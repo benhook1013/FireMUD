@@ -2,7 +2,6 @@ name: PR Smoke Gate
 
 on:
   pull_request:
-    branches: [main, develop]
     types: [opened, synchronize, reopened, edited]
 
 run-name: PR Smoke Gate ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
@@ -600,7 +599,7 @@ jobs:
             }
 
             // One canonical producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "f9e6f082e47302a597306a6b57e3d5fa3e753e0b426db772bc06b32121cc26ad";
+            const canonicalRuntimeWorkflowSha256 = "296a6fd5681c9adaff190fdf002b714537f34d5ba50240463360e273a5b0ef7a";
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
             const repositoryName = `${owner}/${repo}`;
@@ -788,17 +787,17 @@ jobs:
               }
 
               try {
+                // Edited events can omit a usable test-merge SHA. Only immutable
+                // ordered parents authorize event proof; otherwise require the
+                // independently verified current tuple's trusted refresh.
+                const validEventTuple = /^[0-9a-f]{40}$/.test(eventBaseSha ?? "") &&
+                  /^[0-9a-f]{40}$/.test(eventMergeSha ?? "");
+                const mergeCommit = validEventTuple
+                  ? await immutableCommit(eventMergeSha, "event test-merge lookup")
+                  : null;
+                const parents = mergeCommit?.parents ?? [];
                 if (
-                  !/^[0-9a-f]{40}$/.test(eventBaseSha ?? "") ||
-                  !/^[0-9a-f]{40}$/.test(eventMergeSha ?? "")
-                ) {
-                  throw new Error("GitHub supplied an invalid event base or test-merge SHA");
-                }
-
-                const mergeCommit = await immutableCommit(eventMergeSha, "event test-merge lookup");
-                const parents = mergeCommit.parents ?? [];
-                if (
-                  mergeCommit.sha === eventMergeSha &&
+                  mergeCommit?.sha === eventMergeSha &&
                   parents.length === 2 &&
                   parents[0]?.sha === eventBaseSha &&
                   parents[1]?.sha === headSha

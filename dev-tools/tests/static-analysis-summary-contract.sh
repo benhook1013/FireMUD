@@ -25,6 +25,7 @@ grep -Fq 'github.paginate(github.rest.checks.listForRef' "$workflow"
 grep -Fq 'github.paginate(github.rest.issues.listComments' "$workflow"
 grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'cancel-in-progress: false' "$workflow"
+grep -Fq 'group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}' "$workflow"
 grep -Fq 'currentPullRequest.head?.sha !== headSha' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
 grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
@@ -81,6 +82,7 @@ const headSha = "a".repeat(40);
 const baseSha = "b".repeat(40);
 let currentHeadSha = headSha;
 let currentBaseSha = baseSha;
+let currentBaseRef = "develop";
 let pullRequestReads = 0;
 let changeBaseDuringRun = false;
 let deleteStatus = null;
@@ -94,7 +96,7 @@ const github = {
     pulls: { get: async () => {
       pullRequestReads += 1;
       if (changeBaseDuringRun && pullRequestReads === 2) currentBaseSha = "c".repeat(40);
-      return { data: { state: "open", head: { sha: currentHeadSha }, base: { sha: currentBaseSha } } };
+      return { data: { state: "open", head: { sha: currentHeadSha }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
     } },
     actions: { listWorkflowRuns: codeqlListWorkflowRuns },
     checks: { listForRef: checksListForRef },
@@ -274,6 +276,114 @@ const context = {
 };
 const core = { info: () => {} };
 const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
+// Model the two serialized workflow_run callbacks against a persistent comment store.
+async function assertCompletionOrders() {
+  const originalPaginate = github.paginate;
+  const originalIssues = github.rest.issues;
+  const originalTimeout = global.setTimeout;
+  global.setTimeout = () => { throw new Error("completion snapshots must not sleep or poll"); };
+  try {
+    for (const first of ["codeql", "license"]) {
+      for (const absentCounterpart of [false, true]) {
+        currentBaseSha = baseSha;
+        currentBaseRef = "develop";
+        const completed = new Set([first]);
+        let currentTuplePublished = true;
+        let comments = [];
+        let creates = 0;
+        let updates = 0;
+        github.rest.issues = {
+          ...originalIssues,
+          createComment: async ({ body }) => {
+            creates += 1;
+            comments.push({ id: 42, user: { login: "github-actions[bot]" }, body });
+          },
+          updateComment: async ({ comment_id, body }) => {
+            updates += 1;
+            const comment = comments.find(({ id }) => id === comment_id);
+            if (!comment) throw new Error("completion must update the same bot comment");
+            comment.body = body;
+          },
+          deleteComment: async () => { throw new Error("single summary must not be deleted"); },
+        };
+        github.paginate = async (method, input) => {
+          const rows = await originalPaginate(method, input);
+          if (method === commentsList) return comments;
+          if (method === codeqlListWorkflowRuns) {
+            if (!currentTuplePublished) return rows;
+            const key = input.workflow_id === "codeql.yml" ? "codeql" : "license";
+            if (!completed.has(key) && absentCounterpart) return [];
+            return rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
+              id: row.id + (currentBaseSha === baseSha ? 0 : 1000),
+              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`),
+              status: completed.has(key) ? "completed" : "in_progress",
+              conclusion: completed.has(key) ? "success" : null,
+            }));
+          }
+          return rows.filter((row) => !absentCounterpart || completed.has(row.id === 3001 ? "license" : "codeql"))
+            .map((row) => ({ ...row,
+              details_url: row.details_url.replace(/runs\/(\d+)/, (_, id) => `runs/${Number(id) + (currentBaseSha === baseSha ? 0 : 1000)}`),
+              status: completed.has(row.id === 3001 ? "license" : "codeql") ? "completed" : "in_progress",
+              conclusion: completed.has(row.id === 3001 ? "license" : "codeql")
+                ? (currentBaseSha !== baseSha && row.id === 2001 ? "failure" : "success") : null,
+            }));
+        };
+        const callback = async (key) => {
+          const name = key === "codeql" ? "CodeQL Analysis" : "License Gate";
+          Object.assign(context.payload.workflow_run, {
+            name, path: `.github/workflows/${key === "codeql" ? "codeql" : "license-scan"}.yml`,
+            display_title: `${name} pr-42 base-${baseSha} head-${headSha}`,
+          });
+          calls.paginate.length = 0;
+          await run(github, context, core);
+          if (calls.paginate.length !== 4) throw new Error("each callback must take exactly one snapshot of both producers, checks and comments");
+        };
+        await callback(first);
+        if (creates !== 1 || updates !== 0 || comments.length !== 1 || !comments[0].body.includes("still running")) {
+          throw new Error(`${first}-first callback must create one honest pending summary`);
+        }
+        const counterpart = first === "codeql" ? "license" : "codeql";
+        const pendingLabel = counterpart === "codeql" ? "CodeQL gate" : "License gate";
+        const pendingStatus = absentCounterpart ? "pending" : "in_progress";
+        if (!comments[0].body.includes(`${pendingLabel}: \`${pendingStatus}\``)) throw new Error("counterpart pending result missing");
+        completed.add(counterpart);
+        await callback(counterpart);
+        if (creates !== 1 || updates !== 1 || comments.length !== 1 || !comments[0].body.includes("checks passed")) {
+          throw new Error(`${first}-first completion sequence did not converge in the same comment`);
+        }
+        // A delayed earlier callback must not regress the terminal snapshot.
+        await callback(first);
+        if (creates !== 1 || updates !== 1 || comments.length !== 1) throw new Error("delayed source callback must retain the final comment");
+        // A late older-base event may replace the pending current-base callback.
+        // Both base advancement and retargeting must wake a new current-tuple snapshot.
+        for (const [nextBase, nextRef] of [["c".repeat(40), "develop"], ["d".repeat(40), "codex/stack-parent"]]) {
+          currentBaseSha = nextBase;
+          currentBaseRef = nextRef;
+          // callback() deliberately retains the original base in its source title.
+          await callback(first);
+          if (creates !== 1 || comments.length !== 1 || !comments[0].body.includes("CodeQL gate: `failure`")) {
+            throw new Error("older-base wakeup must summarize current-base failure after advancement or retargeting");
+          }
+          const writes = updates;
+          await callback(counterpart);
+          if (updates !== writes) throw new Error("older-base callback must not regress the current-base snapshot");
+        }
+        currentBaseSha = "e".repeat(40);
+        currentTuplePublished = false;
+        await callback(first);
+        if (!comments[0].body.includes("CodeQL gate: `pending`") || !comments[0].body.includes("License gate: `pending`")) {
+          throw new Error("completed older-base source and checks cannot substitute for missing current-tuple proof");
+        }
+      }
+    }
+  } finally {
+    currentBaseSha = baseSha;
+    currentBaseRef = "develop";
+    github.paginate = originalPaginate;
+    github.rest.issues = originalIssues;
+    global.setTimeout = originalTimeout;
+  }
+}
 run(github, context, core).then(async () => {
   if (calls.paginate.length !== 4) throw new Error(`expected four paginated calls, got ${calls.paginate.length}`);
   if (!calls.paginate.every(({ input }) => input.per_page === 100)) throw new Error("all API listings must request page size 100");
@@ -297,10 +407,10 @@ run(github, context, core).then(async () => {
     currentHeadSha = headSha;
     currentBaseSha = baseSha;
     pullRequestReads = 0;
-    context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-${"c".repeat(40)} head-${headSha}`;
+    context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-invalid head-${headSha}`;
     return run(github, context, core).then(() => {
       if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
-        throw new Error("source run for another base must not query runs or alter comments");
+        throw new Error("source run with a malformed canonical title must not query runs or alter comments");
       }
       context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`;
       context.payload.workflow_run.path = ".github/workflows/unrelated.yml";
@@ -348,29 +458,7 @@ run(github, context, core).then(async () => {
               async (error) => {
                 if (error?.status !== 500) throw error;
                 deleteStatus = null;
-                calls.paginate.length = 0;
-                calls.updated.length = 0;
-                calls.deleted.length = 0;
-                const originalPaginate = github.paginate;
-                github.paginate = async (method, input) => {
-                  const rows = await originalPaginate(method, input);
-                  return method === commentsList ? rows : rows.map((row) => ({ ...row, status: "in_progress", conclusion: null }));
-                };
-                const originalTimeout = global.setTimeout;
-                const delays = [];
-                global.setTimeout = (callback, delay) => { delays.push(delay); queueMicrotask(callback); };
-                try {
-                  await run(github, context, core);
-                } finally {
-                  global.setTimeout = originalTimeout;
-                  github.paginate = originalPaginate;
-                }
-                if (delays.length !== 10 || delays.some((delay) => delay !== 30000)) throw new Error("static polling must retain the five-minute budget with ten 30-second waits");
-                for (const method of [codeqlListWorkflowRuns, checksListForRef]) {
-                  const expected = method === codeqlListWorkflowRuns ? 22 : 11;
-                  if (calls.paginate.filter((call) => call.method === method).length !== expected) throw new Error("static polling must refresh both producers and checks every round");
-                }
-                if (calls.paginate.length !== 34 || !calls.updated[0]?.body.includes("still running")) throw new Error("bounded pending polling must still publish an honest pending summary");
+                await assertCompletionOrders();
                 console.log("static analysis summary behavioral contract passed");
               },
             );

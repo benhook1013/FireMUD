@@ -353,6 +353,82 @@ exit 99
 EOF
 chmod +x "$fake_bin/docker"
 
+# Execute the real credential-free metadata admission for a feature-base bot PR.
+# Preview admission is a separate privileged boundary; exact tuple checks remain.
+PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" python3 - "$RUNTIME_WORKFLOW" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+fixture = Path(os.environ["FIXTURE_DIR"])
+workflow = Path(sys.argv[1]).read_text()
+section = workflow.split("      - name: Derive image tags\n", 1)[1].split("      - name: Verify successful CI push for manual publication\n", 1)[0]
+script = section.split("        run: |\n", 1)[1]
+script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
+script = script.replace("${{ github.event_name }}", "repository_dispatch")
+paths = [fixture / name for name in ("pull-request.json", "merge-commit.json", "base-ref.json")]
+originals = [path.read_text() for path in paths]
+request, merge, branch = map(json.loads, originals)
+request["base"]["ref"] = "feature/stack-parent"
+request["user"]["login"] = "renovate[bot]"
+request["labels"] = []
+branch["ref"] = "refs/heads/feature/stack-parent"
+env = {
+    **os.environ,
+    "GITHUB_REPOSITORY": "benhook1013/FireMUD",
+    "GITHUB_REF": "refs/heads/develop",
+    "DEFAULT_BRANCH": "develop",
+    "EVENT_ACTION": "pr-runtime-base-refresh",
+    "EVENT_PR_NUMBER": str(request["number"]),
+    "EVENT_BASE_REF": request["base"]["ref"],
+    "EVENT_BASE_SHA": branch["object"]["sha"],
+    "EVENT_HEAD_SHA": request["head"]["sha"],
+    "EVENT_MERGE_SHA": merge["sha"],
+    "GITHUB_RUN_ID": "4242",
+    "GITHUB_RUN_ATTEMPT": "1",
+    "GITHUB_OUTPUT": str(fixture / "runtime-meta-output"),
+}
+
+def admit(current_request, current_merge, current_branch, overrides=None):
+    for path, payload in zip(paths, (current_request, current_merge, current_branch)):
+        path.write_text(json.dumps(payload))
+    Path(env["GITHUB_OUTPUT"]).write_text("")
+    return subprocess.run(["bash", "-c", script], env={**env, **(overrides or {})}, text=True, capture_output=True)
+
+try:
+    accepted = admit(request, merge, branch)
+    assert accepted.returncode == 0, accepted.stderr
+    output = Path(env["GITHUB_OUTPUT"]).read_text()
+    assert f"merge_sha={merge['sha']}\n" in output
+    assert f"base_ref={request['base']['ref']}\n" in output
+    for mutation in ("stale-base", "stale-head", "wrong-parents", "fork", "closed", "retarget", "missing-merge", "wrong-default-ref"):
+        mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (request, merge, branch)]
+        overrides = {}
+        if mutation == "stale-base":
+            mutated_branch["object"]["sha"] = "d" * 40
+        elif mutation == "stale-head":
+            mutated_request["head"]["sha"] = "d" * 40
+        elif mutation == "wrong-parents":
+            mutated_merge["parents"].reverse()
+        elif mutation == "fork":
+            mutated_request["head"]["repo"]["full_name"] = "outsider/FireMUD"
+        elif mutation == "closed":
+            mutated_request["state"] = "closed"
+        elif mutation == "retarget":
+            mutated_request["base"]["ref"] = "feature/other-parent"
+        elif mutation == "missing-merge":
+            overrides["EVENT_MERGE_SHA"] = ""
+        elif mutation == "wrong-default-ref":
+            overrides["GITHUB_REF"] = "refs/heads/feature/untrusted"
+        rejected = admit(mutated_request, mutated_merge, mutated_branch, overrides)
+        assert rejected.returncode != 0, f"runtime metadata admitted {mutation}"
+finally:
+    for path, original in zip(paths, originals):
+        path.write_text(original)
+PY
+
 run_validation() {
   local source_event="${1:-pull_request}"
   local source_branch="${2:-feature/ci}"

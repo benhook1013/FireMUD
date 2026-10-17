@@ -409,73 +409,136 @@ jobs:
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
           set -x
-          bash ./dev-tools/tests/cloc-report-contract.sh
-          bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
-          bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh
-          bash ./dev-tools/tests/workflow-version-authority-contract.sh
-          bash ./dev-tools/tests/workflow-tool-updater-contract.sh
-          bash ./dev-tools/tests/publisher-checksum-contract.sh
-          bash ./dev-tools/tests/jacoco-combined-report-contract.sh
-          bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
-          bash ./dev-tools/tests/pr-review-controller-contract.sh
-          bash ./dev-tools/tests/testcontainers-disabled-contract.sh
-          bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
-          bash ./dev-tools/tests/static-analysis-summary-contract.sh
-          bash ./dev-tools/tests/ci-validation-summary-contract.sh
-          bash ./dev-tools/tests/security-summary-contract.sh
-          bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh
-          bash ./dev-tools/tests/runtime-base-image-apt-contract.sh
-          bash ./dev-tools/tests/pr-required-gate-context-contract.sh
-          bash ./dev-tools/tests/dev-demo-workflow-contract.sh
-          bash ./dev-tools/tests/erd-workflow-contract.sh
-          bash ./dev-tools/tests/smoke-transport-contract.sh
-          bash ./dev-tools/tests/reset-service-db-contract.sh
-          bash ./dev-tools/tests/preview-eligibility-contract.sh
-          bash ./dev-tools/tests/preview-priority-contract.sh
-          bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
-          bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
-          bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh
-          bash ./dev-tools/tests/preview-runner-isolation-contract.sh
-          bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
-          bash ./dev-tools/tests/preview-ca-recovery-contract.sh
-          bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh
-          bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
-          bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
-          bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
-          bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh
-          bash ./dev-tools/tests/game-session-factory-qualification-contract.sh
-          bash ./dev-tools/tests/preview-cleanup-proof-contract.sh
-          bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
-          bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
-          bash ./dev-tools/tests/worktree-topology-contract.sh
-          bash ./dev-tools/tests/dev-tools-readme-contract.sh
-          bash ./dev-tools/tests/preflight-contract.sh
-          bash ./dev-tools/tests/verify-backups-velero-contract.sh
-          bash ./dev-tools/tests/verify-backups-cronjob-contract.sh
-          bash ./dev-tools/tests/backup-verifier-image-contract.sh
-          bash ./dev-tools/tests/kubectl-version-skew-contract.sh
-          bash ./dev-tools/tests/helm-transaction-proof-contract.sh
-          bash ./dev-tools/tests/preview-image-tag-contract.sh
-          bash ./dev-tools/tests/preview-merge-image-tag-contract.sh
-          bash ./dev-tools/tests/overlay-preflight-contract.sh
-          bash ./dev-tools/tests/validate-external-credentials-contract.sh
-          bash ./dev-tools/tests/observability-validator-contract.sh
-          bash ./dev-tools/tests/secret-compliance-contract.sh
-          bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
-          bash ./dev-tools/tests/smoke-image-env-contract.sh
-          bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh
-          bash ./dev-tools/tests/architecture-doc-contracts.sh --defer-unit-tests
-          bash ./dev-tools/tests/lint-yaml-contract.sh
-          python3 -m unittest discover -s dev-tools/validation -p 'test_*.py' --durations 0
-          python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'
+          TIMEFORMAT='bash ./dev-tools/tests/cloc-report-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/cloc-report-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/ci-lightweight-scope-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/workflow-version-authority-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/workflow-version-authority-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/workflow-tool-updater-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/workflow-tool-updater-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/publisher-checksum-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/publisher-checksum-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/jacoco-combined-report-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/jacoco-combined-report-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/gradle-proof-tooling-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/pr-review-controller-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/pr-review-controller-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/testcontainers-disabled-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/testcontainers-disabled-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/pr-retarget-workflow-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/static-analysis-summary-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/static-analysis-summary-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/ci-validation-summary-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/ci-validation-summary-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/security-summary-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/security-summary-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/runtime-base-image-apt-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/runtime-base-image-apt-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/pr-required-gate-context-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/pr-required-gate-context-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/dev-demo-workflow-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/dev-demo-workflow-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/erd-workflow-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/erd-workflow-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/smoke-transport-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/smoke-transport-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/reset-service-db-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/reset-service-db-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-eligibility-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-eligibility-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-priority-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-priority-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-runner-isolation-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-runner-isolation-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-ca-recovery-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-ca-recovery-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/game-session-factory-qualification-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/game-session-factory-qualification-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-cleanup-proof-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-cleanup-proof-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/worktree-topology-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/worktree-topology-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/dev-tools-readme-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/dev-tools-readme-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preflight-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preflight-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/verify-backups-velero-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/verify-backups-velero-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/verify-backups-cronjob-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/verify-backups-cronjob-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/backup-verifier-image-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/backup-verifier-image-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/kubectl-version-skew-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/kubectl-version-skew-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/helm-transaction-proof-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/helm-transaction-proof-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-image-tag-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-image-tag-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/preview-merge-image-tag-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/preview-merge-image-tag-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/overlay-preflight-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/overlay-preflight-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/validate-external-credentials-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/validate-external-credentials-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/observability-validator-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/observability-validator-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/secret-compliance-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/secret-compliance-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/ensure-local-compose-env-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/smoke-image-env-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/smoke-image-env-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/architecture-doc-contracts.sh --defer-unit-tests: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/architecture-doc-contracts.sh --defer-unit-tests
+          TIMEFORMAT='bash ./dev-tools/tests/lint-yaml-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/lint-yaml-contract.sh
+          TIMEFORMAT='python3 -m unittest discover -s dev-tools/validation -p test_*.py --durations 0: real=%3R user=%3U sys=%3S'
+          time python3 -m unittest discover -s dev-tools/validation -p 'test_*.py' --durations 0
+          TIMEFORMAT='python3 -m unittest discover -s dev-tools/tests -p test_*.py: real=%3R user=%3U sys=%3S'
+          time python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'
 
       - name: 🧪 Validate architecture document contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}
-        run: bash ./dev-tools/tests/architecture-doc-contracts.sh
+        run: |
+          TIMEFORMAT='bash ./dev-tools/tests/architecture-doc-contracts.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/architecture-doc-contracts.sh
 
       - name: 🧪 Validate non-runtime Python contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.validation_python_changed == 'true' }}
-        run: python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
+        run: |
+          TIMEFORMAT='python3 -m unittest discover -s dev-tools/validation -p test_*.py: real=%3R user=%3U sys=%3S'
+          time python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
 
   dev-tools-readme-contract:
     name: Dev Tools README Contract

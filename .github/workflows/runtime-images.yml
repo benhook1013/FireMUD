@@ -2,7 +2,6 @@ name: Build Runtime Images
 
 on:
   pull_request:
-    branches: [main, develop]
     types: [opened, synchronize, reopened, edited]
     paths:
       - 'build.gradle.kts'
@@ -46,7 +45,6 @@ on:
   workflow_run:
     workflows: ["CI — Validation"]
     types: [completed]
-    branches: [main, develop]
   repository_dispatch:
     types: [pr-runtime-base-refresh]
   workflow_dispatch:
@@ -186,13 +184,6 @@ jobs:
                 exit 1
               }
             pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            if ! printf '%s' "$pull_request_json" | python3 dev-tools/hosted/preview/preview-eligibility.py \
-              --revalidate-deploy \
-              --expected-repository "$GITHUB_REPOSITORY" \
-              --expected-head-sha "$HEAD_SHA" >/dev/null; then
-              echo "Runtime PR refresh target is not currently preview-eligible; refusing artifact construction." >&2
-              exit 1
-            fi
             jq -e \
               --arg repository "$GITHUB_REPOSITORY" \
               --arg base_ref "$BASE_REF" \
@@ -426,7 +417,7 @@ jobs:
 
   dispatch-pr-base-refreshes:
     name: Dispatch PR Base Refreshes
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.status == 'completed' && github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.status == 'completed' && (github.event.workflow_run.event == 'pull_request' || (github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop'))) && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -444,8 +435,8 @@ jobs:
         with:
           script: |
             const workflowRun = context.payload.workflow_run;
-            const baseBranch = workflowRun.head_branch;
-            const baseSha = workflowRun.head_sha;
+            const refreshBranch = workflowRun.head_branch;
+            const refreshSha = workflowRun.head_sha;
             const shaPattern = /^[0-9a-f]{40}$/;
             const runtimePrefixes = [
               "buildSrc/",
@@ -534,7 +525,18 @@ jobs:
               "renovate[bot]",
             ]);
 
-            const resolveExactMerge = async (number) => {
+            const isPreviewEligible = (pullRequest) => {
+              const labels = pullRequest.labels;
+              return typeof pullRequest.user?.login === "string" &&
+                pullRequest.user.login.length > 0 &&
+                !dependencyBotAuthors.has(pullRequest.user.login) &&
+                Array.isArray(labels) &&
+                labels.every((label) => label && typeof label.name === "string") &&
+                (["main", "develop"].includes(pullRequest.base?.ref) ||
+                  labels.some((label) => label.name === "preview:priority"));
+            };
+
+            const resolveExactMerge = async (number, baseBranch = refreshBranch, baseSha = refreshSha, expectedHeadSha = null) => {
               for (let attempt = 1; attempt <= 5; attempt += 1) {
                 const response = await github.rest.pulls.get({
                   ...context.repo,
@@ -545,13 +547,12 @@ jobs:
                 const currentBaseRef = pullRequest.base?.ref;
                 const headRepository = pullRequest.head?.repo?.full_name;
                 const baseRepository = pullRequest.base?.repo?.full_name;
-                const author = pullRequest.user?.login;
                 if (pullRequest.state !== "open" ||
                   headRepository !== context.payload.repository.full_name ||
                   baseRepository !== context.payload.repository.full_name ||
                   currentBaseRef !== baseBranch ||
                   !shaPattern.test(currentHeadSha || "") ||
-                  dependencyBotAuthors.has(author)) {
+                  (expectedHeadSha !== null && currentHeadSha !== expectedHeadSha)) {
                   return null;
                 }
 
@@ -783,16 +784,90 @@ jobs:
               throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
             };
 
-            if (!shaPattern.test(baseSha) || !["main", "develop"].includes(baseBranch)) {
-              core.setFailed("Successful CI push did not identify a supported lowercase base branch SHA.");
+            if (!shaPattern.test(refreshSha) || typeof refreshBranch !== "string" ||
+              !/^[A-Za-z0-9._/-]+$/.test(refreshBranch)) {
+              core.setFailed("Completed CI callback did not identify a supported lowercase branch SHA.");
               return;
             }
-            const currentBranch = await github.rest.git.getRef({
-              ...context.repo,
-              ref: `heads/${baseBranch}`,
-            });
-            if (currentBranch.data.object?.sha !== baseSha) {
-              core.warning(`Skipping PR base refresh: ${baseBranch} advanced beyond the completed CI push ${baseSha}.`);
+            let sourcePrNumber = null;
+            if (workflowRun.event === "pull_request") {
+              // Completion is a reconcile signal only for a substantive CI attempt.
+              // Metadata edits also complete CI, but must never reconstruct runtime.
+              const positiveInteger = (value) => Number.isSafeInteger(value) && value > 0;
+              const ciPath = ".github/workflows/ci.yml";
+              const ciName = "CI — Validation";
+              const titleMatch = /^CI — Validation pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/.exec(workflowRun.display_title || "");
+              const matchesSource = (run) =>
+                positiveInteger(workflowRun.id) && positiveInteger(workflowRun.run_attempt) &&
+                positiveInteger(workflowRun.workflow_id) &&
+                run.id === workflowRun.id && run.run_attempt === workflowRun.run_attempt &&
+                run.workflow_id === workflowRun.workflow_id && run.event === "pull_request" &&
+                run.status === "completed" && typeof run.conclusion === "string" && run.conclusion.length > 0 &&
+                run.repository?.full_name === context.payload.repository.full_name &&
+                run.head_repository?.full_name === context.payload.repository.full_name &&
+                run.head_branch === refreshBranch && run.head_sha === refreshSha &&
+                run.display_title === workflowRun.display_title &&
+                [ciName, workflowRun.display_title].includes(run.name) &&
+                (run.path === ciPath || (typeof run.path === "string" &&
+                  run.path.startsWith(`${ciPath}@`) && run.path.length > ciPath.length + 1));
+              if (!titleMatch || titleMatch[3] !== refreshSha) {
+                core.warning("Skipping PR runtime reconciliation: callback lacks exact CI PR/base/head title metadata.");
+                return;
+              }
+              const {data: ciWorkflow} = await github.rest.actions.getWorkflow({
+                ...context.repo, workflow_id: "ci.yml",
+              });
+              const {data: source} = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: workflowRun.id,
+              });
+              if (ciWorkflow.id !== workflowRun.workflow_id || ciWorkflow.path !== ciPath ||
+                ciWorkflow.name !== ciName || !matchesSource(source)) {
+                core.warning("Skipping PR runtime reconciliation: current CI workflow/run identity differs from callback.");
+                return;
+              }
+              const jobs = await github.paginate(
+                "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                {...context.repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100}
+              );
+              const gates = jobs.filter((job) => job.name === "Validation Gate");
+              const gate = gates.length === 1 ? gates[0] : null;
+              const preservation = gate?.steps?.filter((step) =>
+                step.name === "Preserve successful required gate on metadata-only edit") || [];
+              const enforcement = gate?.steps?.filter((step) => step.name === "Enforce validation success") || [];
+              const checkPrefix = `https://api.github.com/repos/${context.payload.repository.full_name}/check-runs/`;
+              if (!gate || !positiveInteger(gate.id) || gate.run_id !== source.id ||
+                gate.run_attempt !== source.run_attempt || gate.head_sha !== source.head_sha ||
+                ![ciName, source.display_title].includes(gate.workflow_name) || gate.status !== "completed" ||
+                typeof gate.check_run_url !== "string" || !gate.check_run_url.startsWith(checkPrefix) ||
+                !/^[1-9][0-9]*$/.test(gate.check_run_url.slice(checkPrefix.length)) ||
+                preservation.length !== 1 || preservation[0].status !== "completed" ||
+                preservation[0].conclusion !== "skipped" || enforcement.length !== 1 ||
+                enforcement[0].status !== "completed" || !["success", "failure"].includes(enforcement[0].conclusion)) {
+                core.info("Skipping PR runtime reconciliation: exact CI attempt is metadata-only or lacks substantive native gate evidence.");
+                return;
+              }
+              const {data: latest} = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: source.id,
+              });
+              if (!matchesSource(latest)) {
+                core.warning("Skipping PR runtime reconciliation: CI attempt was superseded during classification.");
+                return;
+              }
+              sourcePrNumber = titleMatch[1];
+            }
+            let currentBranch;
+            try {
+              currentBranch = await github.rest.git.getRef({
+                ...context.repo,
+                ref: `heads/${refreshBranch}`,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info(`Skipping obsolete CI callback: branch ${refreshBranch} no longer exists.`);
+              return;
+            }
+            if (currentBranch.data.object?.sha !== refreshSha) {
+              core.warning(`Skipping PR base refresh: ${refreshBranch} advanced beyond the completed CI callback ${refreshSha}.`);
               return;
             }
 
@@ -801,24 +876,65 @@ jobs:
               {
                 ...context.repo,
                 state: "open",
-                base: baseBranch,
+                base: refreshBranch,
                 per_page: 100,
               },
               (response) => response.data
             );
-            let runtimeInventoryPromise;
-            let runtimeInventoryError = null;
+            const refreshTargets = [];
             for (const listedPullRequest of pullRequests) {
               if (listedPullRequest.state !== "open" ||
-                listedPullRequest.base?.ref !== baseBranch ||
+                listedPullRequest.base?.ref !== refreshBranch ||
                 listedPullRequest.head?.repo?.full_name !== context.payload.repository.full_name ||
                 listedPullRequest.base?.repo?.full_name !== context.payload.repository.full_name) {
                 continue;
               }
               const resolved = await resolveExactMerge(listedPullRequest.number);
-              if (!resolved) {
-                continue;
+              if (resolved) {
+                refreshTargets.push(resolved);
               }
+            }
+            if (workflowRun.event === "pull_request") {
+              // A retarget/edit can carry an unusable event merge SHA. CI completion
+              // is only a reconcile signal: re-read its source's current exact tuple.
+              const sourcePullRequests = await github.paginate(
+                github.rest.pulls.list,
+                {
+                  ...context.repo,
+                  state: "open",
+                  head: `${context.repo.owner}:${refreshBranch}`,
+                  per_page: 100,
+                },
+                (response) => response.data
+              );
+              for (const source of sourcePullRequests) {
+                if (String(source.number) !== sourcePrNumber ||
+                  source.state !== "open" || source.head?.sha !== refreshSha ||
+                  source.head?.ref !== refreshBranch ||
+                  source.head?.repo?.full_name !== context.payload.repository.full_name ||
+                  source.base?.repo?.full_name !== context.payload.repository.full_name ||
+                  typeof source.base?.ref !== "string" ||
+                  !/^[A-Za-z0-9._/-]+$/.test(source.base.ref)) {
+                  continue;
+                }
+                const sourceBase = await github.rest.git.getRef({
+                  ...context.repo,
+                  ref: `heads/${source.base.ref}`,
+                });
+                const sourceBaseSha = sourceBase.data.object?.sha;
+                if (!shaPattern.test(sourceBaseSha || "")) {
+                  core.warning(`Skipping source PR #${source.number}: current base ref SHA is invalid.`);
+                  continue;
+                }
+                const resolved = await resolveExactMerge(source.number, source.base.ref, sourceBaseSha, refreshSha);
+                if (resolved && !refreshTargets.some((target) => target.tuple.prNumber === resolved.tuple.prNumber)) {
+                  refreshTargets.push(resolved);
+                }
+              }
+            }
+            let runtimeInventoryPromise;
+            let runtimeInventoryError = null;
+            for (const resolved of refreshTargets) {
               const {tuple, pullRequest} = resolved;
               if (await hasRuntimeChange(pullRequest)) {
                 let existingProducers = [];
@@ -873,6 +989,10 @@ jobs:
                 }
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
+              }
+              if (!isPreviewEligible(pullRequest)) {
+                core.info(`Skipping preview deploy reconciliation for #${tuple.prNumber}: target is not preview-eligible.`);
+                continue;
               }
               core.info(`Dispatching preview deploy reconciliation for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
               await github.rest.repos.createDispatchEvent({

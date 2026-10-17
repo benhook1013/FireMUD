@@ -631,6 +631,19 @@ assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accep
 assert_job_contains smoke.yml smoke-gate 'continue smokeGatePolling'
 assert_job_excludes smoke.yml smoke-gate 'github.rest.repos.createDispatchEvent'
 
+# Every PR base receives the stable Smoke Gate; runtime path filtering is
+# retained by the producer rather than filtering the required gate itself.
+python3 - "$smoke_path" "$runtime_images_path" <<'PYTHON'
+import sys
+from pathlib import Path
+import yaml
+
+smoke, runtime = [yaml.load(Path(path).read_text(), Loader=yaml.BaseLoader) for path in sys.argv[1:]]
+assert set(smoke["on"]["pull_request"]) == {"types"}
+assert set(runtime["on"]["pull_request"]) == {"types", "paths"}
+assert "branches" not in runtime["on"]["workflow_run"]
+PYTHON
+
 # Reproduce the metadata-edit sequence structurally: the edit has its own
 # concurrency namespace, all runtime construction jobs remain skipped, and no
 # dispatch-capable step exists in Smoke Gate. The original event tuple remains
@@ -832,7 +845,10 @@ const assertCompleteRefinementPreservesEligibleInitialRuns = (initialRuns, cutof
     `${label} must retain every returned initial run at or after its refinement cutoff`);
 };
 
-async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
+async function runDispatcher({
+  tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
+  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
+}) {
   const dispatches = [];
   const errors = [];
   const infos = [];
@@ -840,7 +856,41 @@ async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
   const inventoryCalls = [];
   const eventInventoryCalls = new Map();
   const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
-  const tupleByNumber = new Map(tuples.map((tuple) => [tuple.prNumber, tuple]));
+  const allTuples = [...tuples, ...sourceTuples];
+  const tupleByNumber = new Map(allTuples.map((tuple) => [tuple.prNumber, tuple]));
+  const pullRequestFor = (tuple) => ({
+    number: Number(tuple.prNumber),
+    state: "open",
+    base: { ref: tuple.baseRef, repo: { full_name: repository } },
+    head: { sha: tuple.headSha, ref: tuple.headRef ?? "feature/ci", repo: { full_name: repository } },
+    user: { login: tuple.author ?? "maintainer" },
+    labels: Object.hasOwn(tuple, "labels") ? tuple.labels : [],
+    mergeable: true,
+    mergeable_state: "clean",
+    merge_commit_sha: tuple.mergeSha,
+    changed_files: 1,
+    created_at: createdAt,
+  });
+  const ciRun = {
+    id: 7001, run_attempt: 1, workflow_id: 700,
+    name: "CI — Validation", path: ".github/workflows/ci.yml",
+    repository: { full_name: repository }, head_repository: { full_name: repository },
+    head_branch: "develop", head_sha: currentBaseSha, status: "completed", conclusion: "success", event: "push",
+    display_title: `CI — Validation pr-${sourceTuples[0]?.prNumber ?? "101"} base-${sourceTuples[0]?.baseSha ?? baseSha} head-${callback.head_sha ?? currentBaseSha}`,
+    ...callback,
+  };
+  const ciGate = {
+    id: 8001, run_id: ciRun.id, run_attempt: ciRun.run_attempt, head_sha: ciRun.head_sha,
+    workflow_name: "CI — Validation", name: "Validation Gate", status: "completed", conclusion: "success",
+    check_run_url: `https://api.github.com/repos/${repository}/check-runs/8001`,
+    steps: [
+      { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" },
+      { name: "Enforce validation success", status: "completed", conclusion: "success" },
+    ],
+    ...(ciEvidence.gate ?? {}),
+  };
+  let ciRunReads = 0;
+  const ciJobRequests = [];
   const core = {
     info: (message) => infos.push(message),
     warning: (message) => warnings.push(message),
@@ -850,42 +900,40 @@ async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
   const github = {
     rest: {
       git: {
-        getRef: async () => ({ data: { object: { sha: currentBaseSha } } }),
+        getRef: async ({ ref }) => {
+          if (branchErrors[ref]) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchErrors[ref] });
+          return { data: { object: {
+            sha: branchHeads[ref] ?? allTuples.find((tuple) => `heads/${tuple.baseRef}` === ref)?.baseSha ??
+              callback.head_sha ?? currentBaseSha,
+          } } };
+        },
       },
       pulls: {
-        list: async () => ({ data: tuples.map((tuple) => ({
-          number: Number(tuple.prNumber),
-          state: "open",
-          base: { ref: tuple.baseRef, repo: { full_name: repository } },
-          head: { sha: tuple.headSha, repo: { full_name: repository } },
-          changed_files: 1,
-          created_at: createdAt,
-        })) }),
-        get: async ({ pull_number }) => {
-          const tuple = tupleByNumber.get(String(pull_number));
-          return { data: {
-            number: Number(tuple.prNumber),
-            state: "open",
-            base: { ref: tuple.baseRef, repo: { full_name: repository } },
-            head: { sha: tuple.headSha, repo: { full_name: repository } },
-            user: { login: "maintainer" },
-            mergeable: true,
-            mergeable_state: "clean",
-            merge_commit_sha: tuple.mergeSha,
-            changed_files: 1,
-            created_at: createdAt,
-          } };
-        },
+        list: async (request) => ({ data: (request.head ? sourceTuples : tuples)
+          .filter((tuple) => request.head || tuple.baseRef === request.base)
+          .map(pullRequestFor) }),
+        get: async ({ pull_number }) => ({ data: {
+          ...pullRequestFor(tupleByNumber.get(String(pull_number))),
+          ...(pullOverrides[String(pull_number)] ?? {}),
+        } }),
         listFiles: async () => ({ data: [{ filename: "services/example/src/Main.java" }] }),
       },
       repos: {
         getCommit: async ({ ref }) => {
-          const tuple = tuples.find((candidate) => candidate.mergeSha === ref);
-          return { data: { sha: ref, parents: [{ sha: tuple.baseSha }, { sha: tuple.headSha }] } };
+          const tuple = allTuples.find((candidate) => candidate.mergeSha === ref);
+          return { data: { sha: ref, parents: (mergeParents[ref] ?? [tuple.baseSha, tuple.headSha])
+            .map((parent) => ({ sha: parent })) } };
         },
         createDispatchEvent: async (request) => { dispatches.push(request); },
       },
       actions: {
+        getWorkflow: async () => ({ data: {
+          id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {}),
+        } }),
+        getWorkflowRun: async () => {
+          ciRunReads += 1;
+          return { data: { ...ciRun, ...(ciEvidence.run ?? {}), ...(ciRunReads > 1 ? ciEvidence.latest ?? {} : {}) } };
+        },
         listWorkflowRuns: async (request) => {
           inventoryCalls.push(request);
           if (apiFailure === request.event) throw new Error("fixture API unavailable");
@@ -919,27 +967,130 @@ async function runDispatcher({ tuples, inventories = {}, apiFailure = null }) {
         },
       },
     },
-    paginate: async (endpoint, request, map) => map(await endpoint(request)),
+    paginate: async (endpoint, request, map) => {
+      if (typeof endpoint === "string") {
+        assert.equal(endpoint, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+        ciJobRequests.push(request);
+        return ciEvidence.jobs ?? [ciGate];
+      }
+      return map(await endpoint(request));
+    },
   };
   const context = {
     repo: { owner: "owner", repo: "repo" },
     payload: {
       repository: { full_name: repository, default_branch: "develop" },
-      workflow_run: { head_branch: "develop", head_sha: currentBaseSha, status: "completed" },
+      workflow_run: ciRun,
     },
   };
   const originalDateNow = Date.now;
+  const originalSetTimeout = global.setTimeout;
+  global.setTimeout = (resolve) => { resolve(); };
   Date.now = () => Date.parse("2026-01-08T00:00:00Z");
   try {
     await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
   } finally {
     Date.now = originalDateNow;
+    global.setTimeout = originalSetTimeout;
   }
-  return { dispatches, errors, infos, warnings, inventoryCalls };
+  return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests };
 }
 
 (async () => {
   const tuple = tupleFor(101, "a", "c");
+  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh");
+  const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
+  const source = { ...tuple, headRef: "feature/parent" };
+  const child = { ...tupleFor(102, "d", "e", source.headSha), baseRef: source.headRef };
+  const prCallback = { event: "pull_request", head_branch: source.headRef, head_sha: source.headSha };
+  const reconcile = await runDispatcher({ tuples: [child], sourceTuples: [source], callback: prCallback });
+  assert.deepEqual(runtimeDispatches(reconcile).map((item) => item.client_payload.pr_number).sort(),
+    [source.prNumber, child.prNumber].sort(), "parent PR CI completion must refresh its own exact tuple and dependent feature-base child");
+  assert.equal(previewDispatches(reconcile).length, 1, "ordinary feature child has runtime proof without preview eligibility");
+  for (const candidate of [source, child]) {
+    const payload = runtimeDispatches(reconcile).find((item) => item.client_payload.pr_number === candidate.prNumber).client_payload;
+    assert.deepEqual(payload, {
+      pr_number: candidate.prNumber, base_ref: candidate.baseRef, base_sha: candidate.baseSha,
+      head_sha: candidate.headSha, merge_sha: candidate.mergeSha,
+    }, "CI callback may dispatch only the independently verified exact source or dependent tuple");
+  }
+  assert.deepEqual(reconcile.ciJobRequests, [{ owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100 }],
+    "PR callbacks require exact current native CI attempt jobs");
+  const preservationStep = { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" };
+  const enforcementStep = { name: "Enforce validation success", status: "completed", conclusion: "success" };
+  for (const [label, ciEvidence] of [
+    ["metadata preservation executed", { gate: { steps: [{ ...preservationStep, conclusion: "success" }, { ...enforcementStep, conclusion: "skipped" }] } }],
+    ["failed metadata preservation", { gate: { steps: [{ ...preservationStep, conclusion: "failure" }, { ...enforcementStep, conclusion: "skipped" }] } }],
+    ["missing preservation", { gate: { steps: [enforcementStep] } }],
+    ["ambiguous preservation", { gate: { steps: [preservationStep, preservationStep, enforcementStep] } }],
+    ["skipped enforcement", { gate: { steps: [preservationStep, { ...enforcementStep, conclusion: "skipped" }] } }],
+    ["old native attempt job", { gate: { run_attempt: 2 } }],
+    ["wrong native job run", { gate: { run_id: 7002 } }],
+    ["wrong native job head", { gate: { head_sha: sha("f") } }],
+    ["wrong native job workflow", { gate: { workflow_name: "Other Workflow" } }],
+    ["wrong native check repository", { gate: { check_run_url: "https://api.github.com/repos/outsider/repo/check-runs/8001" } }],
+    ["missing native gate", { jobs: [] }],
+    ["superseded initial attempt", { run: { run_attempt: 2 } }],
+    ["attempt superseded after jobs", { latest: { run_attempt: 2 } }],
+    ["wrong source repository", { run: { repository: { full_name: "outsider/repo" } } }],
+    ["wrong source workflow path", { run: { path: ".github/workflows/other.yml" } }],
+    ["wrong source workflow ID", { workflow: { id: 999 } }],
+    ["wrong source head", { run: { head_sha: sha("f") } }],
+    ["wrong source title", { run: { display_title: "unattributed" } }],
+  ]) {
+    const excluded = await runDispatcher({ tuples: [child], sourceTuples: [source], callback: prCallback, ciEvidence });
+    assert.equal(excluded.dispatches.length, 0, `${label} must exclude source and child runtime/preview reconciliation`);
+  }
+  const failedSubstantive = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: { ...prCallback, conclusion: "failure" },
+    ciEvidence: { gate: { conclusion: "failure", steps: [preservationStep, { ...enforcementStep, conclusion: "failure" }] } },
+  });
+  assert.equal(runtimeDispatches(failedSubstantive).length, 2,
+    "failed substantive CI remains a reconcile signal requiring each source/child's independent runtime smoke");
+  const staleCallback = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback,
+    branchHeads: { [`heads/${source.headRef}`]: sha("f") },
+  });
+  assert.equal(staleCallback.dispatches.length, 0, "superseded parent CI callback must not reconcile any tuple");
+  const deletedCallbackBranch = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback,
+    branchErrors: { [`heads/${source.headRef}`]: 404 },
+  });
+  assert.equal(deletedCallbackBranch.dispatches.length, 0, "deleted callback branch is an obsolete signal without refresh dispatch");
+  await assert.rejects(runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback,
+    branchErrors: { [`heads/${source.headRef}`]: 503 },
+  }), /fixture branch lookup failed/, "other branch API failures must remain visible errors");
+  const retargeted = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback,
+    pullOverrides: { [source.prNumber]: { base: { ref: "feature/retargeted", repo: { full_name: repository } } } },
+  });
+  assert.deepEqual(runtimeDispatches(retargeted).map((item) => item.client_payload.pr_number), [child.prNumber],
+    "source retarget during resolution must not dispatch an old-base source tuple");
+  const advancedSource = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback,
+    pullOverrides: { [source.prNumber]: { head: { sha: sha("f"), ref: source.headRef, repo: { full_name: repository } } } },
+  });
+  assert.deepEqual(runtimeDispatches(advancedSource).map((item) => item.client_payload.pr_number), [child.prNumber],
+    "source completion must never assume its head remains current");
+  const wrongSourceParents = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback,
+    mergeParents: { [source.mergeSha]: [sha("f"), source.headSha] },
+  });
+  assert.deepEqual(runtimeDispatches(wrongSourceParents).map((item) => item.client_payload.pr_number), [child.prNumber],
+    "a current-looking source merge SHA needs immutable exact ordered parents");
+  for (const [labels, author, expectedPreviews] of [
+    [[], "maintainer", 0],
+    [[{ name: "preview:priority" }], "maintainer", 1],
+    [[{ name: "preview:priority" }], "renovate[bot]", 0],
+    [null, "maintainer", 0],
+  ]) {
+    const feature = { ...child, labels, author };
+    // Use the dependent path alone to isolate preview admission from source reconciliation.
+    const featureResult = await runDispatcher({ tuples: [feature], callback: prCallback });
+    assert.equal(runtimeDispatches(featureResult).length, 1, "feature and dependency-bot artifact refresh is independent of preview eligibility");
+    assert.equal(previewDispatches(featureResult).length, expectedPreviews, "preview reconciliation retains canonical priority/bot/label policy");
+  }
   for (const [event, status] of [
     ["pull_request", "queued"],
     ["pull_request", "in_progress"],
@@ -2912,6 +3063,28 @@ checkIdentityQuotaFailures().then(() => {
         throw new Error("Smoke Gate must accept only the successful smoke run for the current tuple");
       }
     });
+  })
+  .then(async () => {
+    // Retarget edits can lack an event merge identity. Neither absence nor
+    // malformed event data grants head-only success: exact current parents
+    // and the typed refresh source are still mandatory.
+    const originalEventSha = context.sha;
+    for (const missingEventSha of [undefined, "", "not-a-sha"]) {
+      context.sha = missingEventSha;
+      availableRuns = [dispatchRun(506, liveBaseSha, headSha, currentMergeSha)];
+      const jobStart = jobQueries.length;
+      await check("success", false);
+      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 506) {
+        throw new Error("missing event merge must require exact current typed refresh proof");
+      }
+      currentMergeParents = [{ sha: headSha }, { sha: liveBaseSha }];
+      await check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run");
+      if (jobQueries.length !== jobStart + 1) {
+        throw new Error("missing event merge must reject reversed current parents");
+      }
+      currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];
+    }
+    context.sha = originalEventSha;
   })
   .then(() => {
     const jobStart = jobQueries.length;
