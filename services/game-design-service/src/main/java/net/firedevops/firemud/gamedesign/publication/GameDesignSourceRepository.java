@@ -338,12 +338,12 @@ public final class GameDesignSourceRepository {
       new GameDesignReviewedBaseRepository(dsl)
           .requireRetained(operation.account().input().selection().selectedCommit());
     }
-    boolean historical =
-        historicalOperation || (gameplayCapture.isEmpty() && operationIsTerminal(operation));
+    boolean historicalGameplay =
+        !historicalOperation && gameplayCapture.isEmpty() && operationIsTerminal(operation);
     if (command.isEmpty()
         || policy.isEmpty()
-        || (asset.isEmpty() && !historical)
-        || (gameplayCapture.isEmpty() && !historical)
+        || (asset.isEmpty() && !historicalOperation)
+        || (gameplayCapture.isEmpty() && !historicalOperation && !historicalGameplay)
         || (templateSourceEnrolled && templateConfig.isEmpty())) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
     }

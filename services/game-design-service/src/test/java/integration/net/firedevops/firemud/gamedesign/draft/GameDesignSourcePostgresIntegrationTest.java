@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -26,6 +28,8 @@ import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
@@ -798,24 +802,81 @@ class GameDesignSourcePostgresIntegrationTest {
         .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
 
     var gameplayCapture = new GameplayRuleSnapshot.Capture(operation, selectedRules);
-    byte[] changedOperation = operation.canonicalBytes();
-    changedOperation[changedOperation.length - 1] ^= 1;
+    var originalAccount = operation.account();
+    var changedSources =
+        originalAccount.sources().stream()
+            .map(
+                source ->
+                    new SourceEvidence(
+                        source.kind(),
+                        source.scopeId(),
+                        source.generation(),
+                        source.sourceVersion() + "0",
+                        source.checkpointStream(),
+                        source.checkpointSequence(),
+                        source.evidence()))
+            .toList();
+    var changedAccount =
+        new AccountPublicationAuthorizationBinding(
+            originalAccount.operationId(),
+            originalAccount.fenceId(),
+            originalAccount.input(),
+            changedSources);
+    var originalInventory = operation.inventory().publicEvidence();
+    var originalAccountOrder = originalInventory.accountOrder();
+    var changedAccountOrder =
+        new WorldSelectedPublicationArtifactInventoryEvidence.PublicAccountOrder(
+            originalAccountOrder.operationId(),
+            originalAccountOrder.fenceId(),
+            originalAccountOrder.actorAccountId(),
+            originalAccountOrder.publicationRequestId(),
+            originalAccountOrder.selectionDigest(),
+            originalAccountOrder.selectedCommitId(),
+            DraftAuthorizationFenceBinding.digest(changedAccount.canonicalBytes()));
+    var changedInventoryEvidence =
+        new WorldSelectedPublicationArtifactInventoryEvidence.PublicEvidence(
+            originalInventory.schema(),
+            originalInventory.schemaVersion(),
+            originalInventory.completeness(),
+            originalInventory.ownerScope(),
+            originalInventory.selectedApplication(),
+            changedAccountOrder,
+            originalInventory.freeze(),
+            originalInventory.checkpoint(),
+            originalInventory.sourceModel(),
+            originalInventory.artifactDecisions());
+    var changedInventory =
+        WorldSelectedPublicationArtifactInventoryEvidence.fromRetainedSelection(
+            changedAccount,
+            operation.world(),
+            changedInventoryEvidence.canonicalBytes(),
+            changedInventoryEvidence.digest());
+    byte[] changedOperation =
+        new GameDesignPublicationOperation(changedAccount, operation.world(), changedInventory)
+            .canonicalBytes();
     assertInvalidGameplayCaptureInsert(
         fixture,
         operation,
         changedOperation,
         gameplayCapture.canonicalBytes(),
-        gameplayCapture.digest());
+        gameplayCapture.digest(),
+        "gameplay-rule capture differs from exact selected operation and synchronized source");
     byte[] changedSnapshot = gameplayCapture.canonicalBytes();
     changedSnapshot[changedSnapshot.length - 1] ^= 1;
     assertInvalidGameplayCaptureInsert(
-        fixture, operation, operation.canonicalBytes(), changedSnapshot, gameplayCapture.digest());
+        fixture,
+        operation,
+        operation.canonicalBytes(),
+        changedSnapshot,
+        gameplayCapture.digest(),
+        "gameplay-rule capture differs from exact selected operation and synchronized source");
     assertInvalidGameplayCaptureInsert(
         fixture,
         operation,
         operation.canonicalBytes(),
         gameplayCapture.canonicalBytes(),
-        "sha256:" + "0".repeat(64));
+        "sha256:" + "0".repeat(64),
+        "gameplay-rule capture differs from exact selected operation and synchronized source");
 
     var first = fixture.tx(() -> fixture.sources().freeze(operation));
     var retry = fixture.tx(() -> fixture.sources().freeze(operation));
@@ -969,6 +1030,52 @@ class GameDesignSourcePostgresIntegrationTest {
   }
 
   @Test
+  void terminalV2CaptureWithMissingAssetAndGameplayIsIncomplete() {
+    Fixture fixture = fixture();
+    var authored =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            null,
+            "main",
+            true);
+    synchronize(fixture, authored, apply(fixture, authored));
+    var operation = retainSelectedOperation(fixture);
+
+    fixture.tx(
+        () -> {
+          new CommandSourceRepository(fixture.dsl()).freeze(operation);
+          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+          new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
+          var attempts = new PublishAttemptRepository(fixture.dsl());
+          var attempt =
+              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          attempt.setFailureCode("ISOLATED_PARTIAL_CAPTURE_DENIAL");
+          attempts.save(attempt);
+          new GameDesignPublicationOperationRepository(fixture.dsl())
+              .seal(
+                  operation.tenantKey(),
+                  operation.workflowId(),
+                  operation.versionId(),
+                  operation.selectionDigest(),
+                  false);
+          return null;
+        });
+
+    assertThatThrownBy(() -> fixture.sources().readCapture(operation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
+  }
+
+  @Test
   void preGameplayTerminalCaptureStaysUnknownAndCannotBeExtendedAfterV1032() throws Exception {
     Fixture fixture = fixture(false, "1031");
     var authored =
@@ -1101,7 +1208,8 @@ class GameDesignSourcePostgresIntegrationTest {
       net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation,
       byte[] operationBytes,
       byte[] captureBytes,
-      String captureDigest) {
+      String captureDigest,
+      String expectedSqlGuardMessage) {
     assertThatThrownBy(
             () ->
                 fixture.tx(
@@ -1119,7 +1227,8 @@ class GameDesignSourcePostgresIntegrationTest {
                                 operationBytes,
                                 captureBytes,
                                 captureDigest)))
-        .isInstanceOf(RuntimeException.class);
+        .rootCause()
+        .hasMessageContaining(expectedSqlGuardMessage);
   }
 
   private static GameDesignPublicationOperation retainSelectedOperation(Fixture fixture) {
