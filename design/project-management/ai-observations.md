@@ -95,6 +95,7 @@ Entry format:
   - Context: the Document preparation gate returned exit code 1 without a finding or report; a temporary init script enabled XML output and exposed one unused fixture local.
   - Observation: Gradle also applies initialization scripts to `buildSrc`, so an unscoped script can affect projects outside the intended service.
   - Expected pattern: scope temporary report configuration through `findProject`, then use the ordinary corrected service gate; consider enabling useful reports in canonical task configuration when the opportunity is justified. No canonical build configuration changed in this lane.
+  - Reconsideration trigger: when canonical SpotBugs tasks expose actionable XML or HTML reports on failure, verify the original diagnostic gap is closed and revisit the temporary-report guidance.
 
 - `2026-10-15`: Keep the shared local Gradle heap qualification explicit
   - Context: repeated 1.4 GiB heap thrashing led to a shared 3 GiB local daemon setting for serialized work.
@@ -150,6 +151,8 @@ Entry format:
   - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
   - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
   - Recovery: the declared-package selector then passed all sixteen owning native cases; the zero-test attempt retains no proof credit.
+  - Recurrence (`2026-10-17`, #3231): a mixed-selector review-fix gate requested two World classes, but one selector incorrectly included the categorized `unit` source-root segment in its Java package. The matching selector executed nine terminal-read cases, so the task succeeded while the launch-binding comparator class remained unrun. A successful task does not establish coverage of every supplied pattern. Verify every expected class in fresh XML, preserve completed reports before a corrected filtered run replaces task output, and credit the missed class only after its own execution.
+  - Reconsideration trigger: when the canonical Gradle selector tooling or CI guard can verify every explicitly requested test class rather than only aggregate task success, qualify that guard against a mixed valid/invalid selector and revisit this manual proof step.
 
 - `2026-10-17`: Explain inbox read failures during SQLite writes
   - Context: Gameplay used the canonical `inbox read` command for an Overseer message at 11:01 UTC on 2026-10-16.
@@ -158,9 +161,10 @@ Entry format:
   - Recovery: one canonical retry returned the full message after 6.30 seconds. Gameplay reported the evidence to Overseer for the User-requested Controller improvements; no database or Controller change was made by this lane.
 
 - `2026-10-17`: Distinguish queued source CI from early metadata runs
-  - Context: Six newly published Gameplay heads initially had only early metadata jobs inspectable; Pacific/Auckland date is 2026-10-17.
+  - Context: Six newly published Gameplay heads initially had only early metadata jobs inspectable.
   - Observation: The observer reported that the heads had no source validation. Their original source workflows later completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
   - Expected pattern: Retain each original run and classify source selection as pending or unknown while discovery or queue admission is incomplete. A completed metadata gate establishes neither source success nor source absence. The report and observer guidance were corrected with the exact source run identities.
+  - Reconsideration trigger: when the observer or CI tooling distinguishes pending source selection from absent proof, qualify it against an early-metadata run with a queued original source workflow and revisit the manual attribution step.
 
 - `2026-10-17`: Targeted Controller status can exhaust its deadline on older queue history
   - Context: Current-front readiness readback followed publication and successful direct head/base verification.
@@ -175,8 +179,3 @@ Entry format:
 - 2026-10-17 — A validation allowance of NONE includes whitespace checks.
   - Observation: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE. It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
-
-- `2026-10-17`: Verify every requested test class when combining Gradle selectors
-  - Context: the #3231 review-fix gate requested two World classes, but one selector incorrectly included the categorized `unit` source-root segment in its Java package.
-  - Observation: the matching selector executed nine terminal-read cases, so the task succeeded while the launch-binding comparator class remained unrun. A successful task does not establish coverage of every supplied pattern.
-  - Expected pattern: derive each selector from its declared package and verify each expected class in fresh XML. Preserve the completed reports before a corrected filtered run replaces task output; count the missed class only after its own execution.

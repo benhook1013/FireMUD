@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
@@ -297,11 +298,11 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
     public Selector {
       requireNonNil(canonicalTenantId, "canonicalTenantId");
       requireNonNil(canonicalGameInstanceId, "canonicalGameInstanceId");
-      if (controlPlaneRequestId == null
-          || controlPlaneRequestId.isBlank()
-          || controlPlaneRequestId.length() > 128) {
+      if (controlPlaneRequestId == null) {
         throw new IllegalArgumentException("controlPlaneRequestId must be non-blank and bounded");
       }
+      StartSessionPreAuthorizationReservationTuple.requireCanonicalControlPlaneRequestId(
+          controlPlaneRequestId);
     }
 
     private static void requireNonNil(UUID value, String name) {

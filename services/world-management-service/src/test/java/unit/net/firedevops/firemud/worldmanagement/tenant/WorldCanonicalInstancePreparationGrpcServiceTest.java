@@ -13,6 +13,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +54,11 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceRe
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -172,6 +178,54 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
   }
 
   @Test
+  void rejectsControlRequestIdsOverCanonicalUtf8ByteLimitBeforeOwnerCalls() {
+    for (String invalid : List.of("a".repeat(129), "é".repeat(65))) {
+      Harness harness = new Harness("STARTING");
+      var request = request(harness.selector).toBuilder().setControlPlaneRequestId(invalid).build();
+
+      Collector result = call(harness.service, request, peer("game-session-service", NAMESPACE));
+
+      assertThat(result.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
+      verifyNoInteractions(
+          harness.launchBinding,
+          harness.assembly,
+          harness.preparation,
+          harness.preparationRepository,
+          harness.lifecycleRepository);
+    }
+  }
+
+  @Test
+  void accepts128ByteControlRequestIdAndPassesItToBothOwnerSelectors() {
+    String controlRequestId = "é".repeat(64);
+    var selector = selector(controlRequestId);
+    Harness harness = new Harness("STARTING");
+    when(harness.launchBinding.bindCommittedLaunch(any())).thenReturn(harness.binding);
+    when(harness.assembly.assemble(any()))
+        .thenThrow(
+            new WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException(
+                "stop after selector capture"));
+
+    Collector result =
+        call(harness.service, request(selector), peer("game-session-service", NAMESPACE));
+
+    assertThat(result.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    var bindingSelector =
+        org.mockito.ArgumentCaptor.forClass(
+            CanonicalGameInstanceLaunchAssociationReadEvidence.Request.class);
+    verify(harness.launchBinding).bindCommittedLaunch(bindingSelector.capture());
+    var assemblySelector =
+        org.mockito.ArgumentCaptor.forClass(
+            WorldCanonicalInstancePreparationAssemblyService.Selector.class);
+    verify(harness.assembly).assemble(assemblySelector.capture());
+    assertThat(bindingSelector.getValue().controlPlaneRequestId()).isEqualTo(controlRequestId);
+    assertThat(assemblySelector.getValue().controlPlaneRequestId())
+        .isEqualTo(bindingSelector.getValue().controlPlaneRequestId());
+    verifyNoInteractions(
+        harness.preparation, harness.preparationRepository, harness.lifecycleRepository);
+  }
+
+  @Test
   void unknownCommittedLaunchBindingFailsClosedBeforeAssembly() {
     Harness harness = new Harness("STARTING");
     when(harness.launchBinding.bindCommittedLaunch(harness.selector))
@@ -210,6 +264,93 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
         harness.preparationRepository,
         harness.lifecycleRepository);
   }
+
+  @Test
+  void mapsStorageFailuresAtThePreparationRpcBoundary() {
+    List<StorageFailureCase> failures =
+        List.of(
+            storageFailure("23514", Status.Code.FAILED_PRECONDITION),
+            storageFailure("23505", Status.Code.FAILED_PRECONDITION),
+            storageFailure("P0001", Status.Code.FAILED_PRECONDITION),
+            storageFailure("55000", Status.Code.FAILED_PRECONDITION),
+            storageFailure("40001", Status.Code.ABORTED),
+            storageFailure("40P01", Status.Code.ABORTED),
+            storageFailure("40003", Status.Code.UNAVAILABLE),
+            storageFailure("08006", Status.Code.UNAVAILABLE),
+            storageFailure("57014", Status.Code.UNAVAILABLE),
+            storageFailure("55P03", Status.Code.UNAVAILABLE),
+            storageFailure("22P02", Status.Code.INTERNAL),
+            storageFailure("42883", Status.Code.INTERNAL),
+            storageFailure("XX001", Status.Code.INTERNAL),
+            new StorageFailureCase(
+                new DataIntegrityViolationException(
+                    "private SQL detail", new SQLException("private SQL detail", "23514")),
+                Status.Code.FAILED_PRECONDITION),
+            new StorageFailureCase(
+                new DataAccessResourceFailureException(
+                    "private SQL detail", new SQLException("private SQL detail", "08006")),
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new DataIntegrityViolationException("private SQL detail"),
+                Status.Code.FAILED_PRECONDITION),
+            new StorageFailureCase(
+                new DataAccessResourceFailureException("private SQL detail"),
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new TransientDataAccessException("transient storage failure") {},
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new org.jooq.exception.DataAccessException("storage failure"),
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new DataAccessException("unclassified storage failure") {}, Status.Code.INTERNAL));
+
+    for (StorageFailureCase failure : failures) {
+      Harness harness = new Harness("STARTING");
+      when(harness.preparation.prepare(
+              eq(harness.input),
+              any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class)))
+          .thenThrow(failure.failure());
+
+      Collector result =
+          call(harness.service, request(harness.selector), peer("game-session-service", NAMESPACE));
+
+      assertThat(result.error)
+          .as(failure.failure().getClass().getSimpleName())
+          .isEqualTo(failure.expected());
+      assertThat(result.value).isNull();
+      assertThat(result.completed).isFalse();
+      assertThat(result.description).doesNotContain("private SQL detail");
+    }
+  }
+
+  @Test
+  void mapsTransactionCreationFailureToUnavailableWithoutLeakingDetails() {
+    Harness harness = new Harness("STARTING");
+    when(harness.preparation.prepare(
+            eq(harness.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class)))
+        .thenThrow(new CannotCreateTransactionException("private transaction detail"));
+
+    Collector result =
+        call(harness.service, request(harness.selector), peer("game-session-service", NAMESPACE));
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(result.description)
+        .isEqualTo("Canonical World preparation transaction could not start")
+        .doesNotContain("private transaction detail");
+    assertThat(result.value).isNull();
+    assertThat(result.completed).isFalse();
+  }
+
+  private static StorageFailureCase storageFailure(String sqlState, Status.Code expected) {
+    return new StorageFailureCase(
+        new org.jooq.exception.DataAccessException(
+            "private SQL detail", new SQLException("private SQL detail", sqlState)),
+        expected);
+  }
+
+  private record StorageFailureCase(RuntimeException failure, Status.Code expected) {}
 
   @Test
   void changedAssembledTupleFailsBeforePreparation() {
@@ -366,6 +507,21 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
             uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
             37L));
+  }
+
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector(
+      String controlPlaneRequestId) {
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+        READ_ID,
+        NAMESPACE,
+        TENANT_ID,
+        "starter-world",
+        INSTANCE_ID,
+        controlPlaneRequestId,
+        DESCRIPTOR_ID,
+        REQUEST_DIGEST,
+        RESULT_DIGEST,
+        RELEASE_DIGEST);
   }
 
   private static byte[] originalTuple(
