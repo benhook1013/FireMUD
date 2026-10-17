@@ -158,8 +158,7 @@ public final class WorldOriginalStartSessionActivationTerminalEvidence {
       }
       requireExactBinding(accountEvidence, result);
       WorldOriginalStartSessionActivationTerminalEvidence decoded =
-          new WorldOriginalStartSessionActivationTerminalEvidence(
-              accountEvidence, result, worldActivationFence, stored);
+          create(accountEvidence, result, worldActivationFence);
       if (!MessageDigest.isEqual(stored, decoded.canonicalBytes)) {
         throw invalid("World activation terminal evidence is not its exact canonical encoding");
       }
