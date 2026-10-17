@@ -2,6 +2,7 @@ package unit.net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -9,8 +10,11 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository.StoredProtection;
@@ -159,6 +163,99 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
     verify(repository).findSettlementExact(protectionId, 19L);
     verify(repository, never()).settleExact(org.mockito.ArgumentMatchers.any());
     verifyNoInteractions(world);
+  }
+
+  @Test
+  void foreignWorldTerminalStatusesAreClassifiedBeforeSettlementMutation() {
+    var preserved = infrastructureCodes();
+    for (Status.Code sourceCode : Status.Code.values()) {
+      var repository = mock(AccountStartSessionActivationProtectionRepository.class);
+      var world = mock(WorldOriginalStartSessionActivationTerminalReadClient.class);
+      var transactions = new OwnerTransactions();
+      var service =
+          new AccountStartSessionActivationProtectionSettlementService(
+              repository, world, transactions, NAMESPACE);
+      var input =
+          new AccountStartSessionActivationProtectionSettlementInput(
+              NAMESPACE,
+              UUID.fromString("11111111-1111-4111-8111-111111111111"),
+              UUID.fromString("22222222-2222-4222-8222-222222222222"),
+              7L);
+      var protectionEvidence = mock(AccountStartSessionActivationProtectionEvidence.class);
+      var protectionRequest = mock(AccountStartSessionActivationProtectionRequest.class);
+      var tuple = mock(StartSessionPostAuthorizationExecutionTuple.class);
+      var preTuple = mock(StartSessionPreAuthorizationReservationTuple.class);
+      var action = mock(StartSessionOperatorAction.class);
+      var scope = mock(StartSessionOperatorAction.Scope.class);
+      when(protectionEvidence.accountProtectionId()).thenReturn(input.accountProtectionId());
+      when(protectionEvidence.accountProtectionFence()).thenReturn(input.accountProtectionFence());
+      when(protectionEvidence.request()).thenReturn(protectionRequest);
+      when(protectionRequest.originalTuple()).thenReturn(tuple);
+      when(tuple.preAuthorizationTuple()).thenReturn(preTuple);
+      when(preTuple.action()).thenReturn(action);
+      when(action.scope()).thenReturn(scope);
+      when(scope.targetNamespace()).thenReturn(NAMESPACE);
+      when(protectionRequest.worldActivationRequest())
+          .thenReturn(mock(WorldCanonicalInstanceActivation.Request.class));
+      var protection = new StoredProtection(protectionEvidence, 1L);
+      when(repository.findHistoricalExact(
+              input.accountProtectionId(), input.accountProtectionFence()))
+          .thenReturn(Optional.of(protection));
+      when(repository.findSettlementExact(
+              input.accountProtectionId(), input.accountProtectionFence()))
+          .thenReturn(Optional.empty());
+      org.mockito.Mockito.doThrow(foreignFailure(sourceCode)).when(world).read(any());
+
+      var failure = statusFailure(() -> withWorldPeer(() -> service.settle(input)));
+
+      assertDependencyFailure(
+          sourceCode, preserved, "Account World activation-terminal dependency failed", failure);
+      verify(world).read(any());
+      verify(repository, never()).settleExact(any());
+      assertThat(transactions.begins).isEqualTo(1);
+      assertThat(transactions.commits).isEqualTo(1);
+      assertThat(transactions.rollbacks).isZero();
+    }
+  }
+
+  private static Set<Status.Code> infrastructureCodes() {
+    return Set.of(
+        Status.Code.UNAVAILABLE,
+        Status.Code.DEADLINE_EXCEEDED,
+        Status.Code.CANCELLED,
+        Status.Code.RESOURCE_EXHAUSTED,
+        Status.Code.INTERNAL,
+        Status.Code.UNKNOWN);
+  }
+
+  private static StatusRuntimeException foreignFailure(Status.Code code) {
+    var trailers = new Metadata();
+    trailers.put(
+        Metadata.Key.of("private-owner-detail", Metadata.ASCII_STRING_MARSHALLER),
+        "private downstream trailer");
+    return Status.fromCode(code)
+        .withDescription("private downstream description")
+        .withCause(new IllegalStateException("private downstream cause"))
+        .asRuntimeException(trailers);
+  }
+
+  private static StatusRuntimeException statusFailure(Runnable work) {
+    var thrown = org.assertj.core.api.Assertions.catchThrowable(work::run);
+    assertThat(thrown).isInstanceOf(StatusRuntimeException.class);
+    return (StatusRuntimeException) thrown;
+  }
+
+  private static void assertDependencyFailure(
+      Status.Code sourceCode,
+      Set<Status.Code> preserved,
+      String expectedDescription,
+      StatusRuntimeException failure) {
+    Status.Code expectedCode =
+        preserved.contains(sourceCode) ? sourceCode : Status.Code.UNAVAILABLE;
+    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
+    assertThat(Status.fromThrowable(failure).getDescription()).isEqualTo(expectedDescription);
+    assertThat(failure.getCause()).isNull();
+    assertThat(failure.getTrailers()).isNull();
   }
 
   private static void assertCode(Status.Code expected, Runnable work) {
