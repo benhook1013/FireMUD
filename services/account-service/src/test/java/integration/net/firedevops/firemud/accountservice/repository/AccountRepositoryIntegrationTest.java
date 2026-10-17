@@ -41,7 +41,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -58,6 +60,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 class AccountRepositoryIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String MIGRATION_LOCATION = "classpath:db/migration";
+  private static final String MIGRATION_PROOF_ONLY_TAG = "migration-proof-only";
   private final String SCHEMA_SUFFIX =
       UUID.randomUUID().toString().replace("-", "").substring(0, 12);
   private final String TEST_SCHEMA = "account_repository_" + SCHEMA_SUFFIX;
@@ -84,17 +87,20 @@ class AccountRepositoryIntegrationTest {
   }
 
   @BeforeEach
-  void setUpRepository() {
+  void setUpRepository(TestInfo testInfo) {
     dataSource = postgres.dataSource(TEST_SCHEMA);
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(TEST_SCHEMA)
-        .defaultSchema(TEST_SCHEMA)
-        .placeholders(Map.of("serviceSchema", TEST_SCHEMA))
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    // Tagged migration proofs create and migrate their own fresh schemas.
+    if (!testInfo.getTags().contains(MIGRATION_PROOF_ONLY_TAG)) {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(TEST_SCHEMA)
+          .defaultSchema(TEST_SCHEMA)
+          .placeholders(Map.of("serviceSchema", TEST_SCHEMA))
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+    }
 
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     repository = new AccountRepository(dsl);
@@ -1325,7 +1331,12 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  @Tag(MIGRATION_PROOF_ONLY_TAG)
   void flywayCanonicalizesLegacyEmailAndRejectsNonCanonicalValues() {
+    DriverManagerDataSource dataSource = postgres.dataSource(MIGRATION_PROOF_SCHEMA);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
     Flyway.configure()
         .dataSource(dataSource)
         .locations(MIGRATION_LOCATION)
@@ -1364,11 +1375,17 @@ class AccountRepositoryIntegrationTest {
                         + MIGRATION_PROOF_SCHEMA
                         + ".accounts (username, email, password_hash) "
                         + "VALUES ('noncanonical', ' Another@Example.COM ', 'hash')"))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("accounts_email_canonical_check");
   }
 
   @Test
+  @Tag(MIGRATION_PROOF_ONLY_TAG)
   void flywayRejectsCanonicalEmailCollisionsBeforeRewriting() {
+    DriverManagerDataSource dataSource = postgres.dataSource(COLLISION_MIGRATION_PROOF_SCHEMA);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
     Flyway.configure()
         .dataSource(dataSource)
         .locations(MIGRATION_LOCATION)
@@ -1456,7 +1473,13 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  @Tag(MIGRATION_PROOF_ONLY_TAG)
   void flywayRejectsRetainedDuplicateProfileTenantIdentityBeforeAddingConstraint() {
+    DriverManagerDataSource dataSource =
+        postgres.dataSource(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
     Flyway.configure()
         .dataSource(dataSource)
         .locations(MIGRATION_LOCATION)
@@ -1517,8 +1540,13 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  @Tag(MIGRATION_PROOF_ONLY_TAG)
   void globalRegistrationMigrationPreservesAndQuarantinesUnprovenTenantRows() {
     String schema = GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA;
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
     Flyway.configure()
         .dataSource(dataSource)
         .locations(MIGRATION_LOCATION)
@@ -1617,8 +1645,13 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  @Tag(MIGRATION_PROOF_ONLY_TAG)
   void accountUuidMigrationPreservesRetainedRowsAndRecordsExactSourceIdentity() {
     String schema = ACCOUNT_UUID_MIGRATION_PROOF_SCHEMA;
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
     Flyway.configure()
         .dataSource(dataSource)
         .locations(MIGRATION_LOCATION)
