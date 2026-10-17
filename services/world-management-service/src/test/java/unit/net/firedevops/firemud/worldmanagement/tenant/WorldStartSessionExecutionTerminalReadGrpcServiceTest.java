@@ -12,6 +12,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +42,10 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldStartSessionExecutionT
 import net.firedevops.firemud.worldmanagement.v1.WorldStartSessionExecutionTerminalReadServiceGrpc;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -229,6 +234,73 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
       assertCode(collector, expectedCode);
     }
   }
+
+  @Test
+  void mapsStorageFailuresAtTheTerminalReadRpcBoundary() {
+    List<StorageFailureCase> failures =
+        List.of(
+            storageFailure("23514", Status.Code.FAILED_PRECONDITION),
+            storageFailure("23505", Status.Code.FAILED_PRECONDITION),
+            storageFailure("P0001", Status.Code.FAILED_PRECONDITION),
+            storageFailure("55000", Status.Code.FAILED_PRECONDITION),
+            storageFailure("40001", Status.Code.ABORTED),
+            storageFailure("40P01", Status.Code.ABORTED),
+            storageFailure("40003", Status.Code.UNAVAILABLE),
+            storageFailure("08006", Status.Code.UNAVAILABLE),
+            storageFailure("57014", Status.Code.UNAVAILABLE),
+            storageFailure("55P03", Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new DataIntegrityViolationException(
+                    "private SQL detail", new SQLException("private SQL detail", "23514")),
+                Status.Code.FAILED_PRECONDITION),
+            new StorageFailureCase(
+                new DataAccessResourceFailureException(
+                    "private SQL detail", new SQLException("private SQL detail", "08006")),
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new DataIntegrityViolationException("private SQL detail"),
+                Status.Code.FAILED_PRECONDITION),
+            new StorageFailureCase(
+                new DataAccessResourceFailureException("private SQL detail"),
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new TransientDataAccessException("transient storage failure") {},
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new org.jooq.exception.DataAccessException("storage failure"),
+                Status.Code.UNAVAILABLE),
+            new StorageFailureCase(
+                new DataAccessException("unclassified storage failure") {}, Status.Code.INTERNAL));
+
+    for (StorageFailureCase failure : failures) {
+      var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+      when(repository.readExactExecution(any(WorldCanonicalInstanceExecutionIdentity.class)))
+          .thenThrow(failure.failure());
+      var grpc =
+          new WorldStartSessionExecutionTerminalReadGrpcService(
+              service(repository, ignored -> {}), NAMESPACE);
+      Collector collector = new Collector();
+      callAs(
+          grpc,
+          peer("account-service", NAMESPACE),
+          WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request()),
+          collector);
+
+      assertCode(collector, failure.expected());
+      assertThat(Status.fromThrowable(collector.error).getDescription())
+          .isEqualTo("World StartSession terminal storage operation failed")
+          .doesNotContain("private SQL detail");
+    }
+  }
+
+  private static StorageFailureCase storageFailure(String sqlState, Status.Code expected) {
+    return new StorageFailureCase(
+        new org.jooq.exception.DataAccessException(
+            "private SQL detail", new SQLException("private SQL detail", sqlState)),
+        expected);
+  }
+
+  private record StorageFailureCase(RuntimeException failure, Status.Code expected) {}
 
   @Test
   void mapsHistoricalOwnerRpcStatusesWithoutHidingRetryableFailures() {
