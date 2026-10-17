@@ -39,6 +39,7 @@ public final class GameDesignSourceRepository {
   private final CommandSourceRepository commands;
   private final AssetSourceRepository assets;
   private final GameplayRuleSourceRepository gameplay;
+  private final TemplateConfigSourceRepository templateConfigs;
   private final DraftCommitCoordinatorRepository coordinator;
 
   public GameDesignSourceRepository(DSLContext dsl) {
@@ -47,6 +48,7 @@ public final class GameDesignSourceRepository {
     commands = new CommandSourceRepository(dsl);
     assets = new AssetSourceRepository(dsl);
     gameplay = new GameplayRuleSourceRepository(dsl);
+    templateConfigs = new TemplateConfigSourceRepository(dsl);
     coordinator = new DraftCommitCoordinatorRepository(dsl);
   }
 
@@ -71,7 +73,10 @@ public final class GameDesignSourceRepository {
                 target, policy.receiptId(), policy.creationTransactionId()));
     AssetSnapshot.Genesis asset = assets.enrollFreshDraft(target);
     var rules = gameplay.enrollFreshDraft(target);
-    Genesis result = new Genesis(policy, command, Optional.of(asset), Optional.of(rules));
+    var templateConfig = templateConfigs.enrollFreshDraft(target);
+    Genesis result =
+        new Genesis(
+            policy, command, Optional.of(asset), Optional.of(rules), Optional.of(templateConfig));
     if (!result.equals(
         readGenesis(target)
             .orElseThrow(
@@ -88,13 +93,18 @@ public final class GameDesignSourceRepository {
     var policy = policies.readGenesis(target);
     var command = commands.readNewDraftGenesis(target);
     var asset = assets.readGenesis(target);
-    if (policy.isEmpty() && command.isEmpty() && asset.isEmpty()) return Optional.empty();
+    var rules = gameplay.readGenesis(target);
+    var templateConfig = templateConfigs.readGenesis(target);
+    if (policy.isEmpty()
+        && command.isEmpty()
+        && asset.isEmpty()
+        && rules.isEmpty()
+        && templateConfig.isEmpty()) return Optional.empty();
     if (policy.isEmpty() || command.isEmpty()) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_INCOMPLETE");
     }
     return Optional.of(
-        new Genesis(
-            policy.orElseThrow(), command.orElseThrow(), asset, gameplay.readGenesis(target)));
+        new Genesis(policy.orElseThrow(), command.orElseThrow(), asset, rules, templateConfig));
   }
 
   /** Pure typed owner/scope validation; this does not read storage or grant write authority. */
@@ -103,12 +113,14 @@ public final class GameDesignSourceRepository {
     var commandMutations = CommandSource.mutations(binding);
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
     boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
+    boolean templateConfigMutation = !TemplateConfigSource.mutations(binding).isEmpty();
     requireCompleteScopes(
         binding,
         !commandMutations.isEmpty(),
         policyMutation,
         assetMutation,
-        !GameplayRuleSource.mutations(binding).isEmpty());
+        !GameplayRuleSource.mutations(binding).isEmpty(),
+        templateConfigMutation);
   }
 
   /** Stage actual source writes and record exactly one complete local owner outcome. */
@@ -118,6 +130,7 @@ public final class GameDesignSourceRepository {
     List<CommandSource.Mutation> commandMutations = CommandSource.mutations(binding);
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
     boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
+    boolean templateConfigMutation = !TemplateConfigSource.mutations(binding).isEmpty();
     requireGenesis(binding.target());
     requireReviewed(binding);
     Optional<CommandApplication> command = commands.apply(binding);
@@ -131,18 +144,25 @@ public final class GameDesignSourceRepository {
     var rules = gameplay.apply(binding);
     if (rules.isPresent() != !GameplayRuleSource.mutations(binding).isEmpty())
       throw new IllegalStateException("GAMEPLAY_RULE_APPLICATION_INCOMPLETE");
+    Optional<TemplateConfigSourceSnapshot.Application> templateConfig =
+        templateConfigs.apply(binding);
+    if (templateConfig.isPresent() != templateConfigMutation)
+      throw new IllegalStateException("GAME_DESIGN_TEMPLATE_CONFIG_APPLICATION_INCOMPLETE");
     Optional<RealmPolicyApplication> policy = Optional.empty();
     if (policyMutation) {
       // The policy-only path retains its existing exact owner result. Mixed input stages policy
       // first, then records the combined result using actual sibling readback bytes.
       policy =
           Optional.of(
-              command.isPresent() || asset.isPresent() || rules.isPresent()
+              command.isPresent()
+                      || asset.isPresent()
+                      || rules.isPresent()
+                      || templateConfig.isPresent()
                   ? policies.applyMutation(binding)
                   : policies.apply(binding));
     }
     OwnerOutcome expected;
-    if (asset.isPresent() || rules.isPresent()) {
+    if (asset.isPresent() || rules.isPresent() || templateConfig.isPresent()) {
       ByteArrayOutputStream components = new ByteArrayOutputStream();
       DraftAuthorizationFenceBinding.frame(
           components, "game-design-control-plane-sibling-components/v1");
@@ -161,6 +181,12 @@ public final class GameDesignSourceRepository {
         DraftAuthorizationFenceBinding.frame(components, "GAMEPLAY");
         DraftAuthorizationFenceBinding.frame(components, rules.orElseThrow().canonicalBytes());
         epochs.add(rules.orElseThrow().appliedEpoch());
+      }
+      if (templateConfig.isPresent()) {
+        DraftAuthorizationFenceBinding.frame(components, "TEMPLATE_CONFIG");
+        DraftAuthorizationFenceBinding.frame(
+            components, templateConfig.orElseThrow().canonicalBytes());
+        epochs.add(templateConfig.orElseThrow().appliedEpoch());
       }
       if (policy.isPresent()) {
         var policyResult = policy.orElseThrow();
@@ -215,7 +241,7 @@ public final class GameDesignSourceRepository {
     if (!expected.equals(retained)) {
       throw new IllegalStateException("GAME_DESIGN_OWNER_RESULT_READBACK_CONFLICT");
     }
-    return new Application(binding, command, policy, asset, rules, retained);
+    return new Application(binding, command, policy, asset, rules, templateConfig, retained);
   }
 
   /** Invoke after the actual coordinator fence advances, before releasing its application slot. */
@@ -236,7 +262,11 @@ public final class GameDesignSourceRepository {
         gameplay.readGenesis(binding.target()).isPresent()
             ? Optional.of(gameplay.captureSynchronized(binding))
             : Optional.<GameplayRuleSnapshot>empty();
-    return new SynchronizedSources(command, policy, Optional.of(asset), rules);
+    var templateConfig =
+        templateConfigs.readGenesis(binding.target()).isPresent()
+            ? Optional.of(templateConfigs.captureSynchronized(binding))
+            : Optional.<TemplateConfigSourceSnapshot>empty();
+    return new SynchronizedSources(command, policy, Optional.of(asset), rules, templateConfig);
   }
 
   /** Freeze complete selected source snapshots against the same current retained operation. */
@@ -257,7 +287,13 @@ public final class GameDesignSourceRepository {
     CommandSnapshot.Capture command = commands.freeze(operation);
     AssetSnapshot.Capture asset = assets.freeze(operation);
     GameplayRuleSnapshot.Capture gameplayCapture = gameplay.freeze(operation);
-    Capture result = new Capture(command, policy, Optional.of(asset), Optional.of(gameplayCapture));
+    var templateConfig =
+        templateConfigs.readGenesis(operation.account().input().selection().target()).isPresent()
+            ? Optional.of(templateConfigs.freeze(operation))
+            : Optional.<TemplateConfigSourceSnapshot.Capture>empty();
+    Capture result =
+        new Capture(
+            command, policy, Optional.of(asset), Optional.of(gameplayCapture), templateConfig);
     Capture retained =
         readCapture(operation)
             .orElseThrow(
@@ -271,7 +307,8 @@ public final class GameDesignSourceRepository {
         || retained.gameplay().isEmpty()
         || !Arrays.equals(
             result.gameplay().orElseThrow().canonicalBytes(),
-            retained.gameplay().orElseThrow().canonicalBytes())) {
+            retained.gameplay().orElseThrow().canonicalBytes())
+        || !optionalCaptureBytesEqual(result.templateConfig(), retained.templateConfig())) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_READBACK_CONFLICT");
     }
     return retained;
@@ -286,9 +323,17 @@ public final class GameDesignSourceRepository {
     var command = commands.readCapture(operation);
     var policy = policies.readCapture(operation);
     var asset = assets.readCapture(operation);
+    var target = operation.account().input().selection().target();
+    boolean templateSourceEnrolled = templateConfigs.readGenesis(target).isPresent();
+    var templateConfig = templateConfigs.readCapture(operation);
     var gameplayCapture = gameplay.readCapture(operation);
-    if (command.isEmpty() && policy.isEmpty() && asset.isEmpty() && gameplayCapture.isEmpty())
+    if (command.isEmpty()
+        && policy.isEmpty()
+        && asset.isEmpty()
+        && gameplayCapture.isEmpty()
+        && templateConfig.isEmpty()) {
       return Optional.empty();
+    }
     if (historicalOperation) {
       new GameDesignReviewedBaseRepository(dsl)
           .requireRetained(operation.account().input().selection().selectedCommit());
@@ -298,11 +343,13 @@ public final class GameDesignSourceRepository {
     if (command.isEmpty()
         || policy.isEmpty()
         || (asset.isEmpty() && !historicalOperation)
-        || (gameplayCapture.isEmpty() && !historicalOperation && !historicalGameplay)) {
+        || (gameplayCapture.isEmpty() && !historicalOperation && !historicalGameplay)
+        || (templateSourceEnrolled && templateConfig.isEmpty())) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
     }
     return Optional.of(
-        new Capture(command.orElseThrow(), policy.orElseThrow(), asset, gameplayCapture));
+        new Capture(
+            command.orElseThrow(), policy.orElseThrow(), asset, gameplayCapture, templateConfig));
   }
 
   public Optional<SynchronizedSources> readSynchronized(TargetProof target, UUID commitId) {
@@ -325,8 +372,14 @@ public final class GameDesignSourceRepository {
         && (gameplay.readGenesis(target).isPresent()
             || !GameplayRuleSource.mutations(binding).isEmpty()))
       throw new IllegalStateException("GAMEPLAY_RULE_SYNCHRONIZED_SOURCE_INCOMPLETE");
+    var templateConfig = templateConfigs.readSnapshot(target, commitId);
+    if (templateConfig.isEmpty()
+        && (templateConfigs.readGenesis(target).isPresent()
+            || !TemplateConfigSource.mutations(binding).isEmpty()))
+      throw new IllegalStateException("TEMPLATE_CONFIG_SYNCHRONIZED_SOURCE_INCOMPLETE");
     return Optional.of(
-        new SynchronizedSources(command.orElseThrow(), policy.orElseThrow(), asset, rules));
+        new SynchronizedSources(
+            command.orElseThrow(), policy.orElseThrow(), asset, rules, templateConfig));
   }
 
   private void requireGenesis(TargetProof target) {
@@ -381,8 +434,9 @@ public final class GameDesignSourceRepository {
       boolean hasCommand,
       boolean hasPolicy,
       boolean hasAsset,
-      boolean hasGameplay) {
-    if (!hasCommand && !hasPolicy && !hasAsset && !hasGameplay
+      boolean hasGameplay,
+      boolean hasTemplateConfig) {
+    if (!hasCommand && !hasPolicy && !hasAsset && !hasGameplay && !hasTemplateConfig
         || !binding.requiredOwners().contains(Owner.GAME_DESIGN_CONTROL_PLANE)) {
       throw new IllegalArgumentException("Game Design owner requires typed source revisions");
     }
@@ -405,11 +459,14 @@ public final class GameDesignSourceRepository {
             .toList();
     List<AffectedUnit> assets = units.stream().filter(AssetSourceRepository::isScope).toList();
     var rules = units.stream().filter(GameplayRuleSource::isScope).toList();
+    var templateConfigs = units.stream().filter(TemplateConfigSource::isScope).toList();
     if (commands.size() != (hasCommand ? 1 : 0)
         || policies.size() != (hasPolicy ? 1 : 0)
         || assets.size() != (hasAsset ? 1 : 0)
         || rules.size() != (hasGameplay ? 1 : 0)
-        || commands.size() + policies.size() + assets.size() + rules.size() != units.size()
+        || templateConfigs.size() != (hasTemplateConfig ? 1 : 0)
+        || commands.size() + policies.size() + assets.size() + rules.size() + templateConfigs.size()
+            != units.size()
         || units.stream()
             .anyMatch(
                 unit ->
@@ -438,12 +495,14 @@ public final class GameDesignSourceRepository {
       RealmPolicyGenesis policy,
       CommandSource.NewDraftGenesisReceipt command,
       Optional<AssetSnapshot.Genesis> assetEvidence,
-      Optional<GameplayRuleSnapshot.Genesis> gameplayEvidence) {
+      Optional<GameplayRuleSnapshot.Genesis> gameplayEvidence,
+      Optional<TemplateConfigSourceSnapshot.Genesis> templateConfig) {
     public Genesis {
       Objects.requireNonNull(policy, "policy");
       Objects.requireNonNull(command, "command");
       assetEvidence = Objects.requireNonNull(assetEvidence, "assetEvidence");
       gameplayEvidence = Objects.requireNonNull(gameplayEvidence, "gameplayEvidence");
+      templateConfig = Objects.requireNonNull(templateConfig, "templateConfig");
       if (gameplayEvidence.isPresent()
           && (!policy.target().equals(gameplayEvidence.orElseThrow().target())
               || !policy
@@ -460,17 +519,32 @@ public final class GameDesignSourceRepository {
                       .equals(assetEvidence.orElseThrow().creationTransactionId()))) {
         throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_IDENTITY_CONFLICT");
       }
+      if (templateConfig.isPresent()
+          && (!policy.target().equals(templateConfig.orElseThrow().target())
+              || !policy
+                  .creationTransactionId()
+                  .equals(templateConfig.orElseThrow().creationTransactionId()))) {
+        throw new IllegalStateException("TEMPLATE_CONFIG_GENESIS_IDENTITY_CONFLICT");
+      }
+    }
+
+    public Genesis(
+        RealmPolicyGenesis policy,
+        CommandSource.NewDraftGenesisReceipt command,
+        Optional<AssetSnapshot.Genesis> assetEvidence,
+        Optional<GameplayRuleSnapshot.Genesis> gameplayEvidence) {
+      this(policy, command, assetEvidence, gameplayEvidence, Optional.empty());
     }
 
     public Genesis(
         RealmPolicyGenesis policy,
         CommandSource.NewDraftGenesisReceipt command,
         Optional<AssetSnapshot.Genesis> assetEvidence) {
-      this(policy, command, assetEvidence, Optional.empty());
+      this(policy, command, assetEvidence, Optional.empty(), Optional.empty());
     }
 
     public Genesis(RealmPolicyGenesis policy, CommandSource.NewDraftGenesisReceipt command) {
-      this(policy, command, Optional.empty());
+      this(policy, command, Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     public AssetSnapshot.Genesis asset() {
@@ -485,6 +559,7 @@ public final class GameDesignSourceRepository {
       Optional<RealmPolicyApplication> policy,
       Optional<AssetApplication> asset,
       Optional<GameplayRuleSnapshot.Application> gameplay,
+      Optional<TemplateConfigSourceSnapshot.Application> templateConfig,
       OwnerOutcome ownerOutcome) {
     public Application {
       Objects.requireNonNull(binding, "binding");
@@ -492,12 +567,18 @@ public final class GameDesignSourceRepository {
       policy = Objects.requireNonNull(policy, "policy");
       asset = Objects.requireNonNull(asset, "asset");
       gameplay = Objects.requireNonNull(gameplay, "gameplay");
+      templateConfig = Objects.requireNonNull(templateConfig, "templateConfig");
       Objects.requireNonNull(ownerOutcome, "ownerOutcome");
-      if (command.isEmpty() && policy.isEmpty() && asset.isEmpty() && gameplay.isEmpty()
+      if (command.isEmpty()
+              && policy.isEmpty()
+              && asset.isEmpty()
+              && gameplay.isEmpty()
+              && templateConfig.isEmpty()
           || command.isPresent() && !binding.equals(command.orElseThrow().binding())
           || policy.isPresent() && !binding.equals(policy.orElseThrow().snapshot().binding())
           || asset.isPresent() && !binding.equals(asset.orElseThrow().binding())
           || gameplay.isPresent() && !binding.equals(gameplay.orElseThrow().binding())
+          || templateConfig.isPresent() && !binding.equals(templateConfig.orElseThrow().binding())
           || ownerOutcome.owner() != Owner.GAME_DESIGN_CONTROL_PLANE
           || ownerOutcome.status() != OwnerStatus.APPLIED
           || !binding.commitId().equals(ownerOutcome.commitId())
@@ -511,8 +592,18 @@ public final class GameDesignSourceRepository {
         Optional<CommandApplication> command,
         Optional<RealmPolicyApplication> policy,
         Optional<AssetApplication> asset,
+        Optional<GameplayRuleSnapshot.Application> gameplay,
         OwnerOutcome ownerOutcome) {
-      this(binding, command, policy, asset, Optional.empty(), ownerOutcome);
+      this(binding, command, policy, asset, gameplay, Optional.empty(), ownerOutcome);
+    }
+
+    public Application(
+        DraftCommitBinding binding,
+        Optional<CommandApplication> command,
+        Optional<RealmPolicyApplication> policy,
+        Optional<AssetApplication> asset,
+        OwnerOutcome ownerOutcome) {
+      this(binding, command, policy, asset, Optional.empty(), Optional.empty(), ownerOutcome);
     }
   }
 
@@ -520,15 +611,20 @@ public final class GameDesignSourceRepository {
       CommandSnapshot command,
       RealmPolicySnapshot policy,
       Optional<AssetSnapshot> assetEvidence,
-      Optional<GameplayRuleSnapshot> gameplayEvidence) {
+      Optional<GameplayRuleSnapshot> gameplayEvidence,
+      Optional<TemplateConfigSourceSnapshot> templateConfig) {
     public SynchronizedSources {
       Objects.requireNonNull(command, "command");
       Objects.requireNonNull(policy, "policy");
       assetEvidence = Objects.requireNonNull(assetEvidence, "assetEvidence");
       gameplayEvidence = Objects.requireNonNull(gameplayEvidence, "gameplayEvidence");
+      templateConfig = Objects.requireNonNull(templateConfig, "templateConfig");
       if (gameplayEvidence.isPresent()
           && !command.binding().equals(gameplayEvidence.orElseThrow().binding()))
         throw new IllegalStateException("GAMEPLAY_RULE_SOURCE_SNAPSHOT_BINDING_CONFLICT");
+      if (templateConfig.isPresent()
+          && !command.binding().equals(templateConfig.orElseThrow().binding()))
+        throw new IllegalStateException("TEMPLATE_CONFIG_SOURCE_SNAPSHOT_BINDING_CONFLICT");
       if (!command.binding().equals(policy.binding())
           || assetEvidence.isPresent()
               && !command.binding().equals(assetEvidence.orElseThrow().binding())) {
@@ -540,7 +636,15 @@ public final class GameDesignSourceRepository {
         CommandSnapshot command,
         RealmPolicySnapshot policy,
         Optional<AssetSnapshot> assetEvidence) {
-      this(command, policy, assetEvidence, Optional.empty());
+      this(command, policy, assetEvidence, Optional.empty(), Optional.empty());
+    }
+
+    public SynchronizedSources(
+        CommandSnapshot command,
+        RealmPolicySnapshot policy,
+        Optional<AssetSnapshot> assetEvidence,
+        Optional<GameplayRuleSnapshot> gameplayEvidence) {
+      this(command, policy, assetEvidence, gameplayEvidence, Optional.empty());
     }
 
     public AssetSnapshot asset() {
@@ -553,12 +657,14 @@ public final class GameDesignSourceRepository {
       CommandSnapshot.Capture command,
       RealmPolicySnapshot.Capture policy,
       Optional<AssetSnapshot.Capture> asset,
-      Optional<GameplayRuleSnapshot.Capture> gameplay) {
+      Optional<GameplayRuleSnapshot.Capture> gameplay,
+      Optional<TemplateConfigSourceSnapshot.Capture> templateConfig) {
     public Capture {
       Objects.requireNonNull(command, "command");
       Objects.requireNonNull(policy, "policy");
       asset = Objects.requireNonNull(asset, "asset");
       gameplay = Objects.requireNonNull(gameplay, "gameplay");
+      templateConfig = Objects.requireNonNull(templateConfig, "templateConfig");
       if (!Arrays.equals(command.operation().canonicalBytes(), policy.operation().canonicalBytes())
           || !command.snapshot().binding().equals(policy.snapshot().binding())
           || asset.isPresent()
@@ -576,6 +682,30 @@ public final class GameDesignSourceRepository {
                       .equals(gameplay.orElseThrow().snapshot().binding()))) {
         throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_BINDING_CONFLICT");
       }
+      if (templateConfig.isPresent()
+          && (!Arrays.equals(
+                  command.operation().canonicalBytes(),
+                  templateConfig.orElseThrow().operation().canonicalBytes())
+              || !command
+                  .snapshot()
+                  .binding()
+                  .equals(templateConfig.orElseThrow().snapshot().binding()))) {
+        throw new IllegalStateException("GAME_DESIGN_TEMPLATE_CONFIG_CAPTURE_BINDING_CONFLICT");
+      }
     }
+
+    public Capture(
+        CommandSnapshot.Capture command,
+        RealmPolicySnapshot.Capture policy,
+        Optional<AssetSnapshot.Capture> asset) {
+      this(command, policy, asset, Optional.empty(), Optional.empty());
+    }
+  }
+
+  private static boolean optionalCaptureBytesEqual(
+      Optional<TemplateConfigSourceSnapshot.Capture> left,
+      Optional<TemplateConfigSourceSnapshot.Capture> right) {
+    if (left.isEmpty() || right.isEmpty()) return left.isEmpty() && right.isEmpty();
+    return Arrays.equals(left.orElseThrow().canonicalBytes(), right.orElseThrow().canonicalBytes());
   }
 }

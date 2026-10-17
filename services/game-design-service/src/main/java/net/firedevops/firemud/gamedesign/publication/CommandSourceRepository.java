@@ -127,7 +127,9 @@ public final class CommandSourceRepository {
     List<CommandSource.Mutation> mutations = CommandSource.mutations(binding);
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
     boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
-    requireCompleteControlPlaneScopes(binding, mutations, policyMutation, assetMutation);
+    boolean templateConfigMutation = !TemplateConfigSource.mutations(binding).isEmpty();
+    requireCompleteControlPlaneScopes(
+        binding, mutations, policyMutation, assetMutation, templateConfigMutation);
     Optional<CommandApplication> existing = application(binding);
     if (existing.isPresent()) return existing;
     if (mutations.isEmpty()) return Optional.empty();
@@ -222,7 +224,8 @@ public final class CommandSourceRepository {
         binding,
         mutations,
         CommandSource.hasRealmPolicyRevision(binding),
-        !AssetSource.mutations(binding).isEmpty());
+        !AssetSource.mutations(binding).isEmpty(),
+        !TemplateConfigSource.mutations(binding).isEmpty());
     List<CommandSource.Definition> definitions;
     if (!mutations.isEmpty()) {
       CommandApplication applied =
@@ -547,7 +550,8 @@ public final class CommandSourceRepository {
       DraftCommitBinding binding,
       List<CommandSource.Mutation> commandMutations,
       boolean policyMutation,
-      boolean assetMutation) {
+      boolean assetMutation,
+      boolean templateConfigMutation) {
     List<DraftCommitBinding.AffectedUnit> units =
         binding.affectedUnits(Owner.GAME_DESIGN_CONTROL_PLANE);
     List<DraftCommitBinding.AffectedUnit> commands =
@@ -562,11 +566,18 @@ public final class CommandSourceRepository {
             .toList();
     boolean gameplayMutation =
         !net.firedevops.firemud.common.gamedesign.GameplayRuleSource.mutations(binding).isEmpty();
+    var templateConfigs = units.stream().filter(TemplateConfigSource::isScope).toList();
     if (commands.size() != (commandMutations.isEmpty() ? 0 : 1)
         || policies.size() != (policyMutation ? 1 : 0)
         || assets.size() != (assetMutation ? 1 : 0)
         || gameplay.size() != (gameplayMutation ? 1 : 0)
-        || commands.size() + policies.size() + assets.size() + gameplay.size() != units.size()) {
+        || templateConfigs.size() != (templateConfigMutation ? 1 : 0)
+        || commands.size()
+                + policies.size()
+                + assets.size()
+                + gameplay.size()
+                + templateConfigs.size()
+            != units.size()) {
       throw new IllegalArgumentException(
           "Complete supported Game Design control-plane scopes are required");
     }
@@ -574,6 +585,8 @@ public final class CommandSourceRepository {
     if (!policies.isEmpty()) requireScopeTarget(policies.getFirst(), binding.target());
     if (!assets.isEmpty()) requireScopeTarget(assets.getFirst(), binding.target());
     if (!gameplay.isEmpty()) requireScopeTarget(gameplay.getFirst(), binding.target());
+    if (!templateConfigs.isEmpty())
+      requireScopeTarget(templateConfigs.getFirst(), binding.target());
   }
 
   private boolean isCommandScope(DraftCommitBinding.AffectedUnit unit) {

@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadRequest;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadResult;
@@ -18,6 +19,128 @@ import net.firedevops.firemud.common.publication.GameDesignPublicationOperationB
 import org.junit.jupiter.api.Test;
 
 class GameDesignPublicationTerminalEvidenceCodecTest {
+  @Test
+  void selectedFullV4TerminalRoundTripsOnlyTheExactCompleteParticipantVector() throws Exception {
+    var fixture = PublishedRealmEntryPolicySetEvidenceTest.fixture(false);
+    var previous = fixture.terminal().releaseContent();
+    var previousSelector = previous.worldStartLocationEvidence();
+    var oldRequest = previousSelector.request();
+    var selectorRequest =
+        new WorldPublishedStartLocationEvidence.Request(
+            oldRequest.targetNamespace(),
+            oldRequest.canonicalTenantId(),
+            oldRequest.canonicalVersionId(),
+            oldRequest.intakeRequestId(),
+            oldRequest.publicationFence(),
+            oldRequest.publicationRequestId(),
+            oldRequest.requestDigest(),
+            oldRequest.versionStateEpoch(),
+            oldRequest.publishWorkflowId(),
+            oldRequest.appliedCommitId(),
+            oldRequest.contentDigest(),
+            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION,
+            oldRequest.worldAffectedTuples());
+    var selector =
+        new WorldPublishedStartLocationEvidence(
+            selectorRequest,
+            previousSelector.selectorReceiptBytes(),
+            previousSelector.originalAccountBindingBytes(),
+            previousSelector.appliedResultBytes());
+    var operation =
+        new GameDesignPublicationOperationBinding(
+            fixture.operation().account(),
+            selector,
+            net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+                fixture.operation().account(), selector));
+    var participants =
+        previous.participantDigests().stream()
+            .map(
+                participant ->
+                    new GameDesignPublicationTerminalEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            participant.participantKey(),
+                            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
+                        participant.abilitySchemaDigest(),
+                        participant.errorCode(),
+                        participant.errorMessage()))
+            .toList();
+    var release =
+        new GameDesignPublicationTerminalEvidence.ReleaseContent(
+            previous.canonicalTenantId(),
+            previous.canonicalVersionId(),
+            previous.publishedReleaseBundleRef(),
+            previous.versionNumber(),
+            "v4",
+            previous.publishWorkflowId(),
+            previous.manifestHash(),
+            previous.manifestSchemaVersion(),
+            previous.artifactDigests(),
+            previous.requiredManifestAssetKeys(),
+            participants,
+            previous.commandDefinitions(),
+            previous.generationConfigRevision(),
+            selector);
+    assertThat(participants)
+        .extracting(GameDesignPublicationTerminalEvidence.Participant::digestSchemaVersion)
+        .containsExactly(4, 3, 1, 6, 2);
+
+    var terminal =
+        new GameDesignPublicationTerminalEvidence(
+            operation.canonicalBytes(),
+            GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED,
+            release,
+            fixture.terminal().publicationVersionStateEpoch());
+    var request =
+        new ReadRequest(
+            ReadRequest.SCHEMA_VERSION,
+            operation.world().request().targetNamespace(),
+            java.util.UUID.fromString("30303030-3030-4030-8030-303030303030"),
+            operation.canonicalBytes());
+    var result = new ReadResult(request, Status.PUBLISHED, Optional.of(terminal));
+    var response = GameDesignPublicationTerminalReadGrpcCodec.toResponse(request, result);
+
+    assertThat(GameDesignPublicationTerminalReadGrpcCodec.fromResponse(request, response))
+        .isEqualTo(result);
+
+    var mixedParticipants = new java.util.ArrayList<>(participants);
+    mixedParticipants.set(
+        3,
+        new GameDesignPublicationTerminalEvidence.Participant(
+            "AUTOMATION_SCRIPTING",
+            participants.get(3).scopeValue(),
+            null,
+            participants.get(3).appliedCommitId(),
+            participants.get(3).contentDigest(),
+            5,
+            null,
+            null,
+            null));
+    assertThatThrownBy(
+            () ->
+                new GameDesignPublicationTerminalEvidence.ReleaseContent(
+                    previous.canonicalTenantId(),
+                    previous.canonicalVersionId(),
+                    previous.publishedReleaseBundleRef(),
+                    previous.versionNumber(),
+                    "v4",
+                    previous.publishWorkflowId(),
+                    previous.manifestHash(),
+                    previous.manifestSchemaVersion(),
+                    previous.artifactDigests(),
+                    previous.requiredManifestAssetKeys(),
+                    mixedParticipants,
+                    previous.commandDefinitions(),
+                    previous.generationConfigRevision(),
+                    selector))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Incomplete or changed required participant proof");
+  }
+
   @Test
   void maximumFrozenEpochIsRejectedAsInvalidEvidenceAndOrdinaryEpochRoundTrips() throws Exception {
     var ordinary = PublishedRealmEntryPolicySetEvidenceTest.fixture(false);

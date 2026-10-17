@@ -140,6 +140,8 @@ Entry format:
   - Recovery: the next foreground canonical attempt on `3c71c8c24379af623ca66550a4f4acaadd0ffd81` completed at 05:27:42 UTC with exit zero, full terminal capture, held-edge and backend proof, authenticated teardown and independently absent project resources. This does not establish why the earlier owner ended.
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
+- `2026-10-16`: Qualify tenant mutation predicates before relying on filtered readback or later owner guards. The template repository's global-ID update could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row. Test controlled pre-phase rows as well as later guarded owners: the native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
+
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
   - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
   - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
@@ -147,6 +149,12 @@ Entry format:
   - Recovery: the declared-package selector then passed all sixteen owning native cases; the zero-test attempt retains no proof credit.
   - Recurrence (`2026-10-17`, #3231): a mixed-selector review-fix gate requested two World classes, but one selector incorrectly included the categorized `unit` source-root segment in its Java package. The matching selector executed nine terminal-read cases, so the task succeeded while the launch-binding comparator class remained unrun. A successful task does not establish coverage of every supplied pattern. Verify every expected class in fresh XML, preserve completed reports before a corrected filtered run replaces task output, and credit the missed class only after its own execution.
   - Reconsideration trigger: when the canonical Gradle selector tooling or CI guard can verify every explicitly requested test class rather than only aggregate task success, qualify that guard against a mixed valid/invalid selector and revisit this manual proof step.
+
+- `2026-10-17`: Explain inbox read failures during SQLite writes
+  - Context: Gameplay used the canonical `inbox read` command for an Overseer message at 11:01 UTC on 2026-10-16.
+  - Observation: the command returned no message body after 9.95 seconds and reported only `SQLite inbox write failed`. The error did not identify the failed write, contention state or safe retry boundary; its underlying cause remains unknown.
+  - Expected pattern: make message delivery and seen-state recording failures distinguishable, with enough operation context to choose a safe canonical retry without inspecting or mutating the database directly.
+  - Recovery: one canonical retry returned the full message after 6.30 seconds. Gameplay reported the evidence to Overseer for the User-requested Controller improvements; no database or Controller change was made by this lane.
 
 - `2026-10-17`: Distinguish queued source CI from early metadata runs
   - Context: Six newly published Gameplay heads initially had only early metadata jobs inspectable.
