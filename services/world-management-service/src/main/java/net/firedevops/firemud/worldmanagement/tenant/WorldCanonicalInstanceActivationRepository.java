@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEviden
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -24,6 +25,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Owner-local immutable activation ledger and exact World lifecycle CAS. */
 public final class WorldCanonicalInstanceActivationRepository {
+  private static final int MAX_PROTECTED_ACTIVATION_ATTEMPTS = 3;
+
   private final DSLContext dsl;
   private final TransactionTemplate readTransaction;
   private final TransactionTemplate writeTransaction;
@@ -276,7 +279,8 @@ public final class WorldCanonicalInstanceActivationRepository {
   /**
    * Creates or completes one protected initial activation. The Account protection remains pending
    * until its caller consumes the exact returned terminal through Account's authenticated owner
-   * settlement path; this repository does not release it.
+   * settlement path; this repository does not release it. Only the invocation that created the
+   * pending fence may retry its lifecycle transaction after a transient data access failure.
    */
   public WorldOriginalStartSessionActivationTerminalEvidence activateProtected(
       AccountStartSessionActivationProtectionEvidence protection,
@@ -297,111 +301,120 @@ public final class WorldCanonicalInstanceActivationRepository {
             intent.accountProtectionEvidenceBytes());
     WorldCanonicalInstanceActivation.Request request =
         firstProtection.request().worldActivationRequest();
-    try {
-      writeTransaction.execute(
-          status -> {
-            requireWritableTransaction();
-            held.requireHeld();
-            lockActivationOperation(firstProtection);
-            Record fence = activationFenceForUpdate(request.activationRequestId());
-            if (fence == null) {
-              throw new InvalidActivationEvidenceException(
-                  "Protected World activation lost its durable operation fence");
-            }
-            requireSameProtectionIdentity(fence, firstProtection);
-            String state = required(fence, "operation_state", String.class);
-            if (!"PENDING".equals(state)) return null;
+    // Retain PENDING once; retries repeat only this invocation's lifecycle transaction.
+    int attempts = 0;
+    while (true) {
+      attempts++;
+      try {
+        writeTransaction.execute(
+            status -> {
+              requireWritableTransaction();
+              held.requireHeld();
+              lockActivationOperation(firstProtection);
+              Record fence = activationFenceForUpdate(request.activationRequestId());
+              if (fence == null) {
+                throw new InvalidActivationEvidenceException(
+                    "Protected World activation lost its durable operation fence");
+              }
+              requireSameProtectionIdentity(fence, firstProtection);
+              String state = required(fence, "operation_state", String.class);
+              if (!"PENDING".equals(state)) return null;
 
-            WorldCanonicalInstanceLifecycleEvidence current =
-                lifecycleRepository
-                    .readForActivationInOwnerTransaction(request.preparing().request())
-                    .orElseThrow(
-                        () ->
-                            new ActivationConflictException(
-                                "Protected World activation no longer has its exact materialized owner association"));
-            requireLocalProtectedActivationBinding(
-                firstProtection, false, required(fence, "world_execution_fence", Long.class));
-            requireLeaseStillValidAfterLocalLockWait(fence);
+              WorldCanonicalInstanceLifecycleEvidence current =
+                  lifecycleRepository
+                      .readForActivationInOwnerTransaction(request.preparing().request())
+                      .orElseThrow(
+                          () ->
+                              new ActivationConflictException(
+                                  "Protected World activation no longer has its exact materialized owner association"));
+              requireLocalProtectedActivationBinding(
+                  firstProtection, false, required(fence, "world_execution_fence", Long.class));
+              requireLeaseStillValidAfterLocalLockWait(fence);
 
-            Optional<WorldCanonicalInstanceActivation.Result> oldResult =
-                readResultInCurrentTransaction(request);
-            if (oldResult.isPresent()) {
-              throw new ActivationConflictException(
-                  "A legacy or independently terminal World activation result cannot be upgraded to Account-protected proof");
-            }
-            boolean exactPrecondition = exactPreparingPrecondition(request, current);
-            if (!exactPrecondition) {
-              WorldCanonicalInstanceActivation.Result aborted =
+              Optional<WorldCanonicalInstanceActivation.Result> oldResult =
+                  readResultInCurrentTransaction(request);
+              if (oldResult.isPresent()) {
+                throw new ActivationConflictException(
+                    "A legacy or independently terminal World activation result cannot be upgraded to Account-protected proof");
+              }
+              boolean exactPrecondition = exactPreparingPrecondition(request, current);
+              if (!exactPrecondition) {
+                WorldCanonicalInstanceActivation.Result aborted =
+                    new WorldCanonicalInstanceActivation.Result(
+                        request,
+                        WorldCanonicalInstanceActivation.Outcome.ABORTED,
+                        "PRECONDITION_FAILED",
+                        current);
+                insertResult(request, aborted);
+                completeActivationFence(
+                    fence,
+                    firstProtection,
+                    aborted,
+                    WorldCanonicalInstanceActivation.Outcome.ABORTED);
+                held.requireHeld();
+                return null;
+              }
+
+              WorldCanonicalInstanceLifecycleEvidence predicted =
+                  nextActiveEvidence(request, current);
+              WorldCanonicalInstanceActivation.Result committed =
                   new WorldCanonicalInstanceActivation.Result(
-                      request,
-                      WorldCanonicalInstanceActivation.Outcome.ABORTED,
-                      "PRECONDITION_FAILED",
-                      current);
-              insertResult(request, aborted);
+                      request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predicted);
+              insertResult(request, committed);
+              held.requireHeld();
+              // V43's exact execution manifest predicts this row with the transaction timestamp.
+              int updated =
+                  dsl.execute(
+                      "UPDATE world_instance SET status='ACTIVE', lifecycle_epoch=lifecycle_epoch+1, "
+                          + "row_version=row_version+1, updated_at=CURRENT_TIMESTAMP "
+                          + "WHERE id=(SELECT world_instance_id FROM world_canonical_instance_association "
+                          + "WHERE canonical_game_instance_id=? AND schema_version=2 "
+                          + "AND canonical_realm_id=? AND catalog_revision=?) "
+                          + "AND canonical_game_instance_id=? AND canonical_realm_id=? AND catalog_revision=? "
+                          + "AND status='PREPARING' AND lifecycle_epoch=? AND row_version=?",
+                      request.canonicalGameInstanceId(),
+                      firstProtection.request().launchAssociation().canonicalRealmId(),
+                      firstProtection.request().launchAssociation().catalogRevision(),
+                      request.canonicalGameInstanceId(),
+                      firstProtection.request().launchAssociation().canonicalRealmId(),
+                      firstProtection.request().launchAssociation().catalogRevision(),
+                      request.expectedLifecycleEpoch(),
+                      request.expectedRowVersion());
+              if (updated != 1) {
+                throw new ActivationConflictException(
+                    "Protected World lifecycle changed before its exact activation compare-and-set");
+              }
+              WorldCanonicalInstanceLifecycleEvidence actual =
+                  lifecycleRepository
+                      .readForActivationInOwnerTransaction(request.preparing().request())
+                      .orElseThrow(
+                          () ->
+                              new InvalidActivationEvidenceException(
+                                  "Protected World activation lost its owner readback"));
+              if (!Arrays.equals(predicted.canonicalBytes(), actual.canonicalBytes())) {
+                throw new InvalidActivationEvidenceException(
+                    "Protected World activation result differs from its exact committed owner readback");
+              }
               completeActivationFence(
                   fence,
                   firstProtection,
-                  aborted,
-                  WorldCanonicalInstanceActivation.Outcome.ABORTED);
+                  committed,
+                  WorldCanonicalInstanceActivation.Outcome.COMMITTED);
               held.requireHeld();
               return null;
-            }
-
-            WorldCanonicalInstanceLifecycleEvidence predicted =
-                nextActiveEvidence(request, current);
-            WorldCanonicalInstanceActivation.Result committed =
-                new WorldCanonicalInstanceActivation.Result(
-                    request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predicted);
-            insertResult(request, committed);
-            held.requireHeld();
-            // V43's exact execution manifest predicts this row with the transaction timestamp.
-            int updated =
-                dsl.execute(
-                    "UPDATE world_instance SET status='ACTIVE', lifecycle_epoch=lifecycle_epoch+1, "
-                        + "row_version=row_version+1, updated_at=CURRENT_TIMESTAMP "
-                        + "WHERE id=(SELECT world_instance_id FROM world_canonical_instance_association "
-                        + "WHERE canonical_game_instance_id=? AND schema_version=2 "
-                        + "AND canonical_realm_id=? AND catalog_revision=?) "
-                        + "AND canonical_game_instance_id=? AND canonical_realm_id=? AND catalog_revision=? "
-                        + "AND status='PREPARING' AND lifecycle_epoch=? AND row_version=?",
-                    request.canonicalGameInstanceId(),
-                    firstProtection.request().launchAssociation().canonicalRealmId(),
-                    firstProtection.request().launchAssociation().catalogRevision(),
-                    request.canonicalGameInstanceId(),
-                    firstProtection.request().launchAssociation().canonicalRealmId(),
-                    firstProtection.request().launchAssociation().catalogRevision(),
-                    request.expectedLifecycleEpoch(),
-                    request.expectedRowVersion());
-            if (updated != 1) {
-              throw new ActivationConflictException(
-                  "Protected World lifecycle changed before its exact activation compare-and-set");
-            }
-            WorldCanonicalInstanceLifecycleEvidence actual =
-                lifecycleRepository
-                    .readForActivationInOwnerTransaction(request.preparing().request())
-                    .orElseThrow(
-                        () ->
-                            new InvalidActivationEvidenceException(
-                                "Protected World activation lost its owner readback"));
-            if (!Arrays.equals(predicted.canonicalBytes(), actual.canonicalBytes())) {
-              throw new InvalidActivationEvidenceException(
-                  "Protected World activation result differs from its exact committed owner readback");
-            }
-            completeActivationFence(
-                fence,
-                firstProtection,
-                committed,
-                WorldCanonicalInstanceActivation.Outcome.COMMITTED);
-            held.requireHeld();
-            return null;
-          });
-    } catch (RuntimeException outcomeUncertain) {
-      Optional<WorldOriginalStartSessionActivationTerminalEvidence> terminal =
-          readTerminalEvidence(protection);
-      if (terminal.isPresent()) return terminal.orElseThrow();
-      throw outcomeUncertain;
+            });
+        break;
+      } catch (RuntimeException outcomeUncertain) {
+        Optional<WorldOriginalStartSessionActivationTerminalEvidence> terminal =
+            readTerminalEvidence(firstProtection);
+        if (terminal.isPresent()) return terminal.orElseThrow();
+        if (!(outcomeUncertain instanceof TransientDataAccessException)
+            || attempts >= MAX_PROTECTED_ACTIVATION_ATTEMPTS) {
+          throw outcomeUncertain;
+        }
+      }
     }
-    return readTerminalEvidence(protection)
+    return readTerminalEvidence(firstProtection)
         .orElseThrow(
             () ->
                 new InvalidActivationEvidenceException(
