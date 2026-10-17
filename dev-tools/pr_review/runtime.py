@@ -3547,7 +3547,7 @@ class HostedRunner:
                         "command": hosted.FULL_COMMAND,
                     },
                 }
-                state = hosted.trigger_state(
+                state = hosted.operational_trigger_state(
                     self.repo,
                     other_pr,
                     payload,
@@ -3567,7 +3567,7 @@ class HostedRunner:
             ) as exc:
                 raise ControllerError(f"manual Hosted request on PR #{other_pr} cannot be verified") from exc
             if (
-                state.state not in {"completed", "failed", "rate_limited", "noop"}
+                state.state not in {"completed", "failed", "rate_limited", "noop", "ambiguous"}
                 or state.terminal is not True
                 or state.attributed is not True
                 or state.response_id is None
