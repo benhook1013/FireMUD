@@ -42,8 +42,8 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
   private static final int MAX_BINDING_BYTES = 4 * 1024 * 1024;
 
   @TempDir static Path tempDirectory;
-  private static GameLogicIntakeSourceReadTransportTest.TestPki pki;
-  private static GameLogicIntakeSourceReadTransportTest.TestIdentity gameLogicClientIdentity;
+  private static IntakeTestPki pki;
+  private static IntakeTestPki.Identity gameLogicClientIdentity;
   private Server server;
   private GameLogicIntakeAuthorizationReadClient client;
   private GameLogicIntakeAuthorizationReadEvidence.Request expectedRequest;
@@ -51,7 +51,17 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
 
   @BeforeAll
   static void certificates() throws Exception {
-    pki = GameLogicIntakeSourceReadTransportTest.TestPki.create(tempDirectory);
+    pki =
+        IntakeTestPki.create(
+            tempDirectory,
+            "terminal",
+            "FireMUD terminal-read test CA",
+            IntakeTestPki.IdentitySpec.server(
+                "account-server", "spiffe://firemud/ns/test/sa/account-service"),
+            IntakeTestPki.IdentitySpec.server(
+                "wrong-server", "spiffe://firemud/ns/test/sa/game-logic-service"),
+            IntakeTestPki.IdentitySpec.client(
+                "game-design-client", "spiffe://firemud/ns/test/sa/game-design-service"));
     gameLogicClientIdentity = issueIdentity("game-logic-client", GAME_LOGIC_URI);
   }
 
@@ -89,7 +99,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
         .isGreaterThan(4 * 1024 * 1024)
         .isLessThanOrEqualTo(GameLogicIntakeAuthorizationGrpcCodec.MAX_WIRE_BYTES);
 
-    start(pki.accountServer());
+    start(pki.server());
     client = newClient(gameLogicClient());
     client.init();
     var actual = client.read(expectedRequest);
@@ -109,7 +119,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
     assertThat(calls).hasValue(0);
     close();
 
-    start(pki.accountServer());
+    start(pki.server());
     client = newClient(otherCaller());
     client.init();
     assertThatThrownBy(() -> client.read(request))
@@ -121,8 +131,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
     assertThat(calls).hasValue(0);
   }
 
-  private void start(GameLogicIntakeSourceReadTransportTest.TestIdentity identity)
-      throws Exception {
+  private void start(IntakeTestPki.Identity identity) throws Exception {
     var service =
         new AccountGameLogicIntakeAuthorizationReadServiceGrpc
             .AccountGameLogicIntakeAuthorizationReadServiceImplBase() {
@@ -155,8 +164,8 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
             .start();
   }
 
-  private GameLogicIntakeAuthorizationReadClient newClient(
-      GameLogicIntakeSourceReadTransportTest.TestIdentity identity) throws Exception {
+  private GameLogicIntakeAuthorizationReadClient newClient(IntakeTestPki.Identity identity)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
     return new GameLogicIntakeAuthorizationReadClient(
@@ -166,26 +175,21 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
         NAMESPACE);
   }
 
-  private GameLogicIntakeSourceReadTransportTest.TestIdentity gameLogicClient() throws Exception {
+  private IntakeTestPki.Identity gameLogicClient() throws Exception {
     return gameLogicClientIdentity;
   }
 
-  private static GameLogicIntakeSourceReadTransportTest.TestIdentity issueIdentity(
-      String alias, String workloadUri) throws Exception {
-    return GameLogicIntakeSourceReadTransportTest.TestPki.issueIdentity(
-        tempDirectory,
-        tempDirectory.resolve("terminal-test-ca.p12"),
-        tempDirectory.resolve("terminal-test-ca.crt"),
-        alias,
-        workloadUri,
-        false);
+  private static IntakeTestPki.Identity issueIdentity(String alias, String workloadUri)
+      throws Exception {
+    return IntakeTestPki.issueIdentity(
+        tempDirectory, pki.caKeyStore(), pki.caCertificateFile(), alias, workloadUri, false);
   }
 
-  private GameLogicIntakeSourceReadTransportTest.TestIdentity otherCaller() throws Exception {
-    return GameLogicIntakeSourceReadTransportTest.TestPki.issueIdentity(
+  private IntakeTestPki.Identity otherCaller() throws Exception {
+    return IntakeTestPki.issueIdentity(
         tempDirectory,
-        tempDirectory.resolve("terminal-test-ca.p12"),
-        tempDirectory.resolve("terminal-test-ca.crt"),
+        pki.caKeyStore(),
+        pki.caCertificateFile(),
         "other-client",
         "spiffe://firemud/ns/test/sa/game-design-service",
         false);

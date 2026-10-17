@@ -49,7 +49,7 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
   private static final String CREDENTIAL = "unchanged.creator.credential";
 
   @TempDir static Path tempDirectory;
-  private static GameLogicIntakeSourceReadTransportTest.TestPki pki;
+  private static IntakeTestPki pki;
   private Server server;
   private GrpcGameLogicIntakeAuthorizationClient client;
   private final AtomicInteger calls = new AtomicInteger();
@@ -61,7 +61,15 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
 
   @BeforeAll
   static void certificates() throws Exception {
-    pki = GameLogicIntakeSourceReadTransportTest.TestPki.create(tempDirectory);
+    pki =
+        IntakeTestPki.create(
+            tempDirectory,
+            "terminal",
+            "FireMUD terminal-read test CA",
+            IntakeTestPki.IdentitySpec.server("account-server", ACCOUNT_URI),
+            IntakeTestPki.IdentitySpec.server(
+                "wrong-server", "spiffe://firemud/ns/test/sa/game-logic-service"),
+            IntakeTestPki.IdentitySpec.client("game-design-client", GD_URI));
   }
 
   @AfterEach
@@ -80,8 +88,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
 
   @Test
   void callsAuthorizeRecoverAndAbortWithExactPeerAndProtectedCredential() throws Exception {
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     var request = request(selected(1));
     var authorized = client.authorize(request, CREDENTIAL);
@@ -103,19 +111,19 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
   @Test
   void pinsAccountServerAndRejectsWrongServerAndWrongAuthenticatedCaller() throws Exception {
     start(pki.wrongServer());
-    client = newClient(pki.gameDesignClient());
+    client = newClient(pki.client());
     client.init();
     assertThatThrownBy(() -> client.authorize(request(selected(1)), CREDENTIAL))
         .isInstanceOf(StatusRuntimeException.class);
     assertThat(calls).hasValue(0);
     closeTransport();
 
-    start(pki.accountServer());
+    start(pki.server());
     var wrongClient =
-        GameLogicIntakeSourceReadTransportTest.TestPki.issueIdentity(
+        IntakeTestPki.issueIdentity(
             tempDirectory,
-            tempDirectory.resolve("terminal-test-ca.p12"),
-            tempDirectory.resolve("terminal-test-ca.crt"),
+            pki.caKeyStore(),
+            pki.caCertificateFile(),
             "wrong-game-design-client",
             ACCOUNT_URI,
             false);
@@ -132,8 +140,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
 
   @Test
   void rejectsWrongNamespaceAmbientSqlAndUnavailableDeadline() throws Exception {
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     var original = request(selected(1));
     var wrongNamespace =
@@ -152,8 +160,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     closeTransport();
 
     stall = true;
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     assertThatThrownBy(() -> client.authorize(original, CREDENTIAL))
         .isInstanceOf(StatusRuntimeException.class)
@@ -201,8 +209,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     assertThat(response.getSerializedSize())
         .isLessThanOrEqualTo(GameLogicIntakeAuthorizationGrpcCodec.MAX_WIRE_BYTES);
     authorizeResponseOverride = response;
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     var actual = client.authorize(largeRequest, CREDENTIAL);
     assertThat(actual.authorization().orElseThrow().canonicalBytes())
@@ -215,8 +223,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
 
   @Test
   void rejectsMalformedCreatorCredentialsBeforeRpcAndSanitizesMalformedEvidence() throws Exception {
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     var request = request(selected(1));
     for (String malformed : List.of(" ", "x".repeat(16385))) {
@@ -242,8 +250,7 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     assertThat(calls).hasValue(1);
   }
 
-  private void start(GameLogicIntakeSourceReadTransportTest.TestIdentity identity)
-      throws Exception {
+  private void start(IntakeTestPki.Identity identity) throws Exception {
     var service =
         new AccountGameLogicIntakeAuthorizationServiceGrpc
             .AccountGameLogicIntakeAuthorizationServiceImplBase() {
@@ -334,8 +341,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
             .start();
   }
 
-  private GrpcGameLogicIntakeAuthorizationClient newClient(
-      GameLogicIntakeSourceReadTransportTest.TestIdentity identity) throws Exception {
+  private GrpcGameLogicIntakeAuthorizationClient newClient(IntakeTestPki.Identity identity)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
     return new GrpcGameLogicIntakeAuthorizationClient(
