@@ -189,7 +189,8 @@ class AccountStartSessionActivationProtectionAcquisitionServiceTest {
         .when(h.currentAttemptReader)
         .read(any());
 
-    withWorldPeer(() -> assertCode(Status.Code.UNAVAILABLE, () -> h.service.acquire(input)));
+    withWorldPeer(
+        () -> assertCode(Status.Code.FAILED_PRECONDITION, () -> h.service.acquire(input)));
 
     verifyNoInteractions(h.attempts, h.protections, h.issuer, h.launchReader);
   }
@@ -268,7 +269,7 @@ class AccountStartSessionActivationProtectionAcquisitionServiceTest {
       String expectedDescription,
       StatusRuntimeException failure) {
     Status.Code expectedCode =
-        preserved.contains(sourceCode) ? sourceCode : Status.Code.UNAVAILABLE;
+        preserved.contains(sourceCode) ? sourceCode : Status.Code.FAILED_PRECONDITION;
     assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
     assertThat(Status.fromThrowable(failure).getDescription()).isEqualTo(expectedDescription);
     assertThat(failure.getCause()).isNull();
