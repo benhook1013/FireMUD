@@ -251,7 +251,7 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
       String expectedDescription,
       StatusRuntimeException failure) {
     Status.Code expectedCode =
-        preserved.contains(sourceCode) ? sourceCode : Status.Code.UNAVAILABLE;
+        preserved.contains(sourceCode) ? sourceCode : Status.Code.FAILED_PRECONDITION;
     assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
     assertThat(Status.fromThrowable(failure).getDescription()).isEqualTo(expectedDescription);
     assertThat(failure.getCause()).isNull();
