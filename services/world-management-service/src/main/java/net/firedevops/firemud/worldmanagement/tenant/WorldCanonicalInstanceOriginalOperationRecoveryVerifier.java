@@ -164,6 +164,9 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
         || actual.firstSelection().association().templateId() != identity.gameTemplateId()
         || !uuid(savedIdentity, "playableStateNamespaceId")
             .equals(association.playableStateNamespaceId())
+        || !RealmEntryPolicy.StateScope.SHARED
+            .name()
+            .equals(text(savedIdentity, "playableStateScope"))
         || !RealmEntryPolicy.StateScope.SHARED.equals(association.playableStateScope())
         || !bool(savedIdentity, "publicProduction")
         || !association.publicProduction()) {
