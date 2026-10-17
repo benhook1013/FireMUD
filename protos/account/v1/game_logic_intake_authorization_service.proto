@@ -1,0 +1,36 @@
+syntax = "proto3";
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered Game Design producer for the distinct Game Logic intake order.
+service AccountGameLogicIntakeAuthorizationService {
+  rpc AuthorizeIntake(GameLogicIntakeAuthorizationRequest)
+      returns (GameLogicIntakeAuthorizationResponse);
+  rpc RecoverIntake(GameLogicIntakeAuthorizationRequest)
+      returns (GameLogicIntakeAuthorizationResponse);
+  rpc AbortIntake(GameLogicIntakeAuthorizationRequest)
+      returns (GameLogicIntakeAuthorizationResponse);
+}
+
+// The original creator credential is carried only in protected per-call metadata.
+message GameLogicIntakeAuthorizationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string transport_request_id = 3;
+  string intake_request_id = 4;
+  bytes selected_draft_binding = 5;
+}
+
+message GameLogicIntakeAuthorizationResponse {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    RESERVED = 1;
+    FINALIZED = 2;
+    ABORTED = 3;
+  }
+  GameLogicIntakeAuthorizationRequest request = 1;
+  Outcome outcome = 2;
+  bytes preliminary_source_scope = 3;
+  bytes finalized_intake_authorization = 4;
+}

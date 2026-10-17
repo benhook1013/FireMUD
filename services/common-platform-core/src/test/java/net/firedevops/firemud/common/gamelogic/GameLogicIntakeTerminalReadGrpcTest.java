@@ -1,0 +1,621 @@
+package net.firedevops.firemud.common.gamelogic;
+
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitBlockedReloadCallback;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitCondition;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitLatch;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.setWatcher;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.watcher;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.google.protobuf.ByteString;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.grpc.stub.StreamObserver;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
+import net.firedevops.firemud.gamelogic.v1.GameLogicGameplayRuleIntakeTerminalReadServiceGrpc;
+import net.firedevops.firemud.gamelogic.v1.ReadGameplayRuleIntakeTerminalRequest;
+import net.firedevops.firemud.gamelogic.v1.ReadGameplayRuleIntakeTerminalResponse;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+
+/** Structural and actual loopback-mTLS proof for the closed GL terminal read transport. */
+class GameLogicIntakeTerminalReadGrpcTest {
+  private static final String NAMESPACE = "test";
+  private static final String GL_URI = "spiffe://firemud/ns/test/sa/game-logic-service";
+  private static final String WRONG_GL_URI = "spiffe://firemud/ns/test/sa/game-design-service";
+  private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
+  private static final int LARGE_SOURCE_ENTRIES = 1800;
+  private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
+
+  @TempDir static Path tempDirectory;
+  private static IntakeTestPki pki;
+  private Server server;
+  private GameLogicIntakeTerminalReadClient client;
+  private AtomicInteger headers;
+  private AtomicInteger bodies;
+
+  @BeforeAll
+  static void createTrustedCertificates() throws Exception {
+    pki =
+        IntakeTestPki.create(
+            tempDirectory,
+            "terminal",
+            "FireMUD terminal-read test CA",
+            IntakeTestPki.IdentitySpec.server("game-logic-server", GL_URI),
+            IntakeTestPki.IdentitySpec.server("wrong-server", WRONG_GL_URI),
+            IntakeTestPki.IdentitySpec.client("account-client", ACCOUNT_URI));
+  }
+
+  @AfterEach
+  void stopTransport() throws Exception {
+    if (client != null) {
+      client.close();
+      client = null;
+    }
+    if (server != null) {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      server = null;
+    }
+  }
+
+  /** Real file-watch contention with mocked channels, separate from the socket tests below. */
+  @ParameterizedTest
+  @EnumSource(LifecycleClientKind.class)
+  @Timeout(30)
+  @ResourceLock(Resources.SYSTEM_PROPERTIES)
+  void closeReleasesClientMonitorBeforeDrainingCertificateCallback(
+      LifecycleClientKind kind, @TempDir Path directory) throws Exception {
+    String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
+    System.setProperty(TLS_RELOAD_PROPERTY, "true");
+    CountDownLatch releaseClientMonitor = new CountDownLatch(1);
+    AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+    Thread monitorHolder = null;
+    Thread closeThread = null;
+    AbstractReloadingBlockingGrpcClient<?> client = null;
+    TlsCertificateWatcher originalWatcher = null;
+    List<ManagedChannel> channels = new CopyOnWriteArrayList<>();
+    try {
+      ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+      endpoints.setGameLogicService("game-logic.internal:6565");
+      CommonGrpcClientProperties tls = lifecycleTls(directory);
+      GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+      when(channelFactory.buildChannel(
+              any(String.class), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
+          .thenAnswer(
+              invocation -> {
+                ManagedChannel channel = mock(ManagedChannel.class);
+                channels.add(channel);
+                return channel;
+              });
+      ClientHandle handle = kind.create(endpoints, tls, channelFactory);
+      client = handle.client();
+      handle.initialize().run();
+      AbstractReloadingBlockingGrpcClient<?> clientUnderTest = client;
+
+      originalWatcher = watcher(client);
+      TlsCertificateWatcher closeBoundary = mock(TlsCertificateWatcher.class);
+      TlsCertificateWatcher delegatedWatcher = originalWatcher;
+      doAnswer(
+              invocation -> {
+                assertThat(Thread.holdsLock(clientUnderTest))
+                    .as("the client monitor must be released before watcher shutdown")
+                    .isFalse();
+                delegatedWatcher.close();
+                return null;
+              })
+          .when(closeBoundary)
+          .close();
+      setWatcher(clientUnderTest, closeBoundary);
+      CountDownLatch clientMonitorHeld = new CountDownLatch(1);
+      monitorHolder =
+          new Thread(
+              () -> {
+                synchronized (clientUnderTest) {
+                  clientMonitorHeld.countDown();
+                  awaitLatch(releaseClientMonitor);
+                }
+              },
+              "game-logic-intake-client-monitor-holder");
+      monitorHolder.start();
+      assertThat(clientMonitorHeld.await(5, TimeUnit.SECONDS)).isTrue();
+
+      CountDownLatch closeStarted = new CountDownLatch(1);
+      Thread closeWorker =
+          new Thread(
+              () -> {
+                closeStarted.countDown();
+                try {
+                  clientUnderTest.close();
+                } catch (Throwable failure) {
+                  closeFailure.set(failure);
+                }
+              },
+              "game-logic-intake-client-close");
+      closeThread = closeWorker;
+      closeWorker.start();
+      assertThat(closeStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      awaitCondition(() -> closeWorker.getState() == Thread.State.BLOCKED);
+
+      Files.writeString(Path.of(tls.getCertChain()), "certificate-rotated");
+      Thread callback = awaitBlockedReloadCallback(originalWatcher);
+      assertThat(callback).isNotNull();
+
+      releaseClientMonitor.countDown();
+      closeWorker.join(TimeUnit.SECONDS.toMillis(4));
+      assertThat(closeWorker.isAlive())
+          .as("close must not hold the client monitor while the watcher drains its callback")
+          .isFalse();
+      assertThat(closeFailure.get()).isNull();
+
+      clientUnderTest.close();
+      assertThatThrownBy(() -> handle.initialize().run())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("closed");
+      assertThat(channels).isNotEmpty();
+      for (ManagedChannel channel : channels) {
+        verify(channel, times(1)).shutdown();
+      }
+    } finally {
+      releaseClientMonitor.countDown();
+      if (monitorHolder != null) {
+        monitorHolder.join(TimeUnit.SECONDS.toMillis(5));
+      }
+      if (closeThread != null) {
+        closeThread.join(TimeUnit.SECONDS.toMillis(7));
+      }
+      try {
+        if (originalWatcher != null) {
+          originalWatcher.close();
+        }
+      } finally {
+        try {
+          if (client != null) {
+            if (originalWatcher != null) {
+              setWatcher(client, originalWatcher);
+            }
+            client.close();
+          }
+        } finally {
+          restoreReloadPolicy(previousReloadPolicy);
+        }
+      }
+    }
+  }
+
+  @Test
+  void roundTripsRetainedAbortedAndExplicitAbsenceAndPreservesArrayValueSemantics() {
+    var small = evidence("test", 1, Outcome.RETAINED);
+    var retainedResponse = GameLogicIntakeTerminalReadGrpcCodec.toResponse(small);
+    var retained =
+        GameLogicIntakeTerminalReadGrpcCodec.fromResponse(small.request(), retainedResponse);
+    assertThat(retained.terminal().orElseThrow().canonicalBytes())
+        .isEqualTo(small.terminal().orElseThrow().canonicalBytes());
+    assertThat(retained.terminal().orElseThrow().outcome())
+        .isEqualTo(GameLogicGameplayRuleIntakeTerminal.Outcome.RETAINED);
+
+    var aborted = evidence("test", 1, Outcome.ABORTED);
+    var abortedResponse = GameLogicIntakeTerminalReadGrpcCodec.toResponse(aborted);
+    assertThat(
+            GameLogicIntakeTerminalReadGrpcCodec.fromResponse(aborted.request(), abortedResponse)
+                .terminal()
+                .orElseThrow()
+                .outcome())
+        .isEqualTo(GameLogicGameplayRuleIntakeTerminal.Outcome.ABORTED);
+
+    var absent = new GameLogicIntakeTerminalReadEvidence(small.request(), Optional.empty());
+    var absentResponse = GameLogicIntakeTerminalReadGrpcCodec.toResponse(absent);
+    assertThat(absentResponse.getAbsent()).isTrue();
+    assertThat(
+            GameLogicIntakeTerminalReadGrpcCodec.fromResponse(small.request(), absentResponse)
+                .terminal())
+        .isEmpty();
+
+    var requestWire = GameLogicIntakeTerminalReadGrpcCodec.toRequest(small.request());
+    var decodedRequest = GameLogicIntakeTerminalReadGrpcCodec.fromRequest(requestWire);
+    assertThat(decodedRequest).isEqualTo(small.request());
+    assertThat(decodedRequest.hashCode()).isEqualTo(small.request().hashCode());
+    assertThat(decodedRequest.binding().canonicalBytes())
+        .isEqualTo(small.request().binding().canonicalBytes());
+  }
+
+  @Test
+  void rejectsUnknownFieldsChangedOperationDigestAndTerminalPayload() {
+    var evidence = evidence("test", 1, Outcome.RETAINED);
+    var request = evidence.request();
+    var response = GameLogicIntakeTerminalReadGrpcCodec.toResponse(evidence);
+
+    var requestWithUnknown =
+        ReadGameplayRuleIntakeTerminalRequest.newBuilder()
+            .mergeFrom(GameLogicIntakeTerminalReadGrpcCodec.toRequest(request))
+            .setUnknownFields(
+                com.google.protobuf.UnknownFieldSet.newBuilder()
+                    .addField(
+                        100,
+                        com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                    .build())
+            .build();
+    assertThatThrownBy(() -> GameLogicIntakeTerminalReadGrpcCodec.fromRequest(requestWithUnknown))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var otherOperation = evidence("test", 1, Outcome.RETAINED).request().binding();
+    var changedOperation =
+        response.toBuilder()
+            .setRequest(
+                response.getRequest().toBuilder()
+                    .setOriginalIntakeAuthorization(
+                        ByteString.copyFrom(otherOperation.canonicalBytes()))
+                    .setIntakeAuthorizationDigest(otherOperation.digest()))
+            .build();
+    assertThatThrownBy(
+            () -> GameLogicIntakeTerminalReadGrpcCodec.fromResponse(request, changedOperation))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var changedDigest = response.toBuilder().setTerminalDigest("sha256:" + "0".repeat(64)).build();
+    assertThatThrownBy(
+            () -> GameLogicIntakeTerminalReadGrpcCodec.fromResponse(request, changedDigest))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    byte[] changedPayload = response.getOriginalTerminal().toByteArray();
+    changedPayload[changedPayload.length - 1] ^= 1;
+    var changedTerminal =
+        response.toBuilder().setOriginalTerminal(ByteString.copyFrom(changedPayload)).build();
+    assertThatThrownBy(
+            () -> GameLogicIntakeTerminalReadGrpcCodec.fromResponse(request, changedTerminal))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var responseWithUnknown =
+        response.toBuilder()
+            .setUnknownFields(
+                com.google.protobuf.UnknownFieldSet.newBuilder()
+                    .addField(
+                        100,
+                        com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                    .build())
+            .build();
+    assertThatThrownBy(
+            () -> GameLogicIntakeTerminalReadGrpcCodec.fromResponse(request, responseWithUnknown))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void loopbackStrictMtlsTransportsLargeCanonicalTerminalAndPinsBothPeerIdentities()
+      throws Exception {
+    var large = evidence(NAMESPACE, LARGE_SOURCE_ENTRIES, Outcome.RETAINED);
+    byte[] terminalBytes = large.terminal().orElseThrow().canonicalBytes();
+    assertThat(terminalBytes.length)
+        .isGreaterThan(4 * 1024 * 1024)
+        .isLessThanOrEqualTo(GameLogicGameplayRuleIntakeTerminal.MAX_CANONICAL_BYTES);
+    assertThat(GameLogicIntakeTerminalReadGrpcCodec.toResponse(large).getSerializedSize())
+        .isLessThanOrEqualTo(GameLogicGameplayRuleIntakeTerminal.MAX_WIRE_BYTES);
+
+    startServer(pki.server(), large);
+    client = newClient(server, pki.client());
+    client.init();
+    var actual = client.read(large.request());
+    assertThat(actual.terminal().orElseThrow().canonicalBytes()).isEqualTo(terminalBytes);
+    assertThat(headers).hasValue(1);
+    assertThat(bodies).hasValue(1);
+
+    stopTransport();
+    startServer(pki.wrongServer(), large);
+    client = newClient(server, pki.client());
+    client.init();
+    assertThatThrownBy(() -> client.read(large.request()))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            error ->
+                assertThat(Status.fromThrowable(error).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
+  }
+
+  private enum Outcome {
+    RETAINED,
+    ABORTED
+  }
+
+  private void startServer(
+      IntakeTestPki.Identity identity, GameLogicIntakeTerminalReadEvidence evidence)
+      throws Exception {
+    headers = new AtomicInteger();
+    bodies = new AtomicInteger();
+    var service =
+        new GameLogicGameplayRuleIntakeTerminalReadServiceGrpc
+            .GameLogicGameplayRuleIntakeTerminalReadServiceImplBase() {
+          @Override
+          public void readGameplayRuleIntakeTerminal(
+              ReadGameplayRuleIntakeTerminalRequest wire,
+              StreamObserver<ReadGameplayRuleIntakeTerminalResponse> observer) {
+            bodies.incrementAndGet();
+            assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(ACCOUNT_URI);
+            var request = GameLogicIntakeTerminalReadGrpcCodec.fromRequest(wire);
+            var response =
+                GameLogicIntakeTerminalReadGrpcCodec.toResponse(
+                    new GameLogicIntakeTerminalReadEvidence(request, evidence.terminal()));
+            observer.onNext(response);
+            observer.onCompleted();
+          }
+        };
+    ServerInterceptor countHeaders =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call,
+              Metadata metadata,
+              ServerCallHandler<ReqT, RespT> next) {
+            headers.incrementAndGet();
+            return next.startCall(call, metadata);
+          }
+        };
+    server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .maxInboundMessageSize(GameLogicGameplayRuleIntakeTerminal.MAX_WIRE_BYTES)
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(
+                ServerInterceptors.intercept(
+                    service, countHeaders, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+  }
+
+  private GameLogicIntakeTerminalReadClient newClient(Server target, IntakeTestPki.Identity local)
+      throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameLogicService("localhost:" + target.getPort());
+    return new GameLogicIntakeTerminalReadClient(
+        endpoints, pki.clientProperties(tempDirectory, local), new GrpcChannelFactory(), NAMESPACE);
+  }
+
+  /** These canonical bytes are deliberately synthetic transport evidence, not owner provenance. */
+  private static GameLogicIntakeTerminalReadEvidence evidence(
+      String namespace, int entryCount, Outcome outcome) {
+    var tenant = UUID.randomUUID();
+    var version = UUID.randomUUID();
+    var requestId = UUID.randomUUID();
+    var commitId = UUID.randomUUID();
+    var target =
+        new DraftCommitBinding.TargetProof(
+            tenant, version, 1, "private", 2, "private", "NEW_GAME_ROW");
+    var definitions = new ArrayList<GameplayRuleManifest.Definition>();
+    var revisions = new ArrayList<DraftCommitBinding.RevisionPayload>();
+    var revisionIds = new ArrayList<UUID>();
+    for (int index = 0; index < entryCount; index++) {
+      var definition =
+          new GameplayRuleManifest.AdmissionTag(
+              String.format(java.util.Locale.ROOT, "tag-%05d", index));
+      definitions.add(definition);
+      var revisionId = UUID.randomUUID();
+      revisionIds.add(revisionId);
+      revisions.add(
+          new DraftCommitBinding.RevisionPayload(
+              "0",
+              revisionId,
+              DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+              GameplayRuleSourceRevision.upsertPayload(definition)));
+    }
+    var selectedBinding =
+        DraftCommitBinding.create(
+            target,
+            requestId,
+            commitId,
+            "genesis",
+            List.of(revisions.getFirst()),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                    "GAMEPLAY_RULE_SET",
+                    version.toString(),
+                    "GAMEPLAY_RULE_SET",
+                    "effective",
+                    "0")));
+    var definitionsByFamily =
+        new EnumMap<GameplayRuleManifest.Family, List<GameplayRuleManifest.Definition>>(
+            GameplayRuleManifest.Family.class);
+    for (var family : GameplayRuleManifest.Family.values())
+      definitionsByFamily.put(family, new ArrayList<>());
+    definitionsByFamily.get(GameplayRuleManifest.Family.ADMISSION_TAGS).addAll(definitions);
+    var manifest = new GameplayRuleManifest(definitionsByFamily);
+    var entries = new ArrayList<Map<String, Object>>();
+    for (int index = 0; index < entryCount; index++) {
+      var definition = definitions.get(index);
+      var entryBinding =
+          DraftCommitBinding.create(
+              target,
+              requestId,
+              UUID.randomUUID(),
+              "genesis",
+              List.of(revisions.get(index)),
+              List.of(
+                  new DraftCommitBinding.AffectedUnit(
+                      DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                      "GAMEPLAY_RULE_SET",
+                      version.toString(),
+                      "GAMEPLAY_RULE_SET",
+                      "effective",
+                      Integer.toString(index))));
+      entries.add(
+          Map.of(
+              "family", definition.family().name(),
+              "definitionJson", GameplayRuleManifest.canonical(definition),
+              "sourceBindingJson", entryBinding.canonicalJson(),
+              "sourceBindingDigest", entryBinding.digest(),
+              "revisionOrder", "0",
+              "revisionId", revisionIds.get(index).toString()));
+    }
+    String snapshot =
+        GameplayRuleManifest.canonical(
+            Map.of(
+                "schema",
+                "game-design-gameplay-rule-source-snapshot/v1",
+                "bindingJson",
+                selectedBinding.canonicalJson(),
+                "bindingDigest",
+                selectedBinding.digest(),
+                "sourceEpoch",
+                "1",
+                "inheritedCommitId",
+                "",
+                "genesisReceiptId",
+                UUID.randomUUID().toString(),
+                "manifestJson",
+                manifest.canonicalJson(),
+                "entries",
+                entries));
+    var source = new GameplayRuleSelectedSource(snapshot);
+    var accountEvidence =
+        new DraftAuthorizationFenceBinding.SourceEvidence(
+            DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+            UUID.randomUUID().toString(),
+            "1",
+            "1",
+            null,
+            null,
+            new byte[] {1, 2, 3});
+    var authorization =
+        new GameLogicIntakeAuthorizationBinding(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.fromString(accountEvidence.scopeId()),
+            source,
+            List.of(accountEvidence));
+    var operation = new GameLogicGameplayRuleIntakeOperation(namespace, authorization);
+    var terminal =
+        outcome == Outcome.RETAINED
+            ? GameLogicGameplayRuleIntakeTerminal.retained(
+                operation,
+                source.canonicalBytes(),
+                manifest.canonicalJson().getBytes(StandardCharsets.UTF_8))
+            : GameLogicGameplayRuleIntakeTerminal.aborted(operation);
+    return new GameLogicIntakeTerminalReadEvidence(
+        GameLogicIntakeTerminalReadEvidence.Request.create(namespace, authorization),
+        Optional.of(terminal));
+  }
+
+  @FunctionalInterface
+  private interface Initialize {
+    void run() throws Exception;
+  }
+
+  private record ClientHandle(
+      AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
+
+  private enum LifecycleClientKind {
+    GAME_LOGIC_AUTHORIZATION_READ,
+    GAME_LOGIC_TERMINAL_READ,
+    GAMEPLAY_RULE_SOURCE_READ,
+    ACCOUNT_GAME_LOGIC_SETTLEMENT_READ,
+    GAME_LOGIC_INTAKE_AUTHORIZATION,
+    GAME_LOGIC_INTAKE_RETAIN,
+    GAME_LOGIC_INTAKE_SOURCE_READ;
+
+    ClientHandle create(
+        ServiceEndpointsProperties endpoints,
+        CommonGrpcClientProperties tls,
+        GrpcChannelFactory factory) {
+      return switch (this) {
+        case GAME_LOGIC_AUTHORIZATION_READ -> {
+          var client = new GameLogicIntakeAuthorizationReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAME_LOGIC_TERMINAL_READ -> {
+          var client = new GameLogicIntakeTerminalReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAMEPLAY_RULE_SOURCE_READ -> {
+          var client = new GameplayRuleSourceReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case ACCOUNT_GAME_LOGIC_SETTLEMENT_READ -> {
+          var client =
+              new GrpcAccountGameLogicIntakeSettlementReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAME_LOGIC_INTAKE_AUTHORIZATION -> {
+          var client = new GrpcGameLogicIntakeAuthorizationClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAME_LOGIC_INTAKE_RETAIN -> {
+          var client = new GrpcGameLogicIntakeRetainClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAME_LOGIC_INTAKE_SOURCE_READ -> {
+          var client = new GrpcGameLogicIntakeSourceReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+      };
+    }
+  }
+
+  private static void restoreReloadPolicy(String previousPolicy) {
+    if (previousPolicy == null) {
+      System.clearProperty(TLS_RELOAD_PROPERTY);
+    } else {
+      System.setProperty(TLS_RELOAD_PROPERTY, previousPolicy);
+    }
+  }
+
+  private static CommonGrpcClientProperties lifecycleTls(Path directory) throws Exception {
+    CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
+    tls.setCertChain(Files.writeString(directory.resolve("client.crt"), "certificate").toString());
+    tls.setPrivateKey(Files.writeString(directory.resolve("client.key"), "private key").toString());
+    tls.setCaCert(Files.writeString(directory.resolve("ca.crt"), "CA certificate").toString());
+    return tls;
+  }
+}
