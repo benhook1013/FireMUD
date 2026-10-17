@@ -30,6 +30,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -128,6 +129,20 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
             failure ->
                 assertThat(Status.fromThrowable(failure).getCode())
                     .isEqualTo(Status.Code.PERMISSION_DENIED));
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
+  void reportsUnavailableBeforeInitializationAndAfterClose() throws Exception {
+    start(pki.server());
+    client = newClient(gameLogicClient());
+    var request =
+        GameLogicIntakeAuthorizationReadEvidence.Request.create(NAMESPACE, authorizationBinding());
+
+    assertUnavailable(() -> client.read(request));
+    client.init();
+    client.close();
+    assertUnavailable(() -> client.read(request));
     assertThat(calls).hasValue(0);
   }
 
@@ -290,5 +305,17 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
       assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       server = null;
     }
+  }
+
+  private static void assertUnavailable(ThrowingCallable call) {
+    assertThatThrownBy(call)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(Status.fromThrowable(failure).getDescription()).isNull();
+              assertThat(failure.getCause()).isNull();
+            });
   }
 }
