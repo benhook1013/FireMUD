@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamedesign.publication;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Objects;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -53,7 +55,7 @@ public final class GameDesignGameplayRuleSourceReadService {
     var permissionRequest =
         net.firedevops.firemud.common.gamelogic.GameLogicIntakeSourceReadEvidence.Request.create(
             namespace, reader, request.purpose(), request.proof());
-    var permission = permissions.read(permissionRequest);
+    var permission = readDependency(() -> permissions.read(permissionRequest));
     if (permission == null || !permissionRequest.equals(permission.request()))
       throw Status.FAILED_PRECONDITION
           .withDescription("Exact Account source permission required")
@@ -85,5 +87,22 @@ public final class GameDesignGameplayRuleSourceReadService {
     if (!(prefix + "account-service").equals(peer.uri())
         && !(prefix + "game-logic-service").equals(peer.uri()))
       throw Status.PERMISSION_DENIED.asRuntimeException();
+  }
+
+  private static <T> T readDependency(Supplier<T> read) {
+    try {
+      return read.get();
+    } catch (StatusRuntimeException failure) {
+      throw sanitize(failure);
+    }
+  }
+
+  private static StatusRuntimeException sanitize(StatusRuntimeException failure) {
+    var code = Status.fromThrowable(failure).getCode();
+    return switch (code) {
+      case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+          Status.fromCode(code).asRuntimeException();
+      default -> Status.UNAVAILABLE.asRuntimeException();
+    };
   }
 }

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -33,6 +35,9 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -127,7 +132,7 @@ class GameLogicGameplayRuleIntakeServiceTest {
         .satisfies(
             error ->
                 assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+                    .isEqualTo(Status.Code.UNAVAILABLE));
     assertThat(fixture.stored.get()).isNull();
     verify(fixture.repository, never())
         .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
@@ -210,6 +215,88 @@ class GameLogicGameplayRuleIntakeServiceTest {
         .read(any(GameplayRuleSourceReadEvidence.Request.class));
     verify(fixture.repository, never())
         .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
+  }
+
+  @ParameterizedTest
+  @MethodSource("dependencyFailures")
+  void sanitizesOnlyForeignDependencyStatuses(
+      DependencyCall call, Status.Code foreignCode, Status.Code expectedCode) {
+    var fixture = new Fixture();
+    var authorization = authorization();
+    var failure = foreignFailure(foreignCode);
+    if (call == DependencyCall.RETAIN_ACCOUNT || call == DependencyCall.ABORT_ACCOUNT) {
+      when(fixture.accountReader.read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class)))
+          .thenThrow(failure);
+    } else {
+      fixture.respondAuthorizationOnly(authorization);
+      when(fixture.gameDesignReader.read(any(GameplayRuleSourceReadEvidence.Request.class)))
+          .thenThrow(failure);
+    }
+
+    assertThatThrownBy(
+            () ->
+                asGameDesign(
+                    () -> {
+                      if (call == DependencyCall.ABORT_ACCOUNT)
+                        fixture.service.abort(authorization);
+                      else fixture.service.retain(authorization);
+                      return null;
+                    }))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            error -> {
+              var status = Status.fromThrowable(error);
+              assertThat(status.getCode()).isEqualTo(expectedCode);
+              assertThat(status.getDescription()).isNull();
+              assertThat(error.getCause()).isNull();
+              assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+            });
+    verify(fixture.repository, never())
+        .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
+  }
+
+  private static Stream<Arguments> dependencyFailures() {
+    var calls =
+        List.of(
+            DependencyCall.RETAIN_ACCOUNT,
+            DependencyCall.RETAIN_SOURCE,
+            DependencyCall.ABORT_ACCOUNT);
+    var cases =
+        List.of(
+            Arguments.of(Status.Code.UNAUTHENTICATED, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.PERMISSION_DENIED, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.FAILED_PRECONDITION, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.ABORTED, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.NOT_FOUND, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.ALREADY_EXISTS, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.INVALID_ARGUMENT, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.OUT_OF_RANGE, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.UNAVAILABLE, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.DEADLINE_EXCEEDED, Status.Code.DEADLINE_EXCEEDED),
+            Arguments.of(Status.Code.CANCELLED, Status.Code.CANCELLED),
+            Arguments.of(Status.Code.RESOURCE_EXHAUSTED, Status.Code.RESOURCE_EXHAUSTED),
+            Arguments.of(Status.Code.INTERNAL, Status.Code.INTERNAL),
+            Arguments.of(Status.Code.DATA_LOSS, Status.Code.UNAVAILABLE),
+            Arguments.of(Status.Code.UNKNOWN, Status.Code.UNKNOWN));
+    return calls.stream()
+        .flatMap(
+            call ->
+                cases.stream().map(values -> Arguments.of(call, values.get()[0], values.get()[1])));
+  }
+
+  private static StatusRuntimeException foreignFailure(Status.Code code) {
+    var trailers = new Metadata();
+    trailers.put(Metadata.Key.of("foreign-detail", Metadata.ASCII_STRING_MARSHALLER), "secret");
+    return Status.fromCode(code)
+        .withDescription("foreign description")
+        .withCause(new IllegalStateException("foreign cause"))
+        .asRuntimeException(trailers);
+  }
+
+  private enum DependencyCall {
+    RETAIN_ACCOUNT,
+    RETAIN_SOURCE,
+    ABORT_ACCOUNT
   }
 
   @Test
