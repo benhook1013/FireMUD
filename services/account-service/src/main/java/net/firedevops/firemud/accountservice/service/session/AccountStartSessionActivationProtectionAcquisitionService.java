@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Objects;
@@ -244,7 +245,13 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
       OriginalStartSessionCurrentAttemptEvidence.Request request,
       StartSessionPostAuthorizationExecutionTuple tuple) {
     requireNoAmbientTransaction();
-    OriginalStartSessionCurrentAttemptEvidence.Result observed = currentAttemptClient.read(request);
+    OriginalStartSessionCurrentAttemptEvidence.Result observed;
+    try {
+      observed = currentAttemptClient.read(request);
+    } catch (StatusRuntimeException failure) {
+      throw dependencyFailure(
+          failure, "Account original Game Session current-attempt dependency failed");
+    }
     requireNoAmbientTransaction();
     if (observed == null) {
       throw failedPrecondition("Exact current original Game Session attempt is unavailable");
@@ -271,7 +278,12 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
   private CanonicalGameInstanceLaunchAssociationReadEvidence.Result readLaunchAssociation(
       Request request, AccountStartSessionActivationProtectionAcquisitionInput input) {
     requireNoAmbientTransaction();
-    CanonicalGameInstanceLaunchAssociationReadEvidence.Result result = launchClient.read(request);
+    CanonicalGameInstanceLaunchAssociationReadEvidence.Result result;
+    try {
+      result = launchClient.read(request);
+    } catch (StatusRuntimeException failure) {
+      throw dependencyFailure(failure, "Account Game Session launch-association dependency failed");
+    }
     requireNoAmbientTransaction();
     var preparing = input.worldActivationRequest().preparing();
     if (result == null
@@ -425,5 +437,17 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
         .withDescription(message)
         .withCause(cause)
         .asRuntimeException();
+  }
+
+  private static RuntimeException dependencyFailure(
+      StatusRuntimeException failure, String description) {
+    Status.Code code = failure.getStatus().getCode();
+    Status status =
+        switch (code) {
+          case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+              Status.fromCode(code);
+          default -> Status.UNAVAILABLE;
+        };
+    return status.withDescription(description).asRuntimeException();
   }
 }

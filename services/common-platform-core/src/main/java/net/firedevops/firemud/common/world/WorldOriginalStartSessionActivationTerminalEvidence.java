@@ -230,27 +230,27 @@ public final class WorldOriginalStartSessionActivationTerminalEvidence {
       WorldCanonicalInstanceActivation.Result result,
       byte[] accountBytes,
       byte[] resultBytes) {
-    bounded(
+    validateLength(
         accountBytes,
         AccountStartSessionActivationProtectionEvidence.MAX_CANONICAL_BYTES,
         "Account protection evidence");
-    bounded(
+    validateLength(
         accountEvidence.request().canonicalBytes(),
         AccountStartSessionActivationProtectionRequest.MAX_CANONICAL_BYTES,
         "Account protection request");
-    bounded(
+    validateLength(
         accountEvidence.request().worldActivationRequest().preparingEvidenceBytes(),
         AccountStartSessionActivationProtectionRequest.MAX_WORLD_PREPARING_EVIDENCE_BYTES,
         "PREPARING evidence");
-    bounded(
+    validateLength(
         result.request().canonicalRequestBytes(),
         AccountStartSessionActivationProtectionRequest.MAX_CANONICAL_BYTES,
         "normalized World activation request");
-    bounded(
+    validateLength(
         result.lifecycleEvidence().canonicalBytes(),
         MAX_LIFECYCLE_EVIDENCE_BYTES,
         "lifecycle evidence");
-    bounded(resultBytes, MAX_ACTIVATION_RESULT_BYTES, "activation result");
+    validateLength(resultBytes, MAX_ACTIVATION_RESULT_BYTES, "activation result");
   }
 
   private static byte[] encode(
@@ -343,10 +343,14 @@ public final class WorldOriginalStartSessionActivationTerminalEvidence {
   }
 
   private static byte[] bounded(byte[] value, int maximum, String label) {
+    validateLength(value, maximum, label);
+    return value.clone();
+  }
+
+  private static void validateLength(byte[] value, int maximum, String label) {
     if (value == null || value.length == 0 || value.length > maximum) {
       throw invalid("World activation " + label + " is absent or exceeds its byte limit");
     }
-    return value.clone();
   }
 
   private static void requireCanonicalJson(byte[] bytes, String json) throws IOException {
