@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -14,12 +15,15 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.JsonNode;
@@ -46,6 +50,56 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("must not join an ambient transaction");
     verifyNoInteractions(dsl, manager, association);
+  }
+
+  @Test
+  void preservesSpringResourceFailuresAcrossBothRepositoryReadBoundaries() throws Exception {
+    var request = request();
+    var dsl = mock(DSLContext.class);
+    var manager = mock(PlatformTransactionManager.class);
+    var association = mock(WorldCanonicalInstanceAssociationRepository.class);
+    var repository = new WorldCanonicalInstanceLifecycleReadRepository(dsl, manager, association);
+
+    var associationFailure = new DataAccessResourceFailureException("private storage detail");
+    Method ownerAssociationRead =
+        WorldCanonicalInstanceAssociationRepository.class.getDeclaredMethod(
+            "readOwnerAssociationInOwnerTransaction", UUID.class);
+    ownerAssociationRead.setAccessible(true);
+    when((java.util.Optional<?>)
+            ownerAssociationRead.invoke(association, request.canonicalGameInstanceId()))
+        .thenThrow(associationFailure);
+
+    Method readInOwnerTransaction =
+        WorldCanonicalInstanceLifecycleReadRepository.class.getDeclaredMethod(
+            "readInCurrentOwnerTransaction",
+            WorldCanonicalInstanceLifecycleEvidence.Request.class,
+            boolean.class);
+    readInOwnerTransaction.setAccessible(true);
+    assertThatThrownBy(() -> readInOwnerTransaction.invoke(repository, request, false))
+        .isInstanceOf(InvocationTargetException.class)
+        .satisfies(failure -> assertThat(failure.getCause()).isSameAs(associationFailure));
+
+    var materializedFailure = new DataAccessResourceFailureException("private storage detail");
+    Record preparation = mock(Record.class);
+    when(preparation.get("capture_id", UUID.class)).thenThrow(materializedFailure);
+    Method readMaterialized =
+        WorldCanonicalInstanceLifecycleReadRepository.class.getDeclaredMethod(
+            "readMaterialized",
+            WorldCanonicalInstanceLifecycleEvidence.Request.class,
+            WorldCanonicalInstanceAssociation.class,
+            Record.class,
+            boolean.class);
+    readMaterialized.setAccessible(true);
+    assertThatThrownBy(
+            () ->
+                readMaterialized.invoke(
+                    repository,
+                    request,
+                    mock(WorldCanonicalInstanceAssociation.class),
+                    preparation,
+                    false))
+        .isInstanceOf(InvocationTargetException.class)
+        .satisfies(failure -> assertThat(failure.getCause()).isSameAs(materializedFailure));
   }
 
   @Test
