@@ -12,17 +12,9 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -50,9 +42,8 @@ class GameLogicIntakeSourceReadTransportTest {
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String WRONG_SERVER_URI = "spiffe://firemud/ns/test/sa/game-logic-service";
   private static final String GD_URI = "spiffe://firemud/ns/test/sa/game-design-service";
-  private static final String STORE_PASSWORD = "test-only-store-password";
   @TempDir static Path tempDirectory;
-  private static TestPki pki;
+  private static IntakeTestPki pki;
   private Server server;
   private GrpcGameLogicIntakeSourceReadClient client;
   private final AtomicInteger calls = new AtomicInteger();
@@ -61,7 +52,14 @@ class GameLogicIntakeSourceReadTransportTest {
 
   @BeforeAll
   static void certificates() throws Exception {
-    pki = TestPki.create(tempDirectory);
+    pki =
+        IntakeTestPki.create(
+            tempDirectory,
+            "terminal",
+            "FireMUD terminal-read test CA",
+            IntakeTestPki.IdentitySpec.server("account-server", ACCOUNT_URI),
+            IntakeTestPki.IdentitySpec.server("wrong-server", WRONG_SERVER_URI),
+            IntakeTestPki.IdentitySpec.client("game-design-client", GD_URI));
   }
 
   @AfterEach
@@ -135,14 +133,14 @@ class GameLogicIntakeSourceReadTransportTest {
 
   @Test
   void pinsAccountServerAndAuthenticatedGdClientForBothMethods() throws Exception {
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     for (var request : requests()) assertThat(client.read(request).request()).isEqualTo(request);
     assertThat(calls).hasValue(2);
     close();
     start(pki.wrongServer());
-    client = newClient(pki.gameDesignClient());
+    client = newClient(pki.client());
     client.init();
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class);
@@ -167,8 +165,8 @@ class GameLogicIntakeSourceReadTransportTest {
                     new GrpcChannelFactory(),
                     NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     var original = requests().getFirst();
     var otherNamespace =
@@ -197,8 +195,8 @@ class GameLogicIntakeSourceReadTransportTest {
   @Test
   void boundsUnavailableReadByDeadline() throws Exception {
     stall = true;
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class)
@@ -210,12 +208,12 @@ class GameLogicIntakeSourceReadTransportTest {
 
   @Test
   void rejectsOtherAuthenticatedClientWorkload() throws Exception {
-    start(pki.accountServer());
+    start(pki.server());
     var wrongClient =
-        TestPki.issueIdentity(
+        IntakeTestPki.issueIdentity(
             tempDirectory,
-            tempDirectory.resolve("terminal-test-ca.p12"),
-            tempDirectory.resolve("terminal-test-ca.crt"),
+            pki.caKeyStore(),
+            pki.caCertificateFile(),
             "wrong-source-client",
             ACCOUNT_URI,
             false);
@@ -262,8 +260,8 @@ class GameLogicIntakeSourceReadTransportTest {
     assertThat(GameLogicIntakeSourceReadProtoCodec.toResponse(permission).getSerializedSize())
         .isGreaterThan(4 * 1024 * 1024)
         .isLessThanOrEqualTo(GameLogicIntakeSourceReadProtoCodec.MAX_WIRE_BYTES);
-    start(pki.accountServer());
-    client = newClient(pki.gameDesignClient());
+    start(pki.server());
+    client = newClient(pki.client());
     client.init();
     assertThat(client.read(permission).request().proof().canonicalBytes())
         .containsExactly(large.canonicalBytes());
@@ -275,18 +273,18 @@ class GameLogicIntakeSourceReadTransportTest {
         .isGreaterThan(4 * 1024 * 1024)
         .isLessThanOrEqualTo(GameplayRuleSourceReadGrpcCodec.MAX_WIRE_BYTES);
     var gdServer =
-        TestPki.issueIdentity(
+        IntakeTestPki.issueIdentity(
             tempDirectory,
-            tempDirectory.resolve("terminal-test-ca.p12"),
-            tempDirectory.resolve("terminal-test-ca.crt"),
+            pki.caKeyStore(),
+            pki.caCertificateFile(),
             "source-gd-server",
             GD_URI,
             true);
     var glClient =
-        TestPki.issueIdentity(
+        IntakeTestPki.issueIdentity(
             tempDirectory,
-            tempDirectory.resolve("terminal-test-ca.p12"),
-            tempDirectory.resolve("terminal-test-ca.crt"),
+            pki.caKeyStore(),
+            pki.caCertificateFile(),
             "source-gl-client",
             "spiffe://firemud/ns/test/sa/game-logic-service",
             false);
@@ -356,7 +354,7 @@ class GameLogicIntakeSourceReadTransportTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
-  private void start(TestIdentity identity) throws Exception {
+  private void start(IntakeTestPki.Identity identity) throws Exception {
     var service =
         new AccountGameLogicIntakeSourceReadServiceGrpc
             .AccountGameLogicIntakeSourceReadServiceImplBase() {
@@ -412,7 +410,8 @@ class GameLogicIntakeSourceReadTransportTest {
             .start();
   }
 
-  private GrpcGameLogicIntakeSourceReadClient newClient(TestIdentity identity) throws Exception {
+  private GrpcGameLogicIntakeSourceReadClient newClient(IntakeTestPki.Identity identity)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
     return new GrpcGameLogicIntakeSourceReadClient(
@@ -528,228 +527,5 @@ class GameLogicIntakeSourceReadTransportTest {
                         "0",
                         "revisionId",
                         binding.revisions().getFirst().revisionId().toString())))));
-  }
-
-  record TestIdentity(PrivateKey privateKey, X509Certificate certificate) {}
-
-  record TestPki(
-      X509Certificate caCertificate,
-      TestIdentity accountServer,
-      TestIdentity wrongServer,
-      TestIdentity gameDesignClient) {
-    static TestPki create(Path directory) throws Exception {
-      Path caStore = directory.resolve("terminal-test-ca.p12");
-      runKeytool(
-          "-genkeypair",
-          "-alias",
-          "test-ca",
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=FireMUD terminal-read test CA",
-          "-validity",
-          "30",
-          "-ext",
-          "BC=ca:true",
-          "-ext",
-          "KU=keyCertSign,cRLSign",
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          caStore.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      Path caFile = directory.resolve("terminal-test-ca.crt");
-      runKeytool(
-          "-exportcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-rfc");
-      var caCertificate = readCertificate(caFile);
-      return new TestPki(
-          caCertificate,
-          issueIdentity(directory, caStore, caFile, "account-server", ACCOUNT_URI, true),
-          issueIdentity(directory, caStore, caFile, "wrong-server", WRONG_SERVER_URI, true),
-          issueIdentity(directory, caStore, caFile, "game-design-client", GD_URI, false));
-    }
-
-    CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
-        throws Exception {
-      Path certificate =
-          writePem(
-              directory.resolve("workload-client.crt"),
-              "CERTIFICATE",
-              identity.certificate().getEncoded());
-      Path privateKey =
-          writePem(
-              directory.resolve("workload-client.key"),
-              "PRIVATE KEY",
-              identity.privateKey().getEncoded());
-      Path caFile =
-          writePem(
-              directory.resolve("terminal-client-ca.crt"),
-              "CERTIFICATE",
-              caCertificate.getEncoded());
-      var properties = new CommonGrpcClientProperties();
-      properties.setCertChain(certificate.toString());
-      properties.setPrivateKey(privateKey.toString());
-      properties.setCaCert(caFile.toString());
-      return properties;
-    }
-
-    static TestIdentity issueIdentity(
-        Path directory, Path caStore, Path caFile, String alias, String workloadUri, boolean server)
-        throws Exception {
-      Path store = directory.resolve(alias + ".p12");
-      Path request = directory.resolve(alias + ".csr");
-      Path certificate = directory.resolve(alias + ".crt");
-      String san = "URI:" + workloadUri + ",DNS:localhost,IP:127.0.0.1";
-      runKeytool(
-          "-genkeypair",
-          "-alias",
-          alias,
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=" + alias,
-          "-validity",
-          "30",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san,
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      runKeytool(
-          "-certreq",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          request.toString(),
-          "-ext",
-          "SAN=" + san);
-      runKeytool(
-          "-gencert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-infile",
-          request.toString(),
-          "-outfile",
-          certificate.toString(),
-          "-validity",
-          "30",
-          "-rfc",
-          "-ext",
-          "BC=ca:false",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san);
-      runKeytool(
-          "-importcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-noprompt");
-      runKeytool(
-          "-importcert",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          certificate.toString(),
-          "-noprompt");
-      KeyStore keyStore = KeyStore.getInstance("PKCS12");
-      try (var input = Files.newInputStream(store)) {
-        keyStore.load(input, STORE_PASSWORD.toCharArray());
-      }
-      return new TestIdentity(
-          (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
-          (X509Certificate) keyStore.getCertificate(alias));
-    }
-
-    private static void runKeytool(String... arguments) throws Exception {
-      Path keytool =
-          Path.of(
-              System.getProperty("java.home"),
-              "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows")
-                  ? "keytool.exe"
-                  : "keytool");
-      var command = new ArrayList<String>();
-      command.add(keytool.toString());
-      command.addAll(List.of(arguments));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-      }
-      if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
-        process.destroyForcibly();
-        throw new IllegalStateException("keytool failed: " + output);
-      }
-    }
-
-    private static X509Certificate readCertificate(Path path) throws Exception {
-      try (var input = Files.newInputStream(path)) {
-        return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
-      }
-    }
-
-    private static Path writePem(Path path, String label, byte[] bytes) throws IOException {
-      String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(bytes);
-      return Files.writeString(
-          path,
-          "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n",
-          StandardCharsets.US_ASCII);
-    }
   }
 }
