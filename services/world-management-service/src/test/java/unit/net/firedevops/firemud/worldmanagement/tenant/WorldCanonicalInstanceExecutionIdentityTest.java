@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceExecutionIdentity;
 import org.junit.jupiter.api.Test;
 
 class WorldCanonicalInstanceExecutionIdentityTest {
