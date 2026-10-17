@@ -10,8 +10,6 @@ import net.firedevops.firemud.common.gamelogic.GameLogicIntakeRetainClient;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeRetainEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
-import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
-import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import org.jooq.DSLContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -38,14 +36,7 @@ public final class SelectedDraftGameLogicReceiptService {
       String namespace) {
     this(
         new SelectedDraftGameLogicReceiptRepository(dsl),
-        selection ->
-            new AuthoredDraftPublishSelectionRepository(
-                    dsl, new DraftCommitCoordinatorRepository(dsl))
-                .read(
-                    selection.intent().canonicalTenantId(),
-                    selection.intent().canonicalVersionId(),
-                    selection.intent().publishRequestId())
-                .map(AuthoredDraftPublishSelectionRepository.SelectionSnapshot::selection),
+        selection -> SelectedDraftGameLogicReceiptRepository.readRetainedSelection(dsl, selection),
         transactions,
         gameLogic,
         account,

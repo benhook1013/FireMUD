@@ -9,8 +9,6 @@ import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationClien
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
-import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
-import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import org.jooq.DSLContext;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -149,12 +147,7 @@ public final class SelectedDraftGameLogicIntakeCommandService {
   private static SelectionReader repositoryReader(DSLContext dsl) {
     Objects.requireNonNull(dsl, "dsl");
     return selection ->
-        new AuthoredDraftPublishSelectionRepository(dsl, new DraftCommitCoordinatorRepository(dsl))
-            .read(
-                selection.intent().canonicalTenantId(),
-                selection.intent().canonicalVersionId(),
-                selection.intent().publishRequestId())
-            .map(AuthoredDraftPublishSelectionRepository.SelectionSnapshot::selection);
+        SelectedDraftGameLogicReceiptRepository.readRetainedSelection(dsl, selection);
   }
 
   private static void requireNoTransaction() {
