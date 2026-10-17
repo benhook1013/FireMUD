@@ -15,12 +15,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
@@ -186,10 +189,90 @@ class AccountStartSessionActivationProtectionAcquisitionServiceTest {
         .when(h.currentAttemptReader)
         .read(any());
 
-    withWorldPeer(
-        () -> assertCode(Status.Code.FAILED_PRECONDITION, () -> h.service.acquire(input)));
+    withWorldPeer(() -> assertCode(Status.Code.UNAVAILABLE, () -> h.service.acquire(input)));
 
     verifyNoInteractions(h.attempts, h.protections, h.issuer, h.launchReader);
+  }
+
+  @Test
+  void foreignCurrentAttemptStatusesAreClassifiedAtTheAccountDependencyBoundary() throws Exception {
+    var preserved = infrastructureCodes();
+    for (Status.Code sourceCode : Status.Code.values()) {
+      var h = new Harness();
+      var input = h.committedInput();
+      doThrow(foreignFailure(sourceCode)).when(h.currentAttemptReader).read(any());
+
+      var failure = statusFailure(() -> withWorldPeer(() -> h.service.acquire(input)));
+
+      assertDependencyFailure(
+          sourceCode,
+          preserved,
+          "Account original Game Session current-attempt dependency failed",
+          failure);
+      verify(h.currentAttemptReader).read(any());
+      verifyNoInteractions(h.attempts, h.protections, h.issuer, h.launchReader);
+    }
+  }
+
+  @Test
+  void foreignLaunchAssociationStatusesAreClassifiedBeforeProtectionStorage() throws Exception {
+    var preserved = infrastructureCodes();
+    for (Status.Code sourceCode : Status.Code.values()) {
+      var h = new Harness();
+      var input = h.committedInput();
+      doThrow(foreignFailure(sourceCode)).when(h.launchReader).read(any());
+
+      var failure = statusFailure(() -> withWorldPeer(() -> h.service.acquire(input)));
+
+      assertDependencyFailure(
+          sourceCode,
+          preserved,
+          "Account Game Session launch-association dependency failed",
+          failure);
+      verify(h.currentAttemptReader).read(any());
+      verify(h.launchReader).read(any());
+      verifyNoInteractions(h.attempts, h.protections, h.issuer);
+    }
+  }
+
+  private static Set<Status.Code> infrastructureCodes() {
+    return Set.of(
+        Status.Code.UNAVAILABLE,
+        Status.Code.DEADLINE_EXCEEDED,
+        Status.Code.CANCELLED,
+        Status.Code.RESOURCE_EXHAUSTED,
+        Status.Code.INTERNAL,
+        Status.Code.UNKNOWN);
+  }
+
+  private static StatusRuntimeException foreignFailure(Status.Code code) {
+    var trailers = new Metadata();
+    trailers.put(
+        Metadata.Key.of("private-owner-detail", Metadata.ASCII_STRING_MARSHALLER),
+        "private downstream trailer");
+    return Status.fromCode(code)
+        .withDescription("private downstream description")
+        .withCause(new IllegalStateException("private downstream cause"))
+        .asRuntimeException(trailers);
+  }
+
+  private static StatusRuntimeException statusFailure(Runnable work) {
+    var thrown = org.assertj.core.api.Assertions.catchThrowable(work::run);
+    assertThat(thrown).isInstanceOf(StatusRuntimeException.class);
+    return (StatusRuntimeException) thrown;
+  }
+
+  private static void assertDependencyFailure(
+      Status.Code sourceCode,
+      Set<Status.Code> preserved,
+      String expectedDescription,
+      StatusRuntimeException failure) {
+    Status.Code expectedCode =
+        preserved.contains(sourceCode) ? sourceCode : Status.Code.UNAVAILABLE;
+    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
+    assertThat(Status.fromThrowable(failure).getDescription()).isEqualTo(expectedDescription);
+    assertThat(failure.getCause()).isNull();
+    assertThat(failure.getTrailers()).isNull();
   }
 
   private static void assertCode(Status.Code expected, Runnable work) {
