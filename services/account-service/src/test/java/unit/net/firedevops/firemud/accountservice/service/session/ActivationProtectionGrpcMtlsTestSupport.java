@@ -110,6 +110,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
     static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("activation-test-ca.p12");
       runKeytool(
+          directory,
           "-genkeypair",
           "-alias",
           "activation-test-ca",
@@ -135,6 +136,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           PASSWORD);
       Path caFile = directory.resolve("activation-test-ca.crt");
       runKeytool(
+          directory,
           "-exportcert",
           "-alias",
           "activation-test-ca",
@@ -228,6 +230,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
       String san = server ? "URI:" + uri + ",DNS:localhost,IP:127.0.0.1" : "URI:" + uri;
       String usage = server ? "serverAuth" : "clientAuth";
       runKeytool(
+          directory,
           "-genkeypair",
           "-alias",
           alias,
@@ -254,6 +257,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           "-keypass",
           PASSWORD);
       runKeytool(
+          directory,
           "-certreq",
           "-alias",
           alias,
@@ -268,6 +272,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           "-ext",
           "SAN=" + san);
       runKeytool(
+          directory,
           "-gencert",
           "-alias",
           "activation-test-ca",
@@ -293,6 +298,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           "-ext",
           "SAN=" + san);
       runKeytool(
+          directory,
           "-importcert",
           "-alias",
           "activation-test-ca",
@@ -306,6 +312,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           caFile.toString(),
           "-noprompt");
       runKeytool(
+          directory,
           "-importcert",
           "-alias",
           alias,
@@ -328,7 +335,7 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           (X509Certificate) keyStore.getCertificate(alias));
     }
 
-    private static void runKeytool(String... args) throws Exception {
+    private static void runKeytool(Path directory, String... args) throws Exception {
       Path keytool =
           Path.of(
               System.getProperty("java.home"),
@@ -339,14 +346,52 @@ final class ActivationProtectionGrpcMtlsTestSupport {
       ArrayList<String> command = new ArrayList<>();
       command.add(keytool.toString());
       command.addAll(List.of(args));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+      Path output = Files.createTempFile(directory, "keytool-output-", ".log");
+      try {
+        Process process =
+            new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(output.toFile())
+                .start();
+        awaitKeytoolExit(process, 30, TimeUnit.SECONDS);
+        if (process.exitValue() != 0) {
+          throw new IllegalStateException("test keytool failed: " + Files.readString(output));
+        }
+      } finally {
+        Files.deleteIfExists(output);
       }
-      if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
-        process.destroyForcibly();
-        throw new IllegalStateException("test keytool failed: " + output);
+    }
+
+    /** Waits before reading child output, then terminates and reaps on timeout or interruption. */
+    static void awaitKeytoolExit(Process process, long timeout, TimeUnit unit)
+        throws InterruptedException {
+      try {
+        if (!process.waitFor(timeout, unit)) {
+          throw new IllegalStateException("test keytool exceeded its execution deadline");
+        }
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw interrupted;
+      } finally {
+        boolean restoreInterrupt = Thread.interrupted();
+        try {
+          if (process.isAlive()) process.destroyForcibly();
+          long cleanupDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+          boolean reaped = false;
+          while (!reaped) {
+            long remaining = cleanupDeadline - System.nanoTime();
+            if (remaining <= 0) {
+              throw new IllegalStateException("test keytool could not be reaped after termination");
+            }
+            try {
+              reaped = process.waitFor(remaining, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException interrupted) {
+              restoreInterrupt = true;
+            }
+          }
+        } finally {
+          if (restoreInterrupt) Thread.currentThread().interrupt();
+        }
       }
     }
 
