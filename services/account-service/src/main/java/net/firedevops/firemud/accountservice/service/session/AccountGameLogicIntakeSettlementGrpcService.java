@@ -66,7 +66,7 @@ public final class AccountGameLogicIntakeSettlementGrpcService
     } catch (StatusRuntimeException failure) {
       deny(observer, Status.fromCode(failure.getStatus().getCode()));
       return;
-    } catch (IllegalArgumentException changedPrecondition) {
+    } catch (IllegalArgumentException | IllegalStateException changedPrecondition) {
       deny(observer, Status.FAILED_PRECONDITION);
       return;
     } catch (RuntimeException unavailable) {
