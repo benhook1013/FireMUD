@@ -498,10 +498,9 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
       assertThat(definition)
           .contains(
               "account_ss_admission_assert_no_pending",
-              "account_start_session_world_participations")
-          // The actual published parent has the canonical World guard. Selected-owner source
-          // reservations remain a separate V130 receiving obligation, outside passive V165.
-          .doesNotContain("account_selected_owner_intake_source_read");
+              "account_start_session_world_participations",
+              "account_selected_owner_intake_source_read_is_pending",
+              "account_selected_owner_intake_source_read_reservations");
     }
     String hold =
         fixture

@@ -267,7 +267,9 @@ public final class CommandSource {
       previousOrder = mutation.revisionOrder();
       commitId = mutation.commitId();
       if (mutation.operation() == OperationKind.DELETE) {
-        effective.remove(mutation.stableKey());
+        if (effective.remove(mutation.stableKey()) == null) {
+          throw new IllegalArgumentException("Cannot delete an absent command definition key");
+        }
       } else {
         effective.put(
             mutation.stableKey(),

@@ -66,6 +66,8 @@ val gameDesignClassesProof by configurations.creating {
 
 // Composed owner proofs load foreign migrations from disk; classes-only artifacts omit them.
 tasks.named("crossServiceTest") {
+    inputs.dir(rootProject.layout.projectDirectory.dir("services/account-service/src/main/resources/db/migration"))
+        .withPropertyName("accountOwnerMigrations")
     inputs.dir(rootProject.layout.projectDirectory.dir("services/game-logic-service/src/main/resources/db/migration"))
         .withPropertyName("gameLogicOwnerMigrations")
     inputs.dir(rootProject.layout.projectDirectory.dir("services/world-management-service/src/main/resources/db/migration"))

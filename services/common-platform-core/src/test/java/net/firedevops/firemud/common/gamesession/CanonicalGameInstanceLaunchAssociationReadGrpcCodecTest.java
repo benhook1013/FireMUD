@@ -3,7 +3,9 @@ package net.firedevops.firemud.common.gamesession;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.UnknownFieldSet;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus;
@@ -83,11 +85,17 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
           response.toBuilder().clearOwnerAttemptId().build(),
           response.toBuilder().setOwnerAttemptId("not-a-uuid").build(),
           response.toBuilder().setOwnerAttemptId("00000000-0000-0000-0000-000000000000").build(),
+          response.toBuilder()
+              .setOwnerAttemptId(OWNER_ATTEMPT_ID.toString().toUpperCase(Locale.ROOT))
+              .build(),
           response.toBuilder().setOwnerFence(0).build(),
           response.toBuilder().setOwnerFence(-1).build(),
           response.toBuilder().clearCanonicalRealmId().build(),
           response.toBuilder().setCanonicalRealmId("not-a-uuid").build(),
           response.toBuilder().setCanonicalRealmId("00000000-0000-0000-0000-000000000000").build(),
+          response.toBuilder()
+              .setCanonicalRealmId(CANONICAL_REALM_ID.toString().toUpperCase(Locale.ROOT))
+              .build(),
           response.toBuilder().clearCatalogRevision().build(),
           response.toBuilder().setCatalogRevision(0L).build(),
           response.toBuilder().setCatalogRevision(-1L).build()
@@ -226,6 +234,94 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
                     request.expectedReleaseAttestationEvidenceDigest(),
                     operation))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsOriginalRequestIdentityAtBothLaunchReadWireBoundaries() throws Exception {
+    var binding = AuthoringFixtures.lifecycleEvidence("PREPARING", 1L).launchBinding();
+    var request = request(binding);
+    var reusedIdentity =
+        new Request(
+            READ_REQUEST_ID,
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.gameInstanceUuid(),
+            READ_REQUEST_ID.toString(),
+            request.launchDescriptorId(),
+            request.expectedDescriptorRequestDigest(),
+            request.expectedDescriptorResultDigest(),
+            request.expectedReleaseAttestationEvidenceDigest());
+    var reusedWire =
+        CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request).toBuilder()
+            .setControlPlaneRequestId(READ_REQUEST_ID.toString())
+            .build();
+
+    assertThatThrownBy(
+            () -> CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(reusedWire))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact canonical launch association request required")
+        .hasRootCauseMessage(
+            "Launch association read identity must remain separate from the original request");
+    assertThatThrownBy(
+            () -> CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(reusedIdentity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("separate from the original request");
+  }
+
+  @Test
+  void rejectsChangedEchoMissingLaunchPairAndUnknownTopLevelOrNestedFields() throws Exception {
+    var binding = AuthoringFixtures.lifecycleEvidence("PREPARING", 1L).launchBinding();
+    var request = request(binding);
+    var wire = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request);
+    var response = response(request, binding);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+
+    assertThatThrownBy(
+            () ->
+                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(
+                    wire.toBuilder().setUnknownFields(unknown).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+    for (var invalid :
+        java.util.List.of(
+            response.toBuilder().setControlPlaneRequestId("changed").build(),
+            response.toBuilder().clearLaunchDescriptor().build(),
+            response.toBuilder().clearReleaseAttestation().build(),
+            response.toBuilder().setUnknownFields(unknown).build(),
+            response.toBuilder()
+                .setLaunchDescriptor(
+                    response.getLaunchDescriptor().toBuilder().setUnknownFields(unknown))
+                .build(),
+            response.toBuilder()
+                .setReleaseAttestation(
+                    response.getReleaseAttestation().toBuilder().setUnknownFields(unknown))
+                .build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
+                      request, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  private static Request request(
+      net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence binding) {
+    var descriptor = binding.descriptor();
+    return new Request(
+        READ_REQUEST_ID,
+        descriptor.targetNamespace(),
+        descriptor.canonicalTenantId(),
+        descriptor.worldSlug(),
+        GAME_INSTANCE_ID,
+        descriptor.controlPlaneRequestId(),
+        descriptor.launchDescriptorId(),
+        descriptor.requestDigest(),
+        descriptor.resultDigest(),
+        binding.releaseAttestation().evidenceDigest());
   }
 
   private static StartSessionPostAuthorizationExecutionTuple originalTuple(

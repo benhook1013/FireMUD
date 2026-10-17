@@ -18,10 +18,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
-import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyApplication;
@@ -38,6 +38,8 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -54,6 +56,130 @@ class RealmPolicySourcePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @ParameterizedTest
+  @ValueSource(ints = {2, 3})
+  void playerCreatedPolicyDescriptorPersistsAndReplaysWithIndependentAuthoredProvenance(
+      int schemaVersion) {
+    var fixture = freshFixture();
+    String descriptorRevisionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    String policyBytes = playerCreatedPolicy(schemaVersion, descriptorRevisionId);
+    String authoredPayload = policyRevision(policyBytes);
+    var binding =
+        policyMutationBinding(
+            fixture,
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE, authoredPayload)));
+    start(fixture, binding);
+    UUID authoredRevisionId = binding.revisions().getFirst().revisionId();
+
+    var applied = fixture.tx(() -> fixture.sources().apply(binding));
+    synchronize(fixture, binding, applied);
+    var original = applied.policy().orElseThrow().snapshot();
+    assertThat(original.policies()).hasSize(1);
+    var authored = original.policies().getFirst();
+    assertThat(authored.commitId()).isEqualTo(binding.commitId());
+    assertThat(authored.revisionId()).isEqualTo(authoredRevisionId);
+    assertThat(authoredRevisionId.toString()).isNotEqualTo(descriptorRevisionId);
+    assertThat(authored.policy().canonicalJson()).isEqualTo(policyBytes);
+    if (schemaVersion == 3) {
+      assertThat(authored.policy().initialActorCore().displayName()).isEqualTo("Wayfarer");
+      assertThat(authored.policy().initialActorCore().dispositionKey()).isEqualTo("newcomer");
+    }
+
+    String applicationJson =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT snapshot_json FROM game_design_realm_policy_application WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                binding.target().canonicalTenantId(),
+                binding.target().canonicalVersionId(),
+                binding.commitId())
+            .get(0, String.class);
+    assertThat(applicationJson).isEqualTo(original.canonicalJson());
+    var stored =
+        new RealmPolicySourceRepository(fixture.dsl())
+            .readSnapshot(binding.target(), binding.commitId())
+            .orElseThrow();
+    assertThat(stored.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(stored.policies().getFirst().policy().canonicalJson()).isEqualTo(policyBytes);
+
+    var retry = fixture.tx(() -> fixture.sources().apply(binding));
+    assertThat(retry.ownerOutcome()).isEqualTo(applied.ownerOutcome());
+    assertThat(retry.policy().orElseThrow().canonicalBytes())
+        .containsExactly(applied.policy().orElseThrow().canonicalBytes());
+
+    var originalRevision = binding.revisions().getFirst();
+    var changedSameIdentity =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    originalRevision.revisionOrder(),
+                    originalRevision.revisionId(),
+                    originalRevision.owner(),
+                    policyRevision(
+                        playerCreatedPolicy(
+                            schemaVersion, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")))),
+            binding.affectedUnits());
+    assertThat(changedSameIdentity.digest()).isNotEqualTo(binding.digest());
+    assertThatThrownBy(() -> fixture.tx(() -> fixture.policies().apply(changedSameIdentity)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("POLICY_COMMIT_BINDING_CONFLICT");
+    assertThat(
+            new RealmPolicySourceRepository(fixture.dsl())
+                .readSnapshot(binding.target(), binding.commitId())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+
+    var inheritedBinding = commandOnlyBinding(fixture, binding.commitId(), "0");
+    start(fixture, inheritedBinding);
+    var inheritedApplication = fixture.tx(() -> fixture.sources().apply(inheritedBinding));
+    synchronize(fixture, inheritedBinding, inheritedApplication);
+    var inherited =
+        new RealmPolicySourceRepository(fixture.dsl())
+            .readSnapshot(inheritedBinding.target(), inheritedBinding.commitId())
+            .orElseThrow();
+    assertThat(inherited.policies()).hasSize(1);
+    assertThat(inherited.policies().getFirst().commitId()).isEqualTo(binding.commitId());
+    assertThat(inherited.policies().getFirst().revisionId()).isEqualTo(authoredRevisionId);
+    assertThat(inherited.policies().getFirst().policy().canonicalJson()).isEqualTo(policyBytes);
+
+    String changedPolicyBytes =
+        playerCreatedPolicy(schemaVersion, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    var changedBinding =
+        policyMutationBinding(
+            fixture,
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    policyRevision(changedPolicyBytes))));
+    start(fixture, changedBinding);
+    var changed = fixture.tx(() -> fixture.sources().apply(changedBinding));
+    synchronize(fixture, changedBinding, changed);
+    var changedPolicy = changed.policy().orElseThrow().snapshot().policies().getFirst();
+    assertThat(changedPolicy.commitId()).isEqualTo(changedBinding.commitId());
+    assertThat(changedPolicy.revisionId())
+        .isEqualTo(changedBinding.revisions().getFirst().revisionId());
+    assertThat(changedPolicy.policy().canonicalJson()).isEqualTo(changedPolicyBytes);
+    assertThat(changedPolicy.policy().canonicalJson()).isNotEqualTo(policyBytes);
+    assertThat(
+            new RealmPolicySourceRepository(fixture.dsl())
+                .readSnapshot(binding.target(), binding.commitId())
+                .orElseThrow()
+                .policies()
+                .getFirst()
+                .policy()
+                .canonicalJson())
+        .isEqualTo(policyBytes);
+  }
 
   @Test
   void freshGenesisCreatesNoFakeCommitAndFirstActualPolicyCommitReplaysExactly() {
@@ -273,7 +399,7 @@ class RealmPolicySourcePostgresIntegrationTest {
                     + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
                     + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
                     + "\"aliases\":[\"isolated\"],\"actionTags\":[\"WORLD_BROWSE\"],"
-                    + "\"effects\":[],\"legacyExtension\":{\"kept\":true}}"));
+                    + "\"effects\":[]}"));
     var commandScope =
         new DraftCommitBinding.AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -828,6 +954,28 @@ class RealmPolicySourcePostgresIntegrationTest {
         });
   }
 
+  private static String playerCreatedPolicy(int schemaVersion, String descriptorRevisionId) {
+    String actorCore =
+        schemaVersion == 3
+            ? "\"initialActorCore\":{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"},"
+            : "";
+    String json =
+        "{\"creationDescriptor\":{\"dependencies\":[],\"descriptorId\":\"99999999-9999-4999-8999-999999999999\",\"descriptorRevisionId\":\""
+            + descriptorRevisionId
+            + "\",\"inputKind\":\"EMPTY_OBJECT\",\"schemaVersion\":1},\"entryPolicy\":\"PLAYER_CREATED\","
+            + actorCore
+            + "\"publicProduction\":false,\"realmDisplayName\":\"Player Realm\",\"realmSlug\":\"player-realm\",\"schemaVersion\":"
+            + schemaVersion
+            + ",\"stateScope\":\"ISOLATED\",\"visible\":true,\"worldDisplayName\":\"Player World\",\"worldSlug\":\"player-world\"}";
+    return RealmEntryPolicy.parse(json, new ObjectMapper()).canonicalJson();
+  }
+
+  private static String policyRevision(String policyBytes) {
+    return "{\"logicalRevisionId\":\"player-created-realm-policy\",\"policy\":"
+        + policyBytes
+        + ",\"revisionKind\":\"REALM_ENTRY_POLICY\"}";
+  }
+
   private static DraftCommitBinding policyBinding(
       Fixture fixture, String realm, boolean production) {
     TargetProof target = fixture.target();
@@ -1010,7 +1158,7 @@ class RealmPolicySourcePostgresIntegrationTest {
                         + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
                         + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
                         + "\"aliases\":[\"isolated\"],\"actionTags\":[\"WORLD_BROWSE\"],"
-                        + "\"effects\":[],\"legacyExtension\":{\"kept\":true}}"))),
+                        + "\"effects\":[]}"))),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,
