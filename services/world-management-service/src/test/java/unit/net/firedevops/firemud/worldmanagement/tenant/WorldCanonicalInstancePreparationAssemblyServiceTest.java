@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,6 +36,30 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
   private static final UUID BINDING_VERSION_ID = UUID.randomUUID();
   private static final String BINDING_COMMIT_ID = UUID.randomUUID().toString();
   private static final String CONTROL_REQUEST_ID = "control-request";
+
+  @Test
+  void assemblySelectorAgreesWithCommonSelectorAtCanonicalUtf8ByteLimit() {
+    String controlRequestId = "é".repeat(64);
+    var commonSelector =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            UUID.randomUUID(),
+            NAMESPACE,
+            TENANT_ID,
+            "starter-world",
+            INSTANCE_ID,
+            controlRequestId,
+            "descriptor",
+            "sha256:" + "a".repeat(64),
+            "sha256:" + "b".repeat(64),
+            "sha256:" + "c".repeat(64));
+    var assemblySelector =
+        new WorldCanonicalInstancePreparationAssemblyService.Selector(
+            TENANT_ID, INSTANCE_ID, commonSelector.controlPlaneRequestId());
+
+    assertThat(controlRequestId.getBytes(StandardCharsets.UTF_8)).hasSize(128);
+    assertThat(assemblySelector.controlPlaneRequestId())
+        .isEqualTo(commonSelector.controlPlaneRequestId());
+  }
 
   @AfterEach
   void clearTransactionState() {
