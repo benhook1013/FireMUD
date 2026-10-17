@@ -1,0 +1,72 @@
+package net.firedevops.firemud.accountservice.service.session;
+
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import java.util.Objects;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/** Unregistered World HELD read; it neither creates authority nor settles participation. */
+public final class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadService {
+  private final AccountSelectedOwnerIntakeSourceReservationRepository repository;
+  private final TransactionTemplate ownerTransaction;
+  private final String namespace;
+
+  public AccountSelectedOwnerIntakeWorldClosureAuthorizationReadService(
+      AccountSelectedOwnerIntakeSourceReservationRepository repository,
+      PlatformTransactionManager transactions,
+      String namespace) {
+    this.repository =
+        Objects.requireNonNull(repository, "source reservation repository is required");
+    if (!GrpcPeerIdentity.isValidNamespace(namespace))
+      throw new IllegalArgumentException("Canonical Account workload namespace required");
+    this.namespace = namespace;
+    ownerTransaction = new TransactionTemplate(Objects.requireNonNull(transactions));
+    ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    ownerTransaction.setReadOnly(false);
+  }
+
+  /** Confirms the exact finalized authorization and source locks in an independent transaction. */
+  public void requireHeld(
+      SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request request) {
+    Objects.requireNonNull(request, "World closure authorization-read request is required");
+    requirePeer(namespace, request.intendedReader());
+    if (!namespace.equals(request.targetNamespace()))
+      throw Status.PERMISSION_DENIED.asRuntimeException();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw Status.FAILED_PRECONDITION.asRuntimeException();
+    }
+    try {
+      ownerTransaction.execute(
+          ignored -> {
+            repository.readHeldFinalAuthorization(request.binding());
+            return null;
+          });
+    } catch (StatusRuntimeException failure) {
+      throw failure;
+    } catch (IllegalArgumentException changedOrAbsent) {
+      throw Status.FAILED_PRECONDITION.asRuntimeException();
+    } catch (RuntimeException unavailable) {
+      throw Status.UNAVAILABLE.asRuntimeException();
+    }
+  }
+
+  static void requirePeer(String namespace, String expectedReader) {
+    var peer = GrpcPeerIdentity.current();
+    if (peer == null) throw Status.UNAUTHENTICATED.asRuntimeException();
+    String worldReader = "spiffe://firemud/ns/" + namespace + "/sa/world-management-service";
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || !namespace.equals(peer.namespace())
+        || !worldReader.equals(peer.uri())
+        || !worldReader.equals(expectedReader)) {
+      throw Status.PERMISSION_DENIED.asRuntimeException();
+    }
+  }
+}

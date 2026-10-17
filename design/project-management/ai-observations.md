@@ -199,3 +199,4 @@ Entry format:
   - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
+  - Recurrence (`2026-10-18`, #3249): a parent-carry helper again ran a scoped `git diff --cached --check` under an explicit validation allowance of NONE. The check exited zero and grants no proof credit. Main corrected the contradictory no-validation claim and retained ownership of the named integration gate.
