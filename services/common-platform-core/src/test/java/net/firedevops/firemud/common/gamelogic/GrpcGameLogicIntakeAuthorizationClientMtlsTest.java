@@ -22,9 +22,9 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AccountGameLogicIntakeAuthorizationServiceGrpc;
 import net.firedevops.firemud.account.v1.GameLogicIntakeAuthorizationRequest;
 import net.firedevops.firemud.account.v1.GameLogicIntakeAuthorizationResponse;
@@ -53,9 +53,9 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
   private Server server;
   private GrpcGameLogicIntakeAuthorizationClient client;
   private final AtomicInteger calls = new AtomicInteger();
-  private final AtomicReference<String> callerPeer = new AtomicReference<>();
-  private final AtomicReference<String> observedCredential = new AtomicReference<>();
-  private final AtomicReference<String> observedMethod = new AtomicReference<>();
+  private final List<String> observedCredentials = new CopyOnWriteArrayList<>();
+  private final List<String> observedMethods = new CopyOnWriteArrayList<>();
+  private final List<String> observedPeers = new CopyOnWriteArrayList<>();
   private volatile GameLogicIntakeAuthorizationResponse authorizeResponseOverride;
   private volatile boolean stall;
 
@@ -92,20 +92,23 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     client = newClient(pki.client());
     client.init();
     var request = request(selected(1));
-    var authorized = client.authorize(request, CREDENTIAL);
+    String maximumCredential =
+        "x".repeat(AccountGameLogicIntakeAuthorizationCredentials.MAX_CREDENTIAL_BYTES);
+    var authorized = client.authorize(request, maximumCredential);
     assertThat(authorized.outcome())
         .isEqualTo(GameLogicIntakeAuthorizationEvidence.Outcome.FINALIZED);
     assertThat(authorized.authorization().orElseThrow().intakeRequestId())
         .isEqualTo(request.intakeRequestId());
-    var recovered = client.recover(request, CREDENTIAL);
+    var recovered = client.recover(request, maximumCredential);
     assertThat(recovered.outcome())
         .isEqualTo(GameLogicIntakeAuthorizationEvidence.Outcome.RESERVED);
-    var aborted = client.abort(request, CREDENTIAL);
+    var aborted = client.abort(request, maximumCredential);
     assertThat(aborted.outcome()).isEqualTo(GameLogicIntakeAuthorizationEvidence.Outcome.ABORTED);
     assertThat(calls).hasValue(3);
-    assertThat(callerPeer).hasValue(GD_URI);
-    assertThat(observedCredential).hasValue(CREDENTIAL);
-    assertThat(observedMethod.get()).contains("AbortIntake");
+    assertThat(observedPeers).containsExactly(GD_URI, GD_URI, GD_URI);
+    assertThat(observedCredentials)
+        .containsExactly(maximumCredential, maximumCredential, maximumCredential);
+    assertThat(observedMethods).containsExactly("AuthorizeIntake", "RecoverIntake", "AbortIntake");
   }
 
   @Test
@@ -280,9 +283,9 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
               StreamObserver<GameLogicIntakeAuthorizationResponse> observer,
               String method) {
             calls.incrementAndGet();
-            observedMethod.set(method);
-            callerPeer.set(GrpcPeerIdentity.current().uri());
-            observedCredential.set(
+            observedMethods.add(method);
+            observedPeers.add(GrpcPeerIdentity.current().uri());
+            observedCredentials.add(
                 AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY.get().value());
             assertThat(Context.current().getDeadline()).isNotNull();
             if (stall) return;
@@ -328,6 +331,8 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
     server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
             .maxInboundMessageSize(GameLogicIntakeAuthorizationGrpcCodec.MAX_WIRE_BYTES)
+            .maxInboundMetadataSize(
+                AccountGameLogicIntakeAuthorizationCredentials.MAX_METADATA_BYTES)
             .sslContext(
                 GrpcSslContexts.configure(
                         SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))

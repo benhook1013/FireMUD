@@ -471,6 +471,60 @@ class AcceptanceCliTest(unittest.TestCase):
             ):
                 return cli._dispatch(args)
 
+        def default_budget_status(
+            channels=None, progress_statuses=None, obligations=None, incoming_routes=()
+        ):
+            channels = channels or {"hosted": "BUDGET_EXHAUSTED", "cli": "BUDGET_EXHAUSTED"}
+            progress_statuses = progress_statuses or {
+                "hosted": "BUDGET_EXHAUSTED",
+                "cli": "BUDGET_EXHAUSTED",
+            }
+            obligations = obligations or {"hosted": [], "cli": []}
+            periods = {
+                "hosted": {"completed": 3, "minimum": 2, "maximum": 3},
+                "cli": {"completed": 6, "minimum": 3, "maximum": 6},
+            }
+            controller.status = lambda: {
+                "prs": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "base": "develop",
+                        "parent_head": BASE,
+                        "pr_base_oid": BASE,
+                        "reconciliation": "COHERENT",
+                        "channels": channels,
+                        "allocations": {},
+                        "review_progress": {
+                            channel: {
+                                "status": progress_statuses[channel],
+                                "period": {
+                                    **periods[channel],
+                                    "remaining": 0,
+                                    "in_flight": 0,
+                                    "discovery_closure": "budget_exhausted",
+                                    "taper_complete": False,
+                                },
+                            }
+                            for channel in ("hosted", "cli")
+                        },
+                        "review_obligations": obligations,
+                    }
+                ]
+            }
+            controller.status_for_pr = lambda _pr: controller.status()
+            with (
+                patch("pr_review.cli._controller", return_value=(controller, None)),
+                patch(
+                    "pr_review.cli._read_record_incoming_routes",
+                    return_value=(
+                        list(incoming_routes),
+                        {"status": "available" if incoming_routes else "not_bootstrapped"},
+                    ),
+                ),
+            ):
+                return cli._dispatch(args)
+
         with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
             capped, code = capped_status(
                 {"hosted": "READY", "cli": "READY"},
@@ -489,13 +543,73 @@ class AcceptanceCliTest(unittest.TestCase):
         self.assertTrue(tapered["ready"], tapered)
 
         with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
-            budget_capped, code = capped_status(
-                {"hosted": "BUDGET_EXHAUSTED", "cli": "BUDGET_EXHAUSTED"},
-                {"hosted": "DEFAULT_BUDGET_EXHAUSTED", "cli": "DEFAULT_BUDGET_EXHAUSTED"},
+            budget_capped, code = default_budget_status()
+        self.assertEqual(code, 0)
+        self.assertTrue(budget_capped["ready"], budget_capped)
+        self.assertFalse(
+            budget_capped["review_stack"]["prs"][0]["review_progress"]["cli"]["period"]["taper_complete"]
+        )
+
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            invalid_budget_evidence, code = default_budget_status(
+                progress_statuses={"hosted": "BUDGET_EXHAUSTED", "cli": "UNSTABLE"}
             )
         self.assertEqual(code, 0)
-        self.assertFalse(budget_capped["ready"])
-        self.assertTrue(any("review policy is BUDGET_EXHAUSTED" in reason for reason in budget_capped["reasons"]))
+        self.assertFalse(invalid_budget_evidence["ready"])
+        self.assertTrue(
+            any("cli review policy is BUDGET_EXHAUSTED" in reason for reason in invalid_budget_evidence["reasons"])
+        )
+
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            open_default_policy, code = default_budget_status(
+                channels={"hosted": "READY", "cli": "READY"},
+                progress_statuses={"hosted": "READY", "cli": "READY"},
+            )
+        self.assertEqual(code, 0)
+        self.assertFalse(open_default_policy["ready"])
+
+        unresolved_budget_obligations = {
+            "hosted": ["accepted finding remains unresolved"],
+            "cli": ["unresolved review thread remains"],
+        }
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            budget_with_obligations, code = default_budget_status(obligations=unresolved_budget_obligations)
+        self.assertEqual(code, 0)
+        self.assertFalse(budget_with_obligations["ready"])
+        self.assertIn("hosted: accepted finding remains unresolved", budget_with_obligations["reasons"])
+        self.assertIn("cli: unresolved review thread remains", budget_with_obligations["reasons"])
+
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            budget_with_incoming_route, code = default_budget_status(
+                incoming_routes=(
+                    {"route_id": "route-1", "source_pr": 2, "title": "incoming accepted finding"},
+                )
+            )
+        self.assertEqual(code, 0)
+        self.assertFalse(budget_with_incoming_route["ready"])
+        self.assertTrue(
+            any("SQLite-record incoming route" in reason for reason in budget_with_incoming_route["reasons"])
+        )
+
+        ci_failure_report = {
+            **report,
+            "reasons": ["required CI check is pending"],
+            "ready": False,
+            "verdict": "NOT READY",
+            "mergeability": {"clean": False, "diagnosis": "NOT READY"},
+        }
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(ci_failure_report))):
+            budget_with_ci_failure, code = default_budget_status()
+        self.assertEqual(code, 0)
+        self.assertFalse(budget_with_ci_failure["ready"])
+        self.assertEqual(budget_with_ci_failure["reasons"], ["required CI check is pending"])
+
+        moved_candidate = {**report, "pull_request": {**report["pull_request"], "headRefOid": HEAD_2}}
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(moved_candidate))):
+            budget_with_moved_candidate, code = default_budget_status()
+        self.assertEqual(code, 0)
+        self.assertFalse(budget_with_moved_candidate["ready"])
+        self.assertIn("PR base/head changed between status snapshots", budget_with_moved_candidate["reasons"])
 
         obligations = {
             "hosted": ["accepted finding remains unresolved"],
@@ -512,13 +626,6 @@ class AcceptanceCliTest(unittest.TestCase):
         self.assertIn("hosted: accepted finding remains unresolved", capped_with_obligations["reasons"])
         self.assertIn("cli: unresolved review thread remains", capped_with_obligations["reasons"])
 
-        ci_failure_report = {
-            **report,
-            "reasons": ["required CI check is pending"],
-            "ready": False,
-            "verdict": "NOT READY",
-            "mergeability": {"clean": False, "diagnosis": "NOT READY"},
-        }
         with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(ci_failure_report))):
             capped_with_ci_failure, code = capped_status(
                 {"hosted": "READY", "cli": "READY"},

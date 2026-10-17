@@ -103,7 +103,11 @@ Entry format:
   - Expected pattern: treat the setting as a qualified local choice, not a repository-wide memory guarantee or a change to hosted sizing.
   - Reconsideration trigger: fresh OOM/GC thrashing or a concrete need to measure cold-build memory.
 
-- `2026-10-15`: Classes-only foreign-owner proof artifacts intentionally omit application and Flyway resources. A composed test that reads another owner’s migrations from disk must declare those directories as task inputs; otherwise a SQL-only change can leave the composition up-to-date. The selected Game Logic proof exposed this after its forward migration was reconciled, and Game Design now tracks the foreign Game Logic and World migration directories.
+- `2026-10-15`: Declare foreign migration inputs for classes-only compositions
+  - Context: A composed proof can read another owner’s Flyway migrations from disk while its classes-only test artifacts omit application and Flyway resources.
+  - Observation: Without declaring those migration directories as task inputs, a SQL-only change can leave the composition up-to-date.
+  - Expected pattern: Declare every foreign migration directory read by a composed test as a task input so SQL changes invalidate that proof.
+  - Reconsideration trigger: The composition no longer reads foreign migration files from disk, or its execution model tracks those files through another verified dependency.
 
 - `2026-10-15`: Verify the complete absolute patch destination after the first write
   - Context: Gameplay’s World digest-guard helper verified its checkout but mistyped the absolute migration path, creating a file in a similarly named sibling directory outside Git. This is distinct from the earlier relative-path incident: an absolute path alone does not identify the intended checkout.
@@ -236,3 +240,9 @@ Entry format:
   - Observation: the current allocation status and review-record history exposed the budget, null checkpoint and taper explanation, but no allocation decision timestamp or original grant rationale. Verifying the controlling allowance required a complete queue readback; no head-change counter reset was established.
   - Expected pattern: expose the controlling grant decision, timestamp, actor, original reason and baseline beside its additional-result count through an existing read-only controller command, so a worker can distinguish lifetime history from the current allowance without guessing. This is a tooling suggestion; existing counting and authorization rules stay unchanged.
   - Reconsideration trigger: when an existing read-only controller command exposes the controlling grant decision, timestamp, rationale and baseline beside the remaining allowance, verify it against separate lifetime and current allowances and revisit the manual queue readback.
+
+- `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
+  - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
+  - Observation: one focused five-store reproduction passed with zero failures, errors or skips and no endpoint refusal. All five exact containers were observed running with host-port bindings and absent after the Gradle child ended. Six inspect errors and 20 unparsed records arose only after the case completed during sequential teardown, so continuous ownership through cleanup is not established.
+  - Outcome: the preceding Automation Flyway refusal remains failed evidence with unknown cause; the passing reproduction does not explain it. No speculative host or readiness change is selected.
+  - Reconsideration trigger: a later physical test-time endpoint refusal, or separately retained evidence that identifies the refused endpoint's failure mechanism.
