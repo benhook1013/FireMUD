@@ -133,8 +133,10 @@ if "push" in on:
 workflow_run = on.get("workflow_run")
 if not isinstance(workflow_run, dict) or workflow_run.get("workflows") != ["CI — Validation"]:
     raise SystemExit("runtime image publication must be driven by CI workflow_run")
-if workflow_run.get("types") != ["completed"] or workflow_run.get("branches") != ["main", "develop"]:
-    raise SystemExit("runtime workflow_run must be completed-only and branch-scoped")
+if workflow_run.get("types") != ["completed"] or any(
+    key in workflow_run for key in ("branches", "branches-ignore")
+):
+    raise SystemExit("runtime workflow_run must accept completed-only callbacks from every feature base")
 
 image_meta_if = runtime["jobs"]["image-meta"].get("if", "")
 for required in (
@@ -145,6 +147,21 @@ for required in (
 ):
     if required not in image_meta_if:
         raise SystemExit(f"image-meta is missing exact CI/branch guard: {required}")
+
+# Callback eligibility is wider than registry publication. Every registry writer
+# must independently retain the protected branch and credential-free exclusions.
+for job_id, job in runtime["jobs"].items():
+    if job.get("permissions", {}).get("packages") != "write":
+        continue
+    condition = job.get("if", "")
+    for required in (
+        "github.event_name != 'pull_request'",
+        "github.event_name != 'repository_dispatch'",
+        "needs.image-meta.outputs.head_branch == 'main'",
+        "needs.image-meta.outputs.head_branch == 'develop'",
+    ):
+        if required not in condition:
+            raise SystemExit(f"registry writer {job_id} is missing protected publication guard: {required}")
 
 build_text = str(runtime["jobs"]["build-runtime-images"])
 if "needs.image-meta.outputs.candidate_tag" not in build_text:
@@ -222,6 +239,43 @@ grep -Fq 'image-meta is missing exact CI/branch guard' "$fixture_dir/negative-ru
   echo "runtime publication contract did not reject an unsuccessful CI workflow_run guard" >&2
   exit 1
 }
+
+# A protected callback filter would strand feature-base refreshes. Removing a
+# writer guard instead would widen privileged publication; reject both changes.
+for mutation in filtered-callback failed-callback unprotected-writer; do
+  negative_runtime_workflow="$fixture_dir/$mutation-runtime-images.yml"
+  python3 - "$ROOT_DIR/.github/workflows/runtime-images.yml" "$negative_runtime_workflow" "$mutation" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+source, target = map(Path, sys.argv[1:3])
+workflow = yaml.safe_load(source.read_text())
+mutation = sys.argv[3]
+trigger = workflow.get(True, workflow.get("on", {}))["workflow_run"]
+if mutation == "filtered-callback":
+    trigger["branches"] = ["main", "develop"]
+elif mutation == "failed-callback":
+    trigger["types"] = ["requested", "completed"]
+else:
+    job = workflow["jobs"]["publish-runtime-images"]
+    job["if"] = job["if"].replace("needs.image-meta.outputs.head_branch == 'main'", "true")
+target.write_text(yaml.safe_dump(workflow, sort_keys=False))
+PY
+  if assert_branch_publication_contract \
+    "$negative_runtime_workflow" "$ROOT_DIR/.github/workflows/docker-images.yml" \
+    >"$fixture_dir/$mutation-output" 2>&1; then
+    echo "runtime publication contract accepted $mutation" >&2
+    exit 1
+  fi
+  expected='runtime workflow_run must accept completed-only callbacks from every feature base'
+  if [[ "$mutation" == unprotected-writer ]]; then
+    expected='registry writer publish-runtime-images is missing protected publication guard'
+  fi
+  grep -Fq "$expected" "$fixture_dir/$mutation-output" || {
+    echo "runtime publication contract rejected $mutation for an unexpected reason" >&2
+    exit 1
+  }
+done
 
 negative_base_reuse_workflow="$fixture_dir/negative-base-reuse.yml"
 cp "$trusted_workflow" "$negative_base_reuse_workflow"

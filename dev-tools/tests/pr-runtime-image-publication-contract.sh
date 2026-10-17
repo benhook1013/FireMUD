@@ -339,8 +339,14 @@ case "${2:-}" in
       cat "$FIXTURE_DIR/pull-request.json"
     fi
     ;;
-  repos/benhook1013/FireMUD/git/ref/heads/develop) cat "$FIXTURE_DIR/base-ref.json" ;;
-  repos/benhook1013/FireMUD/git/ref/heads/*) cat "$FIXTURE_DIR/base-ref.json" ;;
+  repos/benhook1013/FireMUD/git/ref/heads/*)
+    if [[ -n "${BASE_REF_CALLS:-}" ]]; then
+      printf '%s\n' "$2" >> "$BASE_REF_CALLS"
+      [[ "$2" == "$EXPECTED_BASE_REF_ENDPOINT" ]] || exit 2
+      [[ "${MOCK_BASE_REF_MISSING:-}" != true ]] || exit 1
+    fi
+    cat "$FIXTURE_DIR/base-ref.json"
+    ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
   *) echo "unexpected endpoint: ${2:-}" >&2; exit 2 ;;
 esac
@@ -352,6 +358,247 @@ printf 'registry operation unexpectedly reached validation: %s\n' "$*" >> "$REGI
 exit 99
 EOF
 chmod +x "$fake_bin/docker"
+
+# Execute the real credential-free metadata admission for a feature-base bot PR.
+# Preview admission is a separate privileged boundary; exact tuple checks remain.
+PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" python3 - "$RUNTIME_WORKFLOW" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from urllib.parse import quote
+
+fixture = Path(os.environ["FIXTURE_DIR"])
+workflow = Path(sys.argv[1]).read_text()
+section = workflow.split("      - name: Derive image tags\n", 1)[1].split("      - name: Verify successful CI push for manual publication\n", 1)[0]
+script = section.split("        run: |\n", 1)[1]
+script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
+script_template = script
+paths = [fixture / name for name in ("pull-request.json", "merge-commit.json", "base-ref.json")]
+originals = [path.read_text() for path in paths]
+request, merge, branch = map(json.loads, originals)
+request["base"]["ref"] = "feature/stack-parent"
+request["user"]["login"] = "renovate[bot]"
+request["labels"] = []
+branch["ref"] = "refs/heads/feature/stack-parent"
+env = {
+    **os.environ,
+    "GITHUB_REPOSITORY": "benhook1013/FireMUD",
+    "GITHUB_REF": "refs/heads/develop",
+    "DEFAULT_BRANCH": "develop",
+    "EVENT_ACTION": "pr-runtime-base-refresh",
+    "EVENT_PR_NUMBER": str(request["number"]),
+    "EVENT_BASE_REF": request["base"]["ref"],
+    "EVENT_BASE_SHA": branch["object"]["sha"],
+    "EVENT_HEAD_SHA": request["head"]["sha"],
+    "EVENT_MERGE_SHA": merge["sha"],
+    "GITHUB_RUN_ID": "4242",
+    "GITHUB_RUN_ATTEMPT": "1",
+    "GITHUB_SHA": merge["sha"],
+    "GITHUB_OUTPUT": str(fixture / "runtime-meta-output"),
+}
+
+def admit(current_request, current_merge, current_branch, overrides=None, event_name="repository_dispatch"):
+    for path, payload in zip(paths, (current_request, current_merge, current_branch)):
+        path.write_text(json.dumps(payload))
+    Path(env["GITHUB_OUTPUT"]).write_text("")
+    calls = fixture / "runtime-meta-ref-calls"
+    calls.write_text("")
+    current_env = {**env, **(overrides or {})}
+    current_env.update({
+        "BASE_REF_CALLS": str(calls),
+        "EXPECTED_BASE_REF_ENDPOINT": "repos/benhook1013/FireMUD/git/ref/heads/" + quote(current_env["EVENT_BASE_REF"], safe="/"),
+    })
+    script = script_template.replace("${{ github.event_name }}", event_name)
+    return subprocess.run(["bash", "-c", script], env=current_env, text=True, capture_output=True)
+
+try:
+    accepted = admit(request, merge, branch)
+    assert accepted.returncode == 0, accepted.stderr
+    output = Path(env["GITHUB_OUTPUT"]).read_text()
+    assert f"merge_sha={merge['sha']}\n" in output
+    assert f"base_ref={request['base']['ref']}\n" in output
+    assert f"image_tag=pr-merge-{merge['sha']}\n" in output
+    assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
+    assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
+    literal_marker = fixture / "must-not-execute"
+    valid_refs = ("feature/topic+fix", "feature/@/parent", "feature/世界", "feature/#fragment", "feature/%encoded",
+                  f"feature/$(touch${{IFS}}{literal_marker})")
+    for base_ref in valid_refs:
+        ref_request, ref_branch = json.loads(json.dumps(request)), json.loads(json.dumps(branch))
+        ref_request["base"]["ref"] = base_ref
+        ref_branch["ref"] = "refs/heads/" + base_ref
+        accepted_ref = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref})
+        assert accepted_ref.returncode == 0, (base_ref, accepted_ref.stderr)
+        assert f"base_ref={base_ref}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+        direct_pr = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref}, event_name="pull_request")
+        assert direct_pr.returncode == 0, (base_ref, direct_pr.stderr)
+        assert f"base_ref={base_ref}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+        assert not literal_marker.exists(), "base ref shell metacharacters executed instead of remaining literal env data"
+        stale_ref = {**ref_branch, "object": {"sha": "d" * 40}}
+        assert admit(ref_request, merge, stale_ref, {"EVENT_BASE_REF": base_ref}).returncode != 0
+        assert admit(ref_request, merge, ref_branch,
+                     {"EVENT_BASE_REF": base_ref, "MOCK_BASE_REF_MISSING": "true"}).returncode != 0
+    for base_ref in ("", "feature/../bad", "feature/bad ref", "feature/ref.lock", "feature/@{bad", "feature/ref?query", "feature/line\nbreak"):
+        rejected_ref = admit(request, merge, branch, {"EVENT_BASE_REF": base_ref})
+        assert rejected_ref.returncode != 0, f"runtime metadata admitted invalid ref {base_ref!r}"
+        assert not (fixture / "runtime-meta-ref-calls").read_text(), "invalid ref reached GitHub lookup"
+    assert admit(request, merge, {**branch, "ref": "refs/heads/feature/other"}).returncode != 0
+    for mutation in ("stale-base", "stale-head", "wrong-parents", "fork", "closed", "retarget", "missing-merge", "wrong-default-ref"):
+        mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (request, merge, branch)]
+        overrides = {}
+        if mutation == "stale-base":
+            mutated_branch["object"]["sha"] = "d" * 40
+        elif mutation == "stale-head":
+            mutated_request["head"]["sha"] = "d" * 40
+        elif mutation == "wrong-parents":
+            mutated_merge["parents"].reverse()
+        elif mutation == "fork":
+            mutated_request["head"]["repo"]["full_name"] = "outsider/FireMUD"
+        elif mutation == "closed":
+            mutated_request["state"] = "closed"
+        elif mutation == "retarget":
+            mutated_request["base"]["ref"] = "feature/other-parent"
+        elif mutation == "missing-merge":
+            overrides["EVENT_MERGE_SHA"] = ""
+        elif mutation == "wrong-default-ref":
+            overrides["GITHUB_REF"] = "refs/heads/feature/untrusted"
+        rejected = admit(mutated_request, mutated_merge, mutated_branch, overrides)
+        assert rejected.returncode != 0, f"runtime metadata admitted {mutation}"
+finally:
+    for path, original in zip(paths, originals):
+        path.write_text(original)
+PY
+
+# A stacked grandchild has no published feature-base image, JARs, or cache.
+# Execute both real source-build scripts; only their Gradle and Docker sinks
+# are simulated. No actual Gradle process, Docker command, or registry is used.
+python3 - "$ROOT_DIR" "$fixture_dir" "$merge_sha" "$base_sha" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import yaml
+
+root, fixture = map(Path, sys.argv[1:3])
+merge_sha, feature_base_sha = sys.argv[3:5]
+workflow = yaml.load((root / ".github/workflows/runtime-images.yml").read_text(), Loader=yaml.BaseLoader)
+job = workflow["jobs"]["pr-local-smoke"]
+assert job["permissions"] == {"contents": "read"}
+assert job["env"]["SMOKE_IMAGE_LOCAL_ONLY"] == "true"
+assert job["env"]["SMOKE_MINIO_LOCAL_ONLY"] == "true"
+gradle_setup = [step for step in job["steps"] if step.get("uses", "").startswith("gradle/actions/setup-gradle@")]
+assert len(gradle_setup) == 1 and gradle_setup[0]["with"]["cache-read-only"] == "true"
+build_step = next(step for step in job["steps"] if step.get("name") == "Build local PR runtime images")
+assert build_step["env"]["MERGE_SHA"] == "${{ needs.image-meta.outputs.merge_sha }}"
+assert 'bash ./dev-tools/build-local-smoke-images.sh "$MERGE_SHA"' in build_step["run"]
+
+source_tree = fixture / "stacked-source"
+(source_tree / "dev-tools/validation").mkdir(parents=True)
+(source_tree / "fake-bin").mkdir()
+for name in ("build-local-smoke-images.sh", "build-compose-service-jars.sh"):
+    shutil.copyfile(root / "dev-tools" / name, source_tree / "dev-tools" / name)
+services = [
+    "account-service", "automation-scripting-service", "entity-management-service",
+    "game-design-service", "game-logic-service", "game-session-service",
+    "logging-admin-service", "social-groups-service", "spring-cloud-gateway",
+    "tcp-proxy-service", "world-management-service",
+]
+# Begin with neither generated artifacts nor any local image/dependency cache.
+assert not (source_tree / "services").exists()
+assert not (source_tree / "images.json").exists()
+(source_tree / "empty-gradle-home").mkdir()
+assert not list((source_tree / "empty-gradle-home").iterdir())
+(source_tree / "services.json").write_text(json.dumps(services))
+(source_tree / "command-sink.py").write_text(r'''
+import json
+import os
+from pathlib import Path
+import sys
+
+root = Path(os.environ["STACKED_SOURCE_TREE"])
+services = json.loads((root / "services.json").read_text())
+kind, *args = sys.argv[1:]
+merge = os.environ["STACKED_MERGE_SHA"]
+base_image = f"ghcr.io/benhook1013/firemud-base:{merge}"
+assert os.environ["STACKED_FEATURE_BASE_SHA"] not in " ".join(args), "feature-base publication must not be assumed"
+assert not any("cache-from" in arg for arg in args), "source build must work without a published cache"
+log = root / "commands.jsonl"
+if kind == "gradle":
+    assert not log.exists(), "current bootJar tasks must precede every image build"
+    assert args == [
+        "--no-configuration-cache", "--max-workers=1", "--no-parallel",
+        "-Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8", "-PincludeLoadTesting=false",
+        *[f":{service}:bootJar" for service in services],
+    ], args
+    for service in services:
+        libs = root / "services" / service / "build/libs"
+        libs.mkdir(parents=True)
+        (libs / "current-boot.jar").write_text("fresh bootJar fixture")
+elif kind == "docker":
+    assert args[0] == "build", "no registry pull, login, push, or image discovery is allowed"
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    assert events[0]["kind"] == "gradle"
+    assert all((root / "services" / service / "build/libs/current-boot.jar").is_file() for service in services)
+    images_path = root / "images.json"
+    images = json.loads(images_path.read_text()) if images_path.exists() else []
+    if not images:
+        assert args == ["build", "--file", str(root / "docker/base.Dockerfile"), "--tag", base_image, str(root)]
+        image = base_image
+    else:
+        assert images[0] == base_image, "merge-local base must be built before service images"
+        service = services[len(images) - 1]
+        image = f"ghcr.io/benhook1013/{service}:{merge}"
+        assert args == [
+            "build", "--build-context", f"repo_root={root}", "--build-arg", f"BASE_IMAGE={base_image}",
+            "--file", str(root / "services" / service / "Dockerfile"), "--tag", image,
+            str(root / "services" / service / "build/libs"),
+        ], args
+    images.append(image)
+    images_path.write_text(json.dumps(images))
+else:
+    raise AssertionError(f"unexpected command sink {kind}")
+with log.open("a") as output:
+    output.write(json.dumps({"kind": kind, "args": args}) + "\n")
+''')
+(source_tree / "dev-tools/validation/run-gradle-with-dependency-recovery.sh").write_text('''#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -ge 4 && "$1" == --runner && "$2" == "$STACKED_SOURCE_TREE/dev-tools/validation/run-locked-gradle.sh" && "$3" == -- ]]
+runner="$2"
+shift 3
+exec bash "$runner" "$@"
+''')
+(source_tree / "dev-tools/validation/run-locked-gradle.sh").write_text('''#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$STACKED_SOURCE_TREE/command-sink.py" gradle "$@"
+''')
+docker = source_tree / "fake-bin/docker"
+docker.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$STACKED_SOURCE_TREE/command-sink.py" docker "$@"
+''')
+docker.chmod(0o755)
+env = {
+    **os.environ,
+    "PATH": str(source_tree / "fake-bin") + os.pathsep + os.environ["PATH"],
+    "STACKED_SOURCE_TREE": str(source_tree), "STACKED_MERGE_SHA": merge_sha,
+    "STACKED_FEATURE_BASE_SHA": feature_base_sha,
+    "GRADLE_USER_HOME": str(source_tree / "empty-gradle-home"),
+}
+completed = subprocess.run(["bash", str(source_tree / "dev-tools/build-local-smoke-images.sh"), merge_sha],
+                           env=env, text=True, capture_output=True)
+assert completed.returncode == 0, completed.stdout + completed.stderr
+images = json.loads((source_tree / "images.json").read_text())
+assert images == [f"ghcr.io/benhook1013/firemud-base:{merge_sha}",
+                  *[f"ghcr.io/benhook1013/{service}:{merge_sha}" for service in services]]
+commands = [json.loads(line) for line in (source_tree / "commands.jsonl").read_text().splitlines()]
+assert [command["kind"] for command in commands] == ["gradle", *(["docker"] * 12)]
+assert not list((source_tree / "empty-gradle-home").iterdir()), "simulation must not populate a real Gradle cache"
+PY
 
 run_validation() {
   local source_event="${1:-pull_request}"
