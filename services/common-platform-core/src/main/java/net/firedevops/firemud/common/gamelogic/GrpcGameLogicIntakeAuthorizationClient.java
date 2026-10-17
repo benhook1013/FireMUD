@@ -5,8 +5,6 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
@@ -14,11 +12,11 @@ import net.firedevops.firemud.account.v1.AccountGameLogicIntakeAuthorizationServ
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedMtls;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** File-backed mTLS client for the standalone, unregistered Account intake producer. */
 public final class GrpcGameLogicIntakeAuthorizationClient
@@ -29,8 +27,6 @@ public final class GrpcGameLogicIntakeAuthorizationClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public GrpcGameLogicIntakeAuthorizationClient(
       ServiceEndpointsProperties endpoints,
@@ -39,7 +35,7 @@ public final class GrpcGameLogicIntakeAuthorizationClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireFileBackedMtls(tlsProperties),
+        FileBackedMtls.require(tlsProperties, "Account intake authorization"),
         channelFactory,
         GrpcGameLogicIntakeAuthorizationClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace))
@@ -47,13 +43,10 @@ public final class GrpcGameLogicIntakeAuthorizationClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Account intake authorization client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null)
-      throw new IllegalStateException("Account intake authorization stub unavailable");
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Account intake authorization client is closed",
+        "Account intake authorization stub unavailable");
   }
 
   @Override
@@ -78,15 +71,11 @@ public final class GrpcGameLogicIntakeAuthorizationClient
       GameLogicIntakeAuthorizationEvidence.Request request,
       String originalCreatorCredential,
       Operation operation) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive())
-      throw new IllegalStateException("Account intake authorization requires no ambient SQL");
+    requireNoAmbientSql("Account intake authorization requires no ambient SQL");
     Objects.requireNonNull(request);
     if (!workloadNamespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Account intake authorization namespace mismatch");
-    var current = stub();
-    if (closed || !initialized || current == null)
-      throw new IllegalStateException("Account intake authorization client unavailable");
+    var current = requireInitializedStub("Account intake authorization client unavailable");
     var credentials = credentials(originalCreatorCredential, operation);
     var wireRequest = GameLogicIntakeAuthorizationGrpcCodec.toRequest(request);
     try {
@@ -151,42 +140,6 @@ public final class GrpcGameLogicIntakeAuthorizationClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private static CommonGrpcClientProperties requireFileBackedMtls(
-      CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null || tlsProperties.isPlaintext())
-      throw new IllegalArgumentException("Account intake authorization requires workload mTLS");
-    requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
-    requireReadableFile(tlsProperties.getPrivateKey(), "private key");
-    requireReadableFile(tlsProperties.getCaCert(), "CA certificate");
-    return tlsProperties;
-  }
-
-  private static void requireReadableFile(String configuredPath, String label) {
-    if (configuredPath == null
-        || configuredPath.isBlank()
-        || configuredPath.trim().startsWith("classpath:"))
-      throw new IllegalArgumentException(
-          "Account intake authorization requires file-backed certificate, key, and CA material");
-    Path path;
-    try {
-      path = Path.of(configuredPath.trim());
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException("Invalid Account intake authorization " + label + " path");
-    }
-    if (!Files.isRegularFile(path) || !Files.isReadable(path))
-      throw new IllegalArgumentException(
-          "Account intake authorization " + label + " must be an existing readable file");
   }
 
   private enum Operation {
