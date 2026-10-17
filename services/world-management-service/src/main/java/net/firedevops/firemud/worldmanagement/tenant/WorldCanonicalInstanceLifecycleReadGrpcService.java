@@ -14,6 +14,7 @@ import org.jooq.exception.DataAccessException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Exact authenticated lifecycle read; explicitly gated, never default-enabled. */
@@ -79,7 +80,8 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
       return;
     } catch (DataAccessResourceFailureException
         | TransientDataAccessException
-        | DataAccessException unavailable) {
+        | DataAccessException
+        | CannotCreateTransactionException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Canonical World lifecycle storage is temporarily unavailable")
