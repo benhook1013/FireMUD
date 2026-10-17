@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionWor
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient.InvalidTerminalEvidenceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -134,6 +135,24 @@ class AccountStartSessionWorldParticipationSettlementGrpcServiceTest {
                 unavailableOwner, NAMESPACE),
             identity(WORLD_URI),
             request));
+  }
+
+  @Test
+  void invalidWorldTerminalEvidenceRemainsFailedPrecondition() {
+    UUID participationId = UUID.fromString("5bb41395-a183-4ce5-9343-cd0995ba3b48");
+    var owner = mock(AccountStartSessionWorldParticipationSettlementService.class);
+    when(owner.settle(participationId, 43L))
+        .thenThrow(
+            new InvalidTerminalEvidenceException(
+                "World returned invalid original StartSession terminal evidence",
+                new IllegalArgumentException("mismatched terminal identity")));
+
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        invoke(
+            new AccountStartSessionWorldParticipationSettlementGrpcService(owner, NAMESPACE),
+            identity(WORLD_URI),
+            request(participationId, 43L)));
   }
 
   @Test

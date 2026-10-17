@@ -23,6 +23,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifec
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
@@ -73,6 +74,18 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
   }
 
   @Test
+  void rejectsMissingPeerIdentityAsUnauthenticatedBeforeStorageAccess() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+
+    Collector result =
+        call(service, ReadWorldCanonicalInstanceLifecycleRequest.getDefaultInstance(), null);
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAUTHENTICATED);
+    verifyNoInteractions(repository);
+  }
+
+  @Test
   void rejectsAuthenticatedEndUserContextBeforeDecodingOrStorageAccess() {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
@@ -109,6 +122,25 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
   }
 
   @Test
+  void mapsSpringResourceFailureToUnavailableWithoutLeakingStorageDetails() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+    var read = request("test");
+    when(repository.read(read))
+        .thenThrow(new DataAccessResourceFailureException("private storage detail"));
+
+    Collector result =
+        call(
+            service,
+            WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
+            peer("game-session-service", "test"));
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(result.description).doesNotContain("private storage detail");
+    verify(repository).read(read);
+  }
+
+  @Test
   void authenticatedPeerWithMalformedRequestFailsBeforeStorageAccess() {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
@@ -128,7 +160,10 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
       ReadWorldCanonicalInstanceLifecycleRequest request,
       GrpcPeerIdentity peer) {
     Collector response = new Collector();
-    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context context =
+        peer == null
+            ? Context.ROOT
+            : Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = context.attach();
     try {
       service.readWorldCanonicalInstanceLifecycle(request, response);
@@ -165,6 +200,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
       implements StreamObserver<ReadWorldCanonicalInstanceLifecycleResponse> {
     private ReadWorldCanonicalInstanceLifecycleResponse value;
     private Status.Code error;
+    private String description;
     private boolean completed;
 
     @Override
@@ -177,6 +213,7 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
       assertThat(value).isNull();
       assertThat(completed).isFalse();
       error = Status.fromThrowable(failure).getCode();
+      description = Status.fromThrowable(failure).getDescription();
     }
 
     @Override
