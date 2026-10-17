@@ -1,0 +1,26 @@
+syntax = "proto3";
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Unregistered GD-only owner confirmation; canonical proof bytes are not permission.
+service AccountGameLogicIntakeSourceReadService {
+  rpc ReadSourceScope(GameLogicIntakeSourcePermissionRequest) returns (GameLogicIntakeSourcePermissionResponse);
+  rpc ReadFinalizedIntake(GameLogicIntakeSourcePermissionRequest) returns (GameLogicIntakeSourcePermissionResponse);
+}
+message GameLogicIntakeSourcePermissionRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string intended_reader = 4;
+  string purpose = 5;
+  oneof authorization_proof {
+    bytes preliminary_source_scope = 6;
+    bytes finalized_intake_authorization = 7;
+  }
+  string authorization_proof_digest = 8;
+}
+message GameLogicIntakeSourcePermissionResponse {
+  GameLogicIntakeSourcePermissionRequest request = 1;
+  bool permitted = 2;
+}
