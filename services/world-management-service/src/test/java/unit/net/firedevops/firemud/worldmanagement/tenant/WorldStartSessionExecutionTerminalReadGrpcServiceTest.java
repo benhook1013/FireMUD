@@ -46,6 +46,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -294,6 +295,30 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
           .isEqualTo("World StartSession terminal storage operation failed")
           .doesNotContain("private SQL detail");
     }
+  }
+
+  @Test
+  void mapsTransactionCreationFailureToSanitizedUnavailable() {
+    var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+    when(repository.readExactExecution(any(WorldCanonicalInstanceExecutionIdentity.class)))
+        .thenThrow(
+            new CannotCreateTransactionException(
+                "private SQL detail and credential", new IllegalStateException("private cause")));
+    var grpc =
+        new WorldStartSessionExecutionTerminalReadGrpcService(
+            service(repository, ignored -> {}), NAMESPACE);
+    Collector collector = new Collector();
+
+    callAs(
+        grpc,
+        peer("account-service", NAMESPACE),
+        WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request()),
+        collector);
+
+    assertCode(collector, Status.Code.UNAVAILABLE);
+    assertThat(Status.fromThrowable(collector.error).getDescription())
+        .isEqualTo("World StartSession terminal storage is unavailable")
+        .doesNotContain("private SQL detail", "credential", "private cause");
   }
 
   private static StorageFailureCase storageFailure(String sqlState, Status.Code expected) {
