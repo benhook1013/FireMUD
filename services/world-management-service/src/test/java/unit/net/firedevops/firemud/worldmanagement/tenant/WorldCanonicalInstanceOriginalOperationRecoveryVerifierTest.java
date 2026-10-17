@@ -215,13 +215,33 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
         org.mockito.ArgumentCaptor.forClass(
             HistoricalOriginalStartSessionOwnerEvidence.Request.class);
     verify(gameSession).read(gameSessionRequest.capture());
-    assertThat(gameSessionRequest.getValue().associationSelector().readRequestId())
+    var associationSelector = gameSessionRequest.getValue().associationSelector();
+    var retainedAssociation = fixture.launchAssociation();
+    var retainedDescriptor = retainedAssociation.launchBindingEvidence().descriptor();
+    var retainedRelease = retainedAssociation.launchBindingEvidence().releaseAttestation();
+    assertThat(associationSelector.targetNamespace())
+        .isEqualTo(retainedAssociation.targetNamespace());
+    assertThat(associationSelector.canonicalTenantId())
+        .isEqualTo(retainedAssociation.canonicalTenantId());
+    assertThat(associationSelector.gameInstanceUuid())
+        .isEqualTo(retainedAssociation.gameInstanceUuid());
+    assertThat(associationSelector.controlPlaneRequestId())
+        .isEqualTo(retainedAssociation.controlPlaneRequestId());
+    assertThat(associationSelector.launchDescriptorId())
+        .isEqualTo(retainedAssociation.launchDescriptorId());
+    assertThat(associationSelector.expectedDescriptorRequestDigest())
+        .isEqualTo(retainedDescriptor.requestDigest());
+    assertThat(associationSelector.expectedDescriptorResultDigest())
+        .isEqualTo(retainedDescriptor.resultDigest());
+    assertThat(associationSelector.expectedReleaseAttestationEvidenceDigest())
+        .isEqualTo(retainedRelease.evidenceDigest());
+    assertThat(associationSelector.readRequestId())
+        .isNotEqualTo(accountRequest.getValue().readRequestId())
         .isNotEqualTo(GAME_INSTANCE)
         .isNotEqualTo(PARTICIPATION_ID)
         .isNotEqualTo(ATTEMPT_ID);
     assertThat(gameSessionRequest.getValue().expectedOwnerAttemptId()).isEqualTo(ATTEMPT_ID);
     assertThat(gameSessionRequest.getValue().expectedOwnerFence()).isEqualTo(GAME_SESSION_FENCE);
-    assertThat(fixture.launchAssociation().capturedStartingRowVersion()).isEqualTo(9_999L);
   }
 
   @Test

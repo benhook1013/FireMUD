@@ -309,27 +309,18 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
   void mapsHistoricalOwnerRpcStatusesWithoutHidingRetryableFailures() {
     var repository = mock(WorldCanonicalInstancePreparationRepository.class);
     for (var mapping :
-        Map.of(
-                Status.Code.RESOURCE_EXHAUSTED,
-                Status.Code.UNAVAILABLE,
-                Status.Code.DEADLINE_EXCEEDED,
-                Status.Code.UNAVAILABLE,
-                Status.Code.PERMISSION_DENIED,
-                Status.Code.PERMISSION_DENIED,
-                Status.Code.UNAUTHENTICATED,
-                Status.Code.PERMISSION_DENIED,
-                Status.Code.INVALID_ARGUMENT,
-                Status.Code.INVALID_ARGUMENT,
-                Status.Code.FAILED_PRECONDITION,
-                Status.Code.FAILED_PRECONDITION,
-                Status.Code.NOT_FOUND,
-                Status.Code.FAILED_PRECONDITION,
-                Status.Code.ALREADY_EXISTS,
-                Status.Code.FAILED_PRECONDITION,
-                Status.Code.ABORTED,
-                Status.Code.FAILED_PRECONDITION,
-                Status.Code.UNKNOWN,
-                Status.Code.INTERNAL)
+        Map.ofEntries(
+                Map.entry(Status.Code.UNAVAILABLE, Status.Code.UNAVAILABLE),
+                Map.entry(Status.Code.RESOURCE_EXHAUSTED, Status.Code.UNAVAILABLE),
+                Map.entry(Status.Code.DEADLINE_EXCEEDED, Status.Code.UNAVAILABLE),
+                Map.entry(Status.Code.PERMISSION_DENIED, Status.Code.PERMISSION_DENIED),
+                Map.entry(Status.Code.UNAUTHENTICATED, Status.Code.PERMISSION_DENIED),
+                Map.entry(Status.Code.INVALID_ARGUMENT, Status.Code.INVALID_ARGUMENT),
+                Map.entry(Status.Code.FAILED_PRECONDITION, Status.Code.FAILED_PRECONDITION),
+                Map.entry(Status.Code.NOT_FOUND, Status.Code.FAILED_PRECONDITION),
+                Map.entry(Status.Code.ALREADY_EXISTS, Status.Code.FAILED_PRECONDITION),
+                Map.entry(Status.Code.ABORTED, Status.Code.FAILED_PRECONDITION),
+                Map.entry(Status.Code.UNKNOWN, Status.Code.INTERNAL))
             .entrySet()) {
       var grpc =
           new WorldStartSessionExecutionTerminalReadGrpcService(

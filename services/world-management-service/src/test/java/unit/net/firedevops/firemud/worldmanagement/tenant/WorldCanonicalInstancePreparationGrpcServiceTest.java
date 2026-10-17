@@ -178,6 +178,54 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
   }
 
   @Test
+  void rejectsControlRequestIdsOverCanonicalUtf8ByteLimitBeforeOwnerCalls() {
+    for (String invalid : List.of("a".repeat(129), "é".repeat(65))) {
+      Harness harness = new Harness("STARTING");
+      var request = request(harness.selector).toBuilder().setControlPlaneRequestId(invalid).build();
+
+      Collector result = call(harness.service, request, peer("game-session-service", NAMESPACE));
+
+      assertThat(result.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
+      verifyNoInteractions(
+          harness.launchBinding,
+          harness.assembly,
+          harness.preparation,
+          harness.preparationRepository,
+          harness.lifecycleRepository);
+    }
+  }
+
+  @Test
+  void accepts128ByteControlRequestIdAndPassesItToBothOwnerSelectors() {
+    String controlRequestId = "é".repeat(64);
+    var selector = selector(controlRequestId);
+    Harness harness = new Harness("STARTING");
+    when(harness.launchBinding.bindCommittedLaunch(any())).thenReturn(harness.binding);
+    when(harness.assembly.assemble(any()))
+        .thenThrow(
+            new WorldCanonicalInstancePreparationAssemblyService.AssemblyRejectedException(
+                "stop after selector capture"));
+
+    Collector result =
+        call(harness.service, request(selector), peer("game-session-service", NAMESPACE));
+
+    assertThat(result.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    var bindingSelector =
+        org.mockito.ArgumentCaptor.forClass(
+            CanonicalGameInstanceLaunchAssociationReadEvidence.Request.class);
+    verify(harness.launchBinding).bindCommittedLaunch(bindingSelector.capture());
+    var assemblySelector =
+        org.mockito.ArgumentCaptor.forClass(
+            WorldCanonicalInstancePreparationAssemblyService.Selector.class);
+    verify(harness.assembly).assemble(assemblySelector.capture());
+    assertThat(bindingSelector.getValue().controlPlaneRequestId()).isEqualTo(controlRequestId);
+    assertThat(assemblySelector.getValue().controlPlaneRequestId())
+        .isEqualTo(bindingSelector.getValue().controlPlaneRequestId());
+    verifyNoInteractions(
+        harness.preparation, harness.preparationRepository, harness.lifecycleRepository);
+  }
+
+  @Test
   void unknownCommittedLaunchBindingFailsClosedBeforeAssembly() {
     Harness harness = new Harness("STARTING");
     when(harness.launchBinding.bindCommittedLaunch(harness.selector))
@@ -459,6 +507,21 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
             uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
             37L));
+  }
+
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector(
+      String controlPlaneRequestId) {
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+        READ_ID,
+        NAMESPACE,
+        TENANT_ID,
+        "starter-world",
+        INSTANCE_ID,
+        controlPlaneRequestId,
+        DESCRIPTOR_ID,
+        REQUEST_DIGEST,
+        RESULT_DIGEST,
+        RELEASE_DIGEST);
   }
 
   private static byte[] originalTuple(

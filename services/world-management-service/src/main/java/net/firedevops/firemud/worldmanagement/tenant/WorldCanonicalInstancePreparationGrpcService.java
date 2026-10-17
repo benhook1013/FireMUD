@@ -86,12 +86,12 @@ public final class WorldCanonicalInstancePreparationGrpcService
     }
 
     try {
-      WorldCompleteLaunchBindingReceipt bound = launchBindingService.bindCommittedLaunch(selector);
       WorldCanonicalInstancePreparationAssemblyService.Selector assemblySelector =
           new WorldCanonicalInstancePreparationAssemblyService.Selector(
               selector.canonicalTenantId(),
               selector.gameInstanceUuid(),
               selector.controlPlaneRequestId());
+      WorldCompleteLaunchBindingReceipt bound = launchBindingService.bindCommittedLaunch(selector);
       Input input = assemblyService.assemble(assemblySelector);
       requireAssembledInputMatches(selector, bound, input);
 

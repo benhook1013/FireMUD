@@ -2,18 +2,63 @@ package net.firedevops.firemud.common.world;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.grpc.ManagedChannelBuilder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient.InvalidTerminalEvidenceException;
+import net.firedevops.firemud.worldmanagement.v1.ReadWorldStartSessionExecutionTerminalResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldStartSessionExecutionTerminalReadServiceGrpc.WorldStartSessionExecutionTerminalReadServiceBlockingStub;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldStartSessionExecutionTerminalReadClientTest {
+  @Test
+  void malformedOrMismatchedOwnerResponseHasADistinctEvidenceFailure(@TempDir Path directory)
+      throws Exception {
+    var client =
+        new WorldStartSessionExecutionTerminalReadClient(
+            new ServiceEndpointsProperties(),
+            fileBacked(directory),
+            new GrpcChannelFactory(),
+            "world-runtime");
+    // Controlled stub responses prove decoding classification, not authenticated transport.
+    var stub = mock(WorldStartSessionExecutionTerminalReadServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    ReflectionTestUtils.setField(client, "stub", stub);
+    ReflectionTestUtils.setField(client, "initialized", true);
+    var request = WorldStartSessionExecutionTerminalReadGrpcCodecTest.request();
+    try {
+      for (var response :
+          List.of(
+              ReadWorldStartSessionExecutionTerminalResponse.getDefaultInstance(),
+              ReadWorldStartSessionExecutionTerminalResponse.newBuilder()
+                  .setReadRequestId(UUID.randomUUID().toString())
+                  .build(),
+              ReadWorldStartSessionExecutionTerminalResponse.newBuilder()
+                  .setReadRequestId(request.readRequestId().toString())
+                  .build())) {
+        when(stub.readWorldStartSessionExecutionTerminal(any())).thenReturn(response);
+        assertThatThrownBy(() -> client.read(request))
+            .isInstanceOf(InvalidTerminalEvidenceException.class)
+            .hasCauseInstanceOf(IllegalArgumentException.class);
+      }
+    } finally {
+      client.close();
+    }
+  }
+
   @Test
   void clientReceiveLimitIncludesTheCompleteCanonicalTerminalEnvelope(@TempDir Path directory)
       throws Exception {
