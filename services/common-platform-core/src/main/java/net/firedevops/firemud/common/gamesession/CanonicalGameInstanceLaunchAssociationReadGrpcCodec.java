@@ -199,6 +199,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
             .setCurrentRowVersion(result.currentRowVersion())
             .setOwnerAttemptId(result.ownerAttemptId().toString())
             .setOwnerFence(result.ownerFence())
+            .setCanonicalRealmId(result.canonicalRealmId().toString())
+            .setCatalogRevision(result.catalogRevision())
             .setLaunchDescriptor(completeResponse.getLaunchDescriptor())
             .setReleaseAttestation(completeResponse.getReleaseAttestation())
             .setPublicProduction(result.publicProduction())
@@ -301,6 +303,11 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
     if (response.getOwnerFence() <= 0) {
       throw new IllegalArgumentException("ownerFence must be positive");
     }
+    UUID canonicalRealmId =
+        parseCanonicalNonNilUuid(response.getCanonicalRealmId(), "canonicalRealmId");
+    if (response.getCatalogRevision() <= 0) {
+      throw new IllegalArgumentException("catalogRevision must be positive");
+    }
     return new Result(
         expectedRequest,
         playableStateNamespaceId,
@@ -310,6 +317,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
         response.getCurrentRowVersion(),
         ownerAttemptId,
         response.getOwnerFence(),
+        canonicalRealmId,
+        response.getCatalogRevision(),
         binding);
   }
 

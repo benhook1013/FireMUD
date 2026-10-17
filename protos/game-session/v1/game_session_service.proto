@@ -647,6 +647,8 @@ message GetCanonicalGameInstanceLaunchAssociationResponse {
   bool public_production = 18;
   string owner_attempt_id = 19;
   int64 owner_fence = 20;
+  string canonical_realm_id = 21;
+  int64 catalog_revision = 22;
 }
 
 message GetRunOwnedFixtureLaunchAssociationRequest {

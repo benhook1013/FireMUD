@@ -20,6 +20,23 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
       UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   private static final UUID OWNER_ATTEMPT_ID =
       UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  private static final UUID CANONICAL_REALM_ID =
+      UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
+  @Test
+  void controlPlaneRequestIdUsesCanonicalUtf8ByteBoundAndUnicode() throws Exception {
+    String ascii128Bytes = "a".repeat(128);
+    String multibyte128Bytes = "é".repeat(64);
+
+    assertThat(requestWithControlPlaneRequestId(ascii128Bytes).controlPlaneRequestId())
+        .isEqualTo(ascii128Bytes);
+    assertThat(requestWithControlPlaneRequestId(multibyte128Bytes).controlPlaneRequestId())
+        .isEqualTo(multibyte128Bytes);
+    for (String invalid : new String[] {"a".repeat(129), "é".repeat(65), "e\u0301", "\uD800"}) {
+      assertThatThrownBy(() -> requestWithControlPlaneRequestId(invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
 
   @Test
   void roundTripsOwnerAttemptAndFenceAndRejectsMissingMalformedOrNonpositiveProof()
@@ -51,6 +68,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
         .isEqualTo(request);
     assertThat(result.ownerAttemptId()).isEqualTo(OWNER_ATTEMPT_ID);
     assertThat(result.ownerFence()).isEqualTo(4L);
+    assertThat(result.canonicalRealmId()).isEqualTo(CANONICAL_REALM_ID);
+    assertThat(result.catalogRevision()).isEqualTo(9L);
     assertThat(result.playableStateScope()).isEqualTo(RealmEntryPolicy.StateScope.SHARED);
     assertThat(result.launchBindingEvidence()).isEqualTo(launchBinding);
     for (var invalid :
@@ -59,7 +78,13 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
           response.toBuilder().setOwnerAttemptId("not-a-uuid").build(),
           response.toBuilder().setOwnerAttemptId("00000000-0000-0000-0000-000000000000").build(),
           response.toBuilder().setOwnerFence(0).build(),
-          response.toBuilder().setOwnerFence(-1).build()
+          response.toBuilder().setOwnerFence(-1).build(),
+          response.toBuilder().clearCanonicalRealmId().build(),
+          response.toBuilder().setCanonicalRealmId("not-a-uuid").build(),
+          response.toBuilder().setCanonicalRealmId("00000000-0000-0000-0000-000000000000").build(),
+          response.toBuilder().clearCatalogRevision().build(),
+          response.toBuilder().setCatalogRevision(0L).build(),
+          response.toBuilder().setCatalogRevision(-1L).build()
         }) {
       assertThatThrownBy(
               () ->
@@ -116,6 +141,25 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
                 launchBinding.releaseAttestation()))
         .setOwnerAttemptId(OWNER_ATTEMPT_ID.toString())
         .setOwnerFence(4L)
+        .setCanonicalRealmId(CANONICAL_REALM_ID.toString())
+        .setCatalogRevision(9L)
         .build();
+  }
+
+  private static Request requestWithControlPlaneRequestId(String controlPlaneRequestId)
+      throws Exception {
+    var launchBinding = AuthoringFixtures.lifecycleEvidence("ACTIVE", 3L).launchBinding();
+    var descriptor = launchBinding.descriptor();
+    return new Request(
+        READ_REQUEST_ID,
+        descriptor.targetNamespace(),
+        descriptor.canonicalTenantId(),
+        descriptor.worldSlug(),
+        GAME_INSTANCE_ID,
+        controlPlaneRequestId,
+        descriptor.launchDescriptorId(),
+        descriptor.requestDigest(),
+        descriptor.resultDigest(),
+        launchBinding.releaseAttestation().evidenceDigest());
   }
 }

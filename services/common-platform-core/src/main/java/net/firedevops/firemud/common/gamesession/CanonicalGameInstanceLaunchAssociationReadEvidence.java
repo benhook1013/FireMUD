@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
@@ -175,7 +176,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       requireNonNil(canonicalTenantId, "canonicalTenantId");
       requireNonNil(gameInstanceUuid, "gameInstanceUuid");
       AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
-      requireText(controlPlaneRequestId, "controlPlaneRequestId");
+      StartSessionPreAuthorizationReservationTuple.requireCanonicalControlPlaneRequestId(
+          controlPlaneRequestId);
       requireText(launchDescriptorId, "launchDescriptorId");
       requireDigest(expectedDescriptorRequestDigest, "expectedDescriptorRequestDigest");
       requireDigest(expectedDescriptorResultDigest, "expectedDescriptorResultDigest");
@@ -206,6 +208,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       long currentRowVersion,
       UUID ownerAttemptId,
       long ownerFence,
+      UUID canonicalRealmId,
+      long catalogRevision,
       CompleteLaunchBindingEvidence launchBindingEvidence) {
     public Result {
       Objects.requireNonNull(request, "request");
@@ -224,6 +228,10 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       requireNonNil(ownerAttemptId, "ownerAttemptId");
       if (ownerFence <= 0) {
         throw new IllegalArgumentException("ownerFence must be positive");
+      }
+      requireNonNil(canonicalRealmId, "canonicalRealmId");
+      if (catalogRevision <= 0) {
+        throw new IllegalArgumentException("catalogRevision must be positive");
       }
       Objects.requireNonNull(launchBindingEvidence, "launchBindingEvidence");
       var descriptor = launchBindingEvidence.descriptor();

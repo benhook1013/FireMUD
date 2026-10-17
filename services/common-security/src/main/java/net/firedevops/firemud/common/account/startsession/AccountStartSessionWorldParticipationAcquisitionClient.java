@@ -6,8 +6,6 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
@@ -26,6 +24,7 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedGrpcMtlsPolicy;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
@@ -131,9 +130,11 @@ public final class AccountStartSessionWorldParticipationAcquisitionClient
   }
 
   @Override
-  public synchronized void close() throws IOException {
-    closed = true;
-    initialized = false;
+  public void close() throws IOException {
+    synchronized (this) {
+      closed = true;
+      initialized = false;
+    }
     super.close();
   }
 
@@ -317,33 +318,10 @@ public final class AccountStartSessionWorldParticipationAcquisitionClient
 
   private static CommonGrpcClientProperties requireFileBackedMtls(
       CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Account World-participation acquisition requires workload mTLS");
-    }
-    requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
-    requireReadableFile(tlsProperties.getPrivateKey(), "private key");
-    requireReadableFile(tlsProperties.getCaCert(), "CA certificate");
-    return tlsProperties;
-  }
-
-  private static void requireReadableFile(String configuredPath, String label) {
-    if (configuredPath == null
-        || configuredPath.isBlank()
-        || configuredPath.trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Account World-participation acquisition requires file-backed mTLS material");
-    }
-    Path path;
-    try {
-      path = Path.of(configuredPath.trim());
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException(
-          "Account World-participation " + label + " must be file-backed", invalid);
-    }
-    if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-      throw new IllegalArgumentException(
-          "Account World-participation " + label + " must be an existing readable file");
-    }
+    return FileBackedGrpcMtlsPolicy.require(
+        tlsProperties,
+        "Account World-participation acquisition",
+        "Account World-participation acquisition requires workload mTLS",
+        "Account World-participation acquisition requires workload mTLS");
   }
 }
