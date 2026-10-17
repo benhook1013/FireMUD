@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.gamelogic;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -53,8 +54,17 @@ public final class GrpcGameLogicIntakeRetainClient
       throw new IllegalArgumentException(
           "Game Logic intake retain must use the configured workload namespace");
     }
+    GameLogicGameplayRuleIntakeServiceGrpc.GameLogicGameplayRuleIntakeServiceBlockingStub
+        initializedStub;
+    try {
+      initializedStub =
+          requireInitializedStub(
+              "Game Logic intake retain client is not initialized and available");
+    } catch (IllegalStateException unavailable) {
+      throw Status.UNAVAILABLE.asRuntimeException();
+    }
     var response =
-        requireInitializedStub("Game Logic intake retain client is not initialized and available")
+        initializedStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .retainGameplayRuleIntake(GameLogicIntakeRetainProtoCodec.toRequest(request));
     try {
