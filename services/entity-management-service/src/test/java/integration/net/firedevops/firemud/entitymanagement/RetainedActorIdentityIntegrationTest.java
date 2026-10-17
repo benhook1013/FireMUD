@@ -395,7 +395,7 @@ class RetainedActorIdentityIntegrationTest {
     UUID namespaceActor = UUID.randomUUID();
     UUID quarantinedActor = UUID.randomUUID();
     insertNamespace(tenantUuid, namespaceUuid, shared);
-    insertNamespace(tenantUuid, otherNamespace, isolated);
+    insertNamespace(tenantUuid, otherNamespace, shared);
     insertNamespace(otherTenant, namespaceUuid, shared);
     // Identical private numeric keys deliberately do not grant canonical tuple equivalence.
     insertActor(
@@ -440,7 +440,7 @@ class RetainedActorIdentityIntegrationTest {
         accountUuid,
         tenantUuid,
         otherNamespace,
-        isolated,
+        shared,
         "shared-live",
         "OWNER_RESOLVED",
         null,
@@ -485,7 +485,7 @@ class RetainedActorIdentityIntegrationTest {
         .containsExactly(tenantActor);
     assertThat(
             actorIdentityRepository.findOwnerResolvedRoster(
-                tenantUuid.toString(), accountUuid.toString(), otherNamespace.toString(), isolated))
+                tenantUuid.toString(), accountUuid.toString(), otherNamespace.toString(), shared))
         .extracting(identity -> identity.characterUuid())
         .containsExactly(namespaceActor);
     assertThat(
@@ -540,7 +540,7 @@ class RetainedActorIdentityIntegrationTest {
                 tenantUuid.toString(),
                 accountUuid.toString(),
                 otherNamespace.toString(),
-                isolated,
+                shared,
                 targetActor.toString()))
         .isEmpty();
     assertThat(
