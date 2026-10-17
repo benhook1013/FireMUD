@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.publication;
 
+import io.grpc.Status;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -89,7 +90,10 @@ public final class SelectedDraftGameLogicIntakeCommandService {
       result = call.invoke(request, originalCreatorCredential);
     } catch (RuntimeException denied) {
       // The protected original credential must never be reflected by an injected client error.
-      throw new IllegalStateException("Account intake authorization denied or unavailable");
+      throw new IllegalStateException(
+          "Account intake authorization denied or unavailable ("
+              + Status.fromThrowable(denied).getCode()
+              + ")");
     }
     var authorization = requireFinalized(request, result);
     return receipts.retain(selection, authorization);

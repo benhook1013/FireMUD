@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Optional;
@@ -201,10 +202,19 @@ class SelectedDraftGameLogicIntakeCommandServiceTest {
   }
 
   @Test
-  void sanitizesProducerFailuresWithoutReflectingProtectedCredential() {
+  void sanitizesProducerStatusCodesWithoutReflectingProtectedCredentialOrCause() {
     var value = SelectedDraftGameLogicReceiptTest.fixture();
     var account = mock(GameLogicIntakeAuthorizationClient.class);
-    when(account.authorize(any(), anyString())).thenThrow(new IllegalStateException(CREDENTIAL));
+    var failures =
+        new RuntimeException[] {
+          Status.UNAVAILABLE.withDescription(CREDENTIAL).asRuntimeException(),
+          Status.DEADLINE_EXCEEDED.withDescription(CREDENTIAL).asRuntimeException(),
+          Status.PERMISSION_DENIED.withDescription(CREDENTIAL).asRuntimeException(),
+          Status.FAILED_PRECONDITION.withDescription(CREDENTIAL).asRuntimeException(),
+          new RuntimeException(CREDENTIAL)
+        };
+    when(account.authorize(any(), anyString())).thenThrow(failures);
+    when(account.recover(any(), anyString())).thenThrow(failures);
     var service =
         new SelectedDraftGameLogicIntakeCommandService(
             ignored -> Optional.of(value.selection()),
@@ -212,13 +222,31 @@ class SelectedDraftGameLogicIntakeCommandServiceTest {
             (selected, authorization) -> value,
             "test");
 
-    assertThatThrownBy(
-            () ->
-                service.authorizeAndRetain(
-                    value.selection(), request(value.selection()), CREDENTIAL))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Account intake authorization denied or unavailable")
-        .hasMessageNotContaining(CREDENTIAL);
+    Status.Code[] expectedCodes = {
+      Status.Code.UNAVAILABLE,
+      Status.Code.DEADLINE_EXCEEDED,
+      Status.Code.PERMISSION_DENIED,
+      Status.Code.FAILED_PRECONDITION,
+      Status.Code.UNKNOWN
+    };
+    for (boolean recover : new boolean[] {false, true}) {
+      for (Status.Code expectedCode : expectedCodes) {
+        assertThatThrownBy(
+                () -> {
+                  var selection = value.selection();
+                  var request = request(selection);
+                  if (recover) {
+                    service.recoverAndRetain(selection, request, CREDENTIAL);
+                  } else {
+                    service.authorizeAndRetain(selection, request, CREDENTIAL);
+                  }
+                })
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account intake authorization denied or unavailable (" + expectedCode + ")")
+            .hasMessageNotContaining(CREDENTIAL)
+            .hasNoCause();
+      }
+    }
   }
 
   @Test
