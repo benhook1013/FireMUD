@@ -232,6 +232,7 @@ Entry format:
 - `2026-10-18`: Retain admission context for independent review refusals
   - Context: a CLI request returned `review-threads:1:0` while peer Hosted findings were recorded as accepted and fix preparation was underway; no provider call occurred.
   - Observation: the short error does not establish why the documented peer-channel exception was not applied. Preserve the command result and any existing admission-audit pointer; no Controller defect or cause was established here.
+  - Expected pattern: retain the CLI result and admission-audit pointer for each independent review refusal, then inspect the recorded admission decision before assigning a cause.
   - Outcome: ordinary qualified publication and thread resolution cleared admission, and the next request reached the provider. Overseer confirmed that independent-channel guidance remains valid and requested no new investigation or Controller change from this error alone.
   - Reconsideration trigger: if this recurs, retain the existing admission context for adjudication rather than infer a cause from the short refusal.
 
@@ -244,5 +245,6 @@ Entry format:
 - `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
   - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
   - Observation: one focused five-store reproduction passed with zero failures, errors or skips and no endpoint refusal. All five exact containers were observed running with host-port bindings and absent after the Gradle child ended. Six inspect errors and 20 unparsed records arose only after the case completed during sequential teardown, so continuous ownership through cleanup is not established.
+  - Expected pattern: retain the original failed test evidence and capture only exact run-owned container states and ports before teardown when a new refusal justifies focused reproduction; keep a successful reproduction distinct from an explained cause.
   - Outcome: the preceding Automation Flyway refusal remains failed evidence with unknown cause; the passing reproduction does not explain it. No speculative host or readiness change is selected.
   - Reconsideration trigger: a later physical test-time endpoint refusal, or separately retained evidence that identifies the refused endpoint's failure mechanism.
