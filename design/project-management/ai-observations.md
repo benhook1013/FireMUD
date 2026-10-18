@@ -148,7 +148,10 @@ Entry format:
   - Recovery: the next foreground canonical attempt on `3c71c8c24379af623ca66550a4f4acaadd0ffd81` completed at 05:27:42 UTC with exit zero, full terminal capture, held-edge and backend proof, authenticated teardown and independently absent project resources. This does not establish why the earlier owner ended.
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
-- `2026-10-16`: Qualify tenant mutation predicates before relying on filtered readback or later owner guards. The template repository's global-ID update could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row. Test controlled pre-phase rows as well as later guarded owners: the native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
+- `2026-10-16`: Qualify tenant mutation predicates
+  - Context: Before relying on filtered readback or later owner guards, account for the template repository's global-ID update, which could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row.
+  - Observation: The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
+  - Expected pattern: Test controlled pre-phase rows as well as later guarded owners. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
 
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
   - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
@@ -199,3 +202,7 @@ Entry format:
   - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
+
+- 2026-10-18: In the CI maintenance PR #3264 Hosted retry, an ad hoc multiline shell read a snapshot file before its producer finished; the JSON check failed but the following provider POST still executed because that shell did not enable errexit. The prior and completed fresh snapshots both showed no active Hosted request, so no conflict was observed. Keep a dependent external mutation in a separate tool call after checking producer completion and validated output; use explicit `set -euo pipefail` for dependent shell batches.
+
+- 2026-10-18: CodeRabbit full review 5560170943 for PR #3264 emitted a complete 1/1 publication with one outside-diff Major but no bounded actionable-comment count. The existing manual adoption correctly refused automatic attribution with `Hosted publication has no unique bounded actionable-comment count`. Exact trigger 6241278398, reviewed head `187ab53426caf78cd6a01b61e092b800186aaec2`, provider result and accepted obligation were retained in the CI validation throughput controller job history without invented Hosted credit; no controller adapter change was made in this CI patch. Reconsider format support only in a separately scoped controller maintenance task.

@@ -32,8 +32,6 @@ public final class WorldPublishedSpawnRequirementsClient
   private static final String WORLD_SERVICE = "world-management-service";
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldPublishedSpawnRequirementsClient(
       ServiceEndpointsProperties endpoints,
@@ -49,18 +47,10 @@ public final class WorldPublishedSpawnRequirementsClient
   }
 
   /** Initializes only when the owning Entity service explicitly starts this opt-in client. */
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World spawn-requirements client is closed");
-    }
-    if (initialized) {
-      return;
-    }
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World spawn-requirements client has no gRPC stub");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "World spawn-requirements client is closed",
+        "World spawn-requirements client has no gRPC stub");
   }
 
   /** Reads and validates the complete immutable source evidence for one exact selector. */
@@ -72,7 +62,7 @@ public final class WorldPublishedSpawnRequirementsClient
           "World spawn-requirements request must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub("World spawn-requirements client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readWorldPublishedSpawnRequirements(
                 WorldPublishedSpawnRequirementsGrpcCodec.toRequest(request));
@@ -103,26 +93,6 @@ public final class WorldPublishedSpawnRequirementsClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldPublishedSpawnRequirementsReadServiceGrpc
-          .WorldPublishedSpawnRequirementsReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World spawn-requirements client is not initialized and available");
-    }
-    return currentStub;
   }
 
   private static CommonGrpcClientProperties requireEntityMtls(
