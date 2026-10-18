@@ -1789,19 +1789,25 @@ class GameDesignSourcePostgresIntegrationTest {
         var slotSql = DSL.using(slot, SQLDialect.POSTGRES);
         slotSql.fetch(
             "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
-        DSL.using(lifecycle, SQLDialect.POSTGRES)
-            .execute(
-                "UPDATE version SET version_state = 'RETIRED', version_state_epoch = version_state_epoch + 1 WHERE id = ?",
-                local.target().gameDesignVersionRowId());
+        var lifecycleSql = DSL.using(lifecycle, SQLDialect.POSTGRES);
+        lifecycleSql.execute(
+            "UPDATE version SET version_state = 'RETIRED', version_state_epoch = version_state_epoch + 1 WHERE id = ?",
+            local.target().gameDesignVersionRowId());
+        int lifecyclePid = storageBackendPid(lifecycleSql);
         var started = new java.util.concurrent.CountDownLatch(1);
+        var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var inserting =
             worker.submit(
                 () -> {
+                  workerPid.set(storageBackendPid(slotSql));
                   started.countDown();
                   return failedStorageWrite(() -> insertRawSlot(slotSql, binding));
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+          assertThat(awaitStorageBackendBlock(local, lifecyclePid, workerPid.get()))
+              .as("slot writer backend blocked by lifecycle backend")
+              .isTrue();
         } finally {
           lifecycle.commit();
         }
@@ -1838,11 +1844,14 @@ class GameDesignSourcePostgresIntegrationTest {
         var lifecycleSql = DSL.using(lifecycle, SQLDialect.POSTGRES);
         lifecycleSql.fetch(
             "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
+        int slotPid = storageBackendPid(DSL.using(slot, SQLDialect.POSTGRES));
         insertRawSlot(DSL.using(slot, SQLDialect.POSTGRES), binding);
         var started = new java.util.concurrent.CountDownLatch(1);
+        var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var updating =
             worker.submit(
                 () -> {
+                  workerPid.set(storageBackendPid(lifecycleSql));
                   started.countDown();
                   return failedStorageWrite(
                       () ->
@@ -1852,6 +1861,9 @@ class GameDesignSourcePostgresIntegrationTest {
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+          assertThat(awaitStorageBackendBlock(local, slotPid, workerPid.get()))
+              .as("lifecycle writer backend blocked by slot backend")
+              .isTrue();
         } finally {
           slot.commit();
         }
@@ -1881,16 +1893,23 @@ class GameDesignSourcePostgresIntegrationTest {
         var slotSql = DSL.using(slot, SQLDialect.POSTGRES);
         slotSql.fetch(
             "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
-        insertRawSelection(DSL.using(selection, SQLDialect.POSTGRES), selected);
+        var selectionSql = DSL.using(selection, SQLDialect.POSTGRES);
+        int selectionPid = storageBackendPid(selectionSql);
+        insertRawSelection(selectionSql, selected);
         var started = new java.util.concurrent.CountDownLatch(1);
+        var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var inserting =
             worker.submit(
                 () -> {
+                  workerPid.set(storageBackendPid(slotSql));
                   started.countDown();
                   return failedStorageWrite(() -> insertRawSlot(slotSql, later));
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+          assertThat(awaitStorageBackendBlock(local, selectionPid, workerPid.get()))
+              .as("slot writer backend blocked by selection backend")
+              .isTrue();
         } finally {
           selection.commit();
         }
@@ -1920,19 +1939,26 @@ class GameDesignSourcePostgresIntegrationTest {
       try (var slot = storageConnection(local, Connection.TRANSACTION_READ_COMMITTED);
           var selection = storageConnection(local, isolation);
           var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+        var slotSql = DSL.using(slot, SQLDialect.POSTGRES);
+        int slotPid = storageBackendPid(slotSql);
         var selectionSql = DSL.using(selection, SQLDialect.POSTGRES);
         selectionSql.fetch(
             "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
-        insertRawSlot(DSL.using(slot, SQLDialect.POSTGRES), later);
+        insertRawSlot(slotSql, later);
         var started = new java.util.concurrent.CountDownLatch(1);
+        var workerPid = new java.util.concurrent.atomic.AtomicInteger();
         var inserting =
             worker.submit(
                 () -> {
+                  workerPid.set(storageBackendPid(selectionSql));
                   started.countDown();
                   return failedStorageWrite(() -> insertRawSelection(selectionSql, selected));
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+          assertThat(awaitStorageBackendBlock(local, slotPid, workerPid.get()))
+              .as("selection writer backend blocked by slot backend")
+              .isTrue();
         } finally {
           slot.commit();
         }
@@ -1957,6 +1983,32 @@ class GameDesignSourcePostgresIntegrationTest {
       Connection.TRANSACTION_REPEATABLE_READ,
       Connection.TRANSACTION_SERIALIZABLE
     };
+  }
+
+  private int storageBackendPid(DSLContext sql) {
+    return Objects.requireNonNull(
+            sql.fetchOne("SELECT pg_backend_pid()"), "storage transaction must expose its backend")
+        .get(0, Integer.class);
+  }
+
+  private boolean awaitStorageBackendBlock(Fixture local, int firstPid, int workerPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      var activity =
+          local
+              .dsl()
+              .fetchOne(
+                  "SELECT ? = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock' AS blocked "
+                      + "FROM pg_stat_activity WHERE pid = ?",
+                  firstPid,
+                  workerPid);
+      if (activity != null && Boolean.TRUE.equals(activity.get("blocked", Boolean.class))) {
+        return true;
+      }
+      Thread.sleep(25);
+    }
+    return false;
   }
 
   private Connection storageConnection(Fixture local, int isolation) throws SQLException {
