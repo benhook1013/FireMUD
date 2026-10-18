@@ -15,7 +15,6 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit file-backed mTLS client for preliminary selected-owner source-scope confirmation. */
 public final class GrpcSelectedOwnerIntakeSourceReadClient
@@ -26,8 +25,6 @@ public final class GrpcSelectedOwnerIntakeSourceReadClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public GrpcSelectedOwnerIntakeSourceReadClient(
       ServiceEndpointsProperties endpoints,
@@ -44,22 +41,17 @@ public final class GrpcSelectedOwnerIntakeSourceReadClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Account selected-owner read client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null)
-      throw new IllegalStateException("Account selected-owner read stub unavailable");
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Account selected-owner read client is closed",
+        "Account selected-owner read stub unavailable");
   }
 
   /** Returns Account's exact preliminary confirmation after authenticating its server identity. */
   @Override
   public SelectedOwnerIntakeSourceReadEvidence read(
       SelectedOwnerIntakeSourceReadEvidence.Request request) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive())
-      throw new IllegalStateException("Account selected-owner read must run outside SQL");
+    requireNoAmbientSql("Account selected-owner read must run outside SQL");
     Objects.requireNonNull(request, "source-read request is required");
     if (!workloadNamespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException(
@@ -98,23 +90,11 @@ public final class GrpcSelectedOwnerIntakeSourceReadClient
         .withCompression("gzip");
   }
 
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
   private AccountSelectedOwnerIntakeSourceReadServiceGrpc
           .AccountSelectedOwnerIntakeSourceReadServiceBlockingStub
       requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null)
-      throw new IllegalStateException(
-          "Account selected-owner read client is not initialized and available");
-    return currentStub;
+    return requireInitializedStub(
+        "Account selected-owner read client is not initialized and available");
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(
