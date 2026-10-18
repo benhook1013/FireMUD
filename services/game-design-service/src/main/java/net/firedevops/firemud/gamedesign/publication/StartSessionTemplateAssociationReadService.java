@@ -34,8 +34,10 @@ import net.firedevops.firemud.worldmanagement.v1.ReadAuthoredWorldSourceIntakeBy
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -164,6 +166,11 @@ public final class StartSessionTemplateAssociationReadService {
           .asRuntimeException();
     } catch (org.springframework.dao.TransientDataAccessException
         | org.springframework.dao.DataAccessResourceFailureException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Game Design association owner storage unavailable")
+          .withCause(unavailable)
+          .asRuntimeException();
+    } catch (CannotCreateTransactionException | TransactionSystemException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("Game Design association owner storage unavailable")
           .withCause(unavailable)

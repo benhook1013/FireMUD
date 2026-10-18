@@ -31,6 +31,12 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
         WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(expected.request(), response);
 
     assertThat(actual).isEqualTo(expected);
+    assertThat(actual.launchBinding().descriptor().requestedScriptPatchVersionPresent()).isTrue();
+    assertThat(actual.launchBinding().descriptor().sourceVersionIdPresent()).isTrue();
+    assertThat(actual.launchBinding().descriptor().targetVersionIdPresent()).isTrue();
+    assertThat(actual.launchBinding().descriptor().requestedRuntimeFlagsJsonPresent()).isTrue();
+    assertThat(actual.launchBinding().descriptor().scriptPatchVersionPresent()).isTrue();
+    assertThat(actual.launchBinding().descriptor().remapSetIdPresent()).isTrue();
     assertThat(actual.spawnRequirements()).hasSize(2);
     assertThat(actual.spawnRequirements().getFirst().revisionOrder()).isEqualTo("9007199254740993");
     assertThat(actual.spawnRequirements().getFirst().spawnCount()).isEqualTo(7);
@@ -427,28 +433,28 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
             uuid("99999999-9999-4999-8999-999999999999"),
             "sha256:" + "a".repeat(64),
             19L,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null);
+            true,
+            "script-patch",
+            true,
+            17L,
+            true,
+            Long.MAX_VALUE,
+            true,
+            "{\"requested\":true}");
     AuthoredWorldLaunchDescriptorEvidence descriptor =
         AuthoredWorldLaunchDescriptorEvidence.create(
             descriptorRequest,
             "descriptor",
             Long.MAX_VALUE,
-            false,
-            null,
+            true,
+            "script-patch",
             "{}",
             "generation-config",
             9L,
             7L,
             "published-release",
-            false,
-            null);
+            true,
+            "remap-set");
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
             .map(
