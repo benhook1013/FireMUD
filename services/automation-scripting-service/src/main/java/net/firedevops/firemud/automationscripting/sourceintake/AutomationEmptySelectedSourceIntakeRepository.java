@@ -91,21 +91,21 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
             UUID associatedCanonicalVersionId = association.get(0, UUID.class);
             UUID intakeRequestId = association.get(1, UUID.class);
             if (associatedCanonicalVersionId == null || intakeRequestId == null) {
-              throw new IllegalStateException(
+              throw new CorruptReceiptException(
                   "Automation publication association identity is corrupt");
             }
             AutomationEmptySelectedSourceIntakeReceipt receipt =
                 readValidated(tx, targetNamespace, intakeRequestId)
                     .orElseThrow(
                         () ->
-                            new IllegalStateException(
+                            new CorruptReceiptException(
                                 "Automation publication association has no committed receipt"));
             var target = receipt.authorizationBinding().selected().target();
             if (!canonicalTenantId.equals(receipt.canonicalTenantId())
                 || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
                 || !canonicalTenantId.equals(target.canonicalTenantId())
                 || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
-              throw new IllegalStateException(
+              throw new CorruptReceiptException(
                   "Automation publication association differs from the retained selected target");
             }
             if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
@@ -229,12 +229,12 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
         read(committed.targetNamespace(), committed.intakeRequestId())
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
+                    new CorruptReceiptException(
                         "Committed Automation source receipt is unavailable"));
     if (!Arrays.equals(committed.canonicalBytes(), readBack.canonicalBytes())
         || !committed.receiptDigest().equals(readBack.receiptDigest())
         || !committed.requestDigest().equals(readBack.requestDigest())) {
-      throw new IllegalStateException("Committed Automation source receipt readback differs");
+      throw new CorruptReceiptException("Committed Automation source receipt readback differs");
     }
     return readBack;
   }
@@ -433,10 +433,14 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
     }
     byte[] receiptBytes = record.get(17, byte[].class);
     if (receiptBytes == null) {
-      throw new IllegalStateException("Automation source association has no retained receipt");
+      throw new CorruptReceiptException("Automation source association has no retained receipt");
     }
-    AutomationEmptySelectedSourceIntakeReceipt receipt =
-        AutomationEmptySelectedSourceIntakeReceipt.fromStored(receiptBytes);
+    final AutomationEmptySelectedSourceIntakeReceipt receipt;
+    try {
+      receipt = AutomationEmptySelectedSourceIntakeReceipt.fromStored(receiptBytes);
+    } catch (RuntimeException malformed) {
+      throw new CorruptReceiptException("Automation stored source receipt is corrupt");
+    }
     if (!Objects.equals(record.get(0, String.class), receipt.targetNamespace())
         || !Objects.equals(record.get(1, UUID.class), receipt.operationId())
         || !Objects.equals(record.get(2, UUID.class), receipt.fenceId())
@@ -453,12 +457,10 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
         || !Objects.equals(record.get(13, String.class), receipt.receiptDigest())
         || !Objects.equals(record.get(15, String.class), receipt.requestDigest())
         || !Objects.equals(record.get(16, String.class), receipt.receiptDigest())
-        || !Objects.equals(
-            record.get(18, OffsetDateTime.class).toInstant(), receipt.retainedAt().toInstant())
-        || !Objects.equals(
-            record.get(14, OffsetDateTime.class).toInstant(), receipt.retainedAt().toInstant())
+        || !sameInstant(record.get(18, OffsetDateTime.class), receipt.retainedAt())
+        || !sameInstant(record.get(14, OffsetDateTime.class), receipt.retainedAt())
         || !Arrays.equals(receipt.canonicalBytes(), receiptBytes)) {
-      throw new IllegalStateException(
+      throw new CorruptReceiptException(
           "Automation source receipt differs from its owner association");
     }
     return Optional.of(receipt);
@@ -470,6 +472,10 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
       throw new IllegalStateException("Automation source census returned an invalid count");
     }
     return value;
+  }
+
+  private static boolean sameInstant(OffsetDateTime actual, OffsetDateTime expected) {
+    return actual != null && expected != null && actual.toInstant().equals(expected.toInstant());
   }
 
   private static <T> T requiredScalar(
@@ -544,6 +550,13 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
 
   public static class IntakeConflictException extends IllegalStateException {
     public IntakeConflictException(String message) {
+      super(message);
+    }
+  }
+
+  /** Indicates that retained receipt bytes or owner rows fail their immutable readback contract. */
+  public static final class CorruptReceiptException extends IllegalStateException {
+    public CorruptReceiptException(String message) {
       super(message);
     }
   }

@@ -399,6 +399,44 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void corruptStoredReceiptBytesHaveADistinctRepositoryFailure() {
+    var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
+    EntityEmptySelectedSourceIntakeReceipt receipt =
+        repository.retainFresh(fixture.inputs(), requestDigest(fixture));
+    byte[] corruptBytes = receipt.canonicalBytes();
+    corruptBytes[0] ^= 1;
+
+    dsl.execute(
+        "ALTER TABLE entity_empty_selected_source_receipt "
+            + "DISABLE TRIGGER trg_entity_empty_source_receipt_immutable");
+    try {
+      assertThat(
+              dsl.execute(
+                  "UPDATE entity_empty_selected_source_receipt SET receipt_bytes = ? "
+                      + "WHERE target_namespace = ? AND intake_request_id = ?",
+                  corruptBytes,
+                  receipt.targetNamespace(),
+                  receipt.intakeRequestId()))
+          .isEqualTo(1);
+    } finally {
+      dsl.execute(
+          "ALTER TABLE entity_empty_selected_source_receipt "
+              + "ENABLE TRIGGER trg_entity_empty_source_receipt_immutable");
+    }
+
+    assertThatThrownBy(() -> repository.read(receipt.targetNamespace(), receipt.intakeRequestId()))
+        .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class)
+        .hasMessageContaining("Entity stored source receipt is corrupt");
+    assertThatThrownBy(
+            () ->
+                repository.readPublicationScope(
+                    receipt.targetNamespace(),
+                    receipt.canonicalTenantId(),
+                    fixture.authorization().selected().target().gameDesignVersionRowId()))
+        .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
+  }
+
+  @Test
   void retainedAuditReferenceWithoutAnItemDeniesFreshGenesis() {
     var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
     dsl.execute(
@@ -463,7 +501,7 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
       dsl.execute("ALTER TABLE " + table + " ENABLE TRIGGER USER");
     }
     assertThatThrownBy(() -> repository.read(receipt.targetNamespace(), receipt.intakeRequestId()))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class)
         .hasMessageContaining("provider readback is missing or differs");
     assertThatThrownBy(
             () ->
@@ -471,7 +509,7 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                     receipt.targetNamespace(),
                     receipt.canonicalTenantId(),
                     fixture.authorization().selected().target().gameDesignVersionRowId()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
   }
 
   private static String expectedSelectedEmptyDigest(
