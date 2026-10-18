@@ -138,7 +138,9 @@ class EntitySelectedSourceIntakeTerminalReadServiceTest {
       assertStatus(() -> service.read(request(changedAuthorization)), Status.Code.ALREADY_EXISTS);
 
       when(repository.read(NAMESPACE, fixture.authorization().intakeRequestId()))
-          .thenThrow(new IllegalArgumentException("corrupt stored Entity receipt"));
+          .thenThrow(
+              new EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException(
+                  "corrupt stored Entity receipt"));
       assertStatus(() -> service.read(request(fixture.authorization())), Status.Code.DATA_LOSS);
     } finally {
       accountContext.detach(previous);

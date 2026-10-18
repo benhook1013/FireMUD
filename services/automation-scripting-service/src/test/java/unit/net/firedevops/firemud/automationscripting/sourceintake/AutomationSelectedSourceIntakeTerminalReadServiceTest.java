@@ -106,7 +106,9 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
                   assertThat(Status.fromThrowable(error).getCode())
                       .isEqualTo(Status.Code.ALREADY_EXISTS));
 
-      doThrow(new IllegalArgumentException("corrupt canonical receipt"))
+      doThrow(
+              new AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException(
+                  "corrupt canonical receipt"))
           .when(repository)
           .readCommittedTerminal(binding);
       assertThatThrownBy(() -> service.read(request(binding)))

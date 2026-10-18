@@ -62,6 +62,10 @@ public final class EntityEmptySelectedSourceIntakeTerminalReadService {
               .orElseThrow(() -> Status.NOT_FOUND.asRuntimeException());
     } catch (StatusRuntimeException denied) {
       throw denied;
+    } catch (EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException corrupt) {
+      throw Status.DATA_LOSS
+          .withDescription("Entity committed receipt is invalid")
+          .asRuntimeException();
     } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("Entity terminal receipt storage is unavailable")

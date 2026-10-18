@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
@@ -24,17 +25,20 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedSourceIntakeCommandGrpcService;
 import net.firedevops.firemud.entitymanagement.v1.RetainSelectedEntitySourceRequest;
 import net.firedevops.firemud.entitymanagement.v1.RetainSelectedEntitySourceResponse;
 import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures;
 import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures.Fixture;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Mocked owner tests verify gates and delegation, not native producer or physical census proof. */
@@ -200,6 +204,53 @@ class EntitySelectedSourceIntakeCommandGrpcServiceTest {
       peer.detach(previous);
     }
     verifyNoInteractions(owner);
+  }
+
+  @Test
+  void mapsStorageCorruptionOutagesAndRemoteEchoFailuresToSanitizedStatuses() {
+    var freeze = fixture.inputs().worldInventoryReadEvidence().request().freezeEvidence();
+    var command =
+        EntitySelectedSourceIntakeCommandEvidence.Request.create(
+            NAMESPACE, fixture.authorization(), freeze);
+    var wire = EntitySelectedSourceIntakeCommandGrpcCodec.toRequest(command);
+    var peer = gameDesignPeer(NAMESPACE);
+    var previous = peer.attach();
+    try {
+      assertFailure(new DataAccessException("private jOOQ details"), wire, Status.Code.UNAVAILABLE);
+      assertFailure(
+          new DataAccessResourceFailureException("private Spring details"),
+          wire,
+          Status.Code.UNAVAILABLE);
+      assertFailure(
+          new EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException(
+              "private receipt details"),
+          wire,
+          Status.Code.DATA_LOSS);
+      assertFailure(
+          new IllegalStateException("private Account or World echo details"),
+          wire,
+          Status.Code.FAILED_PRECONDITION);
+    } finally {
+      peer.detach(previous);
+    }
+  }
+
+  private static void assertFailure(
+      RuntimeException failure,
+      RetainSelectedEntitySourceRequest request,
+      Status.Code expectedCode) {
+    var owner = mock(EntityEmptySelectedSourceIntakeService.class);
+    org.mockito.Mockito.doThrow(failure).when(owner).retain(any(), any(), any());
+    var service = new EntitySelectedSourceIntakeCommandGrpcService(owner, NAMESPACE);
+    var observer = new CapturingObserver(new AtomicReference<>());
+    service.retainSelectedEntitySource(request, observer);
+
+    assertThat(observer.failure()).isInstanceOf(StatusRuntimeException.class);
+    assertThat(Status.fromThrowable(observer.failure()).getCode()).isEqualTo(expectedCode);
+    var status = (StatusRuntimeException) observer.failure();
+    assertThat(status.getStatus().getDescription()).isNull();
+    assertThat(status.getCause()).isNull();
+    assertThat(status.getTrailers()).isNull();
   }
 
   private static void assertCode(Throwable error, Status.Code expected) {

@@ -67,10 +67,16 @@ public final class SelectedEmptyPublicationDigestSupport {
       String ownerLabel) {
     var freezeRequest = retainedFreeze.request();
     var retainedSelection = freezeRequest.accountBinding().input().selection();
+    long retainedGameDesignVersionRowId =
+        retainedSelection.selectedCommit().target().gameDesignVersionRowId();
+    if (gameDesignVersionRowId != retainedGameDesignVersionRowId) {
+      throw new IllegalStateException(
+          ownerLabel + " publication version row differs from the original retained World freeze");
+    }
     var retainedPublicationRequest =
         PublicationDigestRequestBinding.full(
             freezeRequest.canonicalTenantId().toString(),
-            Long.toString(gameDesignVersionRowId),
+            Long.toString(retainedGameDesignVersionRowId),
             freezeRequest.publicationRequestId());
     if (!canonicalTenantId.equals(freezeRequest.canonicalTenantId())
         || !canonicalVersionId.equals(freezeRequest.canonicalVersionId())

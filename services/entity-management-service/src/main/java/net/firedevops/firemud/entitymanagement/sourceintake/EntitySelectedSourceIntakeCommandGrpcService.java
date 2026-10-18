@@ -73,6 +73,11 @@ public final class EntitySelectedSourceIntakeCommandGrpcService
       observer.onError(Status.fromCode(denied.getStatus().getCode()).asRuntimeException());
     } catch (SecurityException denied) {
       observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
+    } catch (EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException corrupt) {
+      observer.onError(Status.DATA_LOSS.asRuntimeException());
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException unavailable) {
+      observer.onError(Status.UNAVAILABLE.asRuntimeException());
     } catch (IllegalArgumentException | IllegalStateException unavailable) {
       observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
     } catch (RuntimeException failure) {

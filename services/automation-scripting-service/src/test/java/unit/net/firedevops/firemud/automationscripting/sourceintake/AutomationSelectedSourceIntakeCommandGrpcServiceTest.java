@@ -1,23 +1,32 @@
 package unit.net.firedevops.firemud.automationscripting.sourceintake;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.grpc.Context;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedSourceIntakeCommandGrpcService;
 import net.firedevops.firemud.automationscripting.v1.RetainSelectedSourceRequest;
 import net.firedevops.firemud.automationscripting.v1.RetainSelectedSourceResponse;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandEvidence;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -118,6 +127,53 @@ class AutomationSelectedSourceIntakeCommandGrpcServiceTest {
     } finally {
       context.detach(previous);
     }
+  }
+
+  @Test
+  void mapsStorageCorruptionOutagesAndRemoteEchoFailuresToSanitizedStatuses() {
+    var fixture = EntitySelectedSourceIntakeTerminalReadFixtures.create();
+    var freeze = fixture.inputs().worldInventoryReadEvidence().request().freezeEvidence();
+    var command =
+        AutomationSelectedSourceIntakeCommandEvidence.Request.create(
+            NAMESPACE, fixture.wrongOwnerAuthorization(), freeze);
+    var wire = AutomationSelectedSourceIntakeCommandGrpcCodec.toRequest(command);
+    var peer = new GrpcPeerIdentity(GAME_DESIGN_URI, NAMESPACE, "game-design-service");
+    var peerContext = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    var previous = peerContext.attach();
+    try {
+      assertFailure(new DataAccessException("private jOOQ details"), wire, Status.Code.UNAVAILABLE);
+      assertFailure(
+          new DataAccessResourceFailureException("private Spring details"),
+          wire,
+          Status.Code.UNAVAILABLE);
+      assertFailure(
+          new AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException(
+              "private receipt details"),
+          wire,
+          Status.Code.DATA_LOSS);
+      assertFailure(
+          new IllegalStateException("private Account or World echo details"),
+          wire,
+          Status.Code.FAILED_PRECONDITION);
+    } finally {
+      peerContext.detach(previous);
+    }
+  }
+
+  private static void assertFailure(
+      RuntimeException failure, RetainSelectedSourceRequest request, Status.Code expectedCode) {
+    var owner = mock(AutomationEmptySelectedSourceIntakeService.class);
+    doThrow(failure).when(owner).retain(any(), any(), any());
+    var service = new AutomationSelectedSourceIntakeCommandGrpcService(owner, NAMESPACE);
+    var observer = new CapturingObserver();
+    service.retainSelectedSource(request, observer);
+
+    assertThat(observer.failure()).isInstanceOf(StatusRuntimeException.class);
+    assertThat(Status.fromThrowable(observer.failure()).getCode()).isEqualTo(expectedCode);
+    var status = (StatusRuntimeException) observer.failure();
+    assertThat(status.getStatus().getDescription()).isNull();
+    assertThat(status.getCause()).isNull();
+    assertThat(status.getTrailers()).isNull();
   }
 
   private static final class CapturingObserver

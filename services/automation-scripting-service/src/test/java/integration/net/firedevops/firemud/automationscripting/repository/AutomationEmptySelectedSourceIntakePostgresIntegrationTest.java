@@ -222,7 +222,8 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
   }
 
   @Test
-  void staleRepeatableReadWritersCannotMissACommittedCanonicalReservation() throws SQLException {
+  void repeatableReadWritersFailWhenReservationRequiresReadCommittedIsolation()
+      throws SQLException {
     try (Connection staleRowWriter = repeatableReadSnapshot()) {
       commitCanonicalEmptySourceFixture(9301L, 9302L);
       try {
@@ -232,7 +233,9 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
                         staleRowWriter,
                         "INSERT INTO scripts (tenant_id, name, version, definition) "
                             + "VALUES (9301, 'stale-snapshot-script', 'v1', '{}')"))
-            .isInstanceOf(SQLException.class);
+            .isInstanceOf(SQLException.class)
+            .hasMessageContaining(
+                "Automation authored-source row writes require READ COMMITTED isolation");
       } finally {
         staleRowWriter.rollback();
       }
@@ -242,7 +245,9 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
       commitCanonicalEmptySourceFixture(9401L, 9402L);
       try {
         assertThatThrownBy(() -> execute(staleTruncator, "TRUNCATE TABLE scripts"))
-            .isInstanceOf(SQLException.class);
+            .isInstanceOf(SQLException.class)
+            .hasMessageContaining(
+                "Automation authored-source TRUNCATE requires READ COMMITTED isolation");
       } finally {
         staleTruncator.rollback();
       }
