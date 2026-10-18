@@ -255,4 +255,28 @@ The CLI finalization command publishes completed native Hosted/CLI runs after fr
 
 The structured result includes `publication` with `status: published|reused`, `comment_id`, `comment_url`, and the canonical `body`. Publishers share the existing lock primitive and retain a pre-POST intent in the existing attempt metadata. Complete paginated GitHub history and verified repository/publisher identity permit reuse of semantically matching canonical comments, including verified commit links and harmless whitespace, and reject conflicting identities or counts. An uncertain POST is recovered by reading history; if the exact comment is not visible, retries refuse another POST and retain the intent. Retry the command later for read recovery; do not manually repost or overwrite historical comments.
 
+For a retained uncertain intent with no visible checkpoint, an authorized operator can explicitly accept the residual duplicate risk through the narrow [publication recovery exception](../../design/developer-workflows/pr-lifecycle.md#review-and-status). Inspect the exact local state first; this command makes no provider request or mutation:
+
+```sh
+firemud-controller reviews records source publication-status --run-id <run ID>
+```
+
+The projection returns the original intent, its digest, append-only publication events, the current `state_sha256`, and the last recorded outcome. Historical outcomes without retained diagnostics remain `unknown`, including after recovery. New POST diagnostics retain only a static outcome category and a numeric HTTP status when available; they never retain raw subprocess output, arguments or credentials. An HTTP error is diagnostic evidence, not automatic authority to retry.
+
+After inspecting this state and accepting the possibility of a delayed original POST, the operator can authorize one recovery invocation:
+
+```sh
+firemud-controller reviews records source publication-recover \
+  --run-id <run ID> --expected-state-sha256 <inspected digest> \
+  --decision-id <unique stable operator decision ID> \
+  --reason "<justification, at most 300 characters>" \
+  --acknowledge-uncertain-delivery
+```
+
+The command authenticates the current GitHub publisher against the original intent and revalidates repository, completed native evidence, canonical body and markers. Under the existing publication lock, it reads complete paginated public history and reuses a unique matching comment, durably binding the decision ID even when no POST is needed. Conflicting or duplicate markers, malformed history, unavailable pages, a missing intent, changed attribution or stale local state refuse publication. The command never edits the original intent or public comments.
+
+When no matching comment is visible, recovery appends the authenticated actor, reason, exact prior-state binding and a timestamped history count/digest to the attempt metadata. It reads complete history again immediately before durably consuming this decision and attempting at most one POST. A comment appearing on that second read is reused. A decision ID is scoped to its exact run; repeating it with identical inputs returns `decision_replayed` and its audit events without another POST, even after a crash before consumption. Changed inputs with that ID refuse. A later operator decision requires a new ID and freshly inspected state digest. Preserve the original invocation inputs when replaying; substituting the newest digest is a changed input.
+
+Current public absence does not establish non-delivery. The first POST can become visible after the final read, so this explicit operator decision accepts residual duplicate risk and does not provide exactly-once delivery. A crash after consumption or another uncertain POST remains fenced; ordinary `finalize` still performs read recovery only for an existing intent. Inspect `publication-status` before deciding whether any further operator action is justified. Recovery changes only checkpoint-publication metadata and the possible checkpoint comment: provider attempts, frozen counts, findings, decisions, archives, review budgets, taper, fix proof and CI remain unchanged. It grants no new provider review or merge permission.
+
 For legacy controller routes, `decide route retargeted --route-id <identity> --unassigned --reason "<reason>"` preserves the open obligation and prior target history. Use it only when an assigned target has ceased to own the work; it is mutually exclusive with `--target-pr` and cannot mark a finding fixed or rejected.
