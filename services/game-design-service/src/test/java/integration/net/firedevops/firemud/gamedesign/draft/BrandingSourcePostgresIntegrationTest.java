@@ -337,7 +337,7 @@ class BrandingSourcePostgresIntegrationTest {
     var retained = new GameDesignSourceRepository(f.dsl).readCapture(operation).orElseThrow();
     assertThat(retained.branding()).isEmpty();
     assertThat(retained.gameplay()).isEmpty();
-    assertThat(retained.policy().policies()).hasSize(1);
+    assertThat(retained.policy().snapshot().policies()).hasSize(1);
     assertThat(retained.command().canonicalBytes())
         .containsExactly(captureRows.get("command").captureBytes());
     assertThat(retained.policy().canonicalBytes())
@@ -426,12 +426,7 @@ class BrandingSourcePostgresIntegrationTest {
 
   private DraftCommitBinding retainPreBrandingSourceCommit(Fixture f) {
     var original =
-        binding(
-            f,
-            "0",
-            CommandSource.SCOPE,
-            commandUpsert("BRANDING_HISTORICAL"),
-            policyPayload());
+        binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"), policyPayload());
     f.tx.executeWithoutResult(
         ignored -> {
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
@@ -463,14 +458,12 @@ class BrandingSourcePostgresIntegrationTest {
           byte[] siblingEvidence = command.canonicalBytes();
           var appliedEpochs =
               List.of(
-                  command.commandAppliedEpoch(),
-                  policy.ownerOutcome().appliedEpochs().getFirst());
+                  command.commandAppliedEpoch(), policy.ownerOutcome().appliedEpochs().getFirst());
           policies.recordCombinedOwnerOutcome(original, siblingEvidence, appliedEpochs);
           var outcome = policy.combinedOwnerOutcome(siblingEvidence, appliedEpochs);
           coordinator.advanceVisibilityFence(
               original,
-              new DraftCommitCoordinatorRepository.CoordinatorProof(
-                  original, List.of(outcome)));
+              new DraftCommitCoordinatorRepository.CoordinatorProof(original, List.of(outcome)));
           commands.captureSynchronized(original);
           policies.captureSynchronized(original);
           new AssetSourceRepository(f.dsl).captureSynchronized(original);
@@ -590,7 +583,12 @@ class BrandingSourcePostgresIntegrationTest {
   }
 
   private GameDesignPublicationOperation retainFreshV2CaptureWithoutBranding(Fixture f) {
-    var sourceCommit = binding(f, "0", RealmPolicySource.SCOPE, policyPayload());
+    var sourceCommit =
+        binding(
+            f,
+            "0",
+            net.firedevops.firemud.common.gamedesign.RealmPolicySource.SCOPE,
+            policyPayload());
     apply(f, sourceCommit);
     return Objects.requireNonNull(
         f.tx.execute(
