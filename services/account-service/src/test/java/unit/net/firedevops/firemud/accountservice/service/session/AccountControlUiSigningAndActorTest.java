@@ -421,6 +421,13 @@ class AccountControlUiSigningAndActorTest {
           AccountControlUiAuthority.canonical(
               Map.ofEntries(
                   Map.entry("kid", "test-only-control"),
+                  Map.entry(
+                      "publicKeyFingerprint",
+                      AccountJwtJwksTrustedSource.publicKeyFingerprint(
+                              new AccountPublicJwksCache.PublicJwksSnapshot(pin, jwks),
+                              pin,
+                              "test-only-control")
+                          .orElseThrow()),
                   Map.entry("environmentId", pin.environmentId()),
                   Map.entry("clusterId", pin.clusterId()),
                   Map.entry("clusterIncarnationUid", pin.clusterIncarnationUid()),

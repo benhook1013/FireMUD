@@ -442,6 +442,302 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     assertThat(sourceRow(fixture.dsl(), "version", version.getId())).isEqualTo(versionBefore);
   }
 
+  @Test
+  void selectedFullV4StorageRejectsMixedProfilesAndExactlyReplaysOriginalBytes() throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selected-v4-profile-source");
+    Version version = saveVersion(fixture, owner);
+    var operation = selectedFullOperation(fixture, version);
+    var json = new tools.jackson.databind.ObjectMapper();
+    var participants =
+        net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures.participants(
+            version.getId(), operation.world(), 4);
+    String original =
+        new String(operation.world().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    var gameBefore = sourceRow(fixture.dsl(), "game", owner.getId());
+    var versionBefore = sourceRow(fixture.dsl(), "version", version.getId());
+    for (int index = 0; index < participants.size(); index++) {
+      var mixed =
+          (tools.jackson.databind.node.ArrayNode)
+              json.readTree(json.writeValueAsString(participants));
+      var participant = participants.get(index);
+      ((tools.jackson.databind.node.ObjectNode) mixed.get(index))
+          .put(
+              "digestSchemaVersion",
+              participant.digestSchemaVersion() == 1 ? 2 : participant.digestSchemaVersion() - 1);
+      assertThatThrownBy(
+              () ->
+                  insertRawSelectedFull(
+                      fixture, version, operation, original, json.writeValueAsString(mixed)))
+          .as("mixed storage profile for %s", participant.participantKey())
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("selected participant differs from commit/digest/schema");
+      assertThat(bundleCount(fixture.dsl())).isZero();
+      assertThat(sourceRow(fixture.dsl(), "game", owner.getId())).isEqualTo(gameBefore);
+      assertThat(sourceRow(fixture.dsl(), "version", version.getId())).isEqualTo(versionBefore);
+    }
+    var requested = selectedFullBundle(version, operation.world());
+    var saved =
+        fixture
+            .transactionTemplate()
+            .execute(
+                status ->
+                    net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                        .commitStorage(
+                            fixture.dsl(),
+                            fixture.versionRepository(),
+                            operation,
+                            () -> fixture.releaseBundleRepository().save(requested)));
+    assertThat(saved).isNotNull();
+    var tuple = releaseBundleTuple(fixture.dsl(), saved.getId());
+    var independent =
+        new PublishedReleaseBundleRepository(fixture.dsl())
+            .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+            .orElseThrow();
+    assertThat(independent).usingRecursiveComparison().isEqualTo(saved);
+    assertThat(independent.getWorldPublishedStartLocationEvidenceJson()).isEqualTo(original);
+    assertThat(independent.getParticipantDigestsJson())
+        .isEqualTo(json.writeValueAsString(participants));
+    assertThat(fixture.releaseBundleRepository().save(requested))
+        .usingRecursiveComparison()
+        .isEqualTo(saved);
+    var changed = selectedFullBundle(version, operation.world());
+    changed.setGenerationConfigRevision("changed-selected-generation");
+    assertThatThrownBy(() -> fixture.releaseBundleRepository().save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertThat(releaseBundleTuple(fixture.dsl(), saved.getId())).isEqualTo(tuple);
+    assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+  }
+
+  @Test
+  void concurrentExactSelectedFullRetriesCommitOneImmutableBundle() throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selected-full-concurrent-source");
+    Version version = saveVersion(fixture, owner);
+    var operation = selectedFullOperation(fixture, version);
+    var start = new java.util.concurrent.CountDownLatch(1);
+    try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<PublishedReleaseBundle> save =
+          () -> {
+            start.await();
+            return fixture
+                .transactionTemplate()
+                .execute(
+                    status ->
+                        net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                            .commitStorage(
+                                fixture.dsl(),
+                                fixture.versionRepository(),
+                                operation,
+                                () ->
+                                    new PublishedReleaseBundleRepository(fixture.dsl())
+                                        .save(selectedFullBundle(version, operation.world()))));
+          };
+      var first = executor.submit(save);
+      var second = executor.submit(save);
+      start.countDown();
+      var one = first.get(20, java.util.concurrent.TimeUnit.SECONDS);
+      var two = second.get(20, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(two).usingRecursiveComparison().isEqualTo(one);
+      assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+      var beforeRetry = releaseBundleTuple(fixture.dsl(), one.getId());
+      assertThat(
+              fixture
+                  .releaseBundleRepository()
+                  .save(selectedFullBundle(version, operation.world())))
+          .usingRecursiveComparison()
+          .isEqualTo(one);
+      assertThat(releaseBundleTuple(fixture.dsl(), one.getId())).isEqualTo(beforeRetry);
+    }
+  }
+
+  @Test
+  void sqlGuardRejectsMissingAndChangedSelectedFullBindingsWithoutAnyRelease() throws Exception {
+    Fixture fixture = fixture(null);
+    Game owner = saveGame(fixture, "selected-full-guard-source");
+    Version version = saveVersion(fixture, owner);
+    var operation = selectedFullOperation(fixture, version);
+    var json = new tools.jackson.databind.ObjectMapper();
+    String original =
+        new String(operation.world().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    String participants =
+        json.writeValueAsString(
+            net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+                .participants(version.getId(), operation.world(), 4));
+    var gameBefore = sourceRow(fixture.dsl(), "game", owner.getId());
+    var versionBefore = sourceRow(fixture.dsl(), "version", version.getId());
+    assertThat(json.readTree(original).path("request").path("versionStateEpoch").isTextual())
+        .isTrue();
+    assertThatThrownBy(() -> insertRawSelectedFull(fixture, version, operation, null, participants))
+        .isInstanceOf(DataAccessException.class);
+    for (String epoch : java.util.List.of("0", "01", "-1", "9223372036854775808")) {
+      var changed = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+      ((tools.jackson.databind.node.ObjectNode) changed.get("request"))
+          .put("versionStateEpoch", epoch);
+      assertThatThrownBy(
+              () ->
+                  insertRawSelectedFull(
+                      fixture, version, operation, json.writeValueAsString(changed), participants))
+          .isInstanceOf(DataAccessException.class);
+    }
+    var numericEpoch = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+    ((tools.jackson.databind.node.ObjectNode) numericEpoch.get("request"))
+        .put("versionStateEpoch", 1L);
+    assertThatThrownBy(
+            () ->
+                insertRawSelectedFull(
+                    fixture,
+                    version,
+                    operation,
+                    json.writeValueAsString(numericEpoch),
+                    participants))
+        .isInstanceOf(DataAccessException.class);
+    for (String field :
+        java.util.List.of(
+            "canonicalTenantId",
+            "canonicalVersionId",
+            "publishWorkflowId",
+            "appliedCommitId",
+            "contentDigest",
+            "digestSchemaVersion",
+            "intakeRequestId")) {
+      var changed = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+      var request = (tools.jackson.databind.node.ObjectNode) changed.get("request");
+      if (field.equals("digestSchemaVersion")) request.put(field, 3);
+      else request.put(field, field.endsWith("Id") ? UUID.randomUUID().toString() : "changed");
+      assertThatThrownBy(
+              () ->
+                  insertRawSelectedFull(
+                      fixture, version, operation, json.writeValueAsString(changed), participants))
+          .isInstanceOf(DataAccessException.class);
+    }
+    for (String field :
+        java.util.List.of(
+            "selectorReceiptBytesBase64",
+            "originalAccountBindingBytesBase64",
+            "appliedResultBytesBase64")) {
+      var changed = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
+      changed.remove(field);
+      assertThatThrownBy(
+              () ->
+                  insertRawSelectedFull(
+                      fixture, version, operation, json.writeValueAsString(changed), participants))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThatThrownBy(() -> insertRawSelectedFull(fixture, version, operation, original, "[]"))
+        .isInstanceOf(DataAccessException.class);
+    var changedParticipants = (tools.jackson.databind.node.ArrayNode) json.readTree(participants);
+    ((tools.jackson.databind.node.ObjectNode) changedParticipants.get(0))
+        .put("contentDigest", "c".repeat(64));
+    assertThatThrownBy(
+            () ->
+                insertRawSelectedFull(
+                    fixture,
+                    version,
+                    operation,
+                    original,
+                    json.writeValueAsString(changedParticipants)))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(bundleCount(fixture.dsl())).isZero();
+    assertThat(sourceRow(fixture.dsl(), "game", owner.getId())).isEqualTo(gameBefore);
+    assertThat(sourceRow(fixture.dsl(), "version", version.getId())).isEqualTo(versionBefore);
+    fixture
+        .transactionTemplate()
+        .executeWithoutResult(
+            status ->
+                net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup.commitStorage(
+                    fixture.dsl(),
+                    fixture.versionRepository(),
+                    operation,
+                    () -> {
+                      insertRawSelectedFull(fixture, version, operation, original, participants);
+                      return fixture
+                          .releaseBundleRepository()
+                          .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+                          .orElseThrow();
+                    }));
+    assertThat(
+            new PublishedReleaseBundleRepository(fixture.dsl())
+                .findByTenantIdAndVersionId(owner.getTenantId(), version.getId())
+                .orElseThrow()
+                .getWorldPublishedStartLocationEvidenceJson())
+        .isEqualTo(original);
+    assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+  }
+
+  /** Actual GDS owner selection/captures with explicitly stipulated remote Account/World input. */
+  private net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation
+      selectedFullOperation(Fixture fixture, Version version) {
+    var target =
+        new net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof(
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            version.getId(),
+            version.getTenantId(),
+            version.getIdentitySourceGameRowId(),
+            version.getIdentitySourceGameTenantKey(),
+            version.getIdentitySourceProvenanceKind());
+    return fixture
+        .transactionTemplate()
+        .execute(
+            status -> {
+              try {
+                return net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                    .retainFrozenSourceBackedSelectedFull(
+                        fixture.dsl(),
+                        target,
+                        version.getVersionStateEpoch(),
+                        "ISOLATED selected-full storage regression",
+                        java.util.List.of());
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+  }
+
+  private PublishedReleaseBundle selectedFullBundle(
+      Version version,
+      net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence evidence) {
+    var candidate = bundle(version.getTenantId(), version.getId());
+    candidate.setAttestationSchemaVersion("v4");
+    candidate.setPublishWorkflowId(evidence.request().publishWorkflowId());
+    candidate.setParticipantDigestsJson(
+        new tools.jackson.databind.ObjectMapper()
+            .writeValueAsString(
+                net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures
+                    .participants(version.getId(), evidence, 4)));
+    candidate.setWorldPublishedStartLocationEvidenceJson(
+        new String(evidence.canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8));
+    return candidate;
+  }
+
+  private void insertRawSelectedFull(
+      Fixture fixture,
+      Version version,
+      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation,
+      String evidence,
+      String participants) {
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO published_release_bundle (tenant_id, version_id, version_number, "
+                + "canonical_tenant_id, canonical_version_id, published_release_bundle_ref, attestation_schema_version, "
+                + "publish_workflow_id, manifest_hash, generation_config_revision, manifest_schema_version, artifact_digests_json, "
+                + "required_manifest_asset_keys_json, participant_digests_json, command_definitions_json, script_only, "
+                + "world_published_start_location_evidence_json) VALUES (?, ?, 1, ?, ?, ?, 'v4', ?, ?, ?, 1, '[]', '[]', ?, '[]', FALSE, ?)",
+            version.getTenantId(),
+            version.getId(),
+            version.getCanonicalTenantId(),
+            version.getCanonicalVersionId(),
+            UUID.randomUUID().toString(),
+            operation.workflowId(),
+            MANIFEST_HASH,
+            GENERATION_CONFIG_REVISION,
+            participants,
+            evidence);
+  }
+
   private Fixture fixture(MigrationVersion target) {
     String schema = "game_design_release_identity_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);

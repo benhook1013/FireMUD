@@ -211,6 +211,16 @@ public class AccountStartSessionActivationProtectionRepository {
                 accountEvidence.accountProtectionId(), accountEvidence.accountProtectionFence())
             .orElseThrow(AccountStartSessionActivationProtectionRepository::unavailable);
     requireSameEvidence(protection.evidence(), accountEvidence);
+    lockOriginalSourceRows(protection.evidence());
+    Record locked =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + PROTECTIONS
+                + " WHERE activation_protection_id = ? FOR UPDATE NOWAIT",
+            accountEvidence.accountProtectionId());
+    if (locked == null) throw unavailable();
+    protection = decodeProtection(locked, readSources(accountEvidence.accountProtectionId()));
+    requireSameEvidence(protection.evidence(), accountEvidence);
 
     dsl.execute(
         "INSERT INTO "
@@ -238,6 +248,22 @@ public class AccountStartSessionActivationProtectionRepository {
       throw conflict();
     }
     return stored;
+  }
+
+  private void lockOriginalSourceRows(AccountStartSessionActivationProtectionEvidence evidence) {
+    for (SourceEvidence source :
+        evidence.sourceEvidenceVector().stream()
+            .sorted(java.util.Comparator.comparing(SourceEvidence::key))
+            .toList()) {
+      Record locked =
+          dsl.fetchOne(
+              "SELECT source_key FROM account_draft_authorization_source_locks "
+                  + "WHERE source_key = ? FOR UPDATE NOWAIT",
+              source.key());
+      if (locked == null || !source.key().equals(text(locked, "source_key"))) {
+        throw unavailable();
+      }
+    }
   }
 
   private Record selectProtectionByRequestId(String requestId) {

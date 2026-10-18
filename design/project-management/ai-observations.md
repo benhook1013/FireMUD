@@ -123,11 +123,49 @@ Entry format:
 
 - 2026-10-15: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source. The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order. Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof. No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
 
+- 2026-10-15: Separate selected-publication owner proofs missed an Account settlement profile gap. The actual GDS terminal → authenticated World completion → both real terminal reads composition reached Account V94 and failed with SQLSTATE 23514 because its inventory validator still admitted only inventory/1 + World/3, while the current canonical producer retains closure inventory/2 + World/4. Preserve that failed composition beside prior component passes; a forward validator correction needs exact profile/refusal and existing-settlement byte/row-version upgrade proof. Do not rewrite installed migrations or treat controlled terminal readbacks as actual producer composition. Correction and qualification are in progress.
+
+- 2026-10-15 follow-up: Account's forward V1011 now converges the exact inventory/1 + World/3 and closure inventory/2 + World/4 validation profiles while retaining the original framing, digest, source and artifact guards. R14 passes the actual six-store terminal-to-settlement composition and nine malformed-profile refusals; R16 passes original PUBLISHED and NO_PUBLICATION settlement upgrade/replay with unchanged stored bytes and row versions. A test-only V1010 predecessor allowlist omission was corrected separately. These controlled component proofs supply no genuine creator, issuer, environment or deployed authority.
+
 - `2026-10-15`: Preserve receiver status when relocating inherited tracker proof
   - Context: the local #3224 parent reconciliation relocated inherited LOGIN proof into a dedicated section. Selecting the complete incoming tracker plus one receiver proof paragraph also displaced the receiver's first-party denial and historical-proof qualifications. The candidate had not been published.
   - Observation: verifying nonoverlapping blobs and paragraphs unique against the merge base missed receiver status that also appeared in the base. Main later compared the complete receiver document, restored every original receiver paragraph byte-for-byte, and retained the incoming concise status and relocated proof. No production source changed.
   - Expected pattern: inspect the complete overlap against the receiver's current contract and status, including text shared with the merge base. Proof relocation alone does not authorize replacing unrelated current-status sections with an earlier parent's view.
   - Reconsideration trigger: a native reconciliation check proves preservation across moved paragraphs and status replacements; ordinary clean merges and nonoverlap comparisons do not establish that property.
+
+- `2026-10-16`: Keep FireController briefs within the size limit
+  - Context: FireController job briefs are capped at 200,000 characters.
+  - Observation: Repeatedly prepending completed and running checkpoints caused a revision to be rejected before the active execution state could be saved.
+  - Expected pattern: Archive the full previous brief, retain standing instructions and superseding decisions, replace the active execution section, and put milestones in native updates/checkpoints. Consolidation restored guarded updates without losing source history or standing authority.
+
+- `2026-10-16`: Keep the original Logging claim-read client workload-only
+  - Context: A generic gRPC channel and stub customizer did not establish the original Logging claim-read client's workload-only boundary: the common customizer attaches bearer metadata, and a trusted TLS channel alone does not pin the expected SPIFFE workload.
+  - Observation: The corrected client uses the existing Common peer credentials and response verifier, preserves default-off composition, and rejects ambient SQL, synchronization and caller context before RPC. Controlled loopback mTLS and the existing native owner consumer now prove this bounded behavior; they do not establish genuine upstream authority.
+  - Expected pattern: Keep the configured server identity separate from mutation target data, and follow canonical usable TLS-material policy rather than copying a donor's regular-file predicate.
+- `2026-10-16`: Bound subprocess output and waits in the original claim-read test PKI fixture
+  - Context: Reading subprocess output to EOF before a timed wait leaves the supposed deadline unbounded.
+  - Observation: The original claim-read test PKI helper now redirects output to an owned temporary file, waits before reading it, and terminates/reaps a timed-out or interrupted child with interrupt preservation. Actual stalled-keytool timeout and interruption cases pass alongside the affected TLS and native owner proofs.
+  - Expected pattern: Keep this correction in the purpose-specific fixture; it does not require a general command framework or change production TLS material policy.
+
+- `2026-10-16`: Recheck original ControlUI expiry after owner locks
+  - Context: An initial ControlUI token expiry check became stale across later owner locks in both current-actor paths. Registry cleanup retention and authorization-reference expiry did not replace the original token's validity boundary.
+  - Observation: The focused native fixture advances the existing actor clock at the real locking read: the old code entered both callbacks after expiry; the correction rejects them without changing the original row while preserving exact held-order recovery.
+  - Expected pattern: Keep current authorization and historical recovery distinct when reconciling displaced guards.
+
+- `2026-10-16`: Compare the complete original validity interval at one owner boundary
+  - Context: original creator callbacks can wait for Account owner locks after initial token verification.
+  - Observation: an expiry-only final check misses a clock observation before the original not-before bound; registry cleanup retention and authorization-reference expiry do not define the original token's full interval.
+  - Expected pattern: use one existing-clock observation for the canonical original `issuedAt <= now < expiresAt` interval, test both denial bounds and exact lower-bound equality, preserve immutable evidence, and keep historical exact-order recovery separate from fresh authorization.
+
+- `2026-10-16`: Separate original signer provenance from present public-key acceptance
+  - Context: fresh signed and committed-JTI creator callbacks must retain their original key identity.
+  - Observation: an immutable source pin, historical committed-signer receipt and still-fresh signature cache do not independently establish that the original key remains in the current protected public snapshot.
+  - Expected pattern: load the existing trusted source outside SQL and synchronization, compare the original key ID and RFC 7638 fingerprint, preserve accepted retiring-key membership and historical exact recovery, and state the per-invocation snapshot limit beside the proof.
+
+- `2026-10-16`: Bound child waits in standalone receiver PKI fixtures
+  - Context: The standalone activation and World participation receiver PKI fixtures had the same output-before-wait pattern, leaving child execution unbounded.
+  - Observation: Both use the existing purpose-specific bounded-child pattern; four actual stalled-JDK-child timeout/interruption cases and all eight consuming receiver cases pass.
+  - Expected pattern: Compare each remaining fixture owner independently; an earlier Logging fixture pass does not prove these locations, and controlled socket proof does not establish real Account settlement or genuine PKI.
 
 - `2026-10-16`: Check both public mapping directions when an internal read requires an identity distinct from its original operation. The launch-association receiver retained that guard while a refactor removed it from the request encoder; the receiver's refusal did not constrain local encoding. A producer refusal assertion reproduced the omission at `653c42cea1`, and restoring the existing encoder guard passed the full 917-case Common gate at `cefbf09ebb`. Keep the transport identity rule at both boundaries and distinguish local codec proof from controlled socket responses or genuine owner authority.
 

@@ -2,8 +2,6 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import io.grpc.Context;
@@ -19,15 +17,18 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.codec.ByteArrayCodec;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.cert.CertificateEncodingException;
-import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -49,14 +50,15 @@ import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsServi
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
+import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
-import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -110,7 +112,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      AccountControlUiOwnerWorkflowPostgresIntegrationTest.postgres;
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static final GenericContainer<?> redis =
@@ -150,7 +152,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
 
   @TempDir Path temporary;
 
-  private InProcessLoggingTransport loggingTransport;
+  private MtlsLoggingTransport loggingTransport;
 
   @AfterEach
   void clearLoggingTransport() throws Exception {
@@ -414,21 +416,25 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       var reservationFixture =
           StartSessionReservationMutationTestFixtures.forRunOwnedPostgres(postgres, loggingSchema);
       var reservationService = reservationFixture.service();
-      var approvedAccountLeaf = testAccountLeafEvidence();
+      var loggingPki =
+          AccountStartSessionReservationProofPki.create(
+              temporary.resolve("logging-claim-pki"), "control-ui-owner-proof");
+      String approvedAccountLeaf =
+          java.util.HexFormat.of()
+              .formatHex(
+                  java.security.MessageDigest.getInstance("SHA-256")
+                      .digest(loggingPki.accountIdentity().certificate().getEncoded()));
       Path approvedLeafFile =
           temporary.resolve("account-reservation-evidence-approved-test-leaf.txt");
       Files.writeString(
-          approvedLeafFile,
-          "active=" + approvedAccountLeaf.leafSha256() + "\n",
-          StandardCharsets.US_ASCII);
+          approvedLeafFile, "active=" + approvedAccountLeaf + "\n", StandardCharsets.US_ASCII);
       loggingTransport =
-          inProcessLoggingTransport(
+          mtlsLoggingTransport(
               new StartSessionReservationEvidenceGrpcService(
                   reservationService,
                   new StartSessionReservationEvidenceLeafApproval(approvedLeafFile.toString()),
                   "control-ui-owner-proof"),
-              "spiffe://firemud/ns/control-ui-owner-proof/sa/account-service",
-              approvedAccountLeaf);
+              loggingPki);
 
       var acquisition = reservationService.acquire(loggingTuple);
       assertThat(acquisition.newlyAcquired()).isTrue();
@@ -862,87 +868,49 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   }
 
   /**
-   * Test-only in-process composition supplies the Account URI and a run-owned approved leaf; it
-   * exercises receiver authorization, not a TLS handshake or mTLS certificate binding.
+   * Controlled Logging socket uses certificate-derived Account identity and actual approved leaf.
    */
-  private static InProcessLoggingTransport inProcessLoggingTransport(
+  private static MtlsLoggingTransport mtlsLoggingTransport(
       StartSessionReservationEvidenceGrpcService receiver,
-      String accountPeerUri,
-      GrpcPeerCertificateEvidence accountLeafEvidence)
+      AccountStartSessionReservationProofPki pki)
       throws Exception {
-    String serverName = InProcessServerBuilder.generateName();
-    var peer = GrpcPeerIdentity.parseUri(accountPeerUri).orElseThrow();
+    var identity = pki.server("logging");
     Server server =
-        InProcessServerBuilder.forName(serverName)
-            .directExecutor()
-            .addService(
-                ServerInterceptors.intercept(
-                    receiver,
-                    new ServerInterceptor() {
-                      @Override
-                      public <RequestT, ResponseT> ServerCall.Listener<RequestT> interceptCall(
-                          ServerCall<RequestT, ResponseT> call,
-                          Metadata headers,
-                          ServerCallHandler<RequestT, ResponseT> next) {
-                        Context peerContext =
-                            Context.current()
-                                .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-                                .withValue(
-                                    GrpcPeerCertificateEvidence.CONTEXT_KEY, accountLeafEvidence);
-                        return Contexts.interceptCall(peerContext, call, headers, next);
-                      }
-                    }))
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(receiver, new GrpcPeerIdentityInterceptor()))
             .build()
             .start();
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setLoggingAdminService("localhost:" + server.getPort());
+    var tls = pki.clientProperties();
+    var factory = new GrpcChannelFactory();
     ManagedChannel receiverChannel =
-        InProcessChannelBuilder.forName(serverName).directExecutor().build();
-    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
-    endpoints.setLoggingAdminService(serverName);
-    CommonGrpcClientProperties testTransport = new CommonGrpcClientProperties();
-    testTransport.setPlaintext(true);
-    GrpcChannelFactory channelFactory =
-        new GrpcChannelFactory() {
-          @Override
-          public ManagedChannel buildChannel(
-              String target,
-              int defaultPort,
-              CommonGrpcClientProperties properties,
-              boolean keepAlive) {
-            if (!serverName.equals(target) || !properties.isPlaintext()) {
-              throw new IllegalArgumentException(
-                  "Only the named in-process test transport is valid");
-            }
-            return InProcessChannelBuilder.forName(serverName).directExecutor().build();
-          }
-        };
-    StartSessionReservationEvidenceClient accountClient =
+        factory.buildChannel(endpoints.getLoggingAdminService(), 6565, tls, true);
+    var accountClient =
         new StartSessionReservationEvidenceClient(
-            endpoints, testTransport, channelFactory, BlockingGrpcStubCustomizer.noop());
+            endpoints, tls, factory, "control-ui-owner-proof");
     try {
       ReflectionTestUtils.invokeMethod(accountClient, "init");
-      return new InProcessLoggingTransport(
+      String loggingUri = "spiffe://firemud/ns/control-ui-owner-proof/sa/logging-admin-service";
+      return new MtlsLoggingTransport(
           server,
           receiverChannel,
           accountClient,
-          StartSessionReservationEvidenceServiceGrpc.newBlockingStub(receiverChannel));
+          StartSessionReservationEvidenceServiceGrpc.newBlockingStub(receiverChannel)
+              .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(loggingUri))
+              .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(loggingUri)));
     } catch (RuntimeException | Error failure) {
       accountClient.close();
       receiverChannel.shutdownNow();
       server.shutdownNow();
       throw failure;
     }
-  }
-
-  private static GrpcPeerCertificateEvidence testAccountLeafEvidence() {
-    X509Certificate leaf = mock(X509Certificate.class);
-    try {
-      when(leaf.getEncoded())
-          .thenReturn(
-              "run-owned Account test leaf certificate".getBytes(StandardCharsets.US_ASCII));
-    } catch (CertificateEncodingException exception) {
-      throw new AssertionError(exception);
-    }
-    return GrpcPeerCertificateEvidence.fromCertificate(leaf).orElseThrow();
   }
 
   private static InProcessAccountTransport inProcessAccountTransport(
@@ -1060,10 +1028,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   }
 
   /**
-   * Test-only in-process composition. Its injected peer context exercises receiver authorization;
-   * it is deliberately not a TLS or mTLS proof.
+   * Controlled Logging socket composition with actual workload certificates and leaf approval.
+   * Account's separate inbound owner transport remains explicitly controlled.
    */
-  private static final class InProcessLoggingTransport implements AutoCloseable {
+  private static final class MtlsLoggingTransport implements AutoCloseable {
     private final Server server;
     private final ManagedChannel receiverChannel;
     private final StartSessionReservationEvidenceClient accountClient;
@@ -1071,7 +1039,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
             .StartSessionReservationEvidenceServiceBlockingStub
         receiverStub;
 
-    private InProcessLoggingTransport(
+    private MtlsLoggingTransport(
         Server server,
         ManagedChannel receiverChannel,
         StartSessionReservationEvidenceClient accountClient,

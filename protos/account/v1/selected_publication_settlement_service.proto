@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone authenticated settlement of one exact selected-publication authorization.
+service AccountSelectedPublicationSettlementService {
+  rpc SettleSelectedPublication(SettleSelectedPublicationRequest)
+      returns (SettleSelectedPublicationResponse);
+}
+
+message SettleSelectedPublicationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Independent transport correlation; the retained Account order remains the settlement key.
+  string request_id = 3;
+  // Complete canonical game-design-publication-operation/v2 bytes.
+  bytes original_operation = 4;
+}
+
+message SettleSelectedPublicationResponse {
+  // Exact unchanged request echo.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  bytes original_operation = 4;
+  // Existing six-frame account-selected-publication-settlement/v1 receipt.
+  bytes settlement_receipt = 5;
+}
