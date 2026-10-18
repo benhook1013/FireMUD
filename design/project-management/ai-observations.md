@@ -115,33 +115,11 @@ Entry format:
   - Expected pattern: Compare every patch target with the pinned worktree path, then inspect the first written file at that absolute destination before continuing. This destination check remains manual.
   - Reconsideration trigger: enforce destination verification at the native patch boundary, or repeat measurement disproves the risk; completion of migration review alone does not resolve it.
 
-- `2026-10-15`: Allocate forward migrations against the resolved combined Flyway history
-  - Context: The selected-owner intake plan's older Account V161 and Automation V5 sketch would sort below already installed combined history, including shared Saga resources and later service-owned migrations.
-  - Observation: The receiving Account parent already reaches V1005, while Saga reaches V1002.
-  - Expected pattern: Preserve existing SQL and prove a retained upgrade from the actual combined parent instead of enabling out-of-order execution or inferring a frontier from the service's older application lineage.
-
-- `2026-10-16`: Use bounded admission for shared heavy runs
-  - Context: The canonical local resource lock already serializes eligible heavy runs across worktrees. Ordinary workers can submit through supported bounded admission and retry a busy result without peer permission or an idle reservation between scheduled wake-ups.
-  - Observation: A Document source gate automatically acquired the lock before its delayed peer completion message arrived.
-  - Expected pattern: Treat busy admission as unrun proof.
-
-- `2026-10-16`: Bound conflict markers and inspect reconstructed files
-  - Context: A multiline conflict-marker resolver truncated three trailing file portions during an unpublished selected-owner carry.
-  - Observation: Native `git merge-file` reconstruction from the exact parents recovered the complete files; a clean whitespace check alone cannot detect lost content.
-  - Expected pattern: Bound marker lines explicitly, verify conflict counts and file tails, and inspect the final net diff against both original parents before committing.
-
-- 2026-10-15: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source. The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order. Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof. No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
-
 - `2026-10-15`: Preserve receiver status when relocating inherited tracker proof
   - Context: the local #3224 parent reconciliation relocated inherited LOGIN proof into a dedicated section. Selecting the complete incoming tracker plus one receiver proof paragraph also displaced the receiver's first-party denial and historical-proof qualifications. The candidate had not been published.
   - Observation: verifying nonoverlapping blobs and paragraphs unique against the merge base missed receiver status that also appeared in the base. Main later compared the complete receiver document, restored every original receiver paragraph byte-for-byte, and retained the incoming concise status and relocated proof. No production source changed.
   - Expected pattern: inspect the complete overlap against the receiver's current contract and status, including text shared with the merge base. Proof relocation alone does not authorize replacing unrelated current-status sections with an earlier parent's view.
   - Reconsideration trigger: a native reconciliation check proves preservation across moved paragraphs and status replacements; ordinary clean merges and nonoverlap comparisons do not establish that property.
-
-- `2026-10-16`: Check both public mapping directions for transport identity
-  - Context: An internal read requires an identity distinct from its original operation. The launch-association receiver retained the guard while a refactor removed it from the request encoder.
-  - Observation: The receiver's refusal did not constrain local encoding. A producer refusal assertion reproduced the omission at `653c42cea1`, and restoring the existing encoder guard passed the full 917-case Common gate at `cefbf09ebb`.
-  - Expected pattern: Keep the transport identity rule at both boundaries and distinguish local codec proof from controlled socket responses or genuine owner authority.
 
 - `2026-10-16`: Report source validation separately from packaged smoke
   - Context: PR #3224 had a successful Validation result and a separate runtime-image Smoke failure in run [38844094461](https://github.com/benhook1013/FireMUD/actions/runs/38844094461); the retained local job record showed Gateway and TCP Proxy public readiness intentionally out of service after the bounded Compose wait.
@@ -218,7 +196,6 @@ Entry format:
   - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
-  - Recurrence (`2026-10-18`, #3249): a parent-carry helper again ran a scoped `git diff --cached --check` under an explicit validation allowance of NONE. The check exited zero and grants no proof credit. Main corrected the contradictory no-validation claim and retained ownership of the named integration gate.
 
 - `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
   - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
@@ -235,14 +212,38 @@ Entry format:
 
 - 2026-10-18: CodeRabbit full review 5560170943 for PR #3264 emitted a complete 1/1 publication with one outside-diff Major but no bounded actionable-comment count. The existing manual adoption correctly refused automatic attribution with `Hosted publication has no unique bounded actionable-comment count`. Exact trigger 6241278398, reviewed head `187ab53426caf78cd6a01b61e092b800186aaec2`, provider result and accepted obligation were retained in the CI validation throughput controller job history without invented Hosted credit; no controller adapter change was made in this CI patch. Reconsider format support only in a separately scoped controller maintenance task.
 
+- `2026-10-18`: PR retarget can fail exact merge-parent metadata checks
+  - Context: After #3237 merged and #3246 was retargeted to `develop`, Runtime Images run `39093729815` and Preview run `39093729854` checked the retargeted head/base pair.
+  - Observation: Both runs rejected the selected test-merge commit because it did not have its exact parents. Runtime failed before image production; Preview exhausted five merge-computation attempts. The PR Runtime path uses `GITHUB_SHA`; an empty dispatch-only `EVENT_MERGE_SHA` is not the cause. The reason for the mismatched merge selection is unconfirmed.
+  - Expected pattern: The previous parent's green runs do not qualify the new pair. Preserve the exact-parent guard and do not rerun blindly. No guard was weakened and no blind rerun was requested.
+  - Recovery: Gameplay reported the captured failures to Overseer in controller message `64512c73-9fa2-44b5-b2b7-e5b607155777`, with Preview evidence in reply `0de28b96-8790-4e5e-b8e5-a915d96de829`. After normal parent reconciliation and the required correction push to `a9d9f27a4139c2be2cbf9b7c1df4c4a33d6b8bf3` on `develop` at `efbc55874894ce5b2b420e19fac5ab23d66e384e`, replacement Runtime Images run `39094799761` and Preview run `39094798308` both succeeded. This establishes recovery of those metadata checks after that publication boundary, without explaining the original mismatch or claiming whole-CI success.
+
+- `2026-10-15`: Allocate forward migrations against the resolved combined Flyway history
+  - Context: The selected-owner intake plan's older Account V161 and Automation V5 sketch would sort below already installed combined history, including shared Saga resources and later service-owned migrations.
+  - Observation: The receiving Account parent already reaches V1005, while Saga reaches V1002.
+  - Expected pattern: Preserve existing SQL and prove a retained upgrade from the actual combined parent instead of enabling out-of-order execution or inferring a frontier from the service's older application lineage.
+
+- `2026-10-16`: Use bounded admission for shared heavy runs
+  - Context: The canonical local resource lock already serializes eligible heavy runs across worktrees. Ordinary workers can submit through supported bounded admission and retry a busy result without peer permission or an idle reservation between scheduled wake-ups.
+  - Observation: A Document source gate automatically acquired the lock before its delayed peer completion message arrived.
+  - Expected pattern: Treat busy admission as unrun proof.
+
+- `2026-10-16`: Bound conflict markers and inspect reconstructed files
+  - Context: A multiline conflict-marker resolver truncated three trailing file portions during an unpublished selected-owner carry.
+  - Observation: Native `git merge-file` reconstruction from the exact parents recovered the complete files; a clean whitespace check alone cannot detect lost content.
+  - Expected pattern: Bound marker lines explicitly, verify conflict counts and file tails, and inspect the final net diff against both original parents before committing.
+
+- `2026-10-16`: Check both public mapping directions for transport identity
+  - Context: An internal read requires an identity distinct from its original operation. The launch-association receiver retained the guard while a refactor removed it from the request encoder.
+  - Observation: The receiver's refusal did not constrain local encoding. A producer refusal assertion reproduced the omission at `653c42cea1`, and restoring the existing encoder guard passed the full 917-case Common gate at `cefbf09ebb`.
+  - Expected pattern: Keep the transport identity rule at both boundaries and distinguish local codec proof from controlled socket responses or genuine owner authority.
+
 - `2026-10-18`: Keep automatic Git repack failures separate from local commit proof
   - Context: The #3248 private-parent receiving commit `029b6299b0ec63a6cd0a1cd30197cc7b3ca56ded` triggered automatic Git maintenance in the shared repository.
   - Observation: The commit succeeded, and background repack reported `fatal: bad object refs/remotes/origin/codex/document-original-world-preparation-20261015` and `fatal: failed to run repack`. The exact cause and repository object health remain unknown.
   - Expected pattern: Record commit and receiving evidence separately from background maintenance results. Investigate only under qualified shared-repository maintenance or when an actual delivery blocker requires it; `gc.log` or unreachable-object warnings do not authorize cleanup.
   - Status and reconsideration: The commit retained prospective tree `733ed58d9390a5ba00e24088435af7b847567527`, all 84 child-owned postimages and the deletion, and all 12 qualified incoming blobs. Evidence is in Controller current-gameplay update 2151, `private-parent-carry-via-09e-verification.json`, and `receive-qualified-private-cli1-parent.patch` under the private #3248 local current-parent-carry evidence. Revisit if a qualified maintenance pass identifies the cause or the failure blocks delivery.
 
-- `2026-10-18`: PR retarget can fail exact merge-parent metadata checks
-  - Context: After #3237 merged and #3246 was retargeted to `develop`, Runtime Images run `39093729815` and Preview run `39093729854` checked the retargeted head/base pair.
-  - Observation: Both runs rejected the selected test-merge commit because it did not have its exact parents. Runtime failed before image production; Preview exhausted five merge-computation attempts. The PR Runtime path uses `GITHUB_SHA`; an empty dispatch-only `EVENT_MERGE_SHA` is not the cause. The reason for the mismatched merge selection is unconfirmed.
-  - Expected pattern: The previous parent's green runs do not qualify the new pair. Preserve the exact-parent guard and do not rerun blindly. No guard was weakened and no blind rerun was requested.
-  - Recovery: Gameplay reported the captured failures to Overseer in controller message `64512c73-9fa2-44b5-b2b7-e5b607155777`, with Preview evidence in reply `0de28b96-8790-4e5e-b8e5-a915d96de829`. After normal parent reconciliation and the required correction push to `a9d9f27a4139c2be2cbf9b7c1df4c4a33d6b8bf3` on `develop` at `efbc55874894ce5b2b420e19fac5ab23d66e384e`, replacement Runtime Images run `39094799761` and Preview run `39094798308` both succeeded. This establishes recovery of those metadata checks after that publication boundary, without explaining the original mismatch or claiming whole-CI success.
+- `2026-10-18`: Recurrence (#3249): a parent-carry helper again ran a scoped `git diff --cached --check` under an explicit validation allowance of NONE. The check exited zero and grants no proof credit. Main corrected the contradictory no-validation claim and retained ownership of the named integration gate.
+
+- 2026-10-15: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source. The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order. Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof. No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
