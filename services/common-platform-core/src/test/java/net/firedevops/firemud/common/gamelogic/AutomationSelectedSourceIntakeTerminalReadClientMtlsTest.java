@@ -102,6 +102,28 @@ class AutomationSelectedSourceIntakeTerminalReadClientMtlsTest {
     assertThat(calls).hasValue(1);
   }
 
+  @Test
+  void authenticatedMalformedResponseIsFailedPrecondition() throws Exception {
+    startMalformedResponseServer(pki.server());
+    client = newClient(pki.client());
+
+    assertThatThrownBy(() -> client.read(request())).isInstanceOf(IllegalStateException.class);
+    assertThat(calls).hasValue(0);
+
+    client.init();
+    assertThatThrownBy(() -> client.read(request()))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            error -> {
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(Status.fromThrowable(error).getDescription())
+                  .isEqualTo("Automation returned invalid terminal evidence");
+              assertThat(error.getCause()).isInstanceOf(IllegalArgumentException.class);
+            });
+    assertThat(calls).hasValue(1);
+  }
+
   private void startServer(IntakeTestPki.Identity identity) throws Exception {
     startServer(identity, 0);
   }
@@ -121,6 +143,36 @@ class AutomationSelectedSourceIntakeTerminalReadClientMtlsTest {
         };
     server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
+            .maxInboundMessageSize(
+                net.firedevops.firemud.common.automation.sourceintake
+                    .AutomationSelectedSourceIntakeTerminalReadGrpcCodec.MAX_WIRE_BYTES)
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+  }
+
+  private void startMalformedResponseServer(IntakeTestPki.Identity identity) throws Exception {
+    var service =
+        new AutomationSelectedSourceIntakeTerminalReadServiceGrpc
+            .AutomationSelectedSourceIntakeTerminalReadServiceImplBase() {
+          @Override
+          public void readSelectedSourceIntakeTerminal(
+              ReadSelectedSourceIntakeTerminalRequest request,
+              StreamObserver<ReadSelectedSourceIntakeTerminalResponse> observer) {
+            calls.incrementAndGet();
+            assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(ACCOUNT_URI);
+            observer.onNext(ReadSelectedSourceIntakeTerminalResponse.getDefaultInstance());
+            observer.onCompleted();
+          }
+        };
+    server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
             .maxInboundMessageSize(
                 net.firedevops.firemud.common.automation.sourceintake
                     .AutomationSelectedSourceIntakeTerminalReadGrpcCodec.MAX_WIRE_BYTES)
