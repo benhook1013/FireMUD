@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -30,6 +31,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Automation {@code COMMITTED_EMPTY} terminal settlement.
  */
 public final class AccountSelectedOwnerIntakeSourceReservationRepository {
+  public static final int MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE = 128;
+
   private static final String RESERVATIONS =
       "account_selected_owner_intake_source_read_reservations";
   private static final String SOURCES = "account_selected_owner_intake_source_read_sources";
@@ -206,6 +209,100 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
       dsl.execute("INSERT INTO " + ABORTS + " (operation_id) VALUES (?)", scope.operationId());
     }
     return new Recovery(scope, State.ABORTED);
+  }
+
+  /**
+   * Finds a bounded page of exact, expired, unfinalized reservations for one Account namespace.
+   * The scope and complete retained source vector are validated before a candidate is returned.
+   */
+  List<SelectedOwnerIntakeSourceReadScope> findExpiredPreliminarySourceReadScopes(
+      int limit, String namespace) {
+    requireTransaction();
+    requireRecoveryLimit(limit);
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Canonical Account workload namespace required");
+    }
+
+    List<Record> rows =
+        dsl.fetch(
+            "SELECT reservation.* FROM "
+                + RESERVATIONS
+                + " reservation JOIN account_control_ui_issuance_operations issuer"
+                + " ON issuer.operation_id = reservation.issuance_operation_id"
+                + " CROSS JOIN LATERAL account_publication_authorization_read_frame("
+                + "reservation.scope_bytes, 1) schema_part"
+                + " CROSS JOIN LATERAL account_publication_authorization_read_frame("
+                + "reservation.scope_bytes, schema_part.next_position) owner_part"
+                + " CROSS JOIN LATERAL account_publication_authorization_read_frame("
+                + "reservation.scope_bytes, owner_part.next_position) namespace_part"
+                + " LEFT JOIN "
+                + AUTHORIZATIONS
+                + " authorization ON authorization.operation_id = reservation.operation_id"
+                + " LEFT JOIN "
+                + ABORTS
+                + " aborted ON aborted.operation_id = reservation.operation_id"
+                + " WHERE convert_from(namespace_part.frame_value, 'UTF8') = ?"
+                + " AND issuer.status = 'COMMITTED'"
+                + " AND extract(epoch FROM clock_timestamp()) >= issuer.expires_at_epoch_second"
+                + " AND authorization.operation_id IS NULL"
+                + " AND aborted.operation_id IS NULL"
+                + " ORDER BY issuer.expires_at_epoch_second, reservation.operation_id"
+                + " LIMIT ?",
+            namespace,
+            limit);
+    List<SelectedOwnerIntakeSourceReadScope> scopes = new ArrayList<>(rows.size());
+    for (Record row : rows) {
+      var scope =
+          SelectedOwnerIntakeSourceReadScope.fromStored(
+              row.get("scope_bytes", byte[].class));
+      if (!namespace.equals(scope.targetNamespace())) {
+        throw new IllegalArgumentException("Expired reservation belongs to another namespace");
+      }
+      requireReservation(row, scope);
+      scopes.add(scope);
+    }
+    return List.copyOf(scopes);
+  }
+
+  /**
+   * Aborts one expired preliminary reservation after taking the canonical source and reservation
+   * locks. A concurrent finalization or a candidate that is no longer eligible is skipped.
+   */
+  boolean abortExpiredPreliminarySourceRead(
+      SelectedOwnerIntakeSourceReadScope scope, String namespace) {
+    requireTransaction();
+    Objects.requireNonNull(scope, "scope");
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)
+        || !namespace.equals(scope.targetNamespace())) {
+      throw new IllegalArgumentException("Exact Account workload namespace required");
+    }
+    requireOwner(scope.owner());
+
+    lockReservedSources(scope);
+    Record row = reservation(scope);
+    requireReservation(row, scope);
+    if (aborted(scope) || authorization(scope.operationId()) != null) return false;
+
+    UUID issuanceOperationId = row.get("issuance_operation_id", UUID.class);
+    if (dsl.fetchOne(
+            "SELECT operation_id FROM account_control_ui_issuance_operations"
+                + " WHERE operation_id = ? AND status = 'COMMITTED'"
+                + " AND extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second",
+            issuanceOperationId)
+        == null) {
+      return false;
+    }
+
+    dsl.execute("INSERT INTO " + ABORTS + " (operation_id) VALUES (?)", scope.operationId());
+    return true;
+  }
+
+  private static void requireRecoveryLimit(int limit) {
+    if (limit <= 0 || limit > MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE) {
+      throw new IllegalArgumentException(
+          "Expired preliminary recovery batch must be between 1 and "
+              + MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE);
+    }
   }
 
   SelectedOwnerIntakeAuthorizationBinding finalizeSourceRead(

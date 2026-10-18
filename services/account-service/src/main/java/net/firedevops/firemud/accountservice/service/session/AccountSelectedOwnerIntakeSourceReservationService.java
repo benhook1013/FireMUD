@@ -137,6 +137,45 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
     return abortSourceRead(scope);
   }
 
+  /**
+   * Performs one bounded Account-internal reconciliation page before any receiver is registered.
+   * It is not a transport or scheduled job: the caller owns invocation and readiness policy.
+   * Each candidate is rechecked and, if still eligible, durably aborted in its own independent
+   * READ_COMMITTED owner transaction. Finalized and concurrently changed candidates are skipped.
+   *
+   * @return abort rows committed by this page; this is not a global completion signal
+   */
+  public int recoverExpiredPreliminarySourceReads(int maximumCandidates) {
+    if (maximumCandidates <= 0) {
+      throw new IllegalArgumentException(
+          "Expired preliminary recovery batch must be positive");
+    }
+    requireNoAmbientTransaction();
+    int boundedCandidates =
+        Math.min(
+            maximumCandidates,
+            AccountSelectedOwnerIntakeSourceReservationRepository
+                .MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE);
+
+    var candidates =
+        Objects.requireNonNull(
+            ownerTransaction.execute(
+                ignored ->
+                    repository.findExpiredPreliminarySourceReadScopes(
+                        boundedCandidates, namespace)),
+            "Expired source-read candidate lookup returned no result");
+    int aborted = 0;
+    for (SelectedOwnerIntakeSourceReadScope scope : candidates) {
+      if (Objects.requireNonNull(
+              ownerTransaction.execute(
+                  ignored -> repository.abortExpiredPreliminarySourceRead(scope, namespace)),
+              "Expired source-read recovery returned no result")) {
+        aborted++;
+      }
+    }
+    return aborted;
+  }
+
   private Optional<SelectedOwnerIntakeSourceReadScope> findScope(
       String originalCompactJwt, UUID intakeRequestId, Owner owner, DraftCommitBinding selected) {
     requireGameDesignPeer();
