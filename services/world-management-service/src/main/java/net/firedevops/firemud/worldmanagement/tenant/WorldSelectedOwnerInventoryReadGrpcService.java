@@ -1,7 +1,6 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -70,37 +69,17 @@ public final class WorldSelectedOwnerInventoryReadGrpcService
     } catch (WorldSelectedOwnerInventoryReadService.ReadFailure failure) {
       fail(responseObserver, Status.fromCode(failure.statusCode()), failure.description());
       return;
-    } catch (StatusRuntimeException failure) {
-      Status status =
-          failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION
-              ? Status.FAILED_PRECONDITION
-              : Status.UNAVAILABLE;
-      fail(
-          responseObserver,
-          status,
-          status.getCode() == Status.Code.FAILED_PRECONDITION
-              ? "Exact retained World artifact inventory is unavailable"
-              : "World selected inventory owner storage is unavailable");
-      return;
     } catch (SecurityException denied) {
       fail(
           responseObserver,
           Status.PERMISSION_DENIED,
           "Exact same-namespace selected-owner workload is required");
       return;
-    } catch (WorldDesignPublicationFenceRepository.ConflictException
-        | IllegalArgumentException inconsistent) {
+    } catch (IllegalArgumentException inconsistent) {
       fail(
           responseObserver,
           Status.FAILED_PRECONDITION,
           "Exact retained World artifact inventory is unavailable");
-      return;
-    } catch (org.springframework.dao.DataAccessException
-        | org.jooq.exception.DataAccessException unavailable) {
-      fail(
-          responseObserver,
-          Status.UNAVAILABLE,
-          "World selected inventory owner storage is unavailable");
       return;
     } catch (RuntimeException failure) {
       fail(
