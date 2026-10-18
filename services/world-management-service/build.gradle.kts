@@ -50,7 +50,8 @@ val worldSelectedPublicationProofJar by tasks.registering(Jar::class) {
     archiveClassifier.set("selected-publication-proof")
     dependsOn(tasks.named("integrationTestClasses"))
     from(sourceSets["integrationTest"].output.classesDirs) {
-        include("net/firedevops/firemud/worldmanagement/tenant/WorldSelectedFullPublicationEvidenceFixture*.class")
+        include("net/firedevops/firemud/worldmanagement/tenant/WorldSelectedFullPublicationEvidenceFixture.class")
+        include("net/firedevops/firemud/worldmanagement/tenant/WorldSelectedFullPublicationEvidenceFixture\$*.class")
     }
 }
 

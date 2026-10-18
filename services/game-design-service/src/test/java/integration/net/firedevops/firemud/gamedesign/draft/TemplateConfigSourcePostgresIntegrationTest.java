@@ -1524,7 +1524,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
             .defaultSchema(schema)
             .table("flyway_schema_history_game_design_service")
             .placeholders(Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration");
+            .locations(
+                "filesystem:"
+                    + java.nio.file.Path.of("src/main/resources/db/migration")
+                        .toAbsolutePath()
+                        .normalize());
     if (migrationTarget != null) flyway.target(MigrationVersion.fromVersion(migrationTarget));
     flyway.load().migrate();
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
@@ -1561,7 +1565,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .defaultSchema(f.schema())
         .table("flyway_schema_history_game_design_service")
         .placeholders(Map.of("serviceSchema", f.schema()))
-        .locations("classpath:db/migration")
+        .locations(
+            "filesystem:"
+                + java.nio.file.Path.of("src/main/resources/db/migration")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
   }

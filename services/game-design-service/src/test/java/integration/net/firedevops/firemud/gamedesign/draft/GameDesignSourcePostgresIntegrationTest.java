@@ -1076,6 +1076,66 @@ class GameDesignSourcePostgresIntegrationTest {
   }
 
   @Test
+  void terminalV2RetainsMissingTemplateCaptureButPendingV2RequiresIt() {
+    Fixture fixture = fixture();
+    var authored =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            null,
+            "main",
+            true);
+    synchronize(fixture, authored, apply(fixture, authored));
+    var operation = retainSelectedOperation(fixture);
+
+    fixture.tx(
+        () -> {
+          new CommandSourceRepository(fixture.dsl()).freeze(operation);
+          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+          new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
+              .freeze(operation);
+          new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation);
+          return null;
+        });
+
+    assertThatThrownBy(() -> fixture.sources().readCapture(operation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
+
+    fixture.tx(
+        () -> {
+          var attempts = new PublishAttemptRepository(fixture.dsl());
+          var attempt =
+              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          attempt.setFailureCode("ISOLATED_TERMINAL_CAPTURE_WITHOUT_TEMPLATE");
+          attempts.save(attempt);
+          new GameDesignPublicationOperationRepository(fixture.dsl())
+              .seal(
+                  operation.tenantKey(),
+                  operation.workflowId(),
+                  operation.versionId(),
+                  operation.selectionDigest(),
+                  false);
+          return null;
+        });
+
+    var retained = fixture.sources().readCapture(operation).orElseThrow();
+    assertThat(retained.command()).isNotNull();
+    assertThat(retained.policy()).isNotNull();
+    assertThat(retained.asset()).isPresent();
+    assertThat(retained.gameplay()).isPresent();
+    assertThat(retained.templateConfig()).isEmpty();
+  }
+
+  @Test
   void preGameplayTerminalCaptureStaysUnknownAndCannotBeExtendedAfterV1032() throws Exception {
     Fixture fixture = fixture(false, "1031");
     var authored =

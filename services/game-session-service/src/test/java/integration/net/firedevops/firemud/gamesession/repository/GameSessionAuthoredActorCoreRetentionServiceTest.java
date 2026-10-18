@@ -85,6 +85,47 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
   }
 
   @Test
+  void changedHistoricalGameInstanceRejectsRetainedRetryBeforeOwnerOrRemoteReads()
+      throws Exception {
+    TestInputs inputs = inputs();
+    Candidate first = candidate(inputs, emptyCanonicalSourceBytes(sourceRequestBytes(inputs)));
+    StoredSource stored = new StoredSource(first, Instant.parse("2026-01-02T03:04:05Z"));
+    when(inputs
+            .retention()
+            .readByOriginalOperation(NAMESPACE, inputs.tuple().controlPlaneRequestId()))
+        .thenReturn(Optional.of(stored));
+    var originalLaunch = inputs.historical().launchAssociation();
+    when(inputs.historical().launchAssociation())
+        .thenReturn(
+            new HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation(
+                originalLaunch.targetNamespace(),
+                originalLaunch.canonicalTenantId(),
+                originalLaunch.worldSlug(),
+                UUID.randomUUID(),
+                originalLaunch.controlPlaneRequestId(),
+                originalLaunch.launchDescriptorId(),
+                originalLaunch.playableStateNamespaceId(),
+                originalLaunch.playableStateScope(),
+                originalLaunch.publicProduction(),
+                originalLaunch.capturedStartingRowVersion(),
+                originalLaunch.launchBindingEvidence()));
+
+    assertThatThrownBy(
+            () -> inputs.service().retain(inputs.historical(), inputs.currentAttemptRequest()))
+        .isInstanceOf(
+            net.firedevops.firemud.gamesession.repository
+                .GameSessionStartSessionOperatorAttemptRepository
+                .StartSessionOperatorAttemptConflictException.class)
+        .hasMessageContaining("differs from the first retained request");
+
+    verify(inputs.retention())
+        .readByOriginalOperation(NAMESPACE, inputs.tuple().controlPlaneRequestId());
+    verify(inputs.retention(), never()).retainInOwnerTransaction(any(Candidate.class));
+    verifyNoInteractions(
+        inputs.launches(), inputs.attempts(), inputs.gameDesign(), inputs.transactionManager());
+  }
+
+  @Test
   void changedCurrentAttemptAfterSourceReadDeniesBeforeRetentionInsert() throws Exception {
     TestInputs inputs = inputs();
     when(inputs
