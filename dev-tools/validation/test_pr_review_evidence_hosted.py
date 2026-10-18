@@ -637,7 +637,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}),
         )
         stdout = "\r\n".join(events) + "\r\n"
-        parsed = evidence.parse_capture_events(stdout)
+        parsed = evidence.parse_capture_events(stdout, strict=True)
 
         with tempfile.TemporaryDirectory() as directory:
             stdout_path = Path(directory) / "stdout"
@@ -711,7 +711,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 stdout_path.write_text(stdout, encoding="utf-8")
 
                 with self.assertRaisesRegex(evidence.EvidenceError, evidence_error):
-                    evidence.parse_capture_events(stdout)
+                    evidence.parse_capture_events(stdout, strict=True)
                 with self.assertRaisesRegex(evidence.CaptureInvalid, evidence_error):
                     evidence._parse_capture_stdout(stdout_path, strict=True)
                 with self.assertRaisesRegex(cli_attempts._UnrecordableCapture, recovery_error):
@@ -720,13 +720,13 @@ class GithubAndEvidenceTests(unittest.TestCase):
     def test_successful_cli_loader_preserves_archived_invalid_json_diagnostic(self):
         expected = "linked capture stdout has invalid JSON at line 1"
         with self.assertRaises(evidence.EvidenceError) as direct:
-            evidence.parse_capture_events("invalid JSON\n")
+            evidence.parse_capture_events("invalid JSON\n", strict=False)
         self.assertEqual(str(direct.exception), expected)
         with tempfile.TemporaryDirectory() as directory:
             stdout_path = Path(directory) / "stdout"
             stdout_path.write_text("invalid JSON\n", encoding="utf-8")
             with self.assertRaises(evidence.CaptureInvalid) as loaded:
-                evidence._parse_capture_stdout(stdout_path)
+                evidence._parse_capture_stdout(stdout_path, strict=False)
         self.assertEqual(str(loaded.exception), expected)
 
     def test_successful_cli_parser_rejects_error_unknown_and_ambiguous_event_streams(self):
@@ -749,7 +749,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 stdout_path = Path(directory) / "stdout"
                 stdout_path.write_text(stdout, encoding="utf-8")
                 with self.assertRaises(evidence.EvidenceError):
-                    evidence.parse_capture_events(stdout)
+                    evidence.parse_capture_events(stdout, strict=True)
                 with self.assertRaises(evidence.CaptureInvalid):
                     evidence._parse_capture_stdout(stdout_path, strict=True)
                 with self.assertRaises(cli_attempts._UnrecordableCapture):
@@ -764,7 +764,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             stdout = json.dumps(finding) + "\n"
             complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
             with self.subTest(finding=finding):
-                self.assertEqual(evidence.parse_capture_events(stdout + complete)[0], [finding])
+                self.assertEqual(evidence.parse_capture_events(stdout + complete, strict=True)[0], [finding])
                 self.assertEqual(evidence.parse_capture_events(complete + stdout, strict=False)[0], [finding])
                 with self.assertRaises(evidence.EvidenceError):
                     evidence.parse_partial_capture_events(stdout)
@@ -780,7 +780,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                     evidence.parse_capture_events(finding + complete, strict=False)[0], [json.loads(finding)]
                 )
                 with self.assertRaisesRegex(evidence.EvidenceError, "invalid finding instructions"):
-                    evidence.parse_capture_events(finding + complete)
+                    evidence.parse_capture_events(finding + complete, strict=True)
                 with self.assertRaises(evidence.EvidenceError):
                     evidence.parse_failed_capture_events(finding + complete)
                 with self.assertRaises(evidence.EvidenceError):
@@ -806,9 +806,9 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
         error = '{"type":"error","errorType":"connection","recoverable":true}\n'
-        findings, _ = evidence.parse_capture_events(progress + complete)
+        findings, _ = evidence.parse_capture_events(progress + complete, strict=True)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(evidence.parse_capture_events((progress + complete).rstrip("\n"))[0], findings)
+        self.assertEqual(evidence.parse_capture_events((progress + complete).rstrip("\n"), strict=True)[0], findings)
         with self.assertRaises(evidence.EvidenceError):
             evidence.parse_failed_capture_events((progress + complete).rstrip("\n"))
         self.assertEqual(evidence.parse_partial_capture_events(progress), findings)

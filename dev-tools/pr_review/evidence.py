@@ -556,7 +556,7 @@ def _read_metadata(path: Path) -> dict[str, str]:
     return result
 
 
-def _parse_capture_stdout(path: Path, *, strict: bool = False) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _parse_capture_stdout(path: Path, *, strict: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     stdout = _read_capture_text(path, "stdout")
     try:
         return parse_capture_events(stdout, strict=strict)
@@ -564,7 +564,7 @@ def _parse_capture_stdout(path: Path, *, strict: bool = False) -> tuple[list[dic
         raise CaptureInvalid(str(exc)) from exc
 
 
-def parse_capture_events(value: str, *, strict: bool = True) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def parse_capture_events(value: str, *, strict: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Validate current success strictly, or retain the original archived interpretation."""
 
     try:
@@ -1197,7 +1197,7 @@ def _load_cli_capture(
         raise CaptureInvalid("linked capture candidate SHA does not match checkpoint")
     if _read_capture_text(status_path, "exit status").strip() != "0":
         raise CaptureInvalid("linked capture did not exit successfully")
-    findings, complete = _parse_capture_stdout(stdout_path)
+    findings, complete = _parse_capture_stdout(stdout_path, strict=False)
     if len(findings) != checkpoint.raw_found:
         raise CaptureInvalid("linked capture finding count does not match checkpoint")
     try:
@@ -1398,7 +1398,7 @@ def discover_cli_captures(
                 candidate_files = int(metadata.get("candidate_files", "-1"))
                 stdout = _contained_file(run_dir, "stdout")
                 assert stdout is not None
-                findings, _ = _parse_capture_stdout(stdout)
+                findings, _ = _parse_capture_stdout(stdout, strict=False)
                 checkpoint = Checkpoint(
                     comment_id=None,
                     created_at="",
