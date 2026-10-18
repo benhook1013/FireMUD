@@ -82,12 +82,17 @@ public final class SelectedOwnerWorldInventoryReadGrpcCodec {
     var freezeEvidence =
         WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
             freezeRequest, request.getFreezeAcknowledgement());
-    return new Request(
-        request.getSchemaVersion(),
-        request.getTargetNamespace(),
-        readRequestId,
-        binding,
-        freezeEvidence);
+    Request decoded =
+        new Request(
+            request.getSchemaVersion(),
+            request.getTargetNamespace(),
+            readRequestId,
+            binding,
+            freezeEvidence);
+    if (!toRequest(decoded).equals(request)) {
+      throw invalid("Selected-owner World inventory read request is noncanonical");
+    }
+    return decoded;
   }
 
   public static ReadSelectedOwnerWorldInventoryResponse toResponse(

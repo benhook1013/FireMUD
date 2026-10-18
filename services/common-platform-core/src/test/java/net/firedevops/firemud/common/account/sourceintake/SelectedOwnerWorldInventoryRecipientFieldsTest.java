@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
+import com.google.protobuf.UnknownFieldSet;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -160,6 +161,48 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
                 SelectedOwnerWorldInventoryReadGrpcCodec.fromResponse(
                     fixture.request(), changedDigest))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsUnknownAndNoncanonicalNestedFreezeInputs() {
+    var fixture = fixture(Owner.ENTITY_MANAGEMENT);
+    var requestWire = SelectedOwnerWorldInventoryReadGrpcCodec.toRequest(fixture.request());
+    var unknownFields =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    var unknownFreezeRequest =
+        requestWire.toBuilder()
+            .setFreezeRequest(
+                requestWire.getFreezeRequest().toBuilder().setUnknownFields(unknownFields))
+            .build();
+    var unknownFreezeAcknowledgement =
+        requestWire.toBuilder()
+            .setFreezeAcknowledgement(
+                requestWire.getFreezeAcknowledgement().toBuilder().setUnknownFields(unknownFields))
+            .build();
+    var noncanonicalFreezeRequest =
+        requestWire.toBuilder()
+            .setFreezeRequest(
+                requestWire.getFreezeRequest().toBuilder()
+                    .setCanonicalTenantId("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"))
+            .build();
+    var noncanonicalFreezeAcknowledgement =
+        requestWire.toBuilder()
+            .setFreezeAcknowledgement(
+                requestWire.getFreezeAcknowledgement().toBuilder()
+                    .setPublicationFence("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB"))
+            .build();
+
+    for (var tampered :
+        List.of(
+            unknownFreezeRequest,
+            unknownFreezeAcknowledgement,
+            noncanonicalFreezeRequest,
+            noncanonicalFreezeAcknowledgement)) {
+      assertThatThrownBy(() -> SelectedOwnerWorldInventoryReadGrpcCodec.fromRequest(tampered))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   @Test
