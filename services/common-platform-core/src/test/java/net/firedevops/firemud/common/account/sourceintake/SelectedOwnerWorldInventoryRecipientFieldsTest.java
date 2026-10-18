@@ -8,7 +8,6 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -18,11 +17,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
-import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
-import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent;
@@ -215,7 +210,7 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
             selected);
     var authorization =
         new SelectedOwnerIntakeAuthorizationBinding(
-            sourceContent(sourceScope),
+            SelectedOwnerIntakeSourceTestFixtures.content(sourceScope),
             List.of(
                 source(SourceKind.TENANT, tenant.toString(), "tenant"),
                 source(SourceKind.ACCOUNT, actor.toString(), "account"),
@@ -277,56 +272,6 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
         WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
             freezeEvidence, publicInventory(freezeEvidence, selected, account));
     return new Fixture(authorization, freezeEvidence, request, inventory);
-  }
-
-  private static SelectedOwnerIntakeSourceContent sourceContent(
-      SelectedOwnerIntakeSourceReadScope scope) {
-    var out = new java.io.ByteArrayOutputStream();
-    frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
-    frame(out, scope.canonicalBytes());
-    frame(out, scope.digest());
-    for (String family :
-        List.of(
-            "COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG")) {
-      byte[] snapshot = sourceSnapshot(family, scope.selected());
-      frame(out, family);
-      frame(out, snapshot);
-      frame(out, DraftAuthorizationFenceBinding.digest(snapshot));
-    }
-    byte[] bytes = out.toByteArray();
-    return SelectedOwnerIntakeSourceContent.fromStored(
-        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
-  }
-
-  private static byte[] sourceSnapshot(String family, DraftCommitBinding selected) {
-    if ("GAMEPLAY_RULE".equals(family)) {
-      return new GameplayRuleSelectedSource(
-              GameplayRuleManifest.canonical(
-                  Map.of(
-                      "schema",
-                      "game-design-gameplay-rule-source-snapshot/v1",
-                      "bindingJson",
-                      selected.canonicalJson(),
-                      "bindingDigest",
-                      selected.digest(),
-                      "sourceEpoch",
-                      "0",
-                      "inheritedCommitId",
-                      "",
-                      "genesisReceiptId",
-                      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                      "manifestJson",
-                      GameplayRuleManifest.explicitEmpty().canonicalJson(),
-                      "entries",
-                      List.of())))
-          .canonicalBytes();
-    }
-    if ("TEMPLATE_CONFIG".equals(family)) {
-      return new TemplateConfigSourceSnapshot(
-              selected, "0", null, id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), List.of())
-          .canonicalBytes();
-    }
-    return SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
   }
 
   private static PublicEvidence publicInventory(
@@ -464,14 +409,6 @@ class SelectedOwnerWorldInventoryRecipientFieldsTest {
   private static SourceEvidence source(SourceKind kind, String scope, String marker) {
     return new SourceEvidence(
         kind, scope, null, "1", null, null, marker.getBytes(StandardCharsets.UTF_8));
-  }
-
-  private static void frame(java.io.ByteArrayOutputStream out, String value) {
-    DraftAuthorizationFenceBinding.frame(out, value);
-  }
-
-  private static void frame(java.io.ByteArrayOutputStream out, byte[] value) {
-    DraftAuthorizationFenceBinding.frame(out, value);
   }
 
   private static UUID id(String value) {
