@@ -1113,6 +1113,56 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "must be text"):
             sqlite_review_records._coverage_limits([123], retained=[123])
 
+    def test_publication_events_are_append_only_state_bound_and_consumed_once(self):
+        self.bootstrap()
+        run_id, _, _ = corrected_native_fixture(self.records)
+        before = self.records.attempt(run_id)["metadata"]
+        state = self.records.checkpoint_publication_state(run_id)
+        self.assertEqual(state["historical_outcome"], "unknown")
+        observation = {"comments": 0, "sha256": "a" * 64}
+        decision = {"type": "recovery_decision", "decision_id": "recovery-once",
+                    "expected_state_sha256": state["state_sha256"], "actor_id": 456, "actor_login": "owner",
+                    "reason": "Explicitly accept residual risk", "acknowledge_uncertain_delivery": True,
+                    "absence": observation, "matched_comment_id": None}
+        saved = self.records.append_checkpoint_publication_event(
+            run_id, decision, expected_state_sha256=state["state_sha256"])
+        self.assertNotEqual(state["state_sha256"], saved["state_sha256"])
+        self.assertEqual(state["intent_sha256"], saved["intent_sha256"])
+        with self.assertRaisesRegex(ReviewRecordsError, "stale"):
+            self.records.append_checkpoint_publication_event(
+                run_id, {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
+                expected_state_sha256=state["state_sha256"])
+        state = self.records.append_checkpoint_publication_event(
+            run_id, {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
+            expected_state_sha256=saved["state_sha256"])
+        with self.assertRaisesRegex(ReviewRecordsError, "already consumed"):
+            self.records.append_checkpoint_publication_event(
+                run_id, {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
+                expected_state_sha256=state["state_sha256"])
+        self.assertEqual(self.records.checkpoint_publication_state(run_id), state)
+        after = self.records.attempt(run_id)["metadata"]
+        after.pop("checkpoint_publication_events")
+        self.assertEqual(after, before)
+
+    def test_publication_event_validation_refuses_bad_fields_credentials_and_missing_decision(self):
+        self.bootstrap()
+        run_id, _, _ = corrected_native_fixture(self.records)
+        state = self.records.checkpoint_publication_state(run_id)
+        observation = {"comments": 0, "sha256": "a" * 64}
+        bad = [{"type": "post_started", "decision_id": "missing", "absence": observation},
+               {"type": "recovery_decision", "decision_id": "new", "expected_state_sha256": state["state_sha256"],
+                "actor_id": 456, "actor_login": "owner", "reason": "ghp_" + "a" * 40,
+                "acknowledge_uncertain_delivery": True, "absence": observation, "matched_comment_id": None},
+               {"type": "post_outcome", "decision_id": None, "outcome": "uncertain", "http_status": None,
+                "comment_id": None, "raw_stderr": "must never be stored"},
+               {"type": "post_outcome", "decision_id": None, "outcome": "uncertain", "http_status": None,
+                "comment_id": None}]
+        for event in bad:
+            with self.subTest(event=event), self.assertRaises(ReviewRecordsError):
+                self.records.append_checkpoint_publication_event(
+                    run_id, event, expected_state_sha256=state["state_sha256"])
+        self.assertEqual(self.records.checkpoint_publication_state(run_id), state)
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)

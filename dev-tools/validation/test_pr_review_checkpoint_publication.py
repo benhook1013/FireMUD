@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import copy
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 import test_pr_review_sqlite_hosted_capture as hosted_fixtures
 from pr_review import checkpoint_publication as publication
-from pr_review import cli, evidence, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
+from pr_review import cli, evidence, github, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
 from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
@@ -212,6 +213,256 @@ class CheckpointPublicationTests(unittest.TestCase):
             results = list(pool.map(lambda _: self.publish(), range(2)))
         self.assertEqual(sorted(item["status"] for item in results), ["published", "reused"])
         self.assertEqual(self.github.posts, 1)
+
+    def prepare_recovery(self):
+        self.cli_run()
+        intent, _, _ = publication._publication_context(
+            self.store, repo=REPO, source_pr=PR, run_id=RUN, adapter=self.github)
+        self.store.reserve_checkpoint_publication(RUN, json.dumps(intent))
+        return {"repo": REPO, "source_pr": PR, "run_id": RUN,
+                "expected_state_sha256": self.store.checkpoint_publication_state(RUN)["state_sha256"],
+                "decision_id": "operator-recovery-1", "reason": "Accept delayed-delivery risk after inspection",
+                "acknowledge_uncertain_delivery": True, "adapter": self.github}
+
+    def test_recovery_posts_once_preserving_all_source_and_provider_evidence(self):
+        options = self.prepare_recovery()
+        history = self.store.history(PR)
+        archives = self.store.attempt_artifacts(RUN)
+        metadata = self.store.attempt(RUN)["metadata"]
+        controller = sqlite_store.SqliteStateStore(self.path).load()
+        result = publication.recover_checkpoint(self.store, **options)
+        self.assertEqual((result["status"], result["comment_id"], self.github.posts), ("published", 789, 1))
+        state = self.store.checkpoint_publication_state(RUN)
+        self.assertEqual([e["type"] for e in state["events"]],
+                         ["recovery_decision", "post_started", "post_outcome"])
+        self.assertEqual(state["historical_outcome"], "unknown")
+        self.assertEqual(state["events"][0]["actor_id"], 456)
+        self.assertEqual(state["events"][0]["absence"]["comments"], 0)
+        self.assertEqual(state["last_known_outcome"]["comment_id"], 789)
+        self.assertEqual(self.store.history(PR), history)
+        self.assertEqual(self.store.attempt_artifacts(RUN), archives)
+        self.assertEqual(sqlite_store.SqliteStateStore(self.path).load(), controller)
+        after = self.store.attempt(RUN)["metadata"]
+        after.pop("checkpoint_publication_events")
+        self.assertEqual(after, metadata)
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        self.assertEqual(self.github.posts, 1)
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
+            publication.recover_checkpoint(self.store, **{**options, "reason": "Changed justification"})
+        self.assertEqual(self.github.posts, 1)
+
+    def test_recovery_requires_acknowledgement_exact_state_and_intent(self):
+        options = self.prepare_recovery()
+        for changes, message in (({"acknowledge_uncertain_delivery": False}, "acknowledgement"),
+                                 ({"expected_state_sha256": "0" * 64}, "stale"),
+                                 ({"source_pr": PR + 1}, "exactly one")):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ReviewRecordsError, message):
+                publication.recover_checkpoint(self.store, **{**options, **changes})
+        with patch.object(self.github, "fetch_authenticated_user", return_value={"id": 999, "login": "other"}), self.assertRaisesRegex(ReviewRecordsError, "original publication intent"):
+            publication.recover_checkpoint(self.store, **options)
+        with patch.object(self.github, "_fetch_api_object", return_value={"id": 999, "full_name": REPO}), self.assertRaisesRegex(ReviewRecordsError, "original publication intent"):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(self.github.posts, 0)
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"], [])
+
+    def test_recovery_missing_intent_and_unfinalized_run_refuse(self):
+        self.cli_run(finalize=False)
+        options = {"repo": REPO, "source_pr": PR, "run_id": RUN, "expected_state_sha256": "0" * 64,
+                   "decision_id": "decision", "reason": "Explicit choice", "acknowledge_uncertain_delivery": True,
+                   "adapter": self.github}
+        with self.assertRaisesRegex(ReviewRecordsError, "finalized"):
+            publication.recover_checkpoint(self.store, **options)
+        self.store.finalize_run(RUN)
+        with self.assertRaisesRegex(ReviewRecordsError, "original publication intent"):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(self.github.posts, 0)
+
+    def test_recovery_reuses_comment_appearing_at_second_read(self):
+        options = self.prepare_recovery()
+        body = self.store.checkpoint_publication_state(RUN)["intent"]["body"]
+        comment = self.github.post_issue_comment(REPO, PR, body)
+        self.github.posts = 0
+        self.github.comments = []
+        with patch.object(self.github, "fetch_api_endpoint", side_effect=[[], [comment]]):
+            result = publication.recover_checkpoint(self.store, **options)
+        self.assertEqual((result["status"], self.github.posts), ("reused", 0))
+        self.assertEqual([e["type"] for e in self.store.checkpoint_publication_state(RUN)["events"]],
+                         ["recovery_decision", "reused"])
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+
+    def test_recovery_existing_comment_reuses_without_authorizing_post(self):
+        options = self.prepare_recovery()
+        body = self.store.checkpoint_publication_state(RUN)["intent"]["body"]
+        self.github.post_issue_comment(REPO, PR, body)
+        self.github.posts = 0
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "reused")
+        self.assertEqual(self.github.posts, 0)
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"][0]["matched_comment_id"], 789)
+        self.github.comments = []
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        self.assertEqual(self.github.posts, 0)
+
+    def test_recovery_incomplete_history_refuses_before_or_after_decision(self):
+        options = self.prepare_recovery()
+        with patch.object(self.github, "fetch_api_endpoint", side_effect=RuntimeError("page two unavailable")), self.assertRaisesRegex(RuntimeError, "page two"):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"], [])
+        with patch.object(self.github, "fetch_api_endpoint", side_effect=[[], RuntimeError("page two unavailable")]), self.assertRaises(RuntimeError):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        self.assertEqual(self.github.posts, 0)
+        with self.assertRaisesRegex(ReviewRecordsError, "prior checkpoint POST"):
+            self.publish()
+
+    def test_recovery_conflicting_duplicate_or_malformed_history_refuses(self):
+        options = self.prepare_recovery()
+        body = self.store.checkpoint_publication_state(RUN)["intent"]["body"]
+        comment = self.github.post_issue_comment(REPO, PR, body)
+        self.github.posts = 0
+        variants = [[{**comment, "body": body.replace("3 Found", "4 Found")}],
+                    [comment, {**comment, "id": 790}],
+                    [{**comment, "user": {"id": 999, "login": "other"}}],
+                    [{**comment, "body": body + "\n<!-- extra -->"}],
+                    [{"id": 789}], [comment, comment]]
+        for comments in variants:
+            with self.subTest(comments=comments), patch.object(self.github, "fetch_api_endpoint", return_value=comments), self.assertRaises(ReviewRecordsError):
+                publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"], [])
+        self.assertEqual(self.github.posts, 0)
+
+    def test_recovery_concurrent_same_decision_posts_once(self):
+        options = self.prepare_recovery()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: publication.recover_checkpoint(self.store, **options), range(2)))
+        self.assertEqual(sorted(r["status"] for r in results), ["decision_replayed", "published"])
+        self.assertEqual(self.github.posts, 1)
+
+    def test_recovery_crash_after_consumption_never_replays_post(self):
+        options = self.prepare_recovery()
+        with patch.object(self.github, "post_issue_comment", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            publication.recover_checkpoint(self.store, **options)
+        state = self.store.checkpoint_publication_state(RUN)
+        self.assertEqual(state["events"][-1]["type"], "post_started")
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        with self.assertRaisesRegex(ReviewRecordsError, "prior checkpoint POST"):
+            self.publish()
+        self.assertEqual(self.github.posts, 0)
+
+    def test_recovery_crash_before_consumption_requires_new_decision(self):
+        options = self.prepare_recovery()
+        append = self.store.append_checkpoint_publication_event
+
+        def interrupted(run_id, event, **kwargs):
+            if event["type"] == "post_started":
+                raise KeyboardInterrupt
+            return append(run_id, event, **kwargs)
+
+        with patch.object(self.store, "append_checkpoint_publication_event", side_effect=interrupted), self.assertRaises(KeyboardInterrupt):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        self.assertEqual(self.github.posts, 0)
+        options.update(decision_id="operator-recovery-2",
+                       expected_state_sha256=self.store.checkpoint_publication_state(RUN)["state_sha256"])
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "published")
+        self.assertEqual(self.github.posts, 1)
+
+    def test_recovery_uncertain_hidden_delivery_stays_fenced(self):
+        options = self.prepare_recovery()
+        self.github.hide = self.github.uncertain = True
+        with self.assertRaisesRegex(ReviewRecordsError, "uncertain"):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        with self.assertRaisesRegex(ReviewRecordsError, "prior checkpoint POST"):
+            self.publish()
+        self.assertEqual(self.github.posts, 1)
+        self.github.hide = False
+        self.assertEqual(self.publish()["status"], "reused")
+        self.assertEqual(self.github.posts, 1)
+
+    def test_recovery_visible_lost_response_is_recovered_and_audited(self):
+        options = self.prepare_recovery()
+        self.github.uncertain = True
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "published")
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["last_known_outcome"]["type"], "reused")
+        self.assertEqual(self.github.posts, 1)
+
+    def test_typed_post_failure_is_retained_without_raw_exception_or_body(self):
+        options = self.prepare_recovery()
+        with patch.object(self.github, "post_issue_comment", side_effect=github.CommentPostError("http_error", 403)), self.assertRaisesRegex(ReviewRecordsError, "uncertain"):
+            publication.recover_checkpoint(self.store, **options)
+        state = self.store.checkpoint_publication_state(RUN)
+        self.assertEqual(state["last_known_outcome"]["http_status"], 403)
+        self.assertEqual(state["last_known_outcome"]["outcome"], "http_error")
+        self.assertNotIn("body", state["last_known_outcome"])
+        with self.assertRaisesRegex(ReviewRecordsError, "prior checkpoint POST"):
+            self.publish()
+        self.assertEqual(self.github.posts, 0)
+
+    def test_comment_post_adapter_retains_only_static_category_and_numeric_http(self):
+        secret = "ghp_" + "a" * 40
+        errors = [(subprocess.CalledProcessError(1, ["gh", secret], stderr=f"{secret} (HTTP 403)"), "http_error", 403),
+                  (subprocess.CalledProcessError(1, ["gh", secret], stderr=secret), "client_error", None),
+                  (subprocess.TimeoutExpired(["gh", secret], 120, output=secret), "timeout", None),
+                  (FileNotFoundError(secret), "client_unavailable", None)]
+        for error, category, status in errors:
+            with self.subTest(category=category), patch.object(github.subprocess, "run", side_effect=error):
+                with self.assertRaises(github.CommentPostError) as caught:
+                    github.post_issue_comment(REPO, PR, secret)
+                self.assertEqual((caught.exception.category, caught.exception.http_status), (category, status))
+                self.assertNotIn(secret, str(caught.exception))
+                self.assertNotIn(secret, repr(caught.exception.__dict__))
+        for output in ("not json " + secret, "[]"):
+            with patch.object(github.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)):
+                with self.assertRaises(github.CommentPostError) as caught:
+                    github.post_issue_comment(REPO, PR, secret)
+                self.assertEqual(caught.exception.category, "invalid_response")
+                self.assertNotIn(secret, str(caught.exception))
+
+    def test_recovery_reads_all_pages_and_rejects_partial_api_failure(self):
+        options = self.prepare_recovery()
+        body = self.store.checkpoint_publication_state(RUN)["intent"]["body"]
+        comment = self.github.post_issue_comment(REPO, PR, body)
+        self.github.posts = 0
+        unrelated = {**comment, "id": 700, "body": "Earlier unrelated comment"}
+        with (patch.object(self.github, "fetch_api_endpoint", side_effect=github.fetch_api_endpoint),
+              patch.object(github.subprocess, "run", return_value=subprocess.CompletedProcess(
+                  [], 0, json.dumps([[unrelated], [comment]]))) as api):
+            self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "reused")
+        self.assertIn("--paginate", api.call_args.args[0])
+        self.assertIn("--slurp", api.call_args.args[0])
+        state = self.store.checkpoint_publication_state(RUN)
+        options.update(decision_id="operator-2", expected_state_sha256=state["state_sha256"])
+        partial = subprocess.CalledProcessError(1, ["gh"], output=json.dumps([[unrelated]]), stderr="page failure")
+        with (patch.object(self.github, "fetch_api_endpoint", side_effect=github.fetch_api_endpoint),
+              patch.object(github.subprocess, "run", side_effect=partial),
+              self.assertRaisesRegex(RuntimeError, "page failure")):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(self.github.posts, 0)
+        self.assertEqual(self.store.checkpoint_publication_state(RUN), state)
+
+    def test_recovery_conflict_on_final_read_holds_recorded_decision(self):
+        options = self.prepare_recovery()
+        body = self.store.checkpoint_publication_state(RUN)["intent"]["body"]
+        conflict = self.github.post_issue_comment(REPO, PR, body.replace("3 Found", "4 Found"))
+        self.github.posts = 0
+        with (patch.object(self.github, "fetch_api_endpoint", side_effect=[[], [conflict]]),
+              self.assertRaisesRegex(ReviewRecordsError, "conflicts")):
+            publication.recover_checkpoint(self.store, **options)
+        self.assertEqual(self.github.posts, 0)
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"][-1]["type"], "recovery_decision")
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+
+    def test_recovery_cannot_replace_original_intent_after_source_correction(self):
+        from test_pr_review_sqlite_review_records import corrected_native_fixture
+
+        run_id, _, _ = corrected_native_fixture(self.store)
+        before = self.store.checkpoint_publication_state(run_id)
+        with self.assertRaises((ReviewRecordsError, evidence.CaptureInvalid)):
+            publication.recover_checkpoint(self.store, repo=REPO, source_pr=PR, run_id=run_id,
+                expected_state_sha256=before["state_sha256"], decision_id="operator-1", reason="Accepted risk",
+                acknowledge_uncertain_delivery=True, adapter=self.github)
+        self.assertEqual(self.store.checkpoint_publication_state(run_id), before)
+        self.assertEqual(self.github.posts, 0)
 
     def test_duration_boundaries(self):
         self.cli_run(duration=3607)
