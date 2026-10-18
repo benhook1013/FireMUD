@@ -12,6 +12,7 @@ import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -44,6 +45,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -292,6 +297,73 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
                       .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
     verifyNoInteractions(published, transactions);
+  }
+
+  @ParameterizedTest
+  @EnumSource(SnapshotFailure.class)
+  void snapshotFailuresMapOnlyRecoverableDataAccessFailuresToUnavailable(
+      SnapshotFailure failureKind) {
+    var wire = wireRequest(NAMESPACE);
+    var selector = mock(WorldPublishedStartLocationEvidence.class);
+    when(selector.request()).thenReturn(selectorRequest());
+    var pair = mock(CompleteLaunchBindingEvidence.class);
+    var descriptor = mock(AuthoredWorldLaunchDescriptorEvidence.class);
+    var release = mock(AuthoredWorldReleaseAttestationEvidence.class);
+    when(gameDesign.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(pair);
+    when(pair.descriptor()).thenReturn(descriptor);
+    when(pair.releaseAttestation()).thenReturn(release);
+    when(descriptor.targetNamespace()).thenReturn(NAMESPACE);
+    when(release.targetNamespace()).thenReturn(NAMESPACE);
+    when(release.evidenceDigest()).thenReturn(wire.getExpectedReleaseAttestationDigest());
+    when(release.schemaVersion())
+        .thenReturn(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
+    when(release.worldStartLocationEvidence()).thenReturn(selector);
+    when(published.readInOwnedSnapshot(any())).thenThrow(snapshotFailure(failureKind));
+
+    try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
+      assertThatThrownBy(() -> owner().read(wire))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                var expectedCode =
+                    switch (failureKind) {
+                      case TRANSIENT, RECOVERABLE -> Status.Code.UNAVAILABLE;
+                      case BAD_SQL, INTEGRITY, UNRELATED_RUNTIME -> Status.Code.INTERNAL;
+                    };
+                assertThat(rejected.code()).isEqualTo(expectedCode);
+                assertThat(rejected.getMessage())
+                    .isEqualTo(
+                        expectedCode == Status.Code.UNAVAILABLE
+                            ? "World published source is temporarily unavailable"
+                            : "World published source read failed")
+                    .doesNotContain("private", "SQL", "integrity");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
+    verify(published).readInOwnedSnapshot(any());
+  }
+
+  private enum SnapshotFailure {
+    TRANSIENT,
+    RECOVERABLE,
+    BAD_SQL,
+    INTEGRITY,
+    UNRELATED_RUNTIME
+  }
+
+  private static RuntimeException snapshotFailure(SnapshotFailure failureKind) {
+    return switch (failureKind) {
+      case TRANSIENT -> new TransientDataAccessResourceException("private transient detail");
+      case RECOVERABLE -> new RecoverableDataAccessException("private recoverable detail");
+      case BAD_SQL ->
+          new BadSqlGrammarException("snapshot", "select private", new SQLException("private SQL"));
+      case INTEGRITY -> new DataIntegrityViolationException("private integrity detail");
+      case UNRELATED_RUNTIME -> new IllegalStateException("private runtime detail");
+    };
   }
 
   @Test

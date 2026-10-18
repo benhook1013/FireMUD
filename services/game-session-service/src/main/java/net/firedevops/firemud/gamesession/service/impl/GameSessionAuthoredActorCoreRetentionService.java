@@ -442,6 +442,7 @@ public final class GameSessionAuthoredActorCoreRetentionService {
         || !candidate
             .canonicalTenantId()
             .equals(request.originalTuple().preAuthorizationTuple().action().scope().tenantId())
+        || !candidate.gameInstanceUuid().equals(historical.launchAssociation().gameInstanceUuid())
         || !candidate.ownerAttemptId().equals(request.expectedOwnerAttemptId())
         || !candidate.ownerMutationId().equals(request.expectedOwnerMutationId())
         || candidate.ownerFence() != request.expectedOwnerFence()

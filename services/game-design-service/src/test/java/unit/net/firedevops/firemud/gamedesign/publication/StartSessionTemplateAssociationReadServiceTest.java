@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionResponse;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence.ReadRequest;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -22,9 +23,13 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -140,20 +145,144 @@ class StartSessionTemplateAssociationReadServiceTest {
     verifyNoInteractions(releases);
   }
 
+  @Test
+  void mapsSpringTransientSnapshotFailureThroughAuthoredCoreCallerToUnavailable() {
+    assertAuthoredCoreStorageFailure(
+        new TransientDataAccessResourceException("database connection interrupted"),
+        Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void mapsSpringResourceFailureThroughAuthoredCoreCallerToUnavailable() {
+    assertAuthoredCoreStorageFailure(
+        new DataAccessResourceFailureException("database connection interrupted"),
+        Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void mapsSpringIntegrityViolationThroughAuthoredCoreCallerToFailedPrecondition() {
+    assertAuthoredCoreStorageFailure(
+        new DataIntegrityViolationException("retained owner evidence conflicts"),
+        Status.Code.FAILED_PRECONDITION);
+  }
+
+  @Test
+  void preservesAssociationCallerConflictForFailedReleaseParticipant() {
+    var service =
+        new StartSessionTemplateAssociationReadService(
+            dsl,
+            unusedTransactionManager(),
+            "world-runtime",
+            (tuple, attempt, fence) -> null,
+            releases);
+    var failed =
+        new PublishedReleaseBundleDto(
+            1L,
+            "tenant",
+            2L,
+            1,
+            "v1",
+            "workflow",
+            "sha256:" + "a".repeat(64),
+            List.of(),
+            List.of(
+                new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
+                    "GAME_LOGIC",
+                    "full",
+                    "commit",
+                    "sha256:" + "b".repeat(64),
+                    1,
+                    "REJECTED",
+                    "failed")),
+            List.of(),
+            "generation-1",
+            false,
+            null,
+            java.time.LocalDateTime.parse("2026-01-01T00:00:00"),
+            TENANT,
+            UUID.fromString("03333333-3333-4333-8333-333333333333"),
+            "release-ref",
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.toPublishedReleaseBundle(failed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("START_SESSION_PUBLISHED_PARTICIPANT_FAILURE");
+  }
+
   private static void withPeer(
       StartSessionTemplateAssociationReadService service,
       StartSessionTemplateAssociationReadEvidence.Request request,
       String workload) {
+    withPeer(workload, () -> service.read(request));
+  }
+
+  private static void withPeer(String workload, Runnable action) {
     var peer =
         new GrpcPeerIdentity(
             "spiffe://firemud/ns/world-runtime/sa/" + workload, "world-runtime", workload);
     Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = context.attach();
     try {
-      service.read(request);
+      action.run();
     } finally {
       context.detach(previous);
     }
+  }
+
+  private void assertAuthoredCoreStorageFailure(
+      RuntimeException storageFailure, Status.Code expectedStatus) {
+    var tuple = postTuple("authored-core-storage-failure");
+    var snapshotOpened = new AtomicBoolean();
+    var associationReader =
+        new StartSessionTemplateAssociationReadService(
+            dsl,
+            immediateTransactionManager(snapshotOpened),
+            "world-runtime",
+            (actual, attempt, fence) -> projection(actual, attempt, fence),
+            releases);
+    var authoredCoreReader =
+        new AuthoredInitialActorCoreReadService(dsl, "world-runtime", associationReader, JSON);
+    org.mockito.Mockito.when(
+            dsl.fetchOne(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(Object[].class)))
+        .thenAnswer(
+            ignored -> {
+              assertThat(snapshotOpened).isTrue();
+              throw storageFailure;
+            });
+
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    "game-session-service",
+                    () -> authoredCoreReader.read(authoredCoreRequest(tuple))))
+        .isInstanceOf(StatusRuntimeException.class)
+        .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+        .isEqualTo(expectedStatus);
+    assertThat(snapshotOpened).isTrue();
+    org.mockito.Mockito.verify(dsl)
+        .fetchOne(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(Object[].class));
+  }
+
+  private static PlatformTransactionManager immediateTransactionManager(
+      AtomicBoolean snapshotOpened) {
+    return new PlatformTransactionManager() {
+      @Override
+      public TransactionStatus getTransaction(TransactionDefinition definition) {
+        snapshotOpened.set(true);
+        return new org.springframework.transaction.support.SimpleTransactionStatus();
+      }
+
+      @Override
+      public void commit(TransactionStatus status) {}
+
+      @Override
+      public void rollback(TransactionStatus status) {}
+    };
   }
 
   private static StartSessionTemplateAssociationReadEvidence.Request request(
@@ -166,6 +295,23 @@ class StartSessionTemplateAssociationReadServiceTest {
         ATTEMPT,
         FENCE,
         new StartSessionTemplateAssociationReadEvidence.InitialConfigured());
+  }
+
+  private static ReadRequest authoredCoreRequest(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    return new ReadRequest(
+        new StartSessionTemplateAssociationReadEvidence.Request(
+            1,
+            "world-runtime",
+            UUID.fromString("01111111-1111-4111-8111-111111111111"),
+            tuple.canonicalBytes(),
+            ATTEMPT,
+            FENCE,
+            new StartSessionTemplateAssociationReadEvidence.ExactReplay(
+                UUID.fromString("03333333-3333-4333-8333-333333333333"),
+                UUID.fromString("04444444-4444-4444-8444-444444444444"),
+                "selected-workflow",
+                "sha256:" + "a".repeat(64))));
   }
 
   private static ReadRedeemedOperationProjectionResponse projection(
