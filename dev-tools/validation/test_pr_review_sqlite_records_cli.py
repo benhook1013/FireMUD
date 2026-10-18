@@ -422,7 +422,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
 
     def test_cli_recover_refuses_symlinked_capture_paths(self):
         _, run_id, capture, _ = self.successful_capture_fixture()
-        for name in ("stdout", "metadata.json", "exit-status", "capture-complete"):
+        for name in ("stdout", "stderr", "metadata.json", "exit-status", "review-duration-seconds", "capture-complete"):
             with self.subTest(name=name):
                 path = capture / name
                 original = path.read_bytes()
