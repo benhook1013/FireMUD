@@ -2119,6 +2119,32 @@ class CliReviewRunnerTests(unittest.TestCase):
         )
         self.assertEqual(len(evidence.parse_partial_capture_events(stream)), 1)
 
+    def test_retained_success_stream_is_not_admitted_as_new_runner_success(self):
+        output = (
+            '{"type":"unknown"}\n'
+            '{"type":"error","errorType":"connection","recoverable":true}\n'
+            '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/a.py"]}\n'
+        )
+        self.assertEqual(evidence.parse_capture_events(output, strict=False)[0], [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / ".git" / "firemud" / "records.sqlite3"
+            database.parent.mkdir()
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, review_output=output, review_returncode=0),
+                records=records,
+            )
+            self.assertEqual(records.attempt(result.run_id)["state"], "failed")
+            self.assertEqual(records.history(result.pull_request)["runs"], [])
+            self.assertEqual(records.attempt_artifacts(result.run_id)["cli_raw_output"], output)
+
     def test_unhashable_event_type_is_terminally_archived_as_raw_failed_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

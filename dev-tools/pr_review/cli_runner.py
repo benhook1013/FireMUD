@@ -1531,7 +1531,7 @@ def run_cli_review(
                 capture_completed = False
                 if stdout_valid_utf8:
                     try:
-                        parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
+                        parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout", strict=True)
                         capture_completed = True
                     except evidence.EvidenceError:
                         try:

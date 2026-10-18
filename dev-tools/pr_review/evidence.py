@@ -556,19 +556,19 @@ def _read_metadata(path: Path) -> dict[str, str]:
     return result
 
 
-def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _parse_capture_stdout(path: Path, *, strict: bool = False) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     stdout = _read_capture_text(path, "stdout")
     try:
-        return parse_capture_events(stdout)
+        return parse_capture_events(stdout, strict=strict)
     except EvidenceError as exc:
         raise CaptureInvalid(str(exc)) from exc
 
 
-def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Parse and validate the newline-delimited events from a successful CLI capture."""
+def parse_capture_events(value: str, *, strict: bool = True) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Validate current success strictly, or retain the original archived interpretation."""
 
     try:
-        findings, completes = _parse_strict_capture_events(value, successful=True)
+        findings, completes = _parse_capture_event_stream(value, successful=True, strict_success=strict)
     except EvidenceError as exc:
         # Retained repair diagnostics use the historical successful-loader
         # prefix; failed/partial callers keep their existing strict errors.
@@ -596,7 +596,7 @@ def parse_partial_capture_events(value: str) -> list[dict[str, Any]]:
     bounded raw output as diagnostic evidence.
     """
 
-    findings, completes = _parse_strict_capture_events(value)
+    findings, completes = _parse_capture_event_stream(value)
     if completes:
         raise EvidenceError("partial capture stdout contains a completion event")
     return findings
@@ -610,7 +610,7 @@ def parse_failed_capture_events(value: str) -> list[dict[str, Any]]:
     which were present before the CLI process failed.
     """
 
-    findings, completes = _parse_strict_capture_events(value)
+    findings, completes = _parse_capture_event_stream(value)
     if completes and (
         len(completes) != 1
         or completes[0].get("status") != "review_completed"
@@ -622,23 +622,26 @@ def parse_failed_capture_events(value: str) -> list[dict[str, Any]]:
     return findings
 
 
-def _parse_strict_capture_events(
-    value: str, *, successful: bool = False
+def _parse_capture_event_stream(
+    value: str, *, successful: bool = False, strict_success: bool = True
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Validate shared event grammar, preserving each outcome's finding contract.
+    """Parse shared events with explicit current versus retained success policy.
 
-    Successful captures prohibit every error event, even after completion.
+    Strict successful captures prohibit every error event, even after completion.
+    Retained successes use the original JSON decoding and ignore other events;
+    completion/count checks remain in the successful wrapper.
     Failed/partial evidence may retain one terminal error but still requires
     finding instructions rather than legacy successful display-only payloads.
     """
 
+    retained_success = successful and not strict_success
     if not isinstance(value, str):
         raise EvidenceError("capture stdout is not text")
     try:
         encoded_size = len(value.encode("utf-8"))
     except UnicodeEncodeError as exc:
         raise EvidenceError("capture stdout is not valid UTF-8 text") from exc
-    if encoded_size > 8 * 1024 * 1024:
+    if not retained_success and encoded_size > 8 * 1024 * 1024:
         raise EvidenceError("capture stdout exceeds its evidence size limit")
     # Successful archives historically permit a complete final JSON object at
     # EOF. Partial/failed evidence still needs the durable final line boundary.
@@ -670,14 +673,18 @@ def _parse_strict_capture_events(
         if not line.strip():
             continue
         event_count += 1
-        if event_count > 10_000:
+        if not retained_success and event_count > 10_000:
             raise EvidenceError("capture stdout has too many JSONL events")
         try:
-            event = json.loads(
-                line,
-                object_pairs_hook=reject_duplicate_keys,
-                parse_constant=reject_json_constant,
-                parse_float=parse_finite_float,
+            event = (
+                json.loads(line)
+                if retained_success
+                else json.loads(
+                    line,
+                    object_pairs_hook=reject_duplicate_keys,
+                    parse_constant=reject_json_constant,
+                    parse_float=parse_finite_float,
+                )
             )
         except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
             raise EvidenceError(f"capture stdout has invalid JSON at line {number}") from exc
@@ -687,11 +694,11 @@ def _parse_strict_capture_events(
         if terminal_error_seen:
             raise EvidenceError("capture stdout has events after its terminal error")
         event_type = event.get("type")
-        if not isinstance(event_type, str):
+        if not retained_success and not isinstance(event_type, str):
             raise EvidenceError(f"capture stdout has an invalid event type at line {number}")
         if event_type == "finding":
             instructions = event.get("codegenInstructions")
-            if instructions is not None and not isinstance(instructions, (str, list)):
+            if not retained_success and instructions is not None and not isinstance(instructions, (str, list)):
                 raise EvidenceError(f"capture stdout has invalid finding instructions at line {number}")
             if not successful and (not isinstance(instructions, str) or not instructions.strip()):
                 raise EvidenceError(f"capture stdout has a finding without instruction text at line {number}")
@@ -707,13 +714,17 @@ def _parse_strict_capture_events(
 
                 if not _cli_detail(instructions).strip():
                     raise EvidenceError(f"capture stdout has a finding without issue content at line {number}")
-            if completes:
+            if completes and not retained_success:
                 raise EvidenceError("capture stdout has findings after its completion event")
             findings.append(event)
         elif event_type == "complete":
-            if completes:
+            if completes and not retained_success:
                 raise EvidenceError("capture stdout has multiple completion events")
             completes.append(event)
+        elif retained_success:
+            # Original successful readers ignored every non-finding/completion
+            # event; retained archives keep that interpretation without writes.
+            continue
         elif event_type in {"start", "reviewing", "review_context", "heartbeat"}:
             if completes:
                 raise EvidenceError("capture stdout has progress events after its completion event")
@@ -748,7 +759,7 @@ def _parse_strict_capture_events(
             terminal_error_seen = True
         else:
             raise EvidenceError(f"capture stdout has an unsupported event at line {number}")
-        if len(findings) > MAX_CAPTURE_FINDINGS:
+        if not retained_success and len(findings) > MAX_CAPTURE_FINDINGS:
             raise EvidenceError("capture stdout has too many findings")
     return findings, completes
 
@@ -997,7 +1008,7 @@ def _cli_capture_from_sql(
     if attempt.get("duration_seconds") != metadata_value["duration_seconds"]:
         raise CaptureInvalid("linked SQLite CLI duration metadata conflicts with its attempt")
     try:
-        findings, complete = parse_capture_events(events_text)
+        findings, complete = parse_capture_events(events_text, strict=False)
     except EvidenceError as exc:
         raise CaptureInvalid(str(exc)) from exc
     counts = run.get("counts")

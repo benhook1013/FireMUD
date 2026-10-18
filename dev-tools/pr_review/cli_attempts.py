@@ -1064,7 +1064,7 @@ def _read_capture_json(path: Path, limit: int, description: str) -> dict[str, An
 
 def _parse_successful_stdout(stdout: str) -> list[dict[str, Any]]:
     try:
-        findings, _ = evidence.parse_capture_events(stdout)
+        findings, _ = evidence.parse_capture_events(stdout, strict=True)
     except evidence.EvidenceError as error:
         message = str(error)
         invalid_json = re.fullmatch(r"(?:linked )?capture stdout has invalid JSON at line ([0-9]+)", message)

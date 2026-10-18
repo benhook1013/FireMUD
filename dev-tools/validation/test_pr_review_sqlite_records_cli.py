@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import cli, cli_attempts, sqlite_review_records
+from pr_review import cli, cli_attempts, evidence, sqlite_review_records
 from pr_review.controller import ReviewController
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
@@ -378,6 +378,21 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertTrue(payload["result"]["idempotent_replay"])
         self.assertEqual(self.database_snapshot(), before)
         self.assertEqual(len(records.history(2885)["runs"]), 1)
+
+    def test_cli_recover_rejects_a_transcript_readable_under_retained_success_rules(self):
+        records, run_id, capture, _ = self.successful_capture_fixture()
+        stdout = (
+            '{"type":"unknown"}\n'
+            '{"type":"error","errorType":"connection","recoverable":true}\n'
+            '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/a.py"]}\n'
+        )
+        self.assertEqual(evidence.parse_capture_events(stdout, strict=False)[0], [])
+        (capture / "stdout").write_text(stdout, encoding="utf-8")
+        before = self.database_snapshot()
+        code, payload = self.recover_capture(run_id)
+        self.assertEqual(code, 2, payload)
+        self.assertEqual(self.database_snapshot(), before)
+        self.assertEqual(records.attempt(run_id)["state"], "started")
 
     def test_cli_recover_zero_findings_replays_without_another_run(self):
         records, run_id, capture, _ = self.successful_capture_fixture()

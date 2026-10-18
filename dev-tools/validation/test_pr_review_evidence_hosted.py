@@ -643,7 +643,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             stdout_path = Path(directory) / "stdout"
             stdout_path.write_text(stdout, encoding="utf-8")
 
-            self.assertEqual(evidence._parse_capture_stdout(stdout_path), parsed)
+            self.assertEqual(evidence._parse_capture_stdout(stdout_path, strict=True), parsed)
             self.assertEqual(cli_attempts._parse_successful_stdout(stdout), parsed[0])
 
     def test_cli_capture_stdout_parsers_reject_the_same_invalid_events(self):
@@ -713,7 +713,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(evidence.EvidenceError, evidence_error):
                     evidence.parse_capture_events(stdout)
                 with self.assertRaisesRegex(evidence.CaptureInvalid, evidence_error):
-                    evidence._parse_capture_stdout(stdout_path)
+                    evidence._parse_capture_stdout(stdout_path, strict=True)
                 with self.assertRaisesRegex(cli_attempts._UnrecordableCapture, recovery_error):
                     cli_attempts._parse_successful_stdout(stdout)
 
@@ -751,7 +751,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 with self.assertRaises(evidence.EvidenceError):
                     evidence.parse_capture_events(stdout)
                 with self.assertRaises(evidence.CaptureInvalid):
-                    evidence._parse_capture_stdout(stdout_path)
+                    evidence._parse_capture_stdout(stdout_path, strict=True)
                 with self.assertRaises(cli_attempts._UnrecordableCapture):
                     cli_attempts._parse_successful_stdout(stdout)
 
@@ -765,6 +765,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
             complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
             with self.subTest(finding=finding):
                 self.assertEqual(evidence.parse_capture_events(stdout + complete)[0], [finding])
+                self.assertEqual(evidence.parse_capture_events(complete + stdout, strict=False)[0], [finding])
                 with self.assertRaises(evidence.EvidenceError):
                     evidence.parse_partial_capture_events(stdout)
                 with self.assertRaises(evidence.EvidenceError):
@@ -775,6 +776,9 @@ class GithubAndEvidenceTests(unittest.TestCase):
         for instructions in ({"text": "hidden finding"}, 17, True, 1.5):
             finding = json.dumps({"type": "finding", "codegenInstructions": instructions}) + "\n"
             with self.subTest(instructions=instructions):
+                self.assertEqual(
+                    evidence.parse_capture_events(finding + complete, strict=False)[0], [json.loads(finding)]
+                )
                 with self.assertRaisesRegex(evidence.EvidenceError, "invalid finding instructions"):
                     evidence.parse_capture_events(finding + complete)
                 with self.assertRaises(evidence.EvidenceError):
@@ -886,6 +890,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         decide: bool = True,
         instructions: tuple[str, ...] = ("The complete SQL finding remains available.",),
         legacy_projection: bool = False,
+        event_text: str | None = None,
     ) -> SqliteReviewRecords:
         database = common / "controller.sqlite3"
         SqliteStateStore(database).update(lambda state: state)
@@ -935,6 +940,8 @@ class GithubAndEvidenceTests(unittest.TestCase):
             )
             + "\n"
         )
+        if event_text is not None:
+            events = event_text
         result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
         records.start_attempt(
             attempt_id=run_id,
@@ -1049,6 +1056,44 @@ class GithubAndEvidenceTests(unittest.TestCase):
             hosted_review_id=None,
             duration_seconds=duration,
         )
+
+    def test_retained_success_grammar_is_preserved_for_native_and_legacy_archives(self):
+        complete = '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/a.py"]}\n'
+        streams = (
+            '{"type":"unknown"}\n{"type":"error","errorType":"connection","recoverable":true}\n' + complete,
+            '{"type":"error","errorType":"connection","recoverable":true}\n' + complete,
+            complete + '{"type":"error"}\n',
+            '{"type":"unknown"}\n' + complete,
+            '{"type":[]}\n' + complete,
+            '{"type":"review_context"}\n' + complete,
+            '{"type":"heartbeat"}\n' + complete,
+            complete + '{"type":"reviewing","message":"Still working"}\n',
+            '{"type":"heartbeat","status":"working","status":"done"}\n' + complete,
+            complete.replace('"findings":0', '"findings":1,"findings":0'),
+        )
+        checkpoint = self._native_cli_checkpoint(found=0, accepted=0, duration=None)
+        for stdout in streams:
+            with self.subTest(stdout=stdout), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(common, instructions=(), event_text=stdout)
+                before = records.history(PR)
+                artifacts = records.attempt_artifacts("run.Native")
+                native = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+                self.assertEqual(native.findings, [])
+                self.assertEqual(records.history(PR), before)
+                self.assertEqual(records.attempt_artifacts("run.Native"), artifacts)
+
+                self._write_native_cli_raw_capture(common)
+                path = common / "coderabbit-review-logs" / "run.Native" / "stdout"
+                path.write_text(stdout, encoding="utf-8")
+                legacy = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=None)
+                self.assertEqual(legacy.findings, [])
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_capture_events(stdout, strict=True)
+                with self.assertRaises(evidence.CaptureInvalid):
+                    evidence._parse_capture_stdout(path, strict=True)
+                with self.assertRaises(cli_attempts._UnrecordableCapture):
+                    cli_attempts._parse_successful_stdout(stdout)
 
     def test_native_cli_checkpoint_loads_from_sql_after_raw_capture_removal(self):
         with tempfile.TemporaryDirectory() as directory:
