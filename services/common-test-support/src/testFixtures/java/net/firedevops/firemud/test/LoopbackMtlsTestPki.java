@@ -90,6 +90,10 @@ public final class LoopbackMtlsTestPki {
   public record Identity(PrivateKey privateKey, X509Certificate certificate) {}
 
   public record Pki(X509Certificate caCertificate, Map<String, Identity> identities) {
+    public Pki {
+      identities = Map.copyOf(identities);
+    }
+
     public Identity identity(String alias) {
       Identity identity = identities.get(alias);
       if (identity == null) {
