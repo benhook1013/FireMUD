@@ -437,6 +437,76 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void corruptSelectedCommitAndRevisionAssociationFieldsFailReceiptReadback() {
+    var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
+    EntityEmptySelectedSourceIntakeReceipt receipt =
+        repository.retainFresh(fixture.inputs(), requestDigest(fixture));
+    var fields =
+        List.of(
+            new AssociationField(
+                "selected_commit_id", UUID.randomUUID(), receipt.selectedCommitId()),
+            new AssociationField(
+                "source_revision_id", UUID.randomUUID(), receipt.sourceRevisionId()),
+            new AssociationField(
+                "source_revision_order",
+                receipt.sourceRevisionOrder().equals("0") ? "1" : "0",
+                receipt.sourceRevisionOrder()));
+    byte[] canonicalReceiptBytes = receipt.canonicalBytes();
+
+    for (AssociationField field : fields) {
+      updateAssociationField(receipt, field.column(), field.corruptedValue());
+      try {
+        assertThatThrownBy(
+                () -> repository.read(receipt.targetNamespace(), receipt.intakeRequestId()))
+            .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException.class)
+            .hasMessage("Entity association differs from its immutable receipt");
+      } finally {
+        updateAssociationField(receipt, field.column(), field.receiptValue());
+      }
+
+      assertThat(rowCount("SELECT COUNT(*) FROM entity_empty_selected_source_association"))
+          .isEqualTo(1L);
+      var storedReceipt =
+          dsl.fetchOne(
+              "SELECT receipt_bytes FROM entity_empty_selected_source_receipt "
+                  + "WHERE target_namespace = ? AND intake_request_id = ?",
+              receipt.targetNamespace(),
+              receipt.intakeRequestId());
+      assertThat(storedReceipt).isNotNull();
+      assertThat(storedReceipt.get(0, byte[].class)).containsExactly(canonicalReceiptBytes);
+      assertThat(
+              repository
+                  .read(receipt.targetNamespace(), receipt.intakeRequestId())
+                  .canonicalBytes())
+          .containsExactly(canonicalReceiptBytes);
+    }
+  }
+
+  private void updateAssociationField(
+      EntityEmptySelectedSourceIntakeReceipt receipt, String column, Object value) {
+    dsl.execute(
+        "ALTER TABLE entity_empty_selected_source_association "
+            + "DISABLE TRIGGER trg_entity_empty_source_association_immutable");
+    try {
+      assertThat(
+              dsl.execute(
+                  "UPDATE entity_empty_selected_source_association SET "
+                      + column
+                      + " = ? WHERE target_namespace = ? AND intake_request_id = ?",
+                  value,
+                  receipt.targetNamespace(),
+                  receipt.intakeRequestId()))
+          .isEqualTo(1);
+    } finally {
+      dsl.execute(
+          "ALTER TABLE entity_empty_selected_source_association "
+              + "ENABLE TRIGGER trg_entity_empty_source_association_immutable");
+    }
+  }
+
+  private record AssociationField(String column, Object corruptedValue, Object receiptValue) {}
+
+  @Test
   void retainedAuditReferenceWithoutAnItemDeniesFreshGenesis() {
     var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
     dsl.execute(
