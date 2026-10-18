@@ -297,7 +297,19 @@ public final class TemplateReferenceRepository {
             "SELECT t.id, t.tenant_id, t.config::TEXT AS config_json, t.default_version_id, "
                 + "q.canonical_tenant_id, q.canonical_version_id "
                 + "FROM game_templates t LEFT JOIN game_design_template_config_source_qualification q "
-                + "ON q.template_id = t.id WHERE t.tenant_id = ? ORDER BY t.id",
+                + "ON q.template_id = t.id LEFT JOIN LATERAL ("
+                + "SELECT r.operation_kind FROM game_design_template_config_source_revision r "
+                + "JOIN game_design_template_config_source_application a "
+                + "ON a.canonical_tenant_id = r.canonical_tenant_id "
+                + "AND a.canonical_version_id = r.canonical_version_id AND a.commit_id = r.commit_id "
+                + "WHERE r.canonical_tenant_id = q.canonical_tenant_id "
+                + "AND r.canonical_version_id = q.canonical_version_id AND r.template_id = t.id "
+                + "AND q.canonical_tenant_id = ? "
+                + "ORDER BY a.expected_epoch::NUMERIC DESC, r.revision_order DESC LIMIT 1"
+                + ") latest ON TRUE "
+                + "WHERE t.tenant_id = ? AND latest.operation_kind IS DISTINCT FROM 'DELETE' "
+                + "ORDER BY t.id",
+            owner.canonicalTenantId(),
             owner.tenantKey());
     if (rows.isEmpty()) {
       throw new IllegalStateException("TEMPLATE_REFERENCE_INVENTORY_EMPTY");

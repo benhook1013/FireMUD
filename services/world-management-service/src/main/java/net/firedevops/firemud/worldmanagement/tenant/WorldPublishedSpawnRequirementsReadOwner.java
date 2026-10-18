@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGrap
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedSpawnRequirementsRequest;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.RecoverableDataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -130,9 +132,19 @@ final class WorldPublishedSpawnRequirementsReadOwner {
   private CompleteLaunchBindingEvidence readLaunchBinding(Request request) {
     try {
       return gameDesignClient.getComplete(request.launchBindingRequest());
-    } catch (RuntimeException unavailable) {
-      throw rejected(
-          Status.Code.UNAVAILABLE, "Authenticated Game Design release read did not complete");
+    } catch (StatusRuntimeException foreignFailure) {
+      Status.Code code = foreignFailure.getStatus().getCode();
+      Status.Code localCode =
+          switch (code) {
+            case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+                code;
+            default -> Status.Code.FAILED_PRECONDITION;
+          };
+      throw rejected(localCode, "Authenticated Game Design release read could not complete");
+    } catch (IllegalArgumentException | IllegalStateException invalidCarrier) {
+      throw rejected(Status.Code.INTERNAL, "Authenticated Game Design release evidence is invalid");
+    } catch (RuntimeException failure) {
+      throw rejected(Status.Code.INTERNAL, "Authenticated Game Design release read failed");
     }
   }
 
@@ -150,10 +162,10 @@ final class WorldPublishedSpawnRequirementsReadOwner {
       throw rejected(
           Status.Code.FAILED_PRECONDITION,
           "Frozen World source conflicts with the exact publication selection");
-    } catch (TransientDataAccessException unavailable) {
+    } catch (TransientDataAccessException | RecoverableDataAccessException unavailable) {
       throw rejected(Status.Code.UNAVAILABLE, "World published source is temporarily unavailable");
-    } catch (DataAccessException unavailable) {
-      throw rejected(Status.Code.UNAVAILABLE, "World published source is temporarily unavailable");
+    } catch (DataAccessException failure) {
+      throw rejected(Status.Code.INTERNAL, "World published source read failed");
     } catch (RuntimeException failure) {
       throw rejected(Status.Code.INTERNAL, "World published source read failed");
     }

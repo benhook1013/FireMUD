@@ -22,7 +22,6 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
-import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
@@ -34,7 +33,6 @@ import net.firedevops.firemud.gamedesign.repository.StartSessionAuthoredActorCor
 import net.firedevops.firemud.gamedesign.repository.StartSessionLaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.StartSessionLaunchDescriptorRepository.Binding;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
-import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -573,7 +571,9 @@ public final class StartSessionLaunchDescriptorProducer {
     }
     var releaseContent = releaseContent(release);
     var readback =
-        publicationOperations.read(exact.association().publishWorkflowId()).orElseThrow();
+        publicationOperations
+            .read(exact.association().publishWorkflowId())
+            .orElseThrow(() -> conflict("Exact selected publication operation is unavailable"));
     if (readback.terminalEvidenceBytes() == null) {
       throw conflict("Exact published terminal evidence is unavailable");
     }
@@ -995,104 +995,22 @@ public final class StartSessionLaunchDescriptorProducer {
     }
   }
 
-  private net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle toPublishedReleaseBundle(
+  net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle toPublishedReleaseBundle(
       PublishedReleaseBundleDto dto) {
-    var builder =
-        net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
-            .setId(dto.id())
-            .setVersionId(dto.versionId())
-            .setVersionNumber(dto.versionNumber())
-            .setAttestationSchemaVersion(dto.attestationSchemaVersion())
-            .setPublishWorkflowId(dto.publishWorkflowId())
-            .setManifestHash(dto.manifestHash())
-            .addAllRequiredManifestAssetKeys(dto.requiredManifestAssetKeys())
-            .setIsScriptOnly(dto.scriptOnly())
-            .setScriptPatchVersion(Objects.requireNonNullElse(dto.scriptPatchVersion(), ""))
-            .setPublishedAt(dto.publishedAt().toString())
-            .setGenerationConfigRevision(dto.generationConfigRevision())
-            .addAllCommandDefinitions(dto.commandDefinitions())
-            .setPublishedReleaseBundleRef(dto.publishedReleaseBundleRef())
-            .setCanonicalTenantId(dto.canonicalTenantId().toString())
-            .setCanonicalVersionId(dto.canonicalVersionId().toString());
-    for (PublishParticipantDigestDto participant : dto.participantDigests()) {
-      if (!participant.succeeded()) throw conflict("Published release participant did not succeed");
-      var value =
-          net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
-              .setParticipantKey(participant.participantKey())
-              .setScopeValue(participant.scopeValue())
-              .setAppliedCommitId(Objects.requireNonNull(participant.appliedCommitId()))
-              .setContentDigest(Objects.requireNonNull(participant.contentDigest()))
-              .setDigestSchemaVersion(Objects.requireNonNull(participant.digestSchemaVersion()));
-      if (participant.abilitySchemaDigest() != null)
-        value.setAbilitySchemaDigest(participant.abilitySchemaDigest());
-      builder.addParticipantDigests(value);
+    try {
+      return PublishedReleaseEvidenceEncoding.toPublishedReleaseBundle(dto);
+    } catch (PublishedReleaseEvidenceEncoding.FailedParticipantException failure) {
+      throw conflict("Published release participant did not succeed");
     }
-    if (dto.manifestSchemaVersion() != null)
-      builder.setManifestSchemaVersion(dto.manifestSchemaVersion());
-    if (dto.artifactDigests() != null) {
-      for (PublishedArtifactDigest artifact : dto.artifactDigests()) {
-        builder.addArtifactDigests(
-            net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest.newBuilder()
-                .setUsageKey(artifact.usageKey())
-                .setArtifactKind(artifact.artifactKind())
-                .setImmutableObjectKey(artifact.immutableObjectKey())
-                .setContentDigest(artifact.contentDigest())
-                .setContentType(artifact.contentType())
-                .setArtifactSchemaVersion(artifact.artifactSchemaVersion()));
-      }
-    }
-    return builder.build();
   }
 
-  private GameDesignPublicationTerminalEvidence.ReleaseContent releaseContent(
+  GameDesignPublicationTerminalEvidence.ReleaseContent releaseContent(
       PublishedReleaseBundleDto dto) {
-    if (dto.manifestSchemaVersion() == null || dto.artifactDigests() == null) {
+    try {
+      return PublishedReleaseEvidenceEncoding.releaseContent(dto);
+    } catch (PublishedReleaseEvidenceEncoding.IncompleteArtifactProofException missingProof) {
       throw conflict("Immutable release content evidence is incomplete");
     }
-    List<GameDesignPublicationTerminalEvidence.Participant> participants =
-        dto.participantDigests().stream()
-            .map(
-                value ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        value.participantKey(),
-                        value.scopeValue(),
-                        value.baseVersionId(),
-                        value.appliedCommitId(),
-                        value.contentDigest(),
-                        Objects.requireNonNull(value.digestSchemaVersion()),
-                        value.abilitySchemaDigest(),
-                        value.errorCode(),
-                        value.errorMessage()))
-            .toList();
-    List<net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.Artifact>
-        artifacts =
-            dto.artifactDigests().stream()
-                .map(
-                    value ->
-                        new net.firedevops.firemud.common.gamedesign
-                            .AuthoredWorldReleaseAttestationEvidence.Artifact(
-                            value.usageKey(),
-                            value.artifactKind(),
-                            value.immutableObjectKey(),
-                            value.contentDigest(),
-                            value.contentType(),
-                            value.artifactSchemaVersion()))
-                .toList();
-    return new GameDesignPublicationTerminalEvidence.ReleaseContent(
-        dto.canonicalTenantId(),
-        dto.canonicalVersionId(),
-        dto.publishedReleaseBundleRef(),
-        dto.versionNumber(),
-        dto.attestationSchemaVersion(),
-        dto.publishWorkflowId(),
-        dto.manifestHash(),
-        dto.manifestSchemaVersion(),
-        artifacts,
-        dto.requiredManifestAssetKeys(),
-        participants,
-        dto.commandDefinitions(),
-        dto.generationConfigRevision(),
-        dto.worldPublishedStartLocationEvidence());
   }
 
   private GameDesignPublicationTerminalEvidence.ReleaseContent releaseContent(Result exact) {

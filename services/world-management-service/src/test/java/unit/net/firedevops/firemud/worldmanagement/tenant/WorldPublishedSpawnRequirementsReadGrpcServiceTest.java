@@ -46,6 +46,8 @@ class WorldPublishedSpawnRequirementsReadGrpcServiceTest {
     assertThat(observer.error).isEqualTo(Status.Code.INTERNAL);
     assertThat(observer.description).isEqualTo("Published World source read failed");
     assertThat(observer.description).doesNotContain("private exception detail");
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
   }
 
   private static final class Collector

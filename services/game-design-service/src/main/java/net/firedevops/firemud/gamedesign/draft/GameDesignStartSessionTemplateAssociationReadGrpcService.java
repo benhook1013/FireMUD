@@ -66,6 +66,11 @@ public final class GameDesignStartSessionTemplateAssociationReadGrpcService
           Status.fromCode(Status.fromThrowable(failure).getCode())
               .withDescription("Exact StartSession association read denied or unavailable")
               .asRuntimeException());
+    } catch (IllegalArgumentException invalidResult) {
+      observer.onError(
+          Status.INTERNAL
+              .withDescription("Game Design returned an invalid StartSession association")
+              .asRuntimeException());
     } catch (RuntimeException unavailable) {
       observer.onError(
           Status.UNAVAILABLE

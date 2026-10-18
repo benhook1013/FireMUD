@@ -56,6 +56,7 @@ public final class WorldPublishedSpawnRequirementsClient
   /** Reads and validates the complete immutable source evidence for one exact selector. */
   public WorldPublishedSpawnRequirementsEvidence read(
       WorldPublishedSpawnRequirementsEvidence.Request request) {
+    requireNoAmbientSql("World spawn-requirements transport must run outside SQL");
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
@@ -90,6 +91,7 @@ public final class WorldPublishedSpawnRequirementsClient
       buildStub(ManagedChannel channel) {
     String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/" + WORLD_SERVICE;
     return WorldPublishedSpawnRequirementsReadServiceGrpc.newBlockingStub(channel)
+        .withMaxInboundMessageSize(WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");

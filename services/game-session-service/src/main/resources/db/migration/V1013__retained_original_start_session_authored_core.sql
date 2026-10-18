@@ -1,6 +1,6 @@
 -- Retain Game Design's exact public authored-core result against its original launch and
 -- attempt. The row is source evidence only; it does not authorize allocation or runtime use.
-CREATE TABLE game_session_original_start_session_authored_actor_core_retention (
+CREATE TABLE gs_original_start_session_authored_actor_core_retention (
     target_namespace VARCHAR(63) NOT NULL,
     control_plane_request_id VARCHAR(128) NOT NULL,
     canonical_tenant_id UUID NOT NULL,
@@ -70,7 +70,7 @@ CREATE TABLE game_session_original_start_session_authored_actor_core_retention (
 -- V35's original-attempt table is intentionally hidden from jOOQ's DDL simulator. Keep the
 -- durable relational binding in PostgreSQL while excluding only this cross-relation constraint.
 -- [jooq ignore start]
-ALTER TABLE game_session_original_start_session_authored_actor_core_retention
+ALTER TABLE gs_original_start_session_authored_actor_core_retention
     ADD CONSTRAINT fk_gs_original_start_session_actor_core_attempt
         FOREIGN KEY (target_namespace, control_plane_request_id)
         REFERENCES game_session_start_session_operator_attempt
@@ -162,7 +162,7 @@ $$;
 
 CREATE TRIGGER game_session_original_start_session_actor_core_retention_guard
     BEFORE INSERT OR UPDATE OR DELETE
-    ON game_session_original_start_session_authored_actor_core_retention
+    ON gs_original_start_session_authored_actor_core_retention
     FOR EACH ROW EXECUTE FUNCTION guard_gs_original_start_session_actor_core_retention();
 
 CREATE FUNCTION reject_gs_original_start_session_actor_core_retention_truncate()
@@ -175,7 +175,7 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER game_session_original_start_session_actor_core_retention_no_truncate
-    BEFORE TRUNCATE ON game_session_original_start_session_authored_actor_core_retention
+CREATE TRIGGER gs_original_start_session_actor_core_retention_no_truncate
+    BEFORE TRUNCATE ON gs_original_start_session_authored_actor_core_retention
     FOR EACH STATEMENT EXECUTE FUNCTION reject_gs_original_start_session_actor_core_retention_truncate();
 -- [jooq ignore stop]

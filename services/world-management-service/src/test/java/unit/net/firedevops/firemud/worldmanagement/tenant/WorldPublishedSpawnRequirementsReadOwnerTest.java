@@ -9,7 +9,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,6 +43,12 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -150,6 +159,90 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     verifyNoInteractions(published, transactions);
   }
 
+  @ParameterizedTest
+  @EnumSource(Status.Code.class)
+  void gameDesignStatusCodesAreMappedAndSanitizedBeforeWorldRead(Status.Code foreignCode) {
+    var wire = wireRequest(NAMESPACE);
+    Metadata foreignTrailers = new Metadata();
+    foreignTrailers.put(
+        Metadata.Key.of("x-private-detail", Metadata.ASCII_STRING_MARSHALLER), "secret");
+    StatusRuntimeException foreignFailure =
+        Status.fromCode(foreignCode)
+            .withDescription("foreign private description")
+            .withCause(new IllegalStateException("private cause"))
+            .asRuntimeException(foreignTrailers);
+    when(gameDesign.getComplete(any(GetLaunchDescriptorRequest.class))).thenThrow(foreignFailure);
+    var owner = owner();
+
+    try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
+      assertThatThrownBy(() -> owner.read(wire))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                Status.Code expected =
+                    switch (foreignCode) {
+                      case UNAVAILABLE,
+                          DEADLINE_EXCEEDED,
+                          CANCELLED,
+                          RESOURCE_EXHAUSTED,
+                          INTERNAL,
+                          UNKNOWN ->
+                          foreignCode;
+                      default -> Status.Code.FAILED_PRECONDITION;
+                    };
+                assertThat(rejected.code()).isEqualTo(expected);
+                assertThat(rejected.getMessage())
+                    .isEqualTo("Authenticated Game Design release read could not complete")
+                    .doesNotContain("foreign", "private", "secret");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
+    verifyNoInteractions(published, transactions);
+  }
+
+  @ParameterizedTest
+  @EnumSource(InvalidCarrierFailure.class)
+  void invalidOrUnexpectedGameDesignRuntimeFailureIsSanitizedInternal(
+      InvalidCarrierFailure failureKind) {
+    RuntimeException foreignFailure =
+        switch (failureKind) {
+          case ILLEGAL_ARGUMENT -> new IllegalArgumentException("private carrier detail");
+          case ILLEGAL_STATE -> new IllegalStateException("private carrier detail");
+          case UNEXPECTED -> new UnsupportedOperationException("private runtime detail");
+        };
+    when(gameDesign.getComplete(any(GetLaunchDescriptorRequest.class))).thenThrow(foreignFailure);
+
+    try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
+      assertThatThrownBy(() -> owner().read(wireRequest(NAMESPACE)))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                assertThat(rejected.code()).isEqualTo(Status.Code.INTERNAL);
+                assertThat(rejected.getMessage())
+                    .isEqualTo(
+                        failureKind == InvalidCarrierFailure.UNEXPECTED
+                            ? "Authenticated Game Design release read failed"
+                            : "Authenticated Game Design release evidence is invalid");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
+    verifyNoInteractions(published, transactions);
+  }
+
+  private enum InvalidCarrierFailure {
+    ILLEGAL_ARGUMENT,
+    ILLEGAL_STATE,
+    UNEXPECTED
+  }
+
   @Test
   void changedReleaseAttestationDigestFailsBeforeWorldRead() {
     var wire = wireRequest(NAMESPACE);
@@ -204,6 +297,73 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
                       .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
     verifyNoInteractions(published, transactions);
+  }
+
+  @ParameterizedTest
+  @EnumSource(SnapshotFailure.class)
+  void snapshotFailuresMapOnlyRecoverableDataAccessFailuresToUnavailable(
+      SnapshotFailure failureKind) {
+    var wire = wireRequest(NAMESPACE);
+    var selector = mock(WorldPublishedStartLocationEvidence.class);
+    when(selector.request()).thenReturn(selectorRequest());
+    var pair = mock(CompleteLaunchBindingEvidence.class);
+    var descriptor = mock(AuthoredWorldLaunchDescriptorEvidence.class);
+    var release = mock(AuthoredWorldReleaseAttestationEvidence.class);
+    when(gameDesign.getComplete(any(GetLaunchDescriptorRequest.class))).thenReturn(pair);
+    when(pair.descriptor()).thenReturn(descriptor);
+    when(pair.releaseAttestation()).thenReturn(release);
+    when(descriptor.targetNamespace()).thenReturn(NAMESPACE);
+    when(release.targetNamespace()).thenReturn(NAMESPACE);
+    when(release.evidenceDigest()).thenReturn(wire.getExpectedReleaseAttestationDigest());
+    when(release.schemaVersion())
+        .thenReturn(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
+    when(release.worldStartLocationEvidence()).thenReturn(selector);
+    when(published.readInOwnedSnapshot(any())).thenThrow(snapshotFailure(failureKind));
+
+    try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
+      assertThatThrownBy(() -> owner().read(wire))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                var expectedCode =
+                    switch (failureKind) {
+                      case TRANSIENT, RECOVERABLE -> Status.Code.UNAVAILABLE;
+                      case BAD_SQL, INTEGRITY, UNRELATED_RUNTIME -> Status.Code.INTERNAL;
+                    };
+                assertThat(rejected.code()).isEqualTo(expectedCode);
+                assertThat(rejected.getMessage())
+                    .isEqualTo(
+                        expectedCode == Status.Code.UNAVAILABLE
+                            ? "World published source is temporarily unavailable"
+                            : "World published source read failed")
+                    .doesNotContain("private", "SQL", "integrity");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
+    verify(published).readInOwnedSnapshot(any());
+  }
+
+  private enum SnapshotFailure {
+    TRANSIENT,
+    RECOVERABLE,
+    BAD_SQL,
+    INTEGRITY,
+    UNRELATED_RUNTIME
+  }
+
+  private static RuntimeException snapshotFailure(SnapshotFailure failureKind) {
+    return switch (failureKind) {
+      case TRANSIENT -> new TransientDataAccessResourceException("private transient detail");
+      case RECOVERABLE -> new RecoverableDataAccessException("private recoverable detail");
+      case BAD_SQL ->
+          new BadSqlGrammarException("snapshot", "select private", new SQLException("private SQL"));
+      case INTEGRITY -> new DataIntegrityViolationException("private integrity detail");
+      case UNRELATED_RUNTIME -> new IllegalStateException("private runtime detail");
+    };
   }
 
   @Test
