@@ -237,14 +237,14 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
                 + "reservation.scope_bytes, owner_part.next_position) namespace_part"
                 + " LEFT JOIN "
                 + AUTHORIZATIONS
-                + " authorization ON authorization.operation_id = reservation.operation_id"
+                + " finalized_reservation ON finalized_reservation.operation_id = reservation.operation_id"
                 + " LEFT JOIN "
                 + ABORTS
                 + " aborted ON aborted.operation_id = reservation.operation_id"
                 + " WHERE convert_from(namespace_part.frame_value, 'UTF8') = ?"
                 + " AND issuer.status = 'COMMITTED'"
                 + " AND extract(epoch FROM clock_timestamp()) >= issuer.expires_at_epoch_second"
-                + " AND authorization.operation_id IS NULL"
+                + " AND finalized_reservation.operation_id IS NULL"
                 + " AND aborted.operation_id IS NULL"
                 + " ORDER BY issuer.expires_at_epoch_second, reservation.operation_id"
                 + " LIMIT ?",

@@ -121,8 +121,8 @@ final class AccountControlUiSignerFixture {
     this(fixture, root, Clock.systemUTC());
   }
 
-  AccountControlUiSignerFixture(
-      AccountControlUiOwnerSourcesFixture fixture, Path root, Clock clock) throws Exception {
+  AccountControlUiSignerFixture(AccountControlUiOwnerSourcesFixture fixture, Path root, Clock clock)
+      throws Exception {
     f = fixture;
     this.clock = Objects.requireNonNull(clock, "clock");
     privateRoot = Files.createDirectories(root.resolve("private"));
