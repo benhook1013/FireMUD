@@ -11,7 +11,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -489,6 +491,65 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
     assertStatus(
         Status.Code.UNAVAILABLE, () -> asGameDesign(() -> unavailable.service.settle(binding)));
     verify(unavailable.repository, never()).settleEntityCommittedEmpty(any());
+  }
+
+  @Test
+  void downstreamStatusFailuresAreSanitizedForBothSelectedOwners() {
+    List<Status.Code> downstreamCodes =
+        List.of(
+            Status.Code.PERMISSION_DENIED,
+            Status.Code.UNAUTHENTICATED,
+            Status.Code.INTERNAL,
+            Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.RESOURCE_EXHAUSTED,
+            Status.Code.FAILED_PRECONDITION);
+    for (Owner owner : List.of(Owner.AUTOMATION_SCRIPTING, Owner.ENTITY_MANAGEMENT)) {
+      for (Status.Code downstreamCode : downstreamCodes) {
+        SelectedOwnerIntakeAuthorizationBinding binding =
+            AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(owner);
+        Harness harness = new Harness(NAMESPACE, owner == Owner.ENTITY_MANAGEMENT);
+        when(harness.repository.findSettlement(binding)).thenReturn(Optional.empty());
+        Metadata poisonTrailers = new Metadata();
+        poisonTrailers.put(
+            Metadata.Key.of("x-downstream-poison", Metadata.ASCII_STRING_MARSHALLER), "private");
+        StatusRuntimeException poisoned =
+            Status.fromCode(downstreamCode)
+                .withDescription("downstream secret detail")
+                .withCause(new IllegalStateException("downstream secret cause"))
+                .asRuntimeException(poisonTrailers);
+        if (owner == Owner.AUTOMATION_SCRIPTING) {
+          when(harness.automationClient.read(any())).thenThrow(poisoned);
+        } else {
+          when(harness.entityClient.read(any())).thenThrow(poisoned);
+        }
+
+        Status.Code expectedCode =
+            downstreamCode == Status.Code.FAILED_PRECONDITION
+                ? Status.Code.FAILED_PRECONDITION
+                : Status.Code.UNAVAILABLE;
+        String expectedDescription =
+            owner == Owner.AUTOMATION_SCRIPTING
+                ? downstreamCode == Status.Code.FAILED_PRECONDITION
+                    ? "Automation terminal evidence is not committed"
+                    : "Automation terminal evidence is unavailable"
+                : downstreamCode == Status.Code.FAILED_PRECONDITION
+                    ? "Entity terminal evidence is not committed"
+                    : "Entity terminal evidence is unavailable";
+        assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(binding)))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure -> {
+                  StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+                  assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
+                  assertThat(statusFailure.getStatus().getDescription())
+                      .isEqualTo(expectedDescription);
+                  assertThat(statusFailure.getCause()).isNull();
+                  assertThat(statusFailure.getTrailers()).isNull();
+                });
+        verify(harness.repository, never()).settleCommittedEmpty(any());
+        verify(harness.repository, never()).settleEntityCommittedEmpty(any());
+      }
+    }
   }
 
   private static EntityEmptySelectedSourceIntakeReceipt entityReceipt(
