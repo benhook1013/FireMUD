@@ -303,8 +303,13 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var provider = new TracedProvider(writer);
     var client = client(provider, qualification, 1);
     var installed = InitialGameplayLoginContextState.installed(original, result);
-    assertThat(client.install(original, result).orElseThrow().encode())
-        .containsExactly(installed.encode());
+    provider.expectedReadback = installed.encode();
+    var firstInstall = client.install(original, result);
+    System.out.println("Initial LOGIN context install observations: " + provider.traces);
+    assertThat(firstInstall)
+        .as("first physical install observations: %s", provider.traces)
+        .isPresent();
+    assertThat(firstInstall.orElseThrow().encode()).containsExactly(installed.encode());
     byte[] payload = admin.get(key(original));
     assertThat(payload).containsExactly(installed.encode());
     assertThat(containsSequence(payload, result.compactJwtBytes()))
@@ -314,8 +319,10 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         .as("credential excluded from live payload")
         .isFalse();
     assertThat(admin.pexpiretime(key(original))).isEqualTo(-1L);
-    assertThat(client.install(original, result).orElseThrow().encode())
-        .containsExactly(installed.encode());
+    var exactRetry = client.install(original, result);
+    System.out.println("Initial LOGIN context retry observations: " + provider.traces);
+    assertThat(exactRetry).as("exact physical retry observations: %s", provider.traces).isPresent();
+    assertThat(exactRetry.orElseThrow().encode()).containsExactly(installed.encode());
     assertThat(admin.get(key(original))).containsExactly(payload);
     assertThat(provider.traces).hasSize(4);
     assertThat(provider.traces.get(0))
@@ -1107,6 +1114,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     private Runnable beforeEval = () -> {};
     private Runnable afterAck = () -> {};
     private final AtomicInteger opened = new AtomicInteger();
+    private byte[] expectedReadback;
 
     private TracedProvider(RedisClient client) {
       this.client = client;
@@ -1134,29 +1142,74 @@ class InitialGameplayLoginContextRedisIntegrationTest {
                     (commandProxy, command, arguments) -> {
                       String name = command.getName();
                       trace.add(name);
-                      if (name.equals("evalsha")) beforeEval.run();
-                      if (name.equals("get") && index == 1 && fault.equals("readback")) {
-                        connection.close();
-                        throw new IllegalStateException(
-                            "Controlled independent readback connection interrupted");
-                      }
-                      Object answer = invoke(commands, command, arguments);
-                      if (name.equals("dispatch")
-                          && arguments != null
-                          && arguments[0] instanceof ProtocolKeyword keyword
-                          && new String(keyword.getBytes(), StandardCharsets.US_ASCII)
-                              .equals("WAITAOF")) {
-                        trace.add("WAITAOF");
-                        afterAck.run();
-                        if (fault.equals("lost-ack")) {
+                      boolean waitAof =
+                          name.equals("dispatch")
+                              && arguments != null
+                              && arguments[0] instanceof ProtocolKeyword keyword
+                              && new String(keyword.getBytes(), StandardCharsets.US_ASCII)
+                                  .equals("WAITAOF");
+                      if (waitAof) trace.add("WAITAOF");
+                      try {
+                        if (name.equals("evalsha")) beforeEval.run();
+                        if (name.equals("get") && index == 1 && fault.equals("readback")) {
                           connection.close();
                           throw new IllegalStateException(
-                              "Controlled physical acknowledgement response delivery lost");
+                              "Controlled independent readback connection interrupted");
                         }
+                        Object answer = invoke(commands, command, arguments);
+                        if (name.equals("evalsha")) recordLongReply(trace, "evalsha", answer);
+                        if (name.equals("get")) recordGet(trace, index, answer);
+                        if (name.equals("pttl")) recordLongReply(trace, "pttl", answer);
+                        if (waitAof) {
+                          recordWaitAofReply(trace, answer);
+                          afterAck.run();
+                          if (fault.equals("lost-ack")) {
+                            connection.close();
+                            throw new IllegalStateException(
+                                "Controlled physical acknowledgement response delivery lost");
+                          }
+                        }
+                        return answer;
+                      } catch (Throwable failure) {
+                        trace.add(
+                            "commandException="
+                                + (waitAof ? "WAITAOF" : name)
+                                + ":"
+                                + failure.getClass().getName());
+                        throw failure;
                       }
-                      return answer;
                     });
               });
+    }
+
+    private void recordGet(List<String> trace, int connectionIndex, Object answer) {
+      boolean present = answer instanceof byte[];
+      trace.add("getPresent=" + present);
+      if (connectionIndex == 1 && expectedReadback != null) {
+        trace.add(
+            "readbackMatchesExpected="
+                + (answer instanceof byte[] bytes && Arrays.equals(expectedReadback, bytes)));
+      }
+    }
+
+    private static void recordLongReply(List<String> trace, String command, Object answer) {
+      if (answer instanceof Long value) trace.add(command + "Result=" + value);
+      else trace.add(command + "ReplyType=" + replyType(answer));
+    }
+
+    private static void recordWaitAofReply(List<String> trace, Object answer) {
+      if (answer instanceof List<?> counts
+          && counts.size() == 2
+          && counts.get(0) instanceof Long local
+          && counts.get(1) instanceof Long replicas) {
+        trace.add("WAITAOFCounts=local:" + local + ",replicas:" + replicas);
+      } else {
+        trace.add("WAITAOFReplyType=" + replyType(answer));
+      }
+    }
+
+    private static String replyType(Object answer) {
+      return answer == null ? "null" : answer.getClass().getName();
     }
 
     private static Object invoke(Object target, Method method, Object[] args) throws Throwable {
