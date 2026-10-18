@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
+import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -181,6 +183,55 @@ class SelectedOwnerEmptySourceInputsTest {
                         .setCommittedEmptyReceipt(ByteString.copyFrom(changedReceipt))
                         .build()))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsOverflowingCanonicalEmptyCensusThroughStoredReceiptBoundary() {
+    Fixture fixture = fixture(Owner.AUTOMATION_SCRIPTING, Options.defaults());
+    var binding = fixture.authorization();
+    var receipt =
+        AutomationEmptySelectedSourceIntakeReceipt.create(
+            new SelectedOwnerEmptySourceInputs(binding, fixture.worldInventoryReadEvidence()),
+            9001L,
+            9002L,
+            AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
+                "test", binding, fixture.worldInventoryReadEvidence().request().freezeEvidence()),
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            0L,
+            OffsetDateTime.parse("2026-10-10T00:00:00Z"));
+    byte[] malformed = receipt.canonicalBytes();
+    malformed = replaceFrame(malformed, 24, Long.toString(Long.MAX_VALUE));
+    malformed = replaceFrame(malformed, 27, "1");
+    byte[] storedMalformed = malformed;
+
+    assertThatThrownBy(() -> AutomationEmptySelectedSourceIntakeReceipt.fromStored(storedMalformed))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("zero unqualified and selected-scope census");
+  }
+
+  private static byte[] replaceFrame(byte[] encoded, int frameIndex, String replacement) {
+    byte[] replacementBytes = replacement.getBytes(StandardCharsets.UTF_8);
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    ByteBuffer input = ByteBuffer.wrap(encoded);
+    for (int index = 0; input.hasRemaining(); index++) {
+      int length = input.getInt();
+      byte[] value = new byte[length];
+      input.get(value);
+      byte[] frameValue = index == frameIndex ? replacementBytes : value;
+      output.writeBytes(ByteBuffer.allocate(Integer.BYTES).putInt(frameValue.length).array());
+      output.writeBytes(frameValue);
+    }
+    return output.toByteArray();
   }
 
   @Test

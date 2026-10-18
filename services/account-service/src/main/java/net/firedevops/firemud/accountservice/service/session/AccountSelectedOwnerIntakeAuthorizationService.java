@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
@@ -111,7 +112,19 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
     outsideSql();
     // The authenticated Game Design client enforces exact request echo, wire closure, six-family
     // content integrity and the absence of SQL or transaction synchronization during this call.
-    var received = sources.read(request);
+    final SelectedOwnerIntakeSourceContent received;
+    try {
+      received = sources.read(request);
+    } catch (StatusRuntimeException failure) {
+      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Game Design selected-owner source content is unavailable")
+            .asRuntimeException();
+      }
+      throw Status.UNAVAILABLE
+          .withDescription("Game Design selected-owner source content is unavailable")
+          .asRuntimeException();
+    }
     var content = requireExactContent(request, received);
 
     var finalizationEnvironment = requireEnvironment(environmentCapture.get());
