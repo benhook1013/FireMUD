@@ -91,6 +91,7 @@ public final class WorldPublishedSpawnRequirementsClient
       buildStub(ManagedChannel channel) {
     String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/" + WORLD_SERVICE;
     return WorldPublishedSpawnRequirementsReadServiceGrpc.newBlockingStub(channel)
+        .withMaxInboundMessageSize(WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");

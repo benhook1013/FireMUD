@@ -43,6 +43,36 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
   }
 
   @Test
+  void acceptsTheMaximumResponseWireSizeAndRejectsOneByteOver() {
+    var expected = evidence();
+    var response =
+        WorldPublishedSpawnRequirementsGrpcCodec.toResponse(expected.request(), expected);
+    var atLimit =
+        responseAtWireSize(
+            response, WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
+    assertThat(atLimit.getSerializedSize())
+        .isEqualTo(WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
+    assertThat(
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(expected.request(), atLimit)
+                .generationRequirements()
+                .getFirst()
+                .value())
+        .isEqualTo(atLimit.getGenerationRequirements(0).getValue());
+
+    var overLimit =
+        responseAtWireSize(
+            response, WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES + 1);
+    assertThat(overLimit.getSerializedSize())
+        .isEqualTo(WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES + 1);
+    assertThatThrownBy(
+            () ->
+                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                    expected.request(), overLimit))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maximum wire size");
+  }
+
+  @Test
   void rejectsChangedRequestScopeReleaseAndMalformedCapture() {
     var expected = evidence();
     var response =
@@ -300,6 +330,29 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
                 uuid("12345678-1234-4234-8234-123456789202"),
                 "population.mode",
                 "sparse")));
+  }
+
+  private static net.firedevops.firemud.worldmanagement.v1
+          .ReadWorldPublishedSpawnRequirementsResponse
+      responseAtWireSize(
+          net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedSpawnRequirementsResponse
+              response,
+          int targetSize) {
+    String value = response.getGenerationRequirements(0).getValue();
+    int length = value.length() + targetSize - response.getSerializedSize();
+    for (int attempt = 0; attempt < 4; attempt++) {
+      var sized =
+          response.toBuilder()
+              .setGenerationRequirements(
+                  0, response.getGenerationRequirements(0).toBuilder().setValue("x".repeat(length)))
+              .build();
+      int difference = targetSize - sized.getSerializedSize();
+      if (difference == 0) {
+        return sized;
+      }
+      length += difference;
+    }
+    throw new AssertionError("Could not size response to the requested wire length");
   }
 
   static WorldPublishedSpawnRequirementsEvidence emptyEvidence() {
