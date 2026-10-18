@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.entity.sourceintake;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -63,7 +64,10 @@ public final class GrpcEntitySelectedSourceIntakeTerminalReadClient
     try {
       return EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
-      throw new IllegalStateException("Entity returned invalid terminal evidence", invalid);
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Entity returned invalid terminal evidence")
+          .withCause(invalid)
+          .asRuntimeException();
     }
   }
 
