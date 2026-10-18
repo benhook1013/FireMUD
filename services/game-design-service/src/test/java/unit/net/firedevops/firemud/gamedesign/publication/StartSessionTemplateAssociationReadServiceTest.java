@@ -30,9 +30,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.TransactionSystemException;
 import tools.jackson.databind.json.JsonMapper;
 
 class StartSessionTemplateAssociationReadServiceTest {
@@ -167,6 +169,71 @@ class StartSessionTemplateAssociationReadServiceTest {
   }
 
   @Test
+  void mapsTransactionCreationFailureToUnavailable() {
+    var tuple = postTuple("transaction-creation-failure");
+    var failure = new CannotCreateTransactionException("database connection unavailable");
+    PlatformTransactionManager transactions =
+        new PlatformTransactionManager() {
+          @Override
+          public TransactionStatus getTransaction(TransactionDefinition definition) {
+            throw failure;
+          }
+
+          @Override
+          public void commit(TransactionStatus status) {
+            throw new AssertionError("Transaction creation failed before commit");
+          }
+
+          @Override
+          public void rollback(TransactionStatus status) {
+            throw new AssertionError("Transaction creation failed before rollback");
+          }
+        };
+    var service =
+        new StartSessionTemplateAssociationReadService(
+            dsl,
+            transactions,
+            "world-runtime",
+            (actual, attempt, fence) -> projection(actual, attempt, fence),
+            releases);
+
+    assertTransactionFailureMapsToUnavailable(service, request(tuple), failure);
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void mapsTransactionRollbackFailureToUnavailable() {
+    var tuple = postTuple("transaction-rollback-failure");
+    var failure = new TransactionSystemException("read-only transaction rollback failed");
+    PlatformTransactionManager transactions =
+        new PlatformTransactionManager() {
+          @Override
+          public TransactionStatus getTransaction(TransactionDefinition definition) {
+            return new org.springframework.transaction.support.SimpleTransactionStatus();
+          }
+
+          @Override
+          public void commit(TransactionStatus status) {
+            throw new AssertionError("The absent reference phase fails before commit");
+          }
+
+          @Override
+          public void rollback(TransactionStatus status) {
+            throw failure;
+          }
+        };
+    var service =
+        new StartSessionTemplateAssociationReadService(
+            dsl,
+            transactions,
+            "world-runtime",
+            (actual, attempt, fence) -> projection(actual, attempt, fence),
+            releases);
+
+    assertTransactionFailureMapsToUnavailable(service, request(tuple), failure);
+  }
+
+  @Test
   void preservesAssociationCallerConflictForFailedReleaseParticipant() {
     var service =
         new StartSessionTemplateAssociationReadService(
@@ -228,6 +295,22 @@ class StartSessionTemplateAssociationReadServiceTest {
     } finally {
       context.detach(previous);
     }
+  }
+
+  private static void assertTransactionFailureMapsToUnavailable(
+      StartSessionTemplateAssociationReadService service,
+      StartSessionTemplateAssociationReadEvidence.Request request,
+      RuntimeException cause) {
+    assertThatThrownBy(() -> withPeer(service, request, "game-session-service"))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            thrown -> {
+              var status = ((StatusRuntimeException) thrown).getStatus();
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription())
+                  .isEqualTo("Game Design association owner storage unavailable");
+              assertThat(status.getCause()).isSameAs(cause);
+            });
   }
 
   private void assertAuthoredCoreStorageFailure(
