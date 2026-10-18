@@ -230,3 +230,19 @@ Entry format:
   - Observation: The commit succeeded, and background repack reported `fatal: bad object refs/remotes/origin/codex/document-original-world-preparation-20261015` and `fatal: failed to run repack`. The exact cause and repository object health remain unknown.
   - Expected pattern: Record commit and receiving evidence separately from background maintenance results. Investigate only under qualified shared-repository maintenance or when an actual delivery blocker requires it; `gc.log` or unreachable-object warnings do not authorize cleanup.
   - Status and reconsideration: The commit retained prospective tree `733ed58d9390a5ba00e24088435af7b847567527`, all 84 child-owned postimages and the deletion, and all 12 qualified incoming blobs. Evidence is in Controller current-gameplay update 2151, `private-parent-carry-via-09e-verification.json`, and `receive-qualified-private-cli1-parent.patch` under the private #3248 local current-parent-carry evidence. Revisit if a qualified maintenance pass identifies the cause or the failure blocks delivery.
+
+- `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
+  - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
+  - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.
+  - Expected pattern: assess and communicate this queue consequence before insertion; preserve the product's qualified head, original parent and proof rather than rebasing it onto unmerged maintenance. Keep the temporary maintenance front through its normal review requirements and release the integration fence at its human-authorized merge. This records the current operational limitation, not a new queue design or review-policy exception.
+  - Reconsideration trigger: if existing tooling gains independent maintenance-root scheduling, qualify its parent/proof behavior before changing this operational assumption.
+
+- `2026-10-19`: Paginate the complete CI observer context inventory
+  - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, the first 100 GraphQL contexts omitted the [#3249 Smoke Gate failure](https://github.com/benhook1013/FireMUD/actions/runs/39142129196/job/117718532427) at `b83`, delaying its detection by about 19 minutes; the complete inventory contained 186 contexts. The private observer now reads all pages within its bound and fails closed if the final `pageInfo.hasNextPage` remains true, errors occur, or head identity differs.
+  - Observation: A first-page result can miss a later failure in the same run. The observer now fails closed when pagination or response checks are incomplete; this records the observer recovery and does not establish or claim an underlying gate bug fix.
+  - Expected pattern: Treat a complete paginated inventory as authoritative, verify page completion, errors, and the requested head, and report no complete result when any check fails.
+
+- `2026-10-19`: Tie routed review-thread closure to the published candidate
+  - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, Main prematurely resolved a routed #3269 H1 thread after the parent #3249 fix was published but before the child carry was published. The thread was immediately reopened and finally resolved after child commit `bc10` was published.
+  - Observation: A routed parent fix alone did not prove that the child candidate carried the fix.
+  - Expected pattern: Close a routed thread only against the relevant published candidate; verify the child carry publication before treating the thread as resolved.
