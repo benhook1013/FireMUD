@@ -67,6 +67,9 @@ public final class WorldSelectedOwnerInventoryReadGrpcService
     try {
       var evidence = readService.read(decoded);
       response = SelectedOwnerWorldInventoryReadGrpcCodec.toResponse(decoded, evidence.inventory());
+    } catch (WorldSelectedOwnerInventoryReadService.ReadFailure failure) {
+      fail(responseObserver, Status.fromCode(failure.statusCode()), failure.description());
+      return;
     } catch (StatusRuntimeException failure) {
       Status status =
           failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION
@@ -75,13 +78,15 @@ public final class WorldSelectedOwnerInventoryReadGrpcService
       fail(
           responseObserver,
           status,
-          "Account did not confirm the exact selected-owner World closure read");
+          status.getCode() == Status.Code.FAILED_PRECONDITION
+              ? "Exact retained World artifact inventory is unavailable"
+              : "World selected inventory owner storage is unavailable");
       return;
     } catch (SecurityException denied) {
       fail(
           responseObserver,
           Status.PERMISSION_DENIED,
-          "Account did not confirm the exact selected-owner World closure read");
+          "Exact same-namespace selected-owner workload is required");
       return;
     } catch (WorldDesignPublicationFenceRepository.ConflictException
         | IllegalArgumentException inconsistent) {
@@ -136,11 +141,16 @@ public final class WorldSelectedOwnerInventoryReadGrpcService
 
   private boolean peerMatchesOwner(Owner owner) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    String expectedService =
-        owner == Owner.ENTITY_MANAGEMENT
-            ? "entity-management-service"
-            : "automation-scripting-service";
-    return peer != null && isExpectedPeer(peer, expectedService);
+    String expectedService = ownerService(owner);
+    return expectedService != null && peer != null && isExpectedPeer(peer, expectedService);
+  }
+
+  private static String ownerService(Owner owner) {
+    return switch (owner) {
+      case ENTITY_MANAGEMENT -> "entity-management-service";
+      case AUTOMATION_SCRIPTING -> "automation-scripting-service";
+      default -> null;
+    };
   }
 
   private static void fail(StreamObserver<?> observer, Status status, String description) {
