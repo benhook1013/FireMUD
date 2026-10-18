@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,14 +17,27 @@ import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
+import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
+import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.BrandingSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
+import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -135,75 +149,7 @@ class BrandingSourcePostgresIntegrationTest {
   @Test
   void v1025RetainedVersionPreservesFiveOwnerHistoryWithoutAcquiringBrandingGenesis() {
     var f = fixture("1025");
-    var original = binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"));
-    f.tx.executeWithoutResult(
-        ignored -> {
-          var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
-          coordinator.claim(original);
-          var policyGenesis =
-              new net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository(f.dsl)
-                  .readGenesis(f.target)
-                  .orElseThrow();
-          var commands =
-              new net.firedevops.firemud.gamedesign.publication.CommandSourceRepository(f.dsl);
-          var commandGenesis = commands.readNewDraftGenesis(f.target).orElseThrow();
-          var assetGenesis =
-              new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(f.dsl)
-                  .readGenesis(f.target)
-                  .orElseThrow();
-          var gameplayGenesis =
-              new net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository(f.dsl)
-                  .readGenesis(f.target)
-                  .orElseThrow();
-          var templateGenesis =
-              new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(
-                      f.dsl)
-                  .readGenesis(f.target)
-                  .orElseThrow();
-          var reviewedEvidence =
-              GameDesignReviewedBaseEvidence.genesis(
-                  new GameDesignSourceRepository.Genesis(
-                      policyGenesis,
-                      commandGenesis,
-                      Optional.of(assetGenesis),
-                      Optional.of(gameplayGenesis),
-                      Optional.of(templateGenesis)));
-          insertReviewedBaseV2(f.dsl, original, reviewedEvidence);
-          coordinator.claimApplicationSlot(original);
-          coordinator.markOwnerInProgress(
-              original, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-          var applied = commands.apply(original).orElseThrow();
-          var out = new java.io.ByteArrayOutputStream();
-          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-              out, "game-design-control-plane-command-application/v1");
-          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-              out, original.canonicalBytes());
-          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-              out, applied.canonicalBytes());
-          var outcome =
-              new DraftCommitCoordinatorRepository.OwnerOutcome(
-                  DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
-                  original.commitId(),
-                  original.digest(),
-                  applied.resultIdentity(),
-                  out.toByteArray(),
-                  List.of(applied.commandAppliedEpoch()));
-          coordinator.recordOwnerOutcome(original, outcome);
-          coordinator.advanceVisibilityFence(
-              original,
-              new DraftCommitCoordinatorRepository.CoordinatorProof(original, List.of(outcome)));
-          commands.captureSynchronized(original);
-          new net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository(f.dsl)
-              .captureSynchronized(original);
-          new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(f.dsl)
-              .captureSynchronized(original);
-          new net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository(f.dsl)
-              .captureSynchronized(original);
-          new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(f.dsl)
-              .captureSynchronized(original);
-          coordinator.releaseApplicationSlot(original);
-        });
+    var original = retainPreBrandingSourceCommit(f);
     var originalSources =
         List.of(
             "command_source",
@@ -342,6 +288,103 @@ class BrandingSourcePostgresIntegrationTest {
   }
 
   @Test
+  void retainedV2CaptureWithoutBrandingRemainsReadableAsPartialHistory() throws Exception {
+    var f = fixture("1025");
+    var original = retainPreBrandingSourceCommit(f);
+    var operation = retainPreBrandingV2Capture(f, original);
+    var captureRows =
+        Map.of(
+            "command",
+            retainedCapture(f, "game_design_command_source_capture", operation.workflowId()),
+            "realm_policy",
+            retainedCapture(f, "game_design_realm_policy_capture", operation.workflowId()),
+            "asset",
+            retainedCapture(f, "game_design_asset_source_capture", operation.workflowId()),
+            "template_config",
+            retainedCapture(f, "game_design_template_config_source_capture", operation.workflowId()));
+    var operationBefore =
+        f.dsl.fetchSingle(
+            "SELECT request_bytes, xmin::text AS row_xmin FROM game_design_publication_operation "
+                + "WHERE publish_workflow_id = ?",
+            operation.workflowId());
+    byte[] operationBytes = operationBefore.get("request_bytes", byte[].class);
+
+    f.migrate();
+
+    var operationAfter =
+        f.dsl.fetchSingle(
+            "SELECT request_bytes, xmin::text AS row_xmin FROM game_design_publication_operation "
+                + "WHERE publish_workflow_id = ?",
+            operation.workflowId());
+    assertThat(operationAfter.get("request_bytes", byte[].class)).containsExactly(operationBytes);
+    assertThat(operationAfter.get("row_xmin", String.class))
+        .isEqualTo(operationBefore.get("row_xmin", String.class));
+    captureRows.forEach(
+        (family, before) ->
+            assertRetainedCapture(
+                f,
+                switch (family) {
+                  case "command" -> "game_design_command_source_capture";
+                  case "realm_policy" -> "game_design_realm_policy_capture";
+                  case "asset" -> "game_design_asset_source_capture";
+                  case "template_config" -> "game_design_template_config_source_capture";
+                  default -> throw new IllegalStateException("Unknown capture family " + family);
+                },
+                operation.workflowId(),
+                before));
+
+    var retained = new GameDesignSourceRepository(f.dsl).readCapture(operation).orElseThrow();
+    assertThat(retained.branding()).isEmpty();
+    assertThat(retained.gameplay()).isEmpty();
+    assertThat(retained.command().canonicalBytes())
+        .containsExactly(captureRows.get("command").captureBytes());
+    assertThat(retained.policy().canonicalBytes())
+        .containsExactly(captureRows.get("realm_policy").captureBytes());
+    assertThat(retained.asset().orElseThrow().canonicalBytes())
+        .containsExactly(captureRows.get("asset").captureBytes());
+    assertThat(retained.templateConfig().orElseThrow().canonicalBytes())
+        .containsExactly(captureRows.get("template_config").captureBytes());
+    assertThatThrownBy(
+            () -> f.tx.execute(ignored -> new GameDesignSourceRepository(f.dsl).freeze(operation)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAME_DESIGN_SOURCE_GENESIS_INCOMPLETE");
+  }
+
+  @Test
+  void retainedCaptureWithoutBrandingStillFailsForBrandingEnrolledTarget() throws Exception {
+    var f = fixture(null);
+    var operation = retainFreshV2CaptureWithoutBranding(f);
+    assertThat(new BrandingSourceRepository(f.dsl).readGenesis(f.target)).isPresent();
+    for (String table :
+        List.of(
+            "game_design_command_source_capture",
+            "game_design_realm_policy_capture",
+            "game_design_asset_source_capture",
+            "game_design_gameplay_rule_source_capture",
+            "game_design_template_config_source_capture")) {
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM " + table + " WHERE publish_workflow_id = ?",
+                      operation.workflowId())
+                  .get(0, Long.class))
+          .as(table)
+          .isEqualTo(1L);
+    }
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_branding_source_capture "
+                        + "WHERE publish_workflow_id = ?",
+                    operation.workflowId())
+                .get(0, Long.class))
+        .isZero();
+    assertThatThrownBy(() -> new GameDesignSourceRepository(f.dsl).readCapture(operation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
+  }
+
+  @Test
   void wrongTenantSourceRowCannotWriteOrExposeSnapshot() {
     var f = fixture(null);
     var foreignGame = new Game();
@@ -371,6 +414,212 @@ class BrandingSourcePostgresIntegrationTest {
     assertThat(new BrandingSourceRepository(f.dsl).readSnapshot(f.target, binding.commitId()))
         .isEmpty();
   }
+
+  private DraftCommitBinding retainPreBrandingSourceCommit(Fixture f) {
+    var original = binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"));
+    f.tx.executeWithoutResult(
+        ignored -> {
+          var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+          coordinator.claim(original);
+          var policyGenesis = new RealmPolicySourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
+          var commands = new CommandSourceRepository(f.dsl);
+          var commandGenesis = commands.readNewDraftGenesis(f.target).orElseThrow();
+          var assetGenesis = new AssetSourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
+          var gameplayGenesis =
+              new GameplayRuleSourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
+          var templateGenesis =
+              new TemplateConfigSourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
+          var reviewedEvidence =
+              GameDesignReviewedBaseEvidence.genesis(
+                  new GameDesignSourceRepository.Genesis(
+                      policyGenesis,
+                      commandGenesis,
+                      Optional.of(assetGenesis),
+                      Optional.of(gameplayGenesis),
+                      Optional.of(templateGenesis)));
+          insertReviewedBaseV2(f.dsl, original, reviewedEvidence);
+          coordinator.claimApplicationSlot(original);
+          coordinator.markOwnerInProgress(
+              original, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+          var applied = commands.apply(original).orElseThrow();
+          var out = new java.io.ByteArrayOutputStream();
+          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+              out, "game-design-control-plane-command-application/v1");
+          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+              out, original.canonicalBytes());
+          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+              out, applied.canonicalBytes());
+          var outcome =
+              new DraftCommitCoordinatorRepository.OwnerOutcome(
+                  DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                  original.commitId(),
+                  original.digest(),
+                  applied.resultIdentity(),
+                  out.toByteArray(),
+                  List.of(applied.commandAppliedEpoch()));
+          coordinator.recordOwnerOutcome(original, outcome);
+          coordinator.advanceVisibilityFence(
+              original,
+              new DraftCommitCoordinatorRepository.CoordinatorProof(original, List.of(outcome)));
+          commands.captureSynchronized(original);
+          new RealmPolicySourceRepository(f.dsl).captureSynchronized(original);
+          new AssetSourceRepository(f.dsl).captureSynchronized(original);
+          new GameplayRuleSourceRepository(f.dsl).captureSynchronized(original);
+          new TemplateConfigSourceRepository(f.dsl).captureSynchronized(original);
+          coordinator.releaseApplicationSlot(original);
+        });
+    return original;
+  }
+
+  private GameDesignPublicationOperation retainPreBrandingV2Capture(
+      Fixture f, DraftCommitBinding original) throws Exception {
+    var seed =
+        IsolatedPublicationOperationFixtures.fresh(f.target, original.commitId().toString());
+    var selectedCommit = seed.account().input().selection().selectedCommit();
+    var world = seed.world();
+    return Objects.requireNonNull(
+        f.tx.execute(
+            ignored -> {
+              var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+              var sources = new GameDesignSourceRepository(f.dsl);
+              var originalSources =
+                  sources.readSynchronized(f.target, original.commitId()).orElseThrow();
+              var originalOutcome =
+                  coordinator.read(f.target, original.requestId()).orElseThrow();
+              var reviewed = GameDesignReviewedBaseEvidence.authored(originalSources, originalOutcome);
+              sources.claimReviewed(selectedCommit, reviewed);
+              coordinator.claimApplicationSlot(selectedCommit);
+              coordinator.markOwnerInProgress(
+                  selectedCommit, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
+              var epochs =
+                  selectedCommit.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
+                      .map(
+                          unit ->
+                              new DraftCommitCoordinatorRepository.AppliedEpoch(
+                                  unit.aggregateType(),
+                                  unit.aggregateId(),
+                                  unit.scopeType(),
+                                  unit.scopeId(),
+                                  unit.expectedEpoch(),
+                                  new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                      .toList();
+              var outcome =
+                  new DraftCommitCoordinatorRepository.OwnerOutcome(
+                      DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                      DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                      selectedCommit.commitId(),
+                      selectedCommit.digest(),
+                      "ISOLATED-world-applied",
+                      world.appliedResultBytes(),
+                      epochs);
+              coordinator.recordOwnerOutcome(selectedCommit, outcome);
+              coordinator.advanceVisibilityFence(
+                  selectedCommit,
+                  new DraftCommitCoordinatorRepository.CoordinatorProof(
+                      selectedCommit, List.of(outcome)));
+              new CommandSourceRepository(f.dsl).captureSynchronized(selectedCommit);
+              new RealmPolicySourceRepository(f.dsl).captureSynchronized(selectedCommit);
+              new AssetSourceRepository(f.dsl).captureSynchronized(selectedCommit);
+              new GameplayRuleSourceRepository(f.dsl).captureSynchronized(selectedCommit);
+              new TemplateConfigSourceRepository(f.dsl).captureSynchronized(selectedCommit);
+              coordinator.releaseApplicationSlot(selectedCommit);
+
+              var intent =
+                  new AuthoredDraftPublishSelection.PublishIntent(
+                      f.target.canonicalTenantId(),
+                      f.target.canonicalVersionId(),
+                      UUID.randomUUID().toString(),
+                      "1",
+                      "ISOLATED retained pre-branding source capture",
+                      selectedCommit.requestId(),
+                      selectedCommit.commitId(),
+                      selectedCommit.digest());
+              var selection =
+                  new AuthoredDraftPublishSelectionRepository(f.dsl, coordinator)
+                      .reserve(intent)
+                      .selection();
+              var selectionBinding =
+                  AuthoredDraftPublishSelectionBinding.fromStored(
+                      selection.canonicalJson(), selection.digest());
+              var operation =
+                  IsolatedPublicationOperationFixtures.forSelection(selectionBinding, world);
+              var attempt = new PublishAttempt();
+              attempt.setTenantId(f.target.gameDesignVersionTenantKey());
+              attempt.setPublishWorkflowId(operation.workflowId());
+              attempt.setPublishType(PublishType.FULL_VERSION);
+              attempt.setVersionId(f.target.gameDesignVersionRowId());
+              attempt.setVersionNumber(
+                  f.dsl
+                      .fetchSingle(
+                          "SELECT version_number FROM version WHERE id = ?",
+                          f.target.gameDesignVersionRowId())
+                      .get("version_number", Integer.class));
+              attempt.setRequestDigest(selection.digest());
+              new PublishAttemptRepository(f.dsl).save(attempt);
+              var operations = new GameDesignPublicationOperationRepository(f.dsl);
+              operations.reserve(operation);
+              new CommandSourceRepository(f.dsl).freeze(operation);
+              new RealmPolicySourceRepository(f.dsl).freeze(operation);
+              new AssetSourceRepository(f.dsl).freeze(operation);
+              new TemplateConfigSourceRepository(f.dsl).freeze(operation);
+              var attempts = new PublishAttemptRepository(f.dsl);
+              var retainedAttempt =
+                  attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+              retainedAttempt.setStatus(PublishAttemptStatus.FAILED);
+              retainedAttempt.setFailureCode("ISOLATED_PRE_BRANDING_CAPTURE_HISTORY");
+              attempts.save(retainedAttempt);
+              operations.seal(
+                  operation.tenantKey(),
+                  operation.workflowId(),
+                  operation.versionId(),
+                  operation.selectionDigest(),
+                  false);
+              return operation;
+            }));
+  }
+
+  private GameDesignPublicationOperation retainFreshV2CaptureWithoutBranding(Fixture f) {
+    return Objects.requireNonNull(
+        f.tx.execute(
+            ignored -> {
+              try {
+                var operation =
+                    IsolatedPublicationOwnerSetup.retainSourceBacked(f.dsl, f.target, 1);
+                new CommandSourceRepository(f.dsl).freeze(operation);
+                new RealmPolicySourceRepository(f.dsl).freeze(operation);
+                new AssetSourceRepository(f.dsl).freeze(operation);
+                new GameplayRuleSourceRepository(f.dsl).freeze(operation);
+                new TemplateConfigSourceRepository(f.dsl).freeze(operation);
+                return operation;
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            }));
+  }
+
+  private RetainedCapture retainedCapture(Fixture f, String table, String workflowId) {
+    var row =
+        f.dsl.fetchSingle(
+            "SELECT operation_bytes, capture_bytes, xmin::text AS row_xmin FROM "
+                + table
+                + " WHERE publish_workflow_id = ?",
+            workflowId);
+    return new RetainedCapture(
+        row.get("operation_bytes", byte[].class),
+        row.get("capture_bytes", byte[].class),
+        row.get("row_xmin", String.class));
+  }
+
+  private void assertRetainedCapture(
+      Fixture f, String table, String workflowId, RetainedCapture original) {
+    var retained = retainedCapture(f, table, workflowId);
+    assertThat(retained.operationBytes()).containsExactly(original.operationBytes());
+    assertThat(retained.captureBytes()).containsExactly(original.captureBytes());
+    assertThat(retained.rowXmin()).isEqualTo(original.rowXmin());
+  }
+
+  private record RetainedCapture(byte[] operationBytes, byte[] captureBytes, String rowXmin) {}
 
   private static void insertReviewedBaseV2(
       DSLContext dsl, DraftCommitBinding binding, GameDesignReviewedBaseEvidence reviewedEvidence) {

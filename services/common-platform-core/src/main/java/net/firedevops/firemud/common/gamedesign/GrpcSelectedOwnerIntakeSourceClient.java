@@ -16,7 +16,6 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.gamedesign.v1.GameDesignSelectedOwnerIntakeSourceServiceGrpc;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit file-backed mTLS client for complete selected-owner source content. */
 public final class GrpcSelectedOwnerIntakeSourceClient
@@ -27,8 +26,6 @@ public final class GrpcSelectedOwnerIntakeSourceClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public GrpcSelectedOwnerIntakeSourceClient(
       ServiceEndpointsProperties endpoints,
@@ -45,22 +42,15 @@ public final class GrpcSelectedOwnerIntakeSourceClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Game Design source client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) throw new IllegalStateException("Game Design source stub unavailable");
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce("Game Design source client is closed", "Game Design source stub unavailable");
   }
 
   /** Reads exact selected source content after authenticating the configured Game Design peer. */
   @Override
   public SelectedOwnerIntakeSourceContent read(
       SelectedOwnerIntakeSourceReadEvidence.Request request) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive())
-      throw new IllegalStateException(
-          "Game Design selected-owner source read must run outside SQL");
+    requireNoAmbientSql("Game Design selected-owner source read must run outside SQL");
     Objects.requireNonNull(request, "selected-owner source-read request is required");
     if (!workloadNamespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException(
@@ -99,23 +89,11 @@ public final class GrpcSelectedOwnerIntakeSourceClient
         .withCompression("gzip");
   }
 
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
   private GameDesignSelectedOwnerIntakeSourceServiceGrpc
           .GameDesignSelectedOwnerIntakeSourceServiceBlockingStub
       requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null)
-      throw new IllegalStateException(
-          "Game Design selected-owner source client is not initialized and available");
-    return currentStub;
+    return requireInitializedStub(
+        "Game Design selected-owner source client is not initialized and available");
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(
