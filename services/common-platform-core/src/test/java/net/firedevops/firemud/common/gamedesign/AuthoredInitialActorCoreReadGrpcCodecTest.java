@@ -16,15 +16,24 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
     var fixture = AuthoredInitialActorCoreReadTestFixture.create();
     var request = new ReadRequest(fixture.request());
     var wireRequest = AuthoredInitialActorCoreReadGrpcCodec.toRequest(request);
-    var response = AuthoredInitialActorCoreReadGrpcCodec.toResponse(fixture.result());
+    var first = fixture.projection(UUID.fromString("5e9c2424-5669-4b6a-8f8f-7b452ab64c62"));
+    var second = fixture.projection(UUID.fromString("6e9c2424-5669-4b6a-8f8f-7b452ab64c62"));
+    var result = fixture.result(java.util.List.of(second, first));
+    var response = AuthoredInitialActorCoreReadGrpcCodec.toResponse(result);
 
     var decoded = AuthoredInitialActorCoreReadGrpcCodec.fromResponse(fixture.request(), response);
 
     assertThat(AuthoredInitialActorCoreReadGrpcCodec.fromRequest(wireRequest)).isEqualTo(request);
-    assertThat(decoded.canonicalBytes()).containsExactly(fixture.result().canonicalBytes());
+    assertThat(decoded.canonicalBytes()).containsExactly(result.canonicalBytes());
     assertThat(decoded.request()).isEqualTo(fixture.request());
     assertThat(decoded.associationRead()).isEqualTo(fixture.associationRead());
     assertThat(decoded.descriptor()).isEqualTo(fixture.descriptor());
+    assertThat(decoded.projections())
+        .extracting(AuthoredInitialActorCoreProjection::bindingId)
+        .containsExactly(second.bindingId(), first.bindingId());
+    assertThat(decoded.projections())
+        .extracting(AuthoredInitialActorCoreProjection::digest)
+        .containsExactly(second.digest(), first.digest());
   }
 
   @Test
