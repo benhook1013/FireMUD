@@ -637,13 +637,13 @@ class GithubAndEvidenceTests(unittest.TestCase):
             json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}),
         )
         stdout = "\r\n".join(events) + "\r\n"
-        parsed = evidence.parse_capture_events(stdout)
+        parsed = evidence.parse_capture_events(stdout, strict=True)
 
         with tempfile.TemporaryDirectory() as directory:
             stdout_path = Path(directory) / "stdout"
             stdout_path.write_text(stdout, encoding="utf-8")
 
-            self.assertEqual(evidence._parse_capture_stdout(stdout_path), parsed)
+            self.assertEqual(evidence._parse_capture_stdout(stdout_path, strict=True), parsed)
             self.assertEqual(cli_attempts._parse_successful_stdout(stdout), parsed[0])
 
     def test_cli_capture_stdout_parsers_reject_the_same_invalid_events(self):
@@ -657,16 +657,22 @@ class GithubAndEvidenceTests(unittest.TestCase):
             ("invalid JSON", '{"type":"finding"}\nnot-json', "invalid JSON at line 2", "JSON is invalid at line 2"),
             ("non-object", "[]\n", "non-object event at line 1", "event at line 1 is not an object"),
             (
-                "missing completion",
+                "unsupported event",
                 '{"type":"other"}\n',
+                "unsupported event",
+                "unsupported event",
+            ),
+            (
+                "missing completion",
+                '{"type":"start"}\n',
                 "no unique successful completion",
                 "no unique successful completion",
             ),
             (
                 "duplicate completion",
                 json.dumps(complete) + "\n" + json.dumps(complete) + "\n",
-                "no unique successful completion",
-                "no unique successful completion",
+                "multiple completion events",
+                "multiple completion events",
             ),
             (
                 "finding count mismatch",
@@ -694,8 +700,8 @@ class GithubAndEvidenceTests(unittest.TestCase):
             (
                 "finding limit",
                 "\n".join([*too_many_findings, json.dumps(over_limit_complete)]) + "\n",
-                "contains too many findings",
-                "contains too many findings",
+                "too many findings",
+                "too many findings",
             ),
         )
 
@@ -705,11 +711,114 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 stdout_path.write_text(stdout, encoding="utf-8")
 
                 with self.assertRaisesRegex(evidence.EvidenceError, evidence_error):
-                    evidence.parse_capture_events(stdout)
+                    evidence.parse_capture_events(stdout, strict=True)
                 with self.assertRaisesRegex(evidence.CaptureInvalid, evidence_error):
-                    evidence._parse_capture_stdout(stdout_path)
+                    evidence._parse_capture_stdout(stdout_path, strict=True)
                 with self.assertRaisesRegex(cli_attempts._UnrecordableCapture, recovery_error):
                     cli_attempts._parse_successful_stdout(stdout)
+
+    def test_successful_cli_loader_preserves_archived_invalid_json_diagnostic(self):
+        expected = "linked capture stdout has invalid JSON at line 1"
+        with self.assertRaises(evidence.EvidenceError) as direct:
+            evidence.parse_capture_events("invalid JSON\n", strict=False)
+        self.assertEqual(str(direct.exception), expected)
+        with tempfile.TemporaryDirectory() as directory:
+            stdout_path = Path(directory) / "stdout"
+            stdout_path.write_text("invalid JSON\n", encoding="utf-8")
+            with self.assertRaises(evidence.CaptureInvalid) as loaded:
+                evidence._parse_capture_stdout(stdout_path, strict=False)
+        self.assertEqual(str(loaded.exception), expected)
+
+    def test_successful_cli_parser_rejects_error_unknown_and_ambiguous_event_streams(self):
+        finding = '{"type":"finding","codegenInstructions":"Use the safer path."}\n'
+        complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
+        error = '{"type":"error","errorType":"connection","recoverable":true}\n'
+        for stdout in (
+            finding + error + complete,
+            finding + complete + error,
+            finding + '{"type":"unknown"}\n' + complete,
+            finding + complete + '{"type":"unknown"}\n',
+            finding + '{"type":"heartbeat","status":"working","status":"done"}\n' + complete,
+            finding + '{"type":"reviewing","extra":{"key":1,"key":2}}\n' + complete,
+            finding + '{"type":"reviewing","message":NaN}\n' + complete,
+            finding + complete + finding,
+            complete + finding,
+            finding + complete + '{"type":"heartbeat","status":"working"}\n',
+        ):
+            with self.subTest(stdout=stdout), tempfile.TemporaryDirectory() as directory:
+                stdout_path = Path(directory) / "stdout"
+                stdout_path.write_text(stdout, encoding="utf-8")
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_capture_events(stdout, strict=True)
+                with self.assertRaises(evidence.CaptureInvalid):
+                    evidence._parse_capture_stdout(stdout_path, strict=True)
+                with self.assertRaises(cli_attempts._UnrecordableCapture):
+                    cli_attempts._parse_successful_stdout(stdout)
+
+    def test_successful_legacy_finding_projection_does_not_weaken_failed_observations(self):
+        for finding in (
+            {"type": "finding", "message": "Legacy issue"},
+            {"type": "finding", "title": "Legacy title", "comment": "Retain this issue", "codegenInstructions": ""},
+            {"type": "finding", "codegenInstructions": ["Review comment at @src/A.java:1", "Retain list instructions"]},
+        ):
+            stdout = json.dumps(finding) + "\n"
+            complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
+            with self.subTest(finding=finding):
+                self.assertEqual(evidence.parse_capture_events(stdout + complete, strict=True)[0], [finding])
+                self.assertEqual(evidence.parse_capture_events(complete + stdout, strict=False)[0], [finding])
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_partial_capture_events(stdout)
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_failed_capture_events(stdout + complete)
+
+    def test_successful_cli_parser_rejects_unsupported_instruction_value_types(self):
+        complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
+        for instructions in ({"text": "hidden finding"}, 17, True, 1.5):
+            finding = json.dumps({"type": "finding", "codegenInstructions": instructions}) + "\n"
+            with self.subTest(instructions=instructions):
+                self.assertEqual(
+                    evidence.parse_capture_events(finding + complete, strict=False)[0], [json.loads(finding)]
+                )
+                with self.assertRaisesRegex(evidence.EvidenceError, "invalid finding instructions"):
+                    evidence.parse_capture_events(finding + complete, strict=True)
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_failed_capture_events(finding + complete)
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_partial_capture_events(finding)
+
+    def test_successful_and_failed_cli_streams_share_strict_progress_rules(self):
+        progress = "".join(
+            json.dumps(event) + "\n"
+            for event in (
+                {"type": "start", "message": "Starting"},
+                {
+                    "type": "review_context",
+                    "baseBranch": "develop",
+                    "currentBranch": "feature",
+                    "expectedDuration": "short",
+                    "reviewType": "full",
+                    "workingDirectory": "/workspace",
+                },
+                {"type": "reviewing", "message": "Reviewing"},
+                {"type": "heartbeat", "status": "working"},
+                {"type": "finding", "codegenInstructions": "Use the safer path."},
+            )
+        )
+        complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
+        error = '{"type":"error","errorType":"connection","recoverable":true}\n'
+        findings, _ = evidence.parse_capture_events(progress + complete, strict=True)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(evidence.parse_capture_events((progress + complete).rstrip("\n"), strict=True)[0], findings)
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.parse_failed_capture_events((progress + complete).rstrip("\n"))
+        self.assertEqual(evidence.parse_partial_capture_events(progress), findings)
+        self.assertEqual(evidence.parse_partial_capture_events(progress + error), findings)
+        self.assertEqual(evidence.parse_failed_capture_events(progress + error), findings)
+        self.assertEqual(evidence.parse_failed_capture_events(progress + complete + error), findings)
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.parse_partial_capture_events(progress + complete)
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.parse_failed_capture_events(progress + error + complete)
 
     def test_cli_capture_preserves_unicode_line_separators_inside_json_strings(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -781,6 +890,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         decide: bool = True,
         instructions: tuple[str, ...] = ("The complete SQL finding remains available.",),
         legacy_projection: bool = False,
+        event_text: str | None = None,
     ) -> SqliteReviewRecords:
         database = common / "controller.sqlite3"
         SqliteStateStore(database).update(lambda state: state)
@@ -830,6 +940,8 @@ class GithubAndEvidenceTests(unittest.TestCase):
             )
             + "\n"
         )
+        if event_text is not None:
+            events = event_text
         result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
         records.start_attempt(
             attempt_id=run_id,
@@ -944,6 +1056,44 @@ class GithubAndEvidenceTests(unittest.TestCase):
             hosted_review_id=None,
             duration_seconds=duration,
         )
+
+    def test_retained_success_grammar_is_preserved_for_native_and_legacy_archives(self):
+        complete = '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/a.py"]}\n'
+        streams = (
+            '{"type":"unknown"}\n{"type":"error","errorType":"connection","recoverable":true}\n' + complete,
+            '{"type":"error","errorType":"connection","recoverable":true}\n' + complete,
+            complete + '{"type":"error"}\n',
+            '{"type":"unknown"}\n' + complete,
+            '{"type":[]}\n' + complete,
+            '{"type":"review_context"}\n' + complete,
+            '{"type":"heartbeat"}\n' + complete,
+            complete + '{"type":"reviewing","message":"Still working"}\n',
+            '{"type":"heartbeat","status":"working","status":"done"}\n' + complete,
+            complete.replace('"findings":0', '"findings":1,"findings":0'),
+        )
+        checkpoint = self._native_cli_checkpoint(found=0, accepted=0, duration=None)
+        for stdout in streams:
+            with self.subTest(stdout=stdout), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(common, instructions=(), event_text=stdout)
+                before = records.history(PR)
+                artifacts = records.attempt_artifacts("run.Native")
+                native = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+                self.assertEqual(native.findings, [])
+                self.assertEqual(records.history(PR), before)
+                self.assertEqual(records.attempt_artifacts("run.Native"), artifacts)
+
+                self._write_native_cli_raw_capture(common)
+                path = common / "coderabbit-review-logs" / "run.Native" / "stdout"
+                path.write_text(stdout, encoding="utf-8")
+                legacy = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=None)
+                self.assertEqual(legacy.findings, [])
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_capture_events(stdout, strict=True)
+                with self.assertRaises(evidence.CaptureInvalid):
+                    evidence._parse_capture_stdout(path, strict=True)
+                with self.assertRaises(cli_attempts._UnrecordableCapture):
+                    cli_attempts._parse_successful_stdout(stdout)
 
     def test_native_cli_checkpoint_loads_from_sql_after_raw_capture_removal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1737,8 +1887,18 @@ class HostedEvidenceTests(unittest.TestCase):
     def test_operational_unknown_count_requires_complete_unambiguous_publication(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         for failure in (
-            "incomplete", "multiple", "wrong_author", "wrong_head", "malformed", "no_batches",
-            "late_batch", "wrong_root_head", "later_active", "extra_review", "wrong_pr", "incomplete_coverage",
+            "incomplete",
+            "multiple",
+            "wrong_author",
+            "wrong_head",
+            "malformed",
+            "no_batches",
+            "late_batch",
+            "wrong_root_head",
+            "later_active",
+            "extra_review",
+            "wrong_pr",
+            "incomplete_coverage",
         ):
             with self.subTest(failure=failure):
                 reviews = self.publication_reviews()

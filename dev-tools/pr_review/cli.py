@@ -311,6 +311,12 @@ def _parser() -> argparse.ArgumentParser:
     provider_import.add_argument("--coverage-limit", action="append", default=[])
     records_database(provider_import)
 
+    cli_recover = record_commands.add_parser(
+        "cli-recover", help="recover one successful native CLI capture into its original attempt"
+    )
+    cli_recover.add_argument("--run-id", required=True)
+    records_database(cli_recover)
+
     cli_observations = record_commands.add_parser(
         "cli-observations",
         help="recover validated findings from one exact terminal failed native CLI capture",
@@ -1455,9 +1461,14 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
 
             source = store.run_source(args.run_id)
             result = recover_checkpoint(
-                store, repo=github.infer_repo(args.repo), source_pr=source["source_pr"], run_id=args.run_id,
-                expected_state_sha256=args.expected_state_sha256, decision_id=args.decision_id,
-                reason=args.reason, acknowledge_uncertain_delivery=args.acknowledge_uncertain_delivery,
+                store,
+                repo=github.infer_repo(args.repo),
+                source_pr=source["source_pr"],
+                run_id=args.run_id,
+                expected_state_sha256=args.expected_state_sha256,
+                decision_id=args.decision_id,
+                reason=args.reason,
+                acknowledge_uncertain_delivery=args.acknowledge_uncertain_delivery,
             )
         elif args.source_command == "finalize":
             result = store.finalize_run(args.run_id, finalized_at=args.finalized_at)
@@ -1523,6 +1534,9 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             reason=args.reason,
             target_pr=args.target_pr,
         )
+        return {"api_version": 1, "result": result}, 0
+    if args.records_command == "cli-recover":
+        result = cli_attempts.recover_successful_cli_capture(store, args.run_id)
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "cli-observations":
         result = cli_attempts.recover_failed_cli_observations(store, _records_database_path(args), args.run_id)
