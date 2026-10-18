@@ -101,6 +101,32 @@ class EntitySelectedEmptyPublicationDigestGrpcReceiverTest {
     verifyNoInteractions(digestService);
   }
 
+  @Test
+  void scriptPatchScopeReturnsUnsupportedBeforeDigestServiceInteraction() {
+    SessionContext.clear();
+    EntitySelectedEmptyPublicationDigestService digestService =
+        Mockito.mock(EntitySelectedEmptyPublicationDigestService.class);
+    EntitySelectedEmptyPublicationDigestGrpcReceiver receiver =
+        new EntitySelectedEmptyPublicationDigestGrpcReceiver(
+            digestService, NAMESPACE, new SimpleMeterRegistry());
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch(TENANT, VERSION_ROW, "patch:1", "request-7");
+    GetDraftDesignDigestRequest patchRequest =
+        GetDraftDesignDigestRequest.newBuilder()
+            .setTenantId(binding.tenantId())
+            .setBaseVersionId(binding.baseVersionId())
+            .setScriptPatchVersion(binding.scriptPatchVersion())
+            .setPublishRequestId(binding.publishRequestId())
+            .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+            .setRequestDigest(binding.requestDigest())
+            .build();
+
+    GetDraftDesignDigestResponse response = invokeAsGameDesign(receiver, patchRequest);
+
+    assertEquals("UNSUPPORTED_SCOPE", response.getError().getCode());
+    verifyNoInteractions(digestService);
+  }
+
   private static GetDraftDesignDigestRequest request(PublicationDigestRequestBinding binding) {
     return GetDraftDesignDigestRequest.newBuilder()
         .setTenantId(binding.tenantId())

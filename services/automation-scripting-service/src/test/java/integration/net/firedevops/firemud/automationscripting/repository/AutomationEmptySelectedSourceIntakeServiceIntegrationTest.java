@@ -84,7 +84,8 @@ class AutomationEmptySelectedSourceIntakeServiceIntegrationTest {
                     invocation.getArgument(0), fixture.worldEvidence().inventory()));
 
     var service =
-        new AutomationEmptySelectedSourceIntakeService(repository, accountClient, worldClient);
+        new AutomationEmptySelectedSourceIntakeService(
+            repository, accountClient, worldClient, NAMESPACE);
     String requestDigest =
         AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
             NAMESPACE, fixture.authorization(), fixture.freezeEvidence());
@@ -195,7 +196,8 @@ class AutomationEmptySelectedSourceIntakeServiceIntegrationTest {
               });
 
       var service =
-          new AutomationEmptySelectedSourceIntakeService(repository, accountClient, worldClient);
+          new AutomationEmptySelectedSourceIntakeService(
+              repository, accountClient, worldClient, NAMESPACE);
       assertThatThrownBy(
               () ->
                   withGameDesignPeer(
@@ -233,7 +235,8 @@ class AutomationEmptySelectedSourceIntakeServiceIntegrationTest {
     when(repository.read(NAMESPACE, fixture.authorization().intakeRequestId()))
         .thenReturn(Optional.of(retained));
     var service =
-        new AutomationEmptySelectedSourceIntakeService(repository, accountClient, worldClient);
+        new AutomationEmptySelectedSourceIntakeService(
+            repository, accountClient, worldClient, NAMESPACE);
 
     var returned =
         withGameDesignPeer(

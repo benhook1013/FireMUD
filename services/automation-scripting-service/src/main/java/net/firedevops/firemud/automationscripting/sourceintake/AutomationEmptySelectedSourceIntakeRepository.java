@@ -262,8 +262,8 @@ public final class AutomationEmptySelectedSourceIntakeRepository {
         tx.fetchOne(
             "SELECT intake_request_id FROM "
                 + ASSOCIATION
-                + " WHERE target_namespace = ? AND (canonical_tenant_id = ? "
-                + "OR canonical_version_id = ? OR operation_id = ?)",
+                + " WHERE target_namespace = ? AND ((canonical_tenant_id = ? "
+                + "AND canonical_version_id = ?) OR operation_id = ?) LIMIT 1",
             binding.targetNamespace(),
             binding.tenantId(),
             binding.versionId(),

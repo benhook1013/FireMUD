@@ -32,16 +32,22 @@ public final class AutomationEmptySelectedSourceIntakeService {
   private final AutomationEmptySelectedSourceIntakeRepository repository;
   private final SelectedOwnerIntakeAuthorizationReadClient authorizationReadClient;
   private final SelectedOwnerWorldInventoryReadClient worldInventoryReadClient;
+  private final String namespace;
 
   public AutomationEmptySelectedSourceIntakeService(
       AutomationEmptySelectedSourceIntakeRepository repository,
       SelectedOwnerIntakeAuthorizationReadClient authorizationReadClient,
-      SelectedOwnerWorldInventoryReadClient worldInventoryReadClient) {
+      SelectedOwnerWorldInventoryReadClient worldInventoryReadClient,
+      String namespace) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.authorizationReadClient =
         Objects.requireNonNull(authorizationReadClient, "authorizationReadClient");
     this.worldInventoryReadClient =
         Objects.requireNonNull(worldInventoryReadClient, "worldInventoryReadClient");
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Canonical namespace required");
+    }
+    this.namespace = namespace;
   }
 
   /**
@@ -53,7 +59,11 @@ public final class AutomationEmptySelectedSourceIntakeService {
       String targetNamespace,
       SelectedOwnerIntakeAuthorizationBinding originalBinding,
       WorldSelectedDraftPublicationFreezeEvidence exactFreeze) {
-    requireAuthenticatedGameDesignCaller(targetNamespace);
+    requireAuthenticatedGameDesignCaller();
+    if (!namespace.equals(targetNamespace)) {
+      throw new IllegalArgumentException(
+          "Automation intake target namespace differs from its configured namespace");
+    }
     requireNoAmbientOwnerSql();
     requireRequest(targetNamespace, originalBinding, exactFreeze);
     String requestDigest =
@@ -113,7 +123,7 @@ public final class AutomationEmptySelectedSourceIntakeService {
     return receipt;
   }
 
-  private static void requireAuthenticatedGameDesignCaller(String targetNamespace) {
+  private void requireAuthenticatedGameDesignCaller() {
     var peer = GrpcPeerIdentity.current();
     if (peer == null) {
       throw new SecurityException("Authenticated same-namespace Game Design peer is required");
@@ -122,10 +132,8 @@ public final class AutomationEmptySelectedSourceIntakeService {
         || SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY.get() != null
         || AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY.get() != null
         || SessionContext.hasAuthenticatedCallerContext()
-        || !GrpcPeerIdentity.isValidNamespace(targetNamespace)
-        || !targetNamespace.equals(peer.namespace())
-        || !("spiffe://firemud/ns/" + targetNamespace + "/sa/game-design-service")
-            .equals(peer.uri())) {
+        || !namespace.equals(peer.namespace())
+        || !("spiffe://firemud/ns/" + namespace + "/sa/game-design-service").equals(peer.uri())) {
       throw new SecurityException(
           "Selected Automation intake requires the exact same-namespace Game Design peer");
     }

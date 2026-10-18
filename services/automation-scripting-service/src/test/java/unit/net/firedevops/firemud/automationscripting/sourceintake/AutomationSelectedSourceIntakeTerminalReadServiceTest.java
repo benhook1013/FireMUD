@@ -24,8 +24,10 @@ import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySele
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Mocked owner-storage and peer tests do not establish physical Automation owner proof. */
@@ -113,6 +115,49 @@ class AutomationSelectedSourceIntakeTerminalReadServiceTest {
               error ->
                   assertThat(Status.fromThrowable(error).getCode())
                       .isEqualTo(Status.Code.DATA_LOSS));
+    } finally {
+      accountContext.detach(previous);
+    }
+  }
+
+  @Test
+  void databaseOutagesAreSanitizedAsUnavailable() {
+    var repository = mock(AutomationEmptySelectedSourceIntakeRepository.class);
+    var binding = binding();
+    var receipt = receipt(BINDING_BYTES);
+    var terminalRequest = request(binding);
+    var service = new AutomationEmptySelectedSourceIntakeTerminalReadService(repository, NAMESPACE);
+    var accountContext = accountPeer();
+    var previous = accountContext.attach();
+    try {
+      for (RuntimeException outage :
+          List.of(
+              new DataAccessException("private jOOQ database detail"),
+              new DataAccessResourceFailureException("private Spring database detail"))) {
+        doThrow(outage)
+            .doReturn(Optional.of(receipt))
+            .when(repository)
+            .readCommittedTerminal(binding);
+
+        assertThatThrownBy(() -> service.read(terminalRequest))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                error -> {
+                  var status = Status.fromThrowable(error);
+                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+                  assertThat(status.getDescription())
+                      .isEqualTo("Automation terminal receipt storage is unavailable");
+                  assertThat(status.getDescription())
+                      .doesNotContain("private jOOQ", "private Spring");
+                  assertThat(((StatusRuntimeException) error).getCause()).isNull();
+                  assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+                });
+
+        var recovered = service.read(terminalRequest);
+        assertThat(recovered.request()).isSameAs(terminalRequest);
+        assertThat(recovered.receipt()).isSameAs(receipt);
+        assertThat(recovered.receipt().canonicalBytes()).isEqualTo(receipt.canonicalBytes());
+      }
     } finally {
       accountContext.detach(previous);
     }

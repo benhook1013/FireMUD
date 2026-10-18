@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySele
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.jooq.exception.DataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone Account-only lookup over Automation's immutable selected-source receipt. */
@@ -63,7 +64,11 @@ public final class AutomationEmptySelectedSourceIntakeTerminalReadService {
       throw Status.ALREADY_EXISTS
           .withDescription("Automation receipt differs from the complete original authorization")
           .asRuntimeException();
-    } catch (RuntimeException corrupt) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Automation terminal receipt storage is unavailable")
+          .asRuntimeException();
+    } catch (IllegalArgumentException | IllegalStateException corrupt) {
       throw Status.DATA_LOSS
           .withDescription("Automation committed receipt is invalid")
           .asRuntimeException();
