@@ -68,7 +68,14 @@ public final class WorldSelectedOwnerInventoryReadGrpcService
       var evidence = readService.read(decoded);
       response = SelectedOwnerWorldInventoryReadGrpcCodec.toResponse(decoded, evidence.inventory());
     } catch (StatusRuntimeException failure) {
-      responseObserver.onError(failure);
+      Status status =
+          failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION
+              ? Status.FAILED_PRECONDITION
+              : Status.UNAVAILABLE;
+      fail(
+          responseObserver,
+          status,
+          "Account did not confirm the exact selected-owner World closure read");
       return;
     } catch (SecurityException denied) {
       fail(

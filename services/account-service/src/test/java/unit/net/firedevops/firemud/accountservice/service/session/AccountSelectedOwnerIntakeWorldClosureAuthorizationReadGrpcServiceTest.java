@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /** Synthetic handler tests only; they do not establish mTLS or PostgreSQL owner proof. */
 class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest {
@@ -90,11 +91,14 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest {
     var owner = mock(AccountSelectedOwnerIntakeWorldClosureAuthorizationReadService.class);
     var service =
         new AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcService(owner, "test");
+    var expectedRequests =
+        new java.util.ArrayList<SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request>();
 
     for (Owner domain : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
       var binding = AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(domain);
       var request =
           SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.create("test", binding);
+      expectedRequests.add(request);
       var wire = SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.toRequest(request);
       var result = new Collector();
       peer("test", "world-management-service")
@@ -118,7 +122,23 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest {
         assertThat(denied.response).isNull();
       }
     }
-    verify(owner, times(2)).requireHeld(any());
+    var requests =
+        ArgumentCaptor.forClass(
+            SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.class);
+    verify(owner, times(2)).requireHeld(requests.capture());
+    assertThat(requests.getAllValues()).hasSize(2);
+    for (int index = 0; index < expectedRequests.size(); index++) {
+      var expected = expectedRequests.get(index);
+      var actual = requests.getAllValues().get(index);
+      assertThat(actual.schemaVersion()).isEqualTo(expected.schemaVersion());
+      assertThat(actual.targetNamespace()).isEqualTo(expected.targetNamespace());
+      assertThat(actual.readRequestId()).isEqualTo(expected.readRequestId());
+      assertThat(actual.intendedReader()).isEqualTo(expected.intendedReader());
+      assertThat(actual.closureReadPurpose()).isEqualTo(expected.closureReadPurpose());
+      assertThat(actual.binding().canonicalBytes())
+          .containsExactly(expected.binding().canonicalBytes());
+      assertThat(actual.binding().owner()).isEqualTo(expected.binding().owner());
+    }
   }
 
   @Test
