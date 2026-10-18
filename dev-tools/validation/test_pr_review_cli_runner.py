@@ -1521,8 +1521,9 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
 
     def test_capture_terminal_clock_survives_parse_delay_and_same_second_reset(self):
-        output = ('{"type":"complete","status":"review_completed","findings":0,'
-                  '"reviewedFiles":["src/Representative.java"]}\n')
+        output = (
+            '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+        )
         terminal = datetime(2026, 10, 14, 12, 0, 0, 200000, tzinfo=timezone.utc)
         started = terminal.replace(microsecond=0)
         for reset_before_terminal in (False, True):
@@ -1540,35 +1541,70 @@ class CliReviewRunnerTests(unittest.TestCase):
                 clock = Mock(wraps=datetime)
                 clock.now.side_effect = [started, terminal]
                 decision_clock = Mock(wraps=datetime)
-                decision_clock.now.return_value = terminal.replace(microsecond=100000 if reset_before_terminal else 300000)
+                decision_clock.now.return_value = terminal.replace(
+                    microsecond=100000 if reset_before_terminal else 300000
+                )
                 original_marker = cli_runner._write_capture_complete_marker
                 original_run = commands.run
                 resets = []
+
                 def reset(resets=resets, controller=controller):
-                    resets.append(controller.decide_period_reset(pr=42, channel="cli", head=HEAD,
-                        current_history_baseline=True, baseline_id="race", actor="operator", reason="renew"))
-                def run_with_reset(argv, reset_before_terminal=reset_before_terminal, original_run=original_run, reset=reset, **kwargs):
+                    resets.append(
+                        controller.decide_period_reset(
+                            pr=42,
+                            channel="cli",
+                            head=HEAD,
+                            current_history_baseline=True,
+                            baseline_id="race",
+                            actor="operator",
+                            reason="renew",
+                        )
+                    )
+
+                def run_with_reset(
+                    argv, reset_before_terminal=reset_before_terminal, original_run=original_run, reset=reset, **kwargs
+                ):
                     if reset_before_terminal and argv[0] == "coderabbit":
                         reset()
                     return original_run(argv, **kwargs)
-                def marker_with_reset(capture_dir, original_marker=original_marker, reset_before_terminal=reset_before_terminal, reset=reset):
+
+                def marker_with_reset(
+                    capture_dir,
+                    original_marker=original_marker,
+                    reset_before_terminal=reset_before_terminal,
+                    reset=reset,
+                ):
                     original_marker(capture_dir)
                     if not reset_before_terminal:
                         reset()
+
                 commands.run = run_with_reset
-                with (patch.object(cli_runner, "datetime", clock),
-                      patch("pr_review.controller.datetime", decision_clock),
-                      patch.object(cli_runner, "_write_capture_complete_marker", side_effect=marker_with_reset)):
-                    result = run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands, records=records)
+                with (
+                    patch.object(cli_runner, "datetime", clock),
+                    patch("pr_review.controller.datetime", decision_clock),
+                    patch.object(cli_runner, "_write_capture_complete_marker", side_effect=marker_with_reset),
+                ):
+                    result = run_cli_review(
+                        target(), github=FakeGitHub(), source_root=root, runner=commands, records=records
+                    )
                 self.assertEqual(len(resets), 1)
                 source_time = "2026-10-14T12:00:00.200000Z"
                 archived = json.loads(records.attempt_artifacts(result.run_id)["metadata"])
                 self.assertEqual(archived["capture_terminal_at"], source_time)
                 self.assertEqual(records.attempt(result.run_id)["finished_at"], source_time)
                 self.assertEqual(records.native_completion_time(result.run_id, source_pr=42), source_time)
-                row = {"pr": 42, "channel": "cli", "head": HEAD, "checkpoint": "published-later",
-                       "source_run_id": result.run_id, "verified_completed_at": source_time,
-                       "completed": True, "attributable": True, "anchored": True, "accepted": 0}
+                row = {
+                    "pr": 42,
+                    "channel": "cli",
+                    "head": HEAD,
+                    "checkpoint": "published-later",
+                    "source_run_id": result.run_id,
+                    "verified_completed_at": source_time,
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "accepted": 0,
+                }
                 progress = ReviewController._default_period_progress(store.load(), 42, Channel.CLI, [row])
                 self.assertEqual(progress["used"], int(reset_before_terminal))
                 self.assertEqual(len(progress["taper_history"]), int(reset_before_terminal))
@@ -1693,11 +1729,15 @@ class CliReviewRunnerTests(unittest.TestCase):
                     self.assertEqual(records.attempt(value["run_id"])["state"], "started")
                 atomic_json(path, value)
 
+            cause = sqlite3.OperationalError("private provider payload and credentials")
+            cause.sqlite_errorcode = 5
+            persistence_error = ReviewRecordsError("simulated archive failure")
+            persistence_error.__cause__ = cause
             with (
                 patch.object(
                     records,
                     "complete_attempt_run",
-                    side_effect=ReviewRecordsError("simulated archive failure"),
+                    side_effect=persistence_error,
                 ),
                 patch("pr_review.cli_runner._atomic_json", side_effect=migrate_before_final_metadata),
             ):
@@ -1710,6 +1750,11 @@ class CliReviewRunnerTests(unittest.TestCase):
                 )
 
             self.assertIn("was not saved", result.warning)
+            self.assertIn(f"records cli-recover --run-id {result.run_id}", result.warning)
+            self.assertIn("ReviewRecordsError", result.warning)
+            self.assertNotIn("simulated archive failure", result.warning)
+            self.assertIn("OperationalError(sqlite_errorcode=5)", result.warning)
+            self.assertNotIn("private provider payload", result.warning)
             self.assertEqual(len(interleaved_reports), 1)
             self.assertFalse(interleaved_reports[0]["available"])
             self.assertIn("CLI review is active", interleaved_reports[0]["reason"])
@@ -1722,8 +1767,15 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(records.attempt(run_id)["state"], "started")
             controller = ReviewController(store=SqliteStateStore(database))
             controller.store.update(lambda state: dataclasses.replace(state, ordered_prs=(42,)))
-            reset = controller.decide_period_reset(pr=42, channel="cli", head=HEAD,
-                current_history_baseline=True, baseline_id="before-recovery", actor="operator", reason="renew")
+            reset = controller.decide_period_reset(
+                pr=42,
+                channel="cli",
+                head=HEAD,
+                current_history_baseline=True,
+                baseline_id="before-recovery",
+                actor="operator",
+                reason="renew",
+            )
             self.assertNotIn(run_id, reset["period"]["baseline_source_run_ids"])
             report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
             self.assertEqual(report["recovered"], [{"run_id": run_id, "pr": "42"}])
@@ -1735,9 +1787,18 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(attempt["finished_at"], archived["capture_terminal_at"])
             self.assertEqual(records.native_completion_time(run_id, source_pr=42), archived["capture_terminal_at"])
             self.assertEqual(records.history(42)["runs"][0]["counts"]["found"], 1)
-            row = {"pr": 42, "channel": "cli", "head": HEAD, "checkpoint": "recovered-publication",
-                   "source_run_id": run_id, "verified_completed_at": archived["capture_terminal_at"],
-                   "completed": True, "attributable": True, "anchored": True, "accepted": 0}
+            row = {
+                "pr": 42,
+                "channel": "cli",
+                "head": HEAD,
+                "checkpoint": "recovered-publication",
+                "source_run_id": run_id,
+                "verified_completed_at": archived["capture_terminal_at"],
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "accepted": 0,
+            }
             progress = ReviewController._default_period_progress(controller.store.load(), 42, Channel.CLI, [row])
             self.assertEqual(progress["used"], 0)
             self.assertEqual(progress["taper_history"], [])
@@ -1817,6 +1878,17 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
             capture_dir = next((root / ".git" / "firemud" / "pr-review" / "runs").iterdir())
             self.assertIn("target changed during setup", (capture_dir / "error").read_text())
+
+    def test_persistence_diagnostic_exposes_only_exception_classes_and_sqlite_code(self):
+        cause = sqlite3.OperationalError("secret-token provider payload")
+        cause.sqlite_errorcode = 5  # SQLITE_BUSY; Python 3.10 does not expose the constant.
+        error = ReviewRecordsError("credential=secret")
+        error.__cause__ = cause
+        identity = cli_runner._persistence_error_identity(error)
+        self.assertEqual(identity, "ReviewRecordsError <- OperationalError(sqlite_errorcode=5)")
+        self.assertNotIn("secret", identity)
+        cause.__cause__ = error
+        self.assertEqual(cli_runner._persistence_error_identity(error), identity)
 
     def test_provider_result_survives_sqlite_completion_failures(self):
         cases = (
@@ -3554,31 +3626,43 @@ class CliReviewRunnerTests(unittest.TestCase):
     def test_forced_cli_overlap_uses_actual_base_instead_of_configured_parent(self):
         anchor = {**cli_anchor(), "actual_base_ref": "develop", "actual_base_sha": PARENT}
         changes = (
-            {}, {"child_head": ADVANCED}, {"actual_base_ref": "other-base"},
-            {"actual_base_sha": ADVANCED}, {"parent_head": ADVANCED},
+            {},
+            {"child_head": ADVANCED},
+            {"actual_base_ref": "other-base"},
+            {"actual_base_sha": ADVANCED},
+            {"parent_head": ADVANCED},
             {"parent_identity": None},
-            {"merge_base": ADVANCED}, {"patch_id": "different-patch"},
+            {"merge_base": ADVANCED},
+            {"patch_id": "different-patch"},
         )
         for changed in changes:
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / ".git").mkdir()
                 selected = target(
-                    parent_ref="configured-parent", parent_head=ADVANCED,
-                    merge_base=PARENT, patch_identity="queue-patch", reconciled=False,
+                    parent_ref="configured-parent",
+                    parent_head=ADVANCED,
+                    merge_base=PARENT,
+                    patch_identity="queue-patch",
+                    reconciled=False,
                 )
                 record_path = write_hosted_trigger(root / ".git", anchor={**anchor, **changed})
                 original_record = json.loads(record_path.read_text())
                 commands = FakeCommands(root)
                 with patch(
-                    "pr_review.cli_runner.github_api.fetch_pull_request", return_value=hosted_payload(),
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload(),
                 ):
                     if changed:
                         with self.assertRaisesRegex(ReviewRunnerError, "reservation_state=active_unverified"):
                             run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands, force=True)
                     else:
                         result = run_cli_review(
-                            selected, github=FakeGitHub(), source_root=root, runner=commands, force=True,
+                            selected,
+                            github=FakeGitHub(),
+                            source_root=root,
+                            runner=commands,
+                            force=True,
                         )
                         self.assertEqual(result.parent_sha, PARENT)
                 self.assertEqual(any(call[0][0] == "coderabbit" for call in commands.calls), not bool(changed))

@@ -20,6 +20,7 @@ from .sqlite_finding_text import _safe_finding_detail
 from .sqlite_provider_imports import _cli_detail, _cli_finding_title
 from .sqlite_review_records import (
     AttemptNotFound,
+    CliCaptureInProgress,
     FindingObservation,
     ReviewRecordsError,
     _redact_archive_text,
@@ -103,6 +104,94 @@ def failed_attempts(database: Path, pr: int) -> dict[str, Any]:
     return {"available": True, "attempts": attempts[:MAX_ATTEMPTS]}
 
 
+def recover_successful_cli_capture(records: Any, run_id: str) -> dict[str, Any]:
+    """Recover only the named successful native capture, without migration or scanning."""
+
+    if not isinstance(run_id, str) or not RUN_NAME.fullmatch(run_id):
+        raise ReviewRecordsError("run ID must identify one native CLI capture")
+    private_dir = records.path.parent / "pr-review"
+    root = private_dir / "runs"
+    directory = root / run_id
+    if any(path.is_symlink() or not path.is_dir() for path in (private_dir, root, directory)):
+        raise ReviewRecordsError("exact native CLI capture directory is unavailable")
+    lock_path = private_dir / "cli.lock"
+    # Use the runner's exclusion lock; never replace an existing lock inode.
+    try:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        lock_handle = os.fdopen(descriptor, "r+")
+    except OSError as exc:
+        raise ReviewRecordsError("CLI review lock could not be opened") from exc
+    with lock_handle:
+        if not stat.S_ISREG(os.fstat(lock_handle.fileno()).st_mode):
+            raise ReviewRecordsError("CLI review lock is not a regular file")
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ReviewRecordsError("a CLI review is active; capture recovery was refused") from exc
+        try:
+            attempt = records.attempt(run_id)
+            if (
+                attempt["channel"] != "cli"
+                or attempt["metadata"].get("origin") == "legacy_private_capture"
+                or not (
+                    (attempt["state"] == "started" and attempt["run_id"] is None)
+                    or (attempt["state"] == "completed" and attempt["run_id"] == run_id)
+                )
+            ):
+                raise ReviewRecordsError("recovery requires the original started attempt or its exact completed link")
+            # The existing exact snapshot reader also rejects a run linked to
+            # another attempt, including one belonging to a different PR.
+            try:
+                records.cli_capture_snapshot(run_id, source_pr=attempt["source_pr"])
+            except CliCaptureInProgress:
+                if attempt["state"] != "started":
+                    raise
+            try:
+                metadata = _read_capture_json(directory / "metadata.json", MAX_METADATA_BYTES, "metadata")
+                if metadata.get("capture_completion_marker") != "capture-complete":
+                    raise _UnrecordableCapture("capture completion marker is undeclared")
+                if _read_capture_text(directory / "capture-complete", 128, "completion marker") != f"{run_id}\n":
+                    raise _UnrecordableCapture("capture completion marker is invalid")
+                if _read_capture_text(directory / "exit-status", MAX_EXIT_STATUS_BYTES, "exit status").strip() != "0":
+                    raise _UnrecordableCapture("capture exit status is not successful")
+                capture = _successful_capture(directory, attempt)
+            except _UnrecordableCapture as exc:
+                raise ReviewRecordsError(str(exc)) from exc
+            result = records.complete_attempt_run(
+                run_id,
+                finish={
+                    "state": "completed",
+                    "finished_at": capture["finished_at"],
+                    "duration_seconds": capture["duration_seconds"],
+                    "exit_status": 0,
+                    "diagnostic": "",
+                    "artifacts": capture["artifacts"],
+                },
+                run={
+                    "run_id": run_id,
+                    "source_pr": capture["pr"],
+                    "channel": "cli",
+                    "findings": capture["findings"],
+                    "outcome": "completed",
+                    "attributable": True,
+                    "source_head": capture["candidate_sha"],
+                    "reviewer": "CodeRabbit CLI",
+                    "scope": "broad",
+                    "started_at": attempt["started_at"],
+                    "finished_at": capture["finished_at"],
+                },
+                finalize_empty=not capture["findings"],
+            )
+            return {
+                "run_id": run_id,
+                "pr": capture["pr"],
+                "status": "recovered",
+                "idempotent_replay": result["attempt"]["idempotent_replay"],
+            }
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def recover_failed_cli_observations(records: Any, database: Path, run_id: str) -> dict[str, Any]:
     """Recover findings from the exact durable capture of one failed native CLI attempt."""
 
@@ -137,7 +226,9 @@ def recover_failed_cli_observations(records: Any, database: Path, run_id: str) -
     ):
         raise ReviewRecordsError("native CLI capture metadata identity is invalid")
     original_metadata = {
-        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
+        key: value
+        for key, value in metadata.items()
+        if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
     }
     if original_metadata != attempt["metadata"]:
         raise ReviewRecordsError("native CLI capture metadata conflicts with its exact SQL attempt")
@@ -656,7 +747,10 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
         if metadata.get("capture_completion_marker") != "capture-complete":
             return None
         original_metadata = {
-            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
+            key: value
+            for key, value in metadata.items()
+            if key
+            not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
         }
         if original_metadata != attempt["metadata"]:
             return None
@@ -748,7 +842,10 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
         if metadata.get("run_id") != directory.name or metadata.get("kind") != "cli":
             return None
         original_metadata = {
-            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
+            key: value
+            for key, value in metadata.items()
+            if key
+            not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
         }
         if original_metadata != attempt["metadata"]:
             return None
@@ -838,7 +935,9 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
     if attempt["channel"] != "cli" or attempt["source_pr"] != pr or attempt["candidate_sha"] != candidate_sha:
         raise _UnrecordableCapture("capture identity conflicts with the SQL attempt")
     initial_metadata = {
-        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
+        key: value
+        for key, value in metadata.items()
+        if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
     }
     if attempt["metadata"] != initial_metadata:
         raise _UnrecordableCapture("capture metadata conflicts with the SQL attempt")
@@ -871,8 +970,11 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
             raise _UnrecordableCapture("capture finding metadata is invalid") from error
     if "capture_terminal_at" in metadata or "capture_terminal_basis" in metadata:
         terminal_value = metadata.get("capture_terminal_at")
-        terminal = (hosted.parse_timestamp(terminal_value) if isinstance(terminal_value, str)
-                    and terminal_value.endswith(("Z", "+00:00")) else None)
+        terminal = (
+            hosted.parse_timestamp(terminal_value)
+            if isinstance(terminal_value, str) and terminal_value.endswith(("Z", "+00:00"))
+            else None
+        )
         if metadata.get("capture_terminal_basis") != "provider_process_exit" or terminal is None:
             raise _UnrecordableCapture("capture terminal provenance is invalid")
         finished_at = terminal.isoformat().replace("+00:00", "Z")

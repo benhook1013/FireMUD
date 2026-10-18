@@ -159,10 +159,13 @@ class ReviewRecordsCliTest(unittest.TestCase):
         records = SqliteReviewRecords(self.database)
         run_id, _, _ = corrected_native_fixture(records)
         before = records.attempt(run_id)
-        with (patch.object(cli.github, "infer_repo", side_effect=AssertionError("no provider or Git discovery")),
-              patch.object(SqliteReviewRecords, "_write_connection", side_effect=AssertionError("read only"))):
-            code, result = self.invoke("source", "publication-status", "--run-id", run_id,
-                                       "--database", str(self.database))
+        with (
+            patch.object(cli.github, "infer_repo", side_effect=AssertionError("no provider or Git discovery")),
+            patch.object(SqliteReviewRecords, "_write_connection", side_effect=AssertionError("read only")),
+        ):
+            code, result = self.invoke(
+                "source", "publication-status", "--run-id", run_id, "--database", str(self.database)
+            )
         self.assertEqual(code, 0, result)
         self.assertEqual(result["result"]["historical_outcome"], "unknown")
         self.assertEqual(result["result"]["intent"], before["metadata"]["checkpoint_publication_intent"])
@@ -176,11 +179,27 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.invoke("bootstrap", "--database", str(self.database))
         records = SqliteReviewRecords(self.database)
         run_id, _, _ = corrected_native_fixture(records)
-        with (patch.object(checkpoint_publication, "recover_checkpoint", return_value={"status": "reused"}) as recover,
-              patch.object(SqliteReviewRecords, "finalize_run", side_effect=AssertionError("counts already frozen"))):
-            code, result = self.invoke("source", "publication-recover", "--run-id", run_id,
-                "--expected-state-sha256", "a" * 64, "--decision-id", "operator-1", "--reason", "Accepted risk",
-                "--acknowledge-uncertain-delivery", "--repo", "owner/repo", "--database", str(self.database))
+        with (
+            patch.object(checkpoint_publication, "recover_checkpoint", return_value={"status": "reused"}) as recover,
+            patch.object(SqliteReviewRecords, "finalize_run", side_effect=AssertionError("counts already frozen")),
+        ):
+            code, result = self.invoke(
+                "source",
+                "publication-recover",
+                "--run-id",
+                run_id,
+                "--expected-state-sha256",
+                "a" * 64,
+                "--decision-id",
+                "operator-1",
+                "--reason",
+                "Accepted risk",
+                "--acknowledge-uncertain-delivery",
+                "--repo",
+                "owner/repo",
+                "--database",
+                str(self.database),
+            )
         self.assertEqual(code, 0, result)
         self.assertEqual(recover.call_args.kwargs["source_pr"], 42)
         self.assertTrue(recover.call_args.kwargs["acknowledge_uncertain_delivery"])
@@ -188,8 +207,19 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(result["result"]["status"], "reused")
 
     def test_publication_recover_requires_explicit_acknowledgement_and_bound_inputs(self):
-        prefix = ["records", "source", "publication-recover", "--run-id", "run.Exact",
-                  "--expected-state-sha256", "a" * 64, "--decision-id", "operator-1", "--reason", "Accepted risk"]
+        prefix = [
+            "records",
+            "source",
+            "publication-recover",
+            "--run-id",
+            "run.Exact",
+            "--expected-state-sha256",
+            "a" * 64,
+            "--decision-id",
+            "operator-1",
+            "--reason",
+            "Accepted risk",
+        ]
         with self.assertRaises(SystemExit):
             cli._parser().parse_args(prefix)
         parsed = cli._parser().parse_args([*prefix, "--acknowledge-uncertain-delivery"])
@@ -266,6 +296,280 @@ class ReviewRecordsCliTest(unittest.TestCase):
         code, result = self.invoke(*invalid)
         self.assertEqual(code, 2)
         self.assertIn("only routed", result["error"])
+
+    def successful_capture_fixture(self):
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        run_id = "run." + "a" * 32
+        metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "capture_completion_marker": "capture-complete",
+            "pull_request": 2885,
+            "candidate_sha": "d" * 40,
+            "candidate_files": 1,
+            "model": "provider-model",
+            "force": False,
+            "repository": "owner/repo",
+            "parent_pr": None,
+            "parent_ref": "develop",
+            "child_head_sha": "d" * 40,
+            "parent_sha": "b" * 40,
+            "merge_base": "b" * 40,
+            "patch_identity": "c" * 64,
+        }
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2885,
+            channel="cli",
+            candidate_sha="d" * 40,
+            started_at="2026-10-18T10:00:00Z",
+            metadata=metadata,
+        )
+        capture = self.database.parent / "pr-review" / "runs" / run_id
+        capture.mkdir(parents=True)
+        terminal = {
+            **metadata,
+            "duration_seconds": 2,
+            "exit_status": 0,
+            "capture_terminal_at": "2026-10-18T10:00:02.123456Z",
+            "capture_terminal_basis": "provider_process_exit",
+        }
+        (capture / "metadata.json").write_text(json.dumps(terminal), encoding="utf-8")
+        (capture / "stdout").write_text(
+            '{"type":"finding","codegenInstructions":"Review comment at @src/A.java:1\\nUse the safer path."}\n'
+            '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["src/A.java"]}\n',
+            encoding="utf-8",
+        )
+        for name, value in {
+            "stderr": "",
+            "exit-status": "0\n",
+            "review-duration-seconds": "2\n",
+            "capture-complete": f"{run_id}\n",
+        }.items():
+            (capture / name).write_text(value, encoding="utf-8")
+        return records, run_id, capture, metadata
+
+    def database_snapshot(self):
+        with sqlite3.connect(self.database) as connection:
+            return list(connection.iterdump())
+
+    def recover_capture(self, run_id):
+        return self.invoke("cli-recover", "--run-id", run_id, "--database", str(self.database))
+
+    def test_cli_recover_preserves_original_metadata_chronology_and_exact_replay(self):
+        records, run_id, capture, metadata = self.successful_capture_fixture()
+        with patch.object(Path, "iterdir", side_effect=AssertionError("must never enumerate captures")):
+            code, payload = self.recover_capture(run_id)
+        self.assertEqual(code, 0, payload)
+        self.assertFalse(payload["result"]["idempotent_replay"])
+        attempt = records.attempt(run_id)
+        self.assertEqual(attempt["metadata"], metadata)
+        self.assertEqual(attempt["run_id"], run_id)
+        self.assertEqual(attempt["finished_at"], "2026-10-18T10:00:02.123456Z")
+        self.assertEqual(records.native_completion_time(run_id, source_pr=2885), attempt["finished_at"])
+        self.assertEqual(
+            [json.loads(line) for line in records.attempt_artifacts(run_id)["cli_events"].splitlines()],
+            [json.loads(line) for line in (capture / "stdout").read_text().splitlines()],
+        )
+        before = self.database_snapshot()
+        code, payload = self.recover_capture(run_id)
+        self.assertEqual(code, 0, payload)
+        self.assertTrue(payload["result"]["idempotent_replay"])
+        self.assertEqual(self.database_snapshot(), before)
+        self.assertEqual(len(records.history(2885)["runs"]), 1)
+
+    def test_cli_recover_zero_findings_replays_without_another_run(self):
+        records, run_id, capture, _ = self.successful_capture_fixture()
+        (capture / "stdout").write_text(
+            '{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/A.java"]}\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(self.recover_capture(run_id)[0], 0)
+        before = self.database_snapshot()
+        self.assertTrue(self.recover_capture(run_id)[1]["result"]["idempotent_replay"])
+        self.assertEqual(self.database_snapshot(), before)
+        self.assertEqual(len(records.history(2885)["runs"]), 1)
+        self.assertEqual(records.history(2885)["runs"][0]["counts"]["found"], 0)
+
+    def test_cli_recover_preserves_historical_clock_without_period_credit(self):
+        records, run_id, capture, _ = self.successful_capture_fixture()
+        metadata_path = capture / "metadata.json"
+        metadata = json.loads(metadata_path.read_text())
+        del metadata["capture_terminal_at"]
+        del metadata["capture_terminal_basis"]
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        terminal = datetime(2026, 10, 18, 10, 0, 3, tzinfo=timezone.utc).timestamp()
+        os.utime(capture / "exit-status", (terminal, terminal))
+        self.assertEqual(self.recover_capture(run_id)[0], 0)
+        self.assertEqual(records.attempt(run_id)["finished_at"], "2026-10-18T10:00:03Z")
+        self.assertIsNone(records.native_completion_time(run_id, source_pr=2885))
+
+    def test_cli_recover_refuses_symlinked_capture_paths(self):
+        _, run_id, capture, _ = self.successful_capture_fixture()
+        for name in ("stdout", "metadata.json", "exit-status", "capture-complete"):
+            with self.subTest(name=name):
+                path = capture / name
+                original = path.read_bytes()
+                target = self.database.parent / "external-capture-fixture"
+                target.write_bytes(original)
+                path.unlink()
+                path.symlink_to(target)
+                before = self.database_snapshot()
+                self.assertEqual(self.recover_capture(run_id)[0], 2)
+                self.assertEqual(self.database_snapshot(), before)
+                path.unlink()
+                path.write_bytes(original)
+        alias = "run." + "b" * 32
+        (capture.parent / alias).symlink_to(capture, target_is_directory=True)
+        before = self.database_snapshot()
+        self.assertEqual(self.recover_capture(alias)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+
+    def test_cli_recover_refuses_inexact_captures_without_database_writes(self):
+        records, run_id, capture, _ = self.successful_capture_fixture()
+        changes = [
+            ("capture-complete", "wrong\n"),
+            ("capture-complete", None),
+            ("exit-status", "1\n"),
+            ("exit-status", "timeout\n"),
+            ("review-duration-seconds", "3\n"),
+            ("stdout", "not JSON\n"),
+            ("stdout", '{"type":"complete","status":"rate_limited"}\n'),
+            ("stdout", '{"type":"complete","status":"unknown"}\n'),
+            ("stdout", '{"type":"finding","codegenInstructions":"incomplete"}\n'),
+        ]
+        original_metadata = json.loads((capture / "metadata.json").read_text())
+        for key, value in (
+            ("run_id", "run." + "b" * 32),
+            ("pull_request", 2886),
+            ("kind", "hosted"),
+            ("candidate_sha", "e" * 40),
+            ("force", True),
+            ("timed_out", True),
+            ("capture_terminal_at", "2026-10-17T10:00:00Z"),
+        ):
+            changes.append(("metadata.json", json.dumps({**original_metadata, key: value})))
+        for name, value in changes:
+            with self.subTest(name=name, value=value):
+                path = capture / name
+                original = path.read_bytes()
+                if value is None:
+                    path.unlink()
+                else:
+                    path.write_text(value, encoding="utf-8")
+                before = self.database_snapshot()
+                code, _ = self.recover_capture(run_id)
+                self.assertEqual(code, 2)
+                self.assertEqual(self.database_snapshot(), before)
+                self.assertEqual(records.attempt(run_id)["state"], "started")
+                path.write_bytes(original)
+        before = self.database_snapshot()
+        for invalid in ("../" + run_id, "run." + "b" * 32):
+            self.assertEqual(self.recover_capture(invalid)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+
+    def test_cli_recover_refuses_conflicts_and_terminal_states(self):
+        records, run_id, _, _ = self.successful_capture_fixture()
+        records.record_run(run_id=run_id, source_pr=2885, channel="cli", findings=[], source_head="e" * 40)
+        before = self.database_snapshot()
+        self.assertEqual(self.recover_capture(run_id)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+        records.finish_attempt(run_id, state="failed")
+        before = self.database_snapshot()
+        self.assertEqual(self.recover_capture(run_id)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+
+    def test_cli_recover_replay_rejects_changed_archived_payload(self):
+        records, run_id, capture, _ = self.successful_capture_fixture()
+        self.assertEqual(self.recover_capture(run_id)[0], 0)
+        before = self.database_snapshot()
+        (capture / "stderr").write_text("changed diagnostic", encoding="utf-8")
+        self.assertEqual(self.recover_capture(run_id)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+        self.assertEqual(len(records.history(2885)["runs"]), 1)
+
+    def test_cli_recover_requires_existing_attempt_and_exact_link(self):
+        _, run_id, _, _ = self.successful_capture_fixture()
+        for state, link in (
+            ("started", "another-run"),
+            ("completed", None),
+            ("rate_limited", None),
+            ("ambiguous", None),
+            ("timed_out", None),
+        ):
+            with self.subTest(state=state, link=link):
+                with sqlite3.connect(self.database) as connection:
+                    connection.execute(
+                        "UPDATE review_attempts SET state = ?, run_id = ?, finished_at = ? WHERE attempt_id = ?",
+                        (state, link, None if state == "started" else "2026-10-18T10:00:02Z", run_id),
+                    )
+                before = self.database_snapshot()
+                self.assertEqual(self.recover_capture(run_id)[0], 2)
+                self.assertEqual(self.database_snapshot(), before)
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("DELETE FROM review_attempts WHERE attempt_id = ?", (run_id,))
+        before = self.database_snapshot()
+        self.assertEqual(self.recover_capture(run_id)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+
+    def test_cli_recover_refuses_a_run_linked_to_another_attempt(self):
+        records, run_id, _, _ = self.successful_capture_fixture()
+        records.start_attempt(attempt_id="other-attempt", source_pr=2886, channel="cli", metadata={})
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = 'other-attempt'", (run_id,))
+        before = self.database_snapshot()
+        self.assertEqual(self.recover_capture(run_id)[0], 2)
+        self.assertEqual(self.database_snapshot(), before)
+
+    def test_cli_recover_concurrent_replay_uses_runner_lock(self):
+        records, run_id, _, _ = self.successful_capture_fixture()
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        entered, release = threading.Event(), threading.Event()
+        complete = records.complete_attempt_run
+
+        def paused_completion(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(10))
+            return complete(*args, **kwargs)
+
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            patch.object(records, "complete_attempt_run", side_effect=paused_completion),
+        ):
+            future = executor.submit(cli_attempts.recover_successful_cli_capture, records, run_id)
+            try:
+                self.assertTrue(entered.wait(10))
+                before = self.database_snapshot()
+                code, payload = self.recover_capture(run_id)
+                self.assertEqual(code, 2, payload)
+                self.assertIn("CLI review is active", payload["error"])
+                self.assertEqual(self.database_snapshot(), before)
+            finally:
+                release.set()
+            self.assertFalse(future.result()["idempotent_replay"])
+        self.assertTrue(self.recover_capture(run_id)[1]["result"]["idempotent_replay"])
+        self.assertEqual(len(records.history(2885)["runs"]), 1)
+
+    def test_cli_recover_refuses_incompatible_schema_without_migration(self):
+        _, run_id, _, _ = self.successful_capture_fixture()
+        for field, value in (
+            ("records_schema_version", 8),
+            ("controller_schema_version", 99),
+            ("min_writer_build", 999),
+        ):
+            with self.subTest(field=field):
+                with sqlite3.connect(self.database) as connection:
+                    original = connection.execute(f"SELECT {field} FROM review_records_metadata").fetchone()[0]
+                    connection.execute(f"UPDATE review_records_metadata SET {field} = ?", (value,))
+                before = self.database_snapshot()
+                with patch.object(SqliteReviewRecords, "migrate", side_effect=AssertionError("must not migrate")):
+                    self.assertEqual(self.recover_capture(run_id)[0], 2)
+                self.assertEqual(self.database_snapshot(), before)
+                with sqlite3.connect(self.database) as connection:
+                    connection.execute(f"UPDATE review_records_metadata SET {field} = ?", (original,))
 
     def test_cli_attempt_reconciliation_refuses_while_runner_lock_is_held(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

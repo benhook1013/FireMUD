@@ -397,6 +397,23 @@ def format_exception_notes(error: BaseException) -> str:
     return "; ".join((rendered, *(f"note: {note}" for note in notes)))
 
 
+def _persistence_error_identity(error: BaseException) -> str:
+    """Expose bounded exception types and numeric SQLite codes, never messages."""
+
+    identities = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(identities) < 4:
+        seen.add(id(current))
+        name = "".join(
+            character for character in type(current).__name__ if character.isascii() and character.isalnum()
+        )[:80]
+        code = getattr(current, "sqlite_errorcode", None)
+        identities.append(name + (f"(sqlite_errorcode={code})" if type(code) is int else ""))
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    return " <- ".join(identities)
+
+
 def _sha(value: str, label: str) -> str:
     if len(value) != 40 or any(character not in "0123456789abcdefABCDEF" for character in value):
         raise ReviewRunnerError(f"{label} must be a full 40-character commit SHA")
@@ -1480,7 +1497,9 @@ def run_cli_review(
                     if records_warning:
                         _add_exception_note(timeout_failure, records_warning)
                     raise timeout_failure from error
-                capture_terminal_at = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+                capture_terminal_at = (
+                    datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+                )
                 finished = monotonic_ns()
                 if finished < started:
                     raise ReviewRunnerError("process clock moved backwards while measuring review duration")
@@ -1491,9 +1510,14 @@ def run_cli_review(
                 (capture_dir / "stderr").write_bytes(stderr_bytes)
                 (capture_dir / "exit-status").write_text(f"{process.returncode}\n", encoding="utf-8")
                 (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
-                metadata.update({"duration_seconds": duration, "exit_status": process.returncode,
-                                 "capture_terminal_at": capture_terminal_at,
-                                 "capture_terminal_basis": "provider_process_exit"})
+                metadata.update(
+                    {
+                        "duration_seconds": duration,
+                        "exit_status": process.returncode,
+                        "capture_terminal_at": capture_terminal_at,
+                        "capture_terminal_basis": "provider_process_exit",
+                    }
+                )
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                     legacy_file.write(f"review_duration_seconds={duration}\n")
@@ -1625,10 +1649,15 @@ def run_cli_review(
                                 artifacts=artifacts,
                             )
                             attempt_finished = True
-                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as error:
                         records_warning = (
                             "SQLite review record was not saved; the durable CLI capture remains available for recovery"
                         )
+                        if result_state == "completed":
+                            records_warning += (
+                                f". Recover this exact run with dev-tools/pr-review records cli-recover --run-id {run_id}"
+                                f". Persistence diagnostic: {_persistence_error_identity(error)}"
+                            )
                 return ReviewResult(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
