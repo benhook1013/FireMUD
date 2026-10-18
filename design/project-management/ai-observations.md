@@ -115,11 +115,20 @@ Entry format:
   - Expected pattern: Compare every patch target with the pinned worktree path, then inspect the first written file at that absolute destination before continuing. This destination check remains manual.
   - Reconsideration trigger: enforce destination verification at the native patch boundary, or repeat measurement disproves the risk; completion of migration review alone does not resolve it.
 
-- `2026-10-15`: Allocate forward migrations against the actual resolved Flyway history, including shared Saga resources and later service-owned migrations. The selected-owner intake plan's older Account V161 and Automation V5 sketch would sort below already installed combined history. The receiving Account parent already reaches V1005, while Saga reaches V1002. Preserve existing SQL and prove a retained upgrade from the actual combined parent instead of enabling out-of-order execution or inferring a frontier from the service's older application lineage.
+- `2026-10-15`: Allocate forward migrations against the resolved combined Flyway history
+  - Context: The selected-owner intake plan's older Account V161 and Automation V5 sketch would sort below already installed combined history, including shared Saga resources and later service-owned migrations.
+  - Observation: The receiving Account parent already reaches V1005, while Saga reaches V1002.
+  - Expected pattern: Preserve existing SQL and prove a retained upgrade from the actual combined parent instead of enabling out-of-order execution or inferring a frontier from the service's older application lineage.
 
-- `2026-10-16`: The canonical local resource lock already serializes eligible heavy runs across worktrees. Ordinary workers can submit through supported bounded admission and retry a busy result without peer permission or an idle reservation between scheduled wake-ups. A Document source gate automatically acquired the lock before its delayed peer completion message arrived; busy admission remains unrun proof.
+- `2026-10-16`: Use bounded admission for shared heavy runs
+  - Context: The canonical local resource lock already serializes eligible heavy runs across worktrees. Ordinary workers can submit through supported bounded admission and retry a busy result without peer permission or an idle reservation between scheduled wake-ups.
+  - Observation: A Document source gate automatically acquired the lock before its delayed peer completion message arrived.
+  - Expected pattern: Treat busy admission as unrun proof.
 
-- `2026-10-16`: A multiline conflict-marker resolver truncated three trailing file portions during an unpublished selected-owner carry. Native `git merge-file` reconstruction from the exact parents recovered the complete files. Bound marker lines explicitly, verify conflict counts and file tails, and inspect the final net diff against both original parents before committing; a clean whitespace check alone cannot detect lost content.
+- `2026-10-16`: Bound conflict markers and inspect reconstructed files
+  - Context: A multiline conflict-marker resolver truncated three trailing file portions during an unpublished selected-owner carry.
+  - Observation: Native `git merge-file` reconstruction from the exact parents recovered the complete files; a clean whitespace check alone cannot detect lost content.
+  - Expected pattern: Bound marker lines explicitly, verify conflict counts and file tails, and inspect the final net diff against both original parents before committing.
 
 - `2026-10-15`: Preserve receiver status when relocating inherited tracker proof
   - Context: the local #3224 parent reconciliation relocated inherited LOGIN proof into a dedicated section. Selecting the complete incoming tracker plus one receiver proof paragraph also displaced the receiver's first-party denial and historical-proof qualifications. The candidate had not been published.
@@ -127,7 +136,10 @@ Entry format:
   - Expected pattern: inspect the complete overlap against the receiver's current contract and status, including text shared with the merge base. Proof relocation alone does not authorize replacing unrelated current-status sections with an earlier parent's view.
   - Reconsideration trigger: a native reconciliation check proves preservation across moved paragraphs and status replacements; ordinary clean merges and nonoverlap comparisons do not establish that property.
 
-- `2026-10-16`: Check both public mapping directions when an internal read requires an identity distinct from its original operation. The launch-association receiver retained that guard while a refactor removed it from the request encoder; the receiver's refusal did not constrain local encoding. A producer refusal assertion reproduced the omission at `653c42cea1`, and restoring the existing encoder guard passed the full 917-case Common gate at `cefbf09ebb`. Keep the transport identity rule at both boundaries and distinguish local codec proof from controlled socket responses or genuine owner authority.
+- `2026-10-16`: Check both public mapping directions for transport identity
+  - Context: An internal read requires an identity distinct from its original operation. The launch-association receiver retained the guard while a refactor removed it from the request encoder.
+  - Observation: The receiver's refusal did not constrain local encoding. A producer refusal assertion reproduced the omission at `653c42cea1`, and restoring the existing encoder guard passed the full 917-case Common gate at `cefbf09ebb`.
+  - Expected pattern: Keep the transport identity rule at both boundaries and distinguish local codec proof from controlled socket responses or genuine owner authority.
 
 - `2026-10-16`: Report source validation separately from packaged smoke
   - Context: PR #3224 had a successful Validation result and a separate runtime-image Smoke failure in run [38844094461](https://github.com/benhook1013/FireMUD/actions/runs/38844094461); the retained local job record showed Gateway and TCP Proxy public readiness intentionally out of service after the bounded Compose wait.
@@ -149,8 +161,8 @@ Entry format:
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
 - `2026-10-16`: Qualify tenant mutation predicates
-  - Context: Before relying on filtered readback or later owner guards, account for the template repository's global-ID update, which could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row.
-  - Observation: The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
+  - Context: Game Design template repository update path (`GameTemplateRepository.save`) and native `GameTemplateRepositoryPostgresIntegrationTest` on the template create/update correction lane.
+  - Observation: The global-ID update rewrote a retained row's tenant before returning it under the supplied tenant; tenant-filtered readback did not protect the original row. The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
   - Expected pattern: Test controlled pre-phase rows as well as later guarded owners. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
 
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages

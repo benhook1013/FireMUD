@@ -390,7 +390,7 @@ public final class GameDesignSourceRepository {
         || policy.isEmpty()
         || (asset.isEmpty() && !historicalOperation)
         || (gameplayCapture.isEmpty() && !historicalOperation && !historicalGameplay)
-        || (brand.isEmpty() && (!historicalOperation || brandingSourceEnrolled))
+        || (brand.isEmpty() && brandingSourceEnrolled)
         || (templateSourceEnrolled && templateConfig.isEmpty() && !historicalTemplate)) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
     }
