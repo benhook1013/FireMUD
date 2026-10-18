@@ -1328,6 +1328,7 @@ class GameDesignSourcePostgresIntegrationTest {
           new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
               .freeze(operation);
           new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation);
+          new BrandingSourceRepository(fixture.dsl()).freeze(operation);
           return null;
         });
 
@@ -1358,6 +1359,7 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(retained.policy()).isNotNull();
     assertThat(retained.asset()).isPresent();
     assertThat(retained.gameplay()).isPresent();
+    assertThat(retained.branding()).isPresent();
     assertThat(retained.templateConfig()).isEmpty();
   }
 
