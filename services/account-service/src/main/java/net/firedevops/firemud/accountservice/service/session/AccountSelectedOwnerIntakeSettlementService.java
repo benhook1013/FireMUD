@@ -124,6 +124,12 @@ public final class AccountSelectedOwnerIntakeSettlementService {
             .withDescription("Automation terminal evidence is not committed")
             .asRuntimeException();
       }
+      Status.Code code = failure.getStatus().getCode();
+      if (code == Status.Code.NOT_FOUND
+          || code == Status.Code.ALREADY_EXISTS
+          || code == Status.Code.DATA_LOSS) {
+        throw Status.fromCode(code).asRuntimeException();
+      }
       throw Status.UNAVAILABLE
           .withDescription("Automation terminal evidence is unavailable")
           .asRuntimeException();
@@ -177,6 +183,12 @@ public final class AccountSelectedOwnerIntakeSettlementService {
         throw Status.FAILED_PRECONDITION
             .withDescription("Entity terminal evidence is not committed")
             .asRuntimeException();
+      }
+      Status.Code code = failure.getStatus().getCode();
+      if (code == Status.Code.NOT_FOUND
+          || code == Status.Code.ALREADY_EXISTS
+          || code == Status.Code.DATA_LOSS) {
+        throw Status.fromCode(code).asRuntimeException();
       }
       throw Status.UNAVAILABLE
           .withDescription("Entity terminal evidence is unavailable")
