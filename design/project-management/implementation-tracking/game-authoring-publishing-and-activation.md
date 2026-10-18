@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Selected Entity and Automation intake prerequisite
+
+The Entity and Automation owner-local empty selected-source intake commands, terminal and digest primitives, shared codecs and security clients are source-prepared and independently unqualified. Their preserved native, unit and mTLS proof has not been freshly executed here. Exact namespace, workload, current Account and World binding guards are included; the adapters and services remain standalone, unregistered and default-denied. This grants no fresh public publication, finalizer registration, continuous protection, genuine issuer or creator authority, admission or activation. Selected-full Game Design and Game Logic publication composition and five-store proof remain downstream in the existing 3251 closure. Canonical owner behavior remains in the [Entity contract](../../architecture/microservices/entity-management-service/api-contracts.md), [Automation contract](../../architecture/microservices/automation-scripting-service/api-contracts.md) and [Game Design selected-full profile](../../architecture/microservices/game-design-service/version-control.md#selected-full-publication-profile).
+
 ### Gameplay source catalog and legacy handoff proof
 
 The existing Game Design gameplay source PostgreSQL owner test now retains a nonempty action, ability, effect, resource and admission-tag catalog beside an ordinary asset in one owner outcome. Exact retry and independent repository reads preserve the original source bytes. A disjoint asset change inherits the gameplay epoch and original binding; explicit ability and action deletion advances the gameplay epoch while preserving the prior snapshot. Additional cases deny legacy effective commands and generic gameplay-rule history before or after the typed snapshot, including an explicitly emptied rule inventory. Generic history under a different private tenant or Version does not contaminate the exact selected source.
