@@ -84,9 +84,12 @@ BEGIN
         OR issuer.bundle_payload IS DISTINCT FROM NEW.issuance_bundle
         OR (convert_from(NEW.issuance_bundle, 'UTF8')::JSONB->>'issuanceFence')::BIGINT IS DISTINCT FROM NEW.issuance_fence
         OR convert_from(NEW.issuance_bundle, 'UTF8')::JSONB->'outboxCheckpoints'
-            IS DISTINCT FROM convert_from(NEW.outbox_checkpoints, 'UTF8')::JSONB
-        OR NEW.scope_digest IS DISTINCT FROM 'sha256:' || encode(sha256(NEW.scope_bytes), 'hex') THEN
+            IS DISTINCT FROM convert_from(NEW.outbox_checkpoints, 'UTF8')::JSONB THEN
         RAISE EXCEPTION 'Preliminary owner scope requires exact current committed creator evidence'
+            USING ERRCODE = '23514';
+    END IF;
+    IF NEW.scope_digest IS DISTINCT FROM 'sha256:' || encode(sha256(NEW.scope_bytes), 'hex') THEN
+        RAISE EXCEPTION 'Preliminary owner scope digest does not match canonical bytes'
             USING ERRCODE = '23514';
     END IF;
 
