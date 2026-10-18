@@ -227,6 +227,11 @@ class EntitySelectedSourceIntakeCommandGrpcServiceTest {
           wire,
           Status.Code.DATA_LOSS);
       assertFailure(
+          new EntityEmptySelectedSourceIntakeRepository.IntakeConflictException(
+              "private intake conflict details"),
+          wire,
+          Status.Code.ALREADY_EXISTS);
+      assertFailure(
           new IllegalStateException("private Account or World echo details"),
           wire,
           Status.Code.FAILED_PRECONDITION);
