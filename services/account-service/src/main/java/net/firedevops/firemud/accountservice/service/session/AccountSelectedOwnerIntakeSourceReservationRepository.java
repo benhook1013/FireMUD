@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeSettlementReceipt;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
@@ -369,41 +370,11 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
         || !"COMMITTED_EMPTY".equals(evidence.receipt().outcome())) {
       throw new IllegalArgumentException("Exact Automation COMMITTED_EMPTY evidence required");
     }
-    SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
-    lockReservedSources(scope);
-    requireReservation(reservation(scope), scope);
-    Record order = authorization(requested.operationId());
-    requireAuthorization(order, requested);
-    if (aborted(scope))
-      throw new IllegalArgumentException("Finalized owner authorization was aborted");
-
-    Record prior = settlement(requested.operationId());
-    if (prior != null) return exactSettlement(prior, requested, evidence);
-
-    AccountSelectedOwnerIntakeSettlementReceipt receipt =
-        AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
-    dsl.execute(
-        "INSERT INTO "
-            + SETTLEMENTS
-            + " (operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
-            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
-            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        receipt.operationId(),
-        requested.fenceId(),
-        requested.intakeRequestId(),
-        requested.owner().name(),
-        requested.targetNamespace(),
-        requested.tenantId(),
-        requested.versionId(),
-        requested.canonicalBytes(),
-        requested.digest(),
+    return settleCommittedEmpty(
+        requested,
         evidence.request().readRequestId(),
-        receipt.ownerReceiptBytes(),
-        receipt.ownerReceiptDigest(),
-        receipt.canonicalBytes(),
-        receipt.digest());
-    return exactSettlement(settlement(requested.operationId()), requested, evidence);
+        () -> AccountSelectedOwnerIntakeSettlementReceipt.create(evidence),
+        evidence);
   }
 
   AccountSelectedOwnerIntakeSettlementReceipt settleEntityCommittedEmpty(
@@ -415,6 +386,18 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
         || !"COMMITTED_EMPTY".equals(evidence.receipt().outcome())) {
       throw new IllegalArgumentException("Exact Entity COMMITTED_EMPTY evidence required");
     }
+    return settleCommittedEmpty(
+        requested,
+        evidence.request().readRequestId(),
+        () -> AccountSelectedOwnerIntakeSettlementReceipt.create(evidence),
+        evidence);
+  }
+
+  private AccountSelectedOwnerIntakeSettlementReceipt settleCommittedEmpty(
+      SelectedOwnerIntakeAuthorizationBinding requested,
+      UUID readRequestId,
+      Supplier<AccountSelectedOwnerIntakeSettlementReceipt> receiptFactory,
+      Object retryEvidence) {
     SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
     lockReservedSources(scope);
     requireReservation(reservation(scope), scope);
@@ -424,10 +407,9 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
       throw new IllegalArgumentException("Finalized owner authorization was aborted");
 
     Record prior = settlement(requested.operationId());
-    if (prior != null) return exactSettlement(prior, requested, evidence);
+    if (prior != null) return exactSettlement(prior, requested, retryEvidence);
 
-    AccountSelectedOwnerIntakeSettlementReceipt receipt =
-        AccountSelectedOwnerIntakeSettlementReceipt.create(evidence);
+    AccountSelectedOwnerIntakeSettlementReceipt receipt = receiptFactory.get();
     dsl.execute(
         "INSERT INTO "
             + SETTLEMENTS
@@ -444,12 +426,12 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
         requested.versionId(),
         requested.canonicalBytes(),
         requested.digest(),
-        evidence.request().readRequestId(),
+        readRequestId,
         receipt.ownerReceiptBytes(),
         receipt.ownerReceiptDigest(),
         receipt.canonicalBytes(),
         receipt.digest());
-    return exactSettlement(settlement(requested.operationId()), requested, evidence);
+    return exactSettlement(settlement(requested.operationId()), requested, retryEvidence);
   }
 
   private AccountSelectedOwnerIntakeSettlementReceipt exactSettlement(
