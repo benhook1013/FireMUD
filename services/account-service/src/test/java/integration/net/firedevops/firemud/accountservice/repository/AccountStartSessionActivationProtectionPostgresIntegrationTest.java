@@ -40,11 +40,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Runs V1003/V1004/V1004.1/V1004.2/V1004.3 against the actual Account PostgreSQL schema and
- * assembled source-writer guard. The integrity and currentness fixtures seed related owner rows
- * with upstream producer triggers disabled. Protection acquisition, child completeness, settlement
- * and source-writer guards remain enabled; they prove SQL currentness/exclusion/immutability only,
- * not authenticated activation-protection production.
+ * Runs V1003 through V1006 against the actual Account PostgreSQL schema and assembled source-writer
+ * guard. The integrity and currentness fixtures seed related owner rows with upstream producer
+ * triggers disabled. Protection acquisition, child completeness, settlement and source-writer
+ * guards remain enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
+ * activation-protection production.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionActivationProtectionPostgresIntegrationTest {
@@ -53,6 +53,222 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private static final JsonMapper JSON = JsonMapper.builder().build();
+
+  @Test
+  void digestAlignmentUpgradePreservesRetainedParentAndRequiresCanonicalWorldPrefix()
+      throws Exception {
+    Fixture fixture = fixture("1005");
+    seedRetainedCombinedParentRows(fixture);
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(180));
+    acquireProtection(fixture, current);
+    var stored =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT * FROM account_start_session_activation_protections WHERE operation_identity_digest = ?",
+                current.operationIdentityDigest());
+    UUID id = stored.get("activation_protection_id", UUID.class);
+    long fence = stored.get("activation_protection_fence", Long.class);
+    var request = readJson(current.requestBytes());
+    UUID activationId = UUID.fromString((String) request.get("worldActivationRequestId"));
+    byte[] preparing =
+        Base64.getDecoder().decode((String) request.get("preparingEvidenceBytesBase64"));
+    byte[][] sources =
+        fixture
+            .dsl()
+            .fetch(
+                "SELECT source_evidence FROM account_start_session_activation_protection_sources "
+                    + "WHERE activation_protection_id = ? ORDER BY account_publication_authorization_source_sort_key(source_key)",
+                id)
+            .stream()
+            .map(row -> row.get("source_evidence", byte[].class))
+            .toArray(byte[][]::new);
+    byte[] evidence =
+        accountEvidence(
+            id,
+            fence,
+            stored.get("acquired_at", OffsetDateTime.class),
+            current.requestBytes(),
+            bytes("{}"),
+            sources);
+    // These are controlled terminal bytes; authenticated World production belongs to the cross
+    // proof.
+    byte[] result = activationResult(activationId, preparing, "COMMITTED");
+    assertThat(
+            readJson(terminalBytes(fixture, id, fence, activationId, evidence, result))
+                .get("activationResultSha256"))
+        .isEqualTo(hash(result));
+    String historyQuery =
+        "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+            + "FROM flyway_schema_history h WHERE version IS NULL OR version <> '1006' "
+            + "ORDER BY installed_rank";
+    var history = fixture.dsl().fetch(historyQuery).getValues(0, String.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetch("SELECT version FROM flyway_schema_history WHERE success")
+                .getValues(0, String.class))
+        .contains("1000", "1001", "1002", "1005")
+        .doesNotContain("1006");
+    var parents = retainedActivationRows(fixture);
+    assertThat(parents.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
+    String guardQuery =
+        "SELECT pg_get_functiondef('account_ss_activation_settlement_insert_guard()'::regprocedure)";
+    String beforeGuard = fixture.dsl().fetchSingle(guardQuery).get(0, String.class);
+    String anchor =
+        "terminal->>'activationResultSha256' IS DISTINCT FROM encode(sha256(result_bytes), 'hex')";
+    String replacement =
+        "terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')";
+    assertThat(beforeGuard).containsOnlyOnce(anchor);
+
+    Flyway upgrade = activationFlyway(fixture.dataSource(), "1006");
+    assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+    upgrade.validate();
+    assertThat(fixture.dsl().fetch(historyQuery).getValues(0, String.class)).isEqualTo(history);
+    assertThat(retainedActivationRows(fixture)).isEqualTo(parents);
+    assertThat(fixture.dsl().fetchSingle(guardQuery).get(0, String.class))
+        .isEqualTo(beforeGuard.replace(anchor, replacement));
+
+    byte[] canonicalTerminal = terminalBytes(fixture, id, fence, activationId, evidence, result);
+    assertThat(readJson(canonicalTerminal).get("activationResultSha256"))
+        .isEqualTo("sha256:" + hash(result));
+    for (String invalidDigest :
+        List.of(
+            hash(result),
+            "sha256:" + "0".repeat(64),
+            "sha256:" + hash(bytes("substituted activation result")))) {
+      var changed = readJson(canonicalTerminal);
+      changed.put("activationResultSha256", invalidDigest);
+      byte[] invalidTerminal = jsonBytes(changed);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              insertActivationSettlement(
+                                  fixture, id, fence, activationId, evidence, invalidTerminal)))
+          .isInstanceOf(RuntimeException.class)
+          .satisfies(
+              failure -> {
+                Throwable root = failure;
+                while (root.getCause() != null) root = root.getCause();
+                assertThat(root)
+                    .isInstanceOfSatisfying(
+                        org.postgresql.util.PSQLException.class,
+                        rejected -> assertThat(rejected.getSQLState()).isEqualTo("23514"));
+              });
+      assertThat(retainedActivationRows(fixture)).isEqualTo(parents);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
+          .isZero();
+    }
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                insertActivationSettlement(
+                    fixture, id, fence, activationId, evidence, canonicalTerminal));
+    assertThat(retainedActivationRows(fixture)).isEqualTo(parents);
+    var settlement =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT terminal_bytes, terminal_digest FROM account_start_session_activation_protection_settlements WHERE activation_protection_id = ?",
+                id);
+    assertThat(settlement.get("terminal_bytes", byte[].class)).containsExactly(canonicalTerminal);
+    assertThat(settlement.get("terminal_digest", String.class))
+        .isEqualTo("sha256:" + hash(canonicalTerminal));
+  }
+
+  private static void seedRetainedCombinedParentRows(Fixture fixture) {
+    Long sagaId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
+                "retained-activation-upgrade",
+                "PENDING")
+            .get(0, Long.class);
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
+            sagaId,
+            "retained-step",
+            "PENDING",
+            3);
+    insert(
+        fixture.dsl(),
+        "account_initial_gameplay_login_disposals",
+        "request_id",
+        UUID.randomUUID(),
+        "disposal_operation_id",
+        UUID.randomUUID(),
+        "caller_workload",
+        "spiffe://firemud/ns/test/sa/game-session-service",
+        "caller_context_id",
+        UUID.randomUUID(),
+        "disposal_digest",
+        "a".repeat(64),
+        "witness_canonical_bytes",
+        bytes("retained parent disposal witness"));
+  }
+
+  private static Map<String, List<String>> retainedActivationRows(Fixture fixture) {
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "account_canonical_tenant_identity_claims",
+            "account_draft_authorization_source_locks",
+            "account_start_session_authority_captures",
+            "account_start_session_operator_authorizations",
+            "account_start_session_world_participations",
+            "account_start_session_world_participation_sources",
+            "account_start_session_world_original_attempt_evidence",
+            "account_start_session_world_participation_settlements",
+            "account_start_session_activation_protections",
+            "account_start_session_activation_protection_sources",
+            "account_initial_gameplay_login_disposals",
+            "saga_instance",
+            "saga_step")) {
+      rows.put(
+          table,
+          fixture
+              .dsl()
+              .fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
+    }
+    return rows;
+  }
+
+  private static void insertActivationSettlement(
+      Fixture fixture, UUID id, long fence, UUID activationId, byte[] evidence, byte[] terminal) {
+    insert(
+        fixture.dsl(),
+        "account_start_session_activation_protection_settlements",
+        "activation_protection_id",
+        id,
+        "activation_protection_fence",
+        fence,
+        "world_activation_request_id",
+        activationId,
+        "world_activation_fence",
+        29L,
+        "outcome",
+        "COMMITTED",
+        "account_protection_evidence_bytes",
+        evidence,
+        "terminal_bytes",
+        terminal,
+        "terminal_digest",
+        "sha256:" + hash(terminal));
+  }
 
   @Test
   void lifecycleUpgradePreservesPendingProtectionAndBlocksInvalidSettlement() throws Exception {
@@ -495,7 +711,12 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
 
     byte[] terminalBytes =
         terminalBytes(
-            id, protectionFence, activationRequestId, accountEvidenceBytes, activationResultBytes);
+            fixture,
+            id,
+            protectionFence,
+            activationRequestId,
+            accountEvidenceBytes,
+            activationResultBytes);
     fixture
         .transaction()
         .executeWithoutResult(
@@ -1168,7 +1389,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     assertSettlementInsertRejected(
         fixture, id, fence, activationId, evidence, jsonBytes(result), "ABORTED");
     result.put("terminalCode", "FENCED_ABORT");
-    byte[] terminal = terminalBytes(id, fence, activationId, evidence, jsonBytes(result));
+    byte[] terminal = terminalBytes(fixture, id, fence, activationId, evidence, jsonBytes(result));
     fixture
         .transaction()
         .executeWithoutResult(
@@ -1250,6 +1471,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       String assertionDescription) {
     byte[] terminalBytes =
         terminalBytes(
+            fixture,
             protectionId,
             protectionFence,
             activationRequestId,
@@ -1362,6 +1584,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   }
 
   private static byte[] terminalBytes(
+      Fixture fixture,
       UUID protectionId,
       long protectionFence,
       UUID activationRequestId,
@@ -1378,7 +1601,17 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         Base64.getEncoder().encodeToString(protectionEvidenceBytes));
     terminal.put(
         "activationResultBytesBase64", Base64.getEncoder().encodeToString(activationResultBytes));
-    terminal.put("activationResultSha256", hash(activationResultBytes));
+    // Retain the exact predecessor grammar for historical frontier tests. Fresh current fixtures
+    // follow the World-owned prefixed digest after the forward Account alignment is installed.
+    boolean aligned =
+        fixture
+            .dsl()
+            .fetchExists(
+                DSL.selectOne()
+                    .from("flyway_schema_history")
+                    .where("version = '1006' AND success"));
+    terminal.put(
+        "activationResultSha256", (aligned ? "sha256:" : "") + hash(activationResultBytes));
     try {
       return jsonBytes(terminal);
     } catch (Exception impossible) {
@@ -1913,7 +2146,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .schemas(source.getSchema())
         .defaultSchema(source.getSchema())
         .placeholders(Map.of("serviceSchema", source.getSchema()))
-        .locations("classpath:db/migration")
+        .locations("classpath:db/migration", "classpath:db/migration/saga")
         .target(target)
         .load();
   }

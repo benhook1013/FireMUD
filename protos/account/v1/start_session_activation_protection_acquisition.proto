@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered World-to-Account source-protection acquisition for the original
+// StartSession activation. It does not activate World or settle/release Account protection.
+service AccountStartSessionActivationProtectionAcquisitionService {
+  rpc AcquireOriginalStartSessionActivationProtection(
+      AcquireOriginalStartSessionActivationProtectionRequest)
+      returns (AcquireOriginalStartSessionActivationProtectionResponse);
+}
+
+// Each repeated field must occur exactly once. Repetition is intentional: protobuf singular
+// fields discard duplicate occurrences during parsing, while these closed transport fields must
+// reject duplicates at the receiver.
+message AcquireOriginalStartSessionActivationProtectionRequest {
+  repeated int32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated bytes original_post_authorization_tuple = 3;
+  repeated string game_session_owner_mutation_id = 4;
+  repeated string game_session_owner_attempt_id = 5;
+  // Canonical positive unsigned-decimal text; parsed only if it fits a positive signed Java long.
+  repeated string game_session_owner_fence = 6;
+  repeated string activation_request_id = 7;
+  // Exact complete canonical World PREPARING evidence. The 64 MiB limit belongs only to this
+  // new Account activation carrier and does not widen the World lifecycle API's limits.
+  repeated bytes world_preparing_evidence = 8;
+}
+
+message AcquireOriginalStartSessionActivationProtectionResponse {
+  // Exactly one complete canonical AccountStartSessionActivationProtectionEvidence value.
+  // Its existing 200 MiB limit is preserved; this RPC adds only protobuf framing headroom.
+  repeated bytes evidence_canonical_bytes = 1;
+}

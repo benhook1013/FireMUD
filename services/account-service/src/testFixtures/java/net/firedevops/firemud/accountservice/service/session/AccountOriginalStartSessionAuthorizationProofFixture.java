@@ -304,6 +304,26 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         namespace);
   }
 
+  /** Creates the actual Account activation-protection owner over this fixture's retained SQL. */
+  public AccountStartSessionActivationProtectionAcquisitionService
+      activationProtectionAcquisitionService(
+          net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient
+              launchClient,
+          OriginalStartSessionCurrentAttemptClient currentAttemptClient) {
+    Objects.requireNonNull(launchClient, "Game Session launch-association reader required");
+    Objects.requireNonNull(currentAttemptClient, "Game Session current-attempt reader required");
+    return new AccountStartSessionActivationProtectionAcquisitionService(
+        authorizationService,
+        new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
+        new AccountStartSessionWorldOriginalAttemptEvidenceRepository(accountSources.dsl),
+        new net.firedevops.firemud.accountservice.repository
+            .AccountStartSessionActivationProtectionRepository(accountSources.dsl),
+        launchClient,
+        currentAttemptClient,
+        accountSources.manager,
+        namespace);
+  }
+
   /** Existing fixture SQL context for independent test-only retained-row inspection. */
   public DSLContext sourceDsl() {
     return accountSources.dsl;

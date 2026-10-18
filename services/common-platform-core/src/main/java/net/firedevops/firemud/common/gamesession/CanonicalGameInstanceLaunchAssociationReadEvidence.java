@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
@@ -170,7 +171,33 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       String launchDescriptorId,
       String expectedDescriptorRequestDigest,
       String expectedDescriptorResultDigest,
-      String expectedReleaseAttestationEvidenceDigest) {
+      String expectedReleaseAttestationEvidenceDigest,
+      OriginalOperation originalOperation) {
+    public Request(
+        UUID readRequestId,
+        String targetNamespace,
+        UUID canonicalTenantId,
+        String worldSlug,
+        UUID gameInstanceUuid,
+        String controlPlaneRequestId,
+        String launchDescriptorId,
+        String expectedDescriptorRequestDigest,
+        String expectedDescriptorResultDigest,
+        String expectedReleaseAttestationEvidenceDigest) {
+      this(
+          readRequestId,
+          targetNamespace,
+          canonicalTenantId,
+          worldSlug,
+          gameInstanceUuid,
+          controlPlaneRequestId,
+          launchDescriptorId,
+          expectedDescriptorRequestDigest,
+          expectedDescriptorResultDigest,
+          expectedReleaseAttestationEvidenceDigest,
+          null);
+    }
+
     public Request {
       requireNonNil(readRequestId, "readRequestId");
       requireNonNil(canonicalTenantId, "canonicalTenantId");
@@ -183,6 +210,84 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       requireDigest(expectedDescriptorResultDigest, "expectedDescriptorResultDigest");
       requireDigest(
           expectedReleaseAttestationEvidenceDigest, "expectedReleaseAttestationEvidenceDigest");
+      if (originalOperation != null) {
+        var tuple = originalOperation.originalTuple();
+        var scope = tuple.preAuthorizationTuple().action().scope();
+        if (!targetNamespace.equals(scope.targetNamespace())
+            || !canonicalTenantId.equals(scope.tenantId())
+            || !controlPlaneRequestId.equals(tuple.controlPlaneRequestId())
+            || readRequestId.equals(originalOperation.ownerMutationId())
+            || readRequestId.equals(originalOperation.ownerAttemptId())) {
+          throw new IllegalArgumentException(
+              "Original operation differs from the exact independent launch selector");
+        }
+      }
+    }
+  }
+
+  /** Exact Account caller selector; its bytes are integrity input, not owner authority. */
+  public record OriginalOperation(
+      byte[] originalPostAuthorizationTuple,
+      UUID ownerMutationId,
+      UUID ownerAttemptId,
+      long ownerFence) {
+    public OriginalOperation {
+      Objects.requireNonNull(originalPostAuthorizationTuple, "originalPostAuthorizationTuple");
+      if (originalPostAuthorizationTuple.length == 0
+          || originalPostAuthorizationTuple.length
+              > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES) {
+        throw new IllegalArgumentException("Complete bounded original tuple required");
+      }
+      originalPostAuthorizationTuple = originalPostAuthorizationTuple.clone();
+      var tuple =
+          StartSessionPostAuthorizationExecutionTuple.decode(originalPostAuthorizationTuple);
+      if (!Arrays.equals(tuple.canonicalBytes(), originalPostAuthorizationTuple)
+          || !"human_operator".equals(tuple.issuanceKind())
+          || !"StartSession".equals(tuple.preAuthorizationTuple().actionFamily())
+          || !"game-session-service".equals(tuple.preAuthorizationTuple().targetOwner())) {
+        throw new IllegalArgumentException("Exact canonical original StartSession tuple required");
+      }
+      requireNonNil(ownerMutationId, "ownerMutationId");
+      requireNonNil(ownerAttemptId, "ownerAttemptId");
+      if (ownerFence <= 0L) throw new IllegalArgumentException("ownerFence must be positive");
+    }
+
+    public StartSessionPostAuthorizationExecutionTuple originalTuple() {
+      return StartSessionPostAuthorizationExecutionTuple.decode(originalPostAuthorizationTuple);
+    }
+
+    @Override
+    public byte[] originalPostAuthorizationTuple() {
+      return originalPostAuthorizationTuple.clone();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      return other instanceof OriginalOperation that
+          && ownerMutationId.equals(that.ownerMutationId)
+          && ownerAttemptId.equals(that.ownerAttemptId)
+          && ownerFence == that.ownerFence
+          && Arrays.equals(originalPostAuthorizationTuple, that.originalPostAuthorizationTuple);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(
+          ownerMutationId,
+          ownerAttemptId,
+          ownerFence,
+          Arrays.hashCode(originalPostAuthorizationTuple));
+    }
+
+    @Override
+    public String toString() {
+      return "OriginalOperation[ownerMutationId="
+          + ownerMutationId
+          + ", ownerAttemptId="
+          + ownerAttemptId
+          + ", ownerFence="
+          + ownerFence
+          + ", tuple=<redacted>]";
     }
   }
 
@@ -237,6 +342,16 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       var descriptor = launchBindingEvidence.descriptor();
       descriptor.requireValid();
       launchBindingEvidence.releaseAttestation().requireValid(descriptor);
+      var original = request.originalOperation();
+      if (original != null
+          && (!original.ownerAttemptId().equals(ownerAttemptId)
+              || original.ownerFence() != ownerFence
+              || currentGameInstanceStatus != CurrentGameInstanceStatus.STARTING
+              || original.originalTuple().preAuthorizationTuple().action().target().gameTemplateId()
+                  != descriptor.gameTemplateId())) {
+        throw new IllegalArgumentException(
+            "Original Account operation differs from its current owner or launch target");
+      }
       if (!request.targetNamespace().equals(descriptor.targetNamespace())
           || !request.canonicalTenantId().equals(descriptor.canonicalTenantId())
           || !request.worldSlug().equals(descriptor.worldSlug())

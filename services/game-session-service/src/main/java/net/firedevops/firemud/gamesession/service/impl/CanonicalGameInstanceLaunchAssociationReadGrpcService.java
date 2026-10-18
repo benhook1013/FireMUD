@@ -23,7 +23,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Directly constructible, deliberately unregistered reader for the original Human STARTING owner.
  *
  * <p>The repository performs the exact pending-attempt, immutable-pin, and current-STARTING read.
- * This observation returns no mutation, continuation, activation, or admission authority.
+ * World retains its complete association selector. The exact same-namespace Account workload must
+ * additionally bind the complete original tuple and actual mutation, attempt and fence; an Account
+ * peer identity alone cannot select an owner row. Neither path accepts end-user context. This
+ * observation returns no mutation, continuation, activation, or admission authority.
  */
 public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
@@ -46,14 +49,16 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
       GetCanonicalGameInstanceLaunchAssociationRequest request,
       StreamObserver<GetCanonicalGameInstanceLaunchAssociationResponse> observer) {
     Objects.requireNonNull(observer, "observer");
-    if (!hasExactWorldWorkloadPeer()) {
+    boolean worldCaller = hasExactWorldWorkloadPeer();
+    boolean accountCaller = hasExactAccountWorkloadPeer();
+    if (!worldCaller && !accountCaller) {
       GrpcPeerIdentity peer = GrpcPeerIdentity.current();
       Status status =
           peer == null
               ? Status.UNAUTHENTICATED.withDescription(
-                  "Verified World Management workload required")
+                  "Verified World Management or Account workload required")
               : Status.PERMISSION_DENIED.withDescription(
-                  "Exact same-namespace World Management workload required");
+                  "Exact same-namespace World Management or Account workload required");
       observer.onError(status.asRuntimeException());
       return;
     }
@@ -68,6 +73,15 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
       observer.onError(
           Status.INVALID_ARGUMENT
               .withDescription("Complete canonical launch-association selector required")
+              .asRuntimeException());
+      return;
+    }
+
+    if ((accountCaller && decoded.originalOperation() == null)
+        || (worldCaller && decoded.originalOperation() != null)) {
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Exact caller-specific original operation selector required")
               .asRuntimeException());
       return;
     }
@@ -153,6 +167,15 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
         && !SessionContext.hasAuthenticatedCallerContext();
   }
 
+  private boolean hasExactAccountWorkloadPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    return peer != null
+        && "account-service".equals(peer.service())
+        && workloadNamespace.equals(peer.namespace())
+        && ("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service").equals(peer.uri())
+        && !SessionContext.hasAuthenticatedCallerContext();
+  }
+
   private static void requireExactOriginalSelection(
       CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector,
       OriginalStartSessionAssociation original) {
@@ -164,6 +187,15 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
     var scope = tuple.preAuthorizationTuple().action().scope();
     var target = tuple.preAuthorizationTuple().action().target();
 
+    var operation = selector.originalOperation();
+    if (operation != null
+        && (!java.util.Arrays.equals(
+                operation.originalPostAuthorizationTuple(), tuple.canonicalBytes())
+            || !operation.ownerAttemptId().equals(original.ownerAttemptId())
+            || operation.ownerFence() != original.ownerFence())) {
+      throw new IllegalStateException(
+          "Account original operation differs from its actual owner association");
+    }
     if (!selector.targetNamespace().equals(association.targetNamespace())
         || !selector.canonicalTenantId().equals(association.canonicalTenantId())
         || !selector.worldSlug().equals(association.worldSlug())
