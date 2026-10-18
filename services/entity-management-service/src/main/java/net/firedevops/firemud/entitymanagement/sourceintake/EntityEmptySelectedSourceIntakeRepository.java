@@ -914,8 +914,8 @@ public final class EntityEmptySelectedSourceIntakeRepository {
     }
   }
 
-  private static final class IntakeConflictException extends IllegalStateException {
-    private IntakeConflictException(String message) {
+  public static final class IntakeConflictException extends IllegalStateException {
+    public IntakeConflictException(String message) {
       super(message);
     }
   }
