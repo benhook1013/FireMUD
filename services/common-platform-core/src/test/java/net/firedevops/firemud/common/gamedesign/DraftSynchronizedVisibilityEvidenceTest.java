@@ -59,7 +59,7 @@ class DraftSynchronizedVisibilityEvidenceTest {
   }
 
   @Test
-  void completeAllOwnerFenceValidatesAndReturnsDefensiveExactWorldResult() {
+  void completeAllOwnerFenceValidatesAndReturnsDefensiveExactOwnerResults() {
     var evidence = evidence(multiOwnerBinding(), resultVector(multiOwnerBinding()));
 
     evidence.requireValid();
@@ -70,6 +70,12 @@ class DraftSynchronizedVisibilityEvidenceTest {
     resultBytes[0] = 0;
     assertThat(evidence.appliedOwnerResult(Owner.WORLD_MANAGEMENT).resultBytes())
         .containsExactly("world-result-bytes".getBytes(StandardCharsets.UTF_8));
+    assertThat(evidence.appliedOwnerResult(Owner.ENTITY_MANAGEMENT).resultIdentity())
+        .isEqualTo("entity-result");
+    byte[] entityBytes = evidence.appliedOwnerResult(Owner.ENTITY_MANAGEMENT).resultBytes();
+    entityBytes[0] = 0;
+    assertThat(evidence.appliedOwnerResult(Owner.ENTITY_MANAGEMENT).resultBytes())
+        .containsExactly("entity-result-bytes".getBytes(StandardCharsets.UTF_8));
   }
 
   @Test
@@ -256,7 +262,9 @@ class DraftSynchronizedVisibilityEvidenceTest {
       item.put(
           "resultBytesBase64",
           Base64.getEncoder()
-              .encodeToString("world-result-bytes".getBytes(StandardCharsets.UTF_8)));
+              .encodeToString(
+                  (owner == Owner.WORLD_MANAGEMENT ? "world-result-bytes" : "entity-result-bytes")
+                      .getBytes(StandardCharsets.UTF_8)));
       item.put("appliedEpochs", List.of(epoch));
       vector.add(item);
     }

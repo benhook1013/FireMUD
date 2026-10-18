@@ -4,21 +4,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** PostgreSQL installation proof for V1007's additive selected-owner source reservations. */
 class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
   @Test
-  void installsV1007OverCombinedV1006ParentGuardsAndRejectsMalformedReservationWithoutSourceRows()
-      throws Exception {
+  void installsV1007AndRejectsMalformedAndDeferredIncompleteReservations() throws Exception {
     var fixture = new AccountPostgresIntegrationFixture();
     try (AutoCloseable fixtureCleanup = fixture::stop) {
       fixture.start();
@@ -124,6 +131,8 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
                 "account_selected_owner_intake_source_read_sources source",
                 "Pending selected owner intake source read excludes hosted-terms dispatch");
 
+        assertDeferredCompletenessTriggerRejectsWrongScopeDigest(
+            jdbc, ownerTransaction, savedAccount.getAccountUuid());
         assertMalformedReservationCreatesNoSourceRows(jdbc);
         assertThat(retainedParentRows(jdbc)).isEqualTo(retainedParent);
       }
@@ -260,6 +269,196 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
     assertThat(count(jdbc, "account_selected_owner_intake_source_read_reservations")).isZero();
     assertThat(count(jdbc, "account_selected_owner_intake_source_read_sources")).isZero();
     assertThat(count(jdbc, "account_selected_owner_intake_source_read_aborts")).isZero();
+  }
+
+  private static void assertDeferredCompletenessTriggerRejectsWrongScopeDigest(
+      JdbcTemplate jdbc, TransactionTemplate transaction, UUID actorAccountUuid) {
+    // The persisted creator fixture follows Account's existing fresh-tenant/issuance row shape.
+    UUID tenantUuid = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO account_fresh_tenant_identity_associations ("
+            + "schema_version, target_namespace, creation_request_id, operation_id, "
+            + "request_digest, canonical_tenant_id, source_game_row_id, source_game_tenant_key, "
+            + "provenance_kind, evidence_digest) VALUES (1, 'test-owner', ?, ?, ?, ?, 1, ?, "
+            + "'NEW_GAME_ROW', ?)",
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "sha256:" + "a".repeat(64),
+        tenantUuid,
+        tenantUuid.toString(),
+        "sha256:" + "b".repeat(64));
+
+    UUID intakeRequestId = UUID.randomUUID();
+    UUID versionUuid = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    UUID fenceId = UUID.randomUUID();
+    var selected =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                tenantUuid,
+                versionUuid,
+                1,
+                tenantUuid.toString(),
+                1,
+                tenantUuid.toString(),
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "fixture-base-commit",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.ENTITY_MANAGEMENT,
+                    "test-only selected entity revision")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.ENTITY_MANAGEMENT,
+                    "entity",
+                    "fixture-entity",
+                    "tenant",
+                    tenantUuid.toString(),
+                    "1")));
+    var scope =
+        new SelectedOwnerIntakeSourceReadScope(
+            DraftCommitBinding.Owner.ENTITY_MANAGEMENT,
+            "test-owner",
+            operationId,
+            fenceId,
+            intakeRequestId,
+            actorAccountUuid,
+            selected);
+
+    UUID issuanceOperationId = UUID.randomUUID();
+    String sourcePayloadJson =
+        "{\"accountId\":\""
+            + actorAccountUuid
+            + "\",\"schemaVersion\":1,\"sources\":[],\"tenantId\":\""
+            + tenantUuid
+            + "\"}";
+    String issuanceBundleJson = "{\"issuanceFence\":1,\"outboxCheckpoints\":[]}";
+    byte[] sourcePayload = sourcePayloadJson.getBytes(StandardCharsets.UTF_8);
+    byte[] issuanceBundle = issuanceBundleJson.getBytes(StandardCharsets.UTF_8);
+    byte[] outboxCheckpoints = "[]".getBytes(StandardCharsets.UTF_8);
+    long issuedAtEpochSecond = Instant.now().getEpochSecond();
+    long expiresAtEpochSecond = issuedAtEpochSecond + 300;
+    OffsetDateTime recoveryExpiresAt =
+        OffsetDateTime.ofInstant(Instant.ofEpochSecond(issuedAtEpochSecond + 60), ZoneOffset.UTC);
+    jdbc.update(
+        "INSERT INTO account_control_ui_issuance_operations ("
+            + "request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, "
+            + "caller_context_id, request_mac_key_id, request_digest, claims_payload, "
+            + "source_payload, bundle_payload, signer_receipt, issued_at_epoch_second, "
+            + "expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, "
+            + "recovery_expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            + "?::timestamptz, 'PREPARED')",
+        UUID.randomUUID(),
+        issuanceOperationId,
+        UUID.randomUUID(),
+        actorAccountUuid,
+        tenantUuid,
+        "spiffe://test-only/control-ui",
+        UUID.randomUUID(),
+        "test-fixture",
+        "c".repeat(64),
+        ("{\"accountId\":\"" + actorAccountUuid + "\"}").getBytes(StandardCharsets.UTF_8),
+        sourcePayload,
+        issuanceBundle,
+        "test-only issuer fixture receipt".getBytes(StandardCharsets.UTF_8),
+        issuedAtEpochSecond,
+        expiresAtEpochSecond,
+        (expiresAtEpochSecond + 300) * 1000,
+        recoveryExpiresAt);
+    jdbc.update(
+        "UPDATE account_control_ui_issuance_operations SET status = 'CANDIDATE', token_hash = ?, "
+            + "pending_registry = ?, active_registry = ? WHERE operation_id = ?",
+        "d".repeat(64),
+        "test-only pending registry".getBytes(StandardCharsets.UTF_8),
+        "test-only active registry".getBytes(StandardCharsets.UTF_8),
+        issuanceOperationId);
+    jdbc.update(
+        "INSERT INTO account_control_ui_response_envelopes ("
+            + "operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+            + "VALUES (?, ?, ?, ?::timestamptz)",
+        issuanceOperationId,
+        "test-only protected response".getBytes(StandardCharsets.UTF_8),
+        "test-only response binding".getBytes(StandardCharsets.UTF_8),
+        recoveryExpiresAt);
+    jdbc.update(
+        "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
+            + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+        "test-only committed issuer receipt".getBytes(StandardCharsets.UTF_8),
+        issuanceOperationId);
+
+    Map<String, Integer> existingRows = ownerReservationRowCounts(jdbc);
+    String correctScopeDigest = scope.digest();
+    char lastHex = correctScopeDigest.charAt(correctScopeDigest.length() - 1);
+    String wrongScopeDigest =
+        correctScopeDigest.substring(0, correctScopeDigest.length() - 1)
+            + (lastHex == '0' ? '1' : '0');
+    assertThat(wrongScopeDigest).matches("^sha256:[0-9a-f]{64}$").isNotEqualTo(correctScopeDigest);
+
+    int[] insertedRows = {0};
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    status -> {
+                      insertedRows[0] =
+                          jdbc.update(
+                              "INSERT INTO account_selected_owner_intake_source_read_reservations ("
+                                  + "operation_id, fence_id, intake_request_id, owner, actor_account_uuid, "
+                                  + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                                  + "issuance_operation_id, issuance_fence, source_payload, "
+                                  + "issuance_bundle, outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                                  + "1, ?, ?, ?)",
+                              operationId,
+                              fenceId,
+                              intakeRequestId,
+                              scope.owner().name(),
+                              actorAccountUuid,
+                              tenantUuid,
+                              versionUuid,
+                              scope.canonicalBytes(),
+                              wrongScopeDigest,
+                              issuanceOperationId,
+                              sourcePayload,
+                              issuanceBundle,
+                              outboxCheckpoints);
+                      return null;
+                    }))
+        .satisfies(
+            failure -> {
+              PSQLException postgresFailure = postgresException(failure);
+              assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
+              assertThat(postgresFailure.getServerErrorMessage().getMessage())
+                  .isEqualTo(
+                      "Preliminary owner scope requires exact current committed creator evidence");
+            });
+
+    assertThat(insertedRows[0]).isEqualTo(1);
+    assertThat(ownerReservationRowCounts(jdbc)).isEqualTo(existingRows);
+    assertThat(
+            Objects.requireNonNull(
+                jdbc.queryForObject(
+                    "SELECT count(*) FROM account_selected_owner_intake_source_read_reservations "
+                        + "WHERE operation_id = ?",
+                    Integer.class,
+                    operationId)))
+        .isZero();
+  }
+
+  private static Map<String, Integer> ownerReservationRowCounts(JdbcTemplate jdbc) {
+    return Map.of(
+        "reservations", count(jdbc, "account_selected_owner_intake_source_read_reservations"),
+        "sources", count(jdbc, "account_selected_owner_intake_source_read_sources"),
+        "aborts", count(jdbc, "account_selected_owner_intake_source_read_aborts"));
+  }
+
+  private static PSQLException postgresException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof PSQLException postgresFailure) return postgresFailure;
+    }
+    throw new AssertionError("Expected PostgreSQL deferred-constraint failure", failure);
   }
 
   private static void assertWorldSourceExclusionGuards(
