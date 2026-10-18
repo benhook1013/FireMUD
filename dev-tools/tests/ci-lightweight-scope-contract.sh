@@ -219,6 +219,13 @@ def mutate_gating_step(workflow, job_id, name_suffix, changes):
     return mutated
 
 
+def executable_command_line(line):
+    # Bash's reserved-word time preserves the command's exit status and errexit.
+    # Strip only that exact prefix; comments, echo/quoted decoys, and failure
+    # suppression must still fail the exact executable-command comparisons.
+    return line.strip().removeprefix("time ")
+
+
 def require_dev_tool_contract_command(workflow, command):
     label = f"ci dev-tool contract command {command!r}"
     step = find_step(
@@ -229,7 +236,7 @@ def require_dev_tool_contract_command(workflow, command):
     )
     run = value_at(step, ("run",), label)
     if not isinstance(run, str) or not any(
-        line.strip() == command for line in run.splitlines()
+        executable_command_line(line) == command for line in run.splitlines()
     ):
         raise SystemExit(
             f"{label}: command must appear as an executable run-block line"
@@ -251,7 +258,7 @@ def require_architecture_test_handoff(workflow):
     run = value_at(step, ("run",), label)
     if not isinstance(run, str):
         raise SystemExit(f"{label}: run block must be a string")
-    lines = [line.strip() for line in run.splitlines()]
+    lines = [executable_command_line(line) for line in run.splitlines()]
     if lines.count(DEFERRED_ARCHITECTURE_COMMAND) != 1:
         raise SystemExit(
             f"{label}: full contract path must defer discovery-covered architecture "
@@ -295,7 +302,7 @@ def mutate_dev_tool_contract_command(workflow, command):
     )
     run = value_at(step, ("run",), "mutated ci workflow")
     step["run"] = "\n".join(
-        line for line in run.splitlines() if line.strip() != command
+        line for line in run.splitlines() if executable_command_line(line) != command
     )
     return mutated
 
@@ -750,14 +757,18 @@ for job_id, name_suffix, command in CI_GATING_STEPS:
         )
 for command in DEV_TOOL_CONTRACT_COMMANDS:
     require_dev_tool_contract_command(ci, command)
-    mutation = mutate_dev_tool_contract_command(ci, command)
-    try:
-        require_dev_tool_contract_command(mutation, command)
-    except SystemExit:
-        continue
-    raise SystemExit(
-        f"ci dev-tool contract execution accepted removal of {command}"
-    )
+    for replacement in ("", f"# time {command}", f'echo "time {command}"',
+                        f'"time {command}"', f"time {command} || true", f"time {command} &"):
+        mutation = mutate_dev_tool_contract_command(ci, command)
+        step = find_step(mutation, "dev-tool-contract-checks", "Validate dev tool contracts", "mutated ci workflow")
+        step["run"] += "\n" + replacement
+        try:
+            require_dev_tool_contract_command(mutation, command)
+        except SystemExit:
+            continue
+        raise SystemExit(
+            f"ci dev-tool contract execution accepted replacement of {command} with {replacement!r}"
+        )
 require_architecture_test_handoff(ci)
 for description, command in (
     ("missing deferred architecture command", DEFERRED_ARCHITECTURE_COMMAND),
@@ -792,12 +803,14 @@ require_equal(
     "${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}",
     "ci workflow",
 )
-require_equal(
-    architecture_document_step,
-    ("run",),
-    "bash ./dev-tools/tests/architecture-doc-contracts.sh",
-    "ci workflow",
-)
+architecture_run = value_at(architecture_document_step, ("run",), "ci architecture document contract")
+architecture_command = "bash ./dev-tools/tests/architecture-doc-contracts.sh"
+if architecture_run not in (
+    architecture_command,
+    f"TIMEFORMAT='{architecture_command}: real=%3R user=%3U sys=%3S'\ntime {architecture_command}\n",
+):
+    raise SystemExit("ci architecture document contract must retain its exact executable command with optional timing")
+
 require_contains(
     complete_contract_step,
     ("run",),
