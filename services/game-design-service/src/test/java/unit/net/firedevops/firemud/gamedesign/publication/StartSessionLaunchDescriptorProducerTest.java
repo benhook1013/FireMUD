@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -23,6 +24,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
@@ -39,8 +42,12 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -124,6 +131,118 @@ class StartSessionLaunchDescriptorProducerTest {
         .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
         .isEqualTo(Status.Code.UNAVAILABLE);
     verifyNoInteractions(transactions);
+  }
+
+  @Test
+  void associationAndLaunchCallersShareLosslessPublishedReleaseEncoding() throws Exception {
+    var dto = completeReleaseDto();
+    var producer = producer();
+    var associationReader =
+        new StartSessionTemplateAssociationReadService(
+            mock(DSLContext.class),
+            mock(PlatformTransactionManager.class),
+            NAMESPACE,
+            (tuple, attempt, fence) -> null,
+            mock(PublishedReleaseBundleService.class));
+
+    var launchBundle = producer.toPublishedReleaseBundle(dto);
+    var associationBundle = associationReader.toPublishedReleaseBundle(dto);
+    assertThat(launchBundle).isEqualTo(associationBundle);
+    assertThat(launchBundle.getId()).isEqualTo(dto.id());
+    assertThat(launchBundle.getVersionId()).isEqualTo(dto.versionId());
+    assertThat(launchBundle.getVersionNumber()).isEqualTo(dto.versionNumber());
+    assertThat(launchBundle.getAttestationSchemaVersion())
+        .isEqualTo(dto.attestationSchemaVersion());
+    assertThat(launchBundle.getPublishWorkflowId()).isEqualTo(dto.publishWorkflowId());
+    assertThat(launchBundle.getManifestHash()).isEqualTo(dto.manifestHash());
+    assertThat(launchBundle.getRequiredManifestAssetKeysList())
+        .containsExactlyElementsOf(dto.requiredManifestAssetKeys());
+    assertThat(launchBundle.getIsScriptOnly()).isEqualTo(dto.scriptOnly());
+    assertThat(launchBundle.getPublishedAt()).isEqualTo(dto.publishedAt().toString());
+    assertThat(launchBundle.getScriptPatchVersion()).isEmpty();
+    assertThat(launchBundle.getGenerationConfigRevision())
+        .isEqualTo(dto.generationConfigRevision());
+    assertThat(launchBundle.getCommandDefinitionsList())
+        .containsExactlyElementsOf(dto.commandDefinitions());
+    assertThat(launchBundle.getPublishedReleaseBundleRef())
+        .isEqualTo(dto.publishedReleaseBundleRef());
+    assertThat(launchBundle.getCanonicalTenantId()).isEqualTo(dto.canonicalTenantId().toString());
+    assertThat(launchBundle.getCanonicalVersionId()).isEqualTo(dto.canonicalVersionId().toString());
+    assertThat(launchBundle.hasManifestSchemaVersion()).isTrue();
+    assertThat(launchBundle.getArtifactDigestsList()).hasSize(1);
+    assertThat(launchBundle.getArtifactDigests(0).getImmutableObjectKey())
+        .isEqualTo(dto.artifactDigests().getFirst().immutableObjectKey());
+    assertThat(launchBundle.getParticipantDigestsList().get(0).hasAbilitySchemaDigest()).isFalse();
+    assertThat(launchBundle.getParticipantDigestsList().get(0).getContentDigest())
+        .isEqualTo(dto.participantDigests().getFirst().contentDigest());
+    assertThat(launchBundle.getParticipantDigestsList().get(2).hasAbilitySchemaDigest()).isTrue();
+
+    var launchContent = producer.releaseContent(dto);
+    var associationContent = associationReader.releaseContent(dto);
+    assertThat(launchContent.canonicalBytes()).containsExactly(associationContent.canonicalBytes());
+    assertThat(launchContent.canonicalBytes())
+        .containsExactly(expectedReleaseContent(dto).canonicalBytes());
+    assertThat(launchContent.worldStartLocationEvidence())
+        .isEqualTo(dto.worldPublishedStartLocationEvidence());
+    assertThat(launchContent.artifactDigests()).hasSize(1);
+  }
+
+  @Test
+  void sharedReleaseEncodingKeepsCallerSpecificFailureMappings() throws Exception {
+    var dto = completeReleaseDto();
+    var producer = producer();
+    var associationReader =
+        new StartSessionTemplateAssociationReadService(
+            mock(DSLContext.class),
+            mock(PlatformTransactionManager.class),
+            NAMESPACE,
+            (tuple, attempt, fence) -> null,
+            mock(PublishedReleaseBundleService.class));
+    var failedParticipant =
+        new PublishParticipantDigestDto(
+            "WORLD_MANAGEMENT",
+            dto.participantDigests().getFirst().scopeValue(),
+            dto.participantDigests().getFirst().appliedCommitId(),
+            dto.participantDigests().getFirst().contentDigest(),
+            dto.participantDigests().getFirst().digestSchemaVersion(),
+            "REJECTED",
+            "failed");
+    var failedDto =
+        withParticipants(
+            dto,
+            Stream.concat(Stream.of(failedParticipant), dto.participantDigests().stream().skip(1))
+                .toList());
+
+    assertThatThrownBy(() -> producer.toPublishedReleaseBundle(failedDto))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = ((StatusRuntimeException) failure).getStatus();
+              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(status.getDescription())
+                  .isEqualTo("Published release participant did not succeed");
+            });
+    assertThatThrownBy(() -> associationReader.toPublishedReleaseBundle(failedDto))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("START_SESSION_PUBLISHED_PARTICIPANT_FAILURE");
+
+    var incomplete = incompleteReleaseDto();
+    var legacyBundle = producer.toPublishedReleaseBundle(incomplete);
+    assertThat(legacyBundle.getScriptPatchVersion()).isEmpty();
+    assertThat(legacyBundle.hasManifestSchemaVersion()).isFalse();
+    assertThat(legacyBundle.getArtifactDigestsList()).isEmpty();
+    assertThatThrownBy(() -> producer.releaseContent(incomplete))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = ((StatusRuntimeException) failure).getStatus();
+              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(status.getDescription())
+                  .isEqualTo("Immutable release content evidence is incomplete");
+            });
+    assertThatThrownBy(() -> associationReader.releaseContent(incomplete))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("START_SESSION_IMMUTABLE_RELEASE_ARTIFACT_PROOF_MISSING");
   }
 
   @Test
@@ -443,6 +562,144 @@ class StartSessionLaunchDescriptorProducerTest {
             uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
             GameplayRuleSource.replay(inheritedRules, binding));
     return new SelectedActorCoreFixture(binding, policySnapshot, rulesSnapshot);
+  }
+
+  private static PublishedReleaseBundleDto completeReleaseDto() throws Exception {
+    var target = selectedActorCoreSource().binding().target();
+    var worldEvidence = PublishedWorldSelectorFixtures.evidence(target);
+    String artifactDigest = digest('c');
+    return new PublishedReleaseBundleDto(
+        17L,
+        "private-owner-key",
+        23L,
+        12,
+        "v2",
+        worldEvidence.request().publishWorkflowId(),
+        digest('e'),
+        List.of("branding/logo"),
+        PublishedWorldSelectorFixtures.participants(1L, worldEvidence),
+        List.of("look"),
+        "generation-config-r1",
+        false,
+        null,
+        java.time.LocalDateTime.parse("2026-10-18T00:00:00"),
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        "release-bundle-ref",
+        1,
+        List.of(
+            new PublishedArtifactDigest(
+                "branding/logo",
+                "IMAGE",
+                "artifacts/sha256/" + artifactDigest.substring("sha256:".length()),
+                artifactDigest,
+                "image/png",
+                1)),
+        worldEvidence);
+  }
+
+  private static PublishedReleaseBundleDto incompleteReleaseDto() {
+    return new PublishedReleaseBundleDto(
+        17L,
+        "private-owner-key",
+        23L,
+        12,
+        "v1",
+        "legacy-workflow",
+        digest('e'),
+        List.of(),
+        List.of(),
+        List.of("look"),
+        "generation-config-r1",
+        false,
+        null,
+        java.time.LocalDateTime.parse("2026-10-18T00:00:00"),
+        TENANT,
+        VERSION,
+        "release-bundle-ref",
+        null,
+        null);
+  }
+
+  private static PublishedReleaseBundleDto withParticipants(
+      PublishedReleaseBundleDto dto, List<PublishParticipantDigestDto> participants) {
+    return new PublishedReleaseBundleDto(
+        dto.id(),
+        dto.tenantId(),
+        dto.versionId(),
+        dto.versionNumber(),
+        dto.attestationSchemaVersion(),
+        dto.publishWorkflowId(),
+        dto.manifestHash(),
+        dto.requiredManifestAssetKeys(),
+        participants,
+        dto.commandDefinitions(),
+        dto.generationConfigRevision(),
+        dto.scriptOnly(),
+        dto.scriptPatchVersion(),
+        dto.publishedAt(),
+        dto.canonicalTenantId(),
+        dto.canonicalVersionId(),
+        dto.publishedReleaseBundleRef(),
+        dto.manifestSchemaVersion(),
+        dto.artifactDigests(),
+        dto.worldPublishedStartLocationEvidence());
+  }
+
+  private static GameDesignPublicationTerminalEvidence.ReleaseContent expectedReleaseContent(
+      PublishedReleaseBundleDto dto) {
+    var participants =
+        dto.participantDigests().stream()
+            .map(
+                value ->
+                    new GameDesignPublicationTerminalEvidence.Participant(
+                        value.participantKey(),
+                        value.scopeValue(),
+                        value.baseVersionId(),
+                        value.appliedCommitId(),
+                        value.contentDigest(),
+                        value.digestSchemaVersion(),
+                        value.abilitySchemaDigest(),
+                        value.errorCode(),
+                        value.errorMessage()))
+            .toList();
+    var artifacts =
+        dto.artifactDigests().stream()
+            .map(
+                value ->
+                    new AuthoredWorldReleaseAttestationEvidence.Artifact(
+                        value.usageKey(),
+                        value.artifactKind(),
+                        value.immutableObjectKey(),
+                        value.contentDigest(),
+                        value.contentType(),
+                        value.artifactSchemaVersion()))
+            .toList();
+    return new GameDesignPublicationTerminalEvidence.ReleaseContent(
+        dto.canonicalTenantId(),
+        dto.canonicalVersionId(),
+        dto.publishedReleaseBundleRef(),
+        dto.versionNumber(),
+        dto.attestationSchemaVersion(),
+        dto.publishWorkflowId(),
+        dto.manifestHash(),
+        dto.manifestSchemaVersion(),
+        artifacts,
+        dto.requiredManifestAssetKeys(),
+        participants,
+        dto.commandDefinitions(),
+        dto.generationConfigRevision(),
+        dto.worldPublishedStartLocationEvidence());
+  }
+
+  private static StartSessionLaunchDescriptorProducer producer() {
+    return new StartSessionLaunchDescriptorProducer(
+        mock(DSLContext.class),
+        mock(PlatformTransactionManager.class),
+        NAMESPACE,
+        mock(StartSessionTemplateAssociationReadService.class),
+        mock(PublishedReleaseBundleService.class),
+        JSON);
   }
 
   private static byte[] bytes(String value) {

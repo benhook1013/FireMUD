@@ -226,7 +226,9 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                           "UPDATE gs_original_start_session_authored_actor_core_retention"
                               + " SET source_result_digest = 'sha256:' || repeat('0', 64)"
                               + where))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining(
+              "Game Session authored-core source retention is immutable and append-only");
       assertThatThrownBy(
               () ->
                   fixture
@@ -234,13 +236,16 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                       .execute(
                           "DELETE FROM gs_original_start_session_authored_actor_core_retention"
                               + where))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining(
+              "Game Session authored-core source retention is immutable and append-only");
       assertThatThrownBy(
               () ->
                   fixture
                       .dsl()
                       .execute("TRUNCATE gs_original_start_session_authored_actor_core_retention"))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Game Session authored-core source retention cannot be truncated");
     }
   }
 
