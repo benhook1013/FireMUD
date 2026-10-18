@@ -154,7 +154,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               fixture
                   .dsl()
                   .fetchOne(
-                      "SELECT count(*) FROM game_session_original_start_session_authored_actor_core_retention"),
+                      "SELECT count(*) FROM gs_original_start_session_authored_actor_core_retention"),
               "new V1013 table count query returned no row");
       Long remainingRetentionCount = remainingRetentionRows.get(0, Long.class);
       assertThat(remainingRetentionCount).isZero();
@@ -223,7 +223,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                   fixture
                       .dsl()
                       .execute(
-                          "UPDATE game_session_original_start_session_authored_actor_core_retention"
+                          "UPDATE gs_original_start_session_authored_actor_core_retention"
                               + " SET source_result_digest = 'sha256:' || repeat('0', 64)"
                               + where))
           .isInstanceOf(RuntimeException.class);
@@ -232,15 +232,14 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                   fixture
                       .dsl()
                       .execute(
-                          "DELETE FROM game_session_original_start_session_authored_actor_core_retention"
+                          "DELETE FROM gs_original_start_session_authored_actor_core_retention"
                               + where))
           .isInstanceOf(RuntimeException.class);
       assertThatThrownBy(
               () ->
                   fixture
                       .dsl()
-                      .execute(
-                          "TRUNCATE game_session_original_start_session_authored_actor_core_retention"))
+                      .execute("TRUNCATE gs_original_start_session_authored_actor_core_retention"))
           .isInstanceOf(RuntimeException.class);
     }
   }

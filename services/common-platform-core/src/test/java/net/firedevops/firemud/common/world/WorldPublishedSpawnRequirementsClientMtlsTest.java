@@ -329,12 +329,14 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
         throws Exception {
       Path certificate =
           writePem(
-              directory.resolve("entity-client.crt"),
+              directory.resolve(
+                  "client-" + identity.certificate().getSerialNumber().toString(16) + ".crt"),
               "CERTIFICATE",
               identity.certificate().getEncoded());
       Path privateKey =
           writePem(
-              directory.resolve("entity-client.key"),
+              directory.resolve(
+                  "client-" + identity.certificate().getSerialNumber().toString(16) + ".key"),
               "PRIVATE KEY",
               identity.privateKey().getEncoded());
       Path caFile =
