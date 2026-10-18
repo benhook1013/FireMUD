@@ -567,28 +567,7 @@ def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, A
 def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Parse and validate the newline-delimited events from a successful CLI capture."""
 
-    findings: list[dict[str, Any]] = []
-    completes: list[dict[str, Any]] = []
-    for number, line in enumerate(_capture_lines(value), 1):
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
-            raise EvidenceError(f"linked capture stdout has invalid JSON at line {number}") from exc
-        if not isinstance(event, dict):
-            raise EvidenceError(f"linked capture stdout has a non-object event at line {number}")
-        _validate_event_archivability(event, number)
-        if event.get("type") == "finding":
-            instructions = event.get("codegenInstructions")
-            if isinstance(instructions, str) and instructions.strip():
-                from .sqlite_provider_imports import _cli_detail
-
-                if not _cli_detail(instructions).strip():
-                    raise EvidenceError(f"linked capture stdout has a finding without issue content at line {number}")
-            findings.append(event)
-        elif event.get("type") == "complete":
-            completes.append(event)
+    findings, completes = _parse_strict_capture_events(value, successful=True)
     if (
         len(completes) != 1
         or completes[0].get("status") != "review_completed"
@@ -638,7 +617,16 @@ def parse_failed_capture_events(value: str) -> list[dict[str, Any]]:
     return findings
 
 
-def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _parse_strict_capture_events(
+    value: str, *, successful: bool = False
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate shared event grammar, preserving each outcome's finding contract.
+
+    Successful captures prohibit every error event, even after completion.
+    Failed/partial evidence may retain one terminal error but still requires
+    finding instructions rather than legacy successful display-only payloads.
+    """
+
     if not isinstance(value, str):
         raise EvidenceError("capture stdout is not text")
     try:
@@ -647,7 +635,9 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
         raise EvidenceError("capture stdout is not valid UTF-8 text") from exc
     if encoded_size > 8 * 1024 * 1024:
         raise EvidenceError("capture stdout exceeds its evidence size limit")
-    if value and not value.endswith("\n"):
+    # Successful archives historically permit a complete final JSON object at
+    # EOF. Partial/failed evidence still needs the durable final line boundary.
+    if value and not value.endswith("\n") and not successful:
         raise EvidenceError("capture stdout ends with an incomplete JSONL line")
 
     def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -696,20 +686,20 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
             raise EvidenceError(f"capture stdout has an invalid event type at line {number}")
         if event_type == "finding":
             instructions = event.get("codegenInstructions")
-            if not isinstance(instructions, str) or not instructions.strip():
+            if not successful and (not isinstance(instructions, str) or not instructions.strip()):
                 raise EvidenceError(f"capture stdout has a finding without instruction text at line {number}")
-            try:
-                instructions.encode("utf-8")
-            except UnicodeEncodeError as exc:
-                raise EvidenceError(f"capture stdout has non-UTF-8 finding text at line {number}") from exc
-            # Reuse the canonical CLI projection to remove the provider's
-            # location preamble before deciding whether a finding has any
-            # issue content. A locator alone must not become a generic title
-            # paired with an empty detail.
-            from .sqlite_provider_imports import _cli_detail
+            # Historical successful findings can carry title/comment or message
+            # instead of instructions. Preserve that projection contract while
+            # failed observations continue requiring actionable instructions.
+            if isinstance(instructions, str) and instructions.strip():
+                try:
+                    instructions.encode("utf-8")
+                except UnicodeEncodeError as exc:
+                    raise EvidenceError(f"capture stdout has non-UTF-8 finding text at line {number}") from exc
+                from .sqlite_provider_imports import _cli_detail
 
-            if not _cli_detail(instructions).strip():
-                raise EvidenceError(f"capture stdout has a finding without issue content at line {number}")
+                if not _cli_detail(instructions).strip():
+                    raise EvidenceError(f"capture stdout has a finding without issue content at line {number}")
             if completes:
                 raise EvidenceError("capture stdout has findings after its completion event")
             findings.append(event)
@@ -733,6 +723,8 @@ def _parse_strict_capture_events(value: str) -> tuple[list[dict[str, Any]], list
                 if message is not None and not isinstance(message, str):
                     raise EvidenceError(f"capture stdout has an invalid reviewing event at line {number}")
         elif event_type == "error":
+            if successful:
+                raise EvidenceError("successful capture stdout contains an error event")
             error_type = event.get("errorType")
             recoverable = event.get("recoverable")
             message = event.get("message")
@@ -812,35 +804,61 @@ def _capture_metadata(metadata: dict[str, Any]) -> dict[str, str]:
     return result
 
 
-def _published_cli_decisions(snapshot: dict[str, Any], checkpoint: Checkpoint, repo: str,
-                             pr_number: int) -> dict[int, tuple[str, str]]:
+def _published_cli_decisions(
+    snapshot: dict[str, Any], checkpoint: Checkpoint, repo: str, pr_number: int
+) -> dict[int, tuple[str, str]]:
     """Bind an immutable original publication to the audited decisions at that time."""
     intent = snapshot["attempt"]["metadata"].get("checkpoint_publication_intent")
     history = snapshot.get("decision_history")
-    if (not isinstance(intent, dict) or not isinstance(intent.get("repository"), str)
-            or intent["repository"].casefold() != repo.casefold()
-            or intent.get("source_pr") != pr_number or intent.get("run_id") != checkpoint.run_id
-            or type(intent.get("repository_id")) is not int or intent["repository_id"] <= 0
-            or type(intent.get("actor_id")) is not int or intent["actor_id"] <= 0
-            or not isinstance(checkpoint.author_login, str)
-            or not isinstance(intent.get("actor_login"), str) or not intent["actor_login"].strip()
-            or intent["actor_login"].casefold() != checkpoint.author_login.casefold()
-            or not isinstance(intent.get("body"), str) or checkpoint.correction
-            or not isinstance(history, dict)):
+    if (
+        not isinstance(intent, dict)
+        or not isinstance(intent.get("repository"), str)
+        or intent["repository"].casefold() != repo.casefold()
+        or intent.get("source_pr") != pr_number
+        or intent.get("run_id") != checkpoint.run_id
+        or type(intent.get("repository_id")) is not int
+        or intent["repository_id"] <= 0
+        or type(intent.get("actor_id")) is not int
+        or intent["actor_id"] <= 0
+        or not isinstance(checkpoint.author_login, str)
+        or not isinstance(intent.get("actor_login"), str)
+        or not intent["actor_login"].strip()
+        or intent["actor_login"].casefold() != checkpoint.author_login.casefold()
+        or not isinstance(intent.get("body"), str)
+        or checkpoint.correction
+        or not isinstance(history, dict)
+    ):
         raise CaptureInvalid("corrected CLI checkpoint lacks immutable original publication binding")
-    published, invalid = parse_checkpoint_comments([{
-        "body": intent["body"], "created_at": checkpoint.created_at,
-        "author_login": checkpoint.author_login,
-    }])
+    published, invalid = parse_checkpoint_comments(
+        [
+            {
+                "body": intent["body"],
+                "created_at": checkpoint.created_at,
+                "author_login": checkpoint.author_login,
+            }
+        ]
+    )
     if invalid or len(published) != 1:
         raise CaptureInvalid("corrected CLI publication intent is malformed")
     original = published[0]
-    fields = ("type", "raw_found", "accepted", "routed", "file_count", "correction", "run_id",
-              "hosted_review_id", "duration_seconds", "duration_invalid")
-    if (any(getattr(original, key) != getattr(checkpoint, key) for key in fields)
-            or not checkpoint.reviewed_sha
-            or original.reviewed_sha != snapshot["run"]["source_head"]
-            or not original.reviewed_sha.casefold().startswith(checkpoint.reviewed_sha.casefold())):
+    fields = (
+        "type",
+        "raw_found",
+        "accepted",
+        "routed",
+        "file_count",
+        "correction",
+        "run_id",
+        "hosted_review_id",
+        "duration_seconds",
+        "duration_invalid",
+    )
+    if (
+        any(getattr(original, key) != getattr(checkpoint, key) for key in fields)
+        or not checkpoint.reviewed_sha
+        or original.reviewed_sha != snapshot["run"]["source_head"]
+        or not original.reviewed_sha.casefold().startswith(checkpoint.reviewed_sha.casefold())
+    ):
         raise CaptureInvalid("corrected CLI checkpoint conflicts with immutable publication intent")
     try:
         cutoff = datetime.fromisoformat(checkpoint.created_at.replace("Z", "+00:00"))
@@ -1032,8 +1050,10 @@ def _cli_capture_from_sql(
         published_correction = corrected and (
             checkpoint.comment_id is not None or "checkpoint_publication_intent" in attempt_metadata
         )
-        if published_correction or counts.get("accepted") != checkpoint.accepted or (
-            checkpoint.routed is not None and counts.get("routed") != checkpoint.routed
+        if (
+            published_correction
+            or counts.get("accepted") != checkpoint.accepted
+            or (checkpoint.routed is not None and counts.get("routed") != checkpoint.routed)
         ):
             checkpoint_decisions = _published_cli_decisions(snapshot, checkpoint, repo, pr_number)
         else:
@@ -1045,17 +1065,25 @@ def _cli_capture_from_sql(
     # A supplied metadata clock, finalization, or publication cannot replace it.
     verified_metadata.pop("completed_at", None)
     from .hosted import parse_timestamp
+
     attempt_finish = parse_timestamp(attempt.get("finished_at"))
     run_finish = parse_timestamp(run.get("finished_at"))
     terminal_value = metadata_value.get("capture_terminal_at")
-    terminal = (parse_timestamp(terminal_value) if isinstance(terminal_value, str)
-                and terminal_value.endswith(("Z", "+00:00")) else None)
+    terminal = (
+        parse_timestamp(terminal_value)
+        if isinstance(terminal_value, str) and terminal_value.endswith(("Z", "+00:00"))
+        else None
+    )
     started_at = parse_timestamp(attempt.get("started_at"))
     # Equality of storage rows alone cannot prove when a provider finished.
     # Old captures retain attribution but earn no local-period chronology credit.
-    if (metadata_value.get("capture_terminal_basis") == "provider_process_exit"
-            and terminal is not None and started_at is not None and terminal >= started_at
-            and terminal == attempt_finish == run_finish):
+    if (
+        metadata_value.get("capture_terminal_basis") == "provider_process_exit"
+        and terminal is not None
+        and started_at is not None
+        and terminal >= started_at
+        and terminal == attempt_finish == run_finish
+    ):
         verified_metadata["completed_at"] = terminal.isoformat().replace("+00:00", "Z")
     capture = CaptureData(
         metadata=verified_metadata,

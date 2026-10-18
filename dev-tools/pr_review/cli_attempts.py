@@ -1067,8 +1067,8 @@ def _parse_successful_stdout(stdout: str) -> list[dict[str, Any]]:
         findings, _ = evidence.parse_capture_events(stdout)
     except evidence.EvidenceError as error:
         message = str(error)
-        invalid_json = re.fullmatch(r"linked capture stdout has invalid JSON at line ([0-9]+)", message)
-        non_object = re.fullmatch(r"linked capture stdout has a non-object event at line ([0-9]+)", message)
+        invalid_json = re.fullmatch(r"(?:linked )?capture stdout has invalid JSON at line ([0-9]+)", message)
+        non_object = re.fullmatch(r"(?:linked )?capture stdout has a non-object event at line ([0-9]+)", message)
         if invalid_json:
             message = f"capture stdout JSON is invalid at line {invalid_json.group(1)}"
         elif non_object:

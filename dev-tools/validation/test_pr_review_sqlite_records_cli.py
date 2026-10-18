@@ -439,6 +439,17 @@ class ReviewRecordsCliTest(unittest.TestCase):
             ("stdout", '{"type":"complete","status":"unknown"}\n'),
             ("stdout", '{"type":"finding","codegenInstructions":"incomplete"}\n'),
         ]
+        successful_stdout = (capture / "stdout").read_text()
+        terminal_error = '{"type":"error","errorType":"connection","recoverable":true}\n'
+        changes.extend(
+            ("stdout", stdout)
+            for stdout in (
+                terminal_error + successful_stdout,
+                successful_stdout + terminal_error,
+                '{"type":"unknown"}\n' + successful_stdout,
+                '{"type":"heartbeat","status":"working","status":"done"}\n' + successful_stdout,
+            )
+        )
         original_metadata = json.loads((capture / "metadata.json").read_text())
         for key, value in (
             ("run_id", "run." + "b" * 32),
