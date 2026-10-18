@@ -75,6 +75,8 @@ public final class EntitySelectedSourceIntakeCommandGrpcService
       observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
     } catch (EntityEmptySelectedSourceIntakeRepository.CorruptReceiptException corrupt) {
       observer.onError(Status.DATA_LOSS.asRuntimeException());
+    } catch (EntityEmptySelectedSourceIntakeRepository.IntakeConflictException conflict) {
+      observer.onError(Status.ALREADY_EXISTS.asRuntimeException());
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException unavailable) {
       observer.onError(Status.UNAVAILABLE.asRuntimeException());
