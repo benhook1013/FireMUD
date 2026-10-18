@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.sourceintake;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -22,10 +23,12 @@ import net.firedevops.firemud.entitymanagement.v1.ReadSelectedSourceIntakeTermin
 import net.firedevops.firemud.entitymanagement.v1.ReadSelectedSourceIntakeTerminalResponse;
 import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures;
 import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures.Fixture;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Synthetic receipt/peer tests do not establish Entity producer or database proof. */
@@ -137,6 +140,49 @@ class EntitySelectedSourceIntakeTerminalReadServiceTest {
       when(repository.read(NAMESPACE, fixture.authorization().intakeRequestId()))
           .thenThrow(new IllegalArgumentException("corrupt stored Entity receipt"));
       assertStatus(() -> service.read(request(fixture.authorization())), Status.Code.DATA_LOSS);
+    } finally {
+      accountContext.detach(previous);
+    }
+  }
+
+  @Test
+  void databaseOutagesAreSanitizedAsUnavailable() {
+    var repository = mock(EntityEmptySelectedSourceIntakeRepository.class);
+    var binding = fixture.authorization();
+    var terminalRequest = request(binding);
+    var service = new EntityEmptySelectedSourceIntakeTerminalReadService(repository, NAMESPACE);
+    var accountContext = accountPeer(NAMESPACE);
+    var previous = accountContext.attach();
+    try {
+      for (RuntimeException outage :
+          java.util.List.of(
+              new DataAccessException("private jOOQ database detail"),
+              new DataAccessResourceFailureException("private Spring database detail"))) {
+        doThrow(outage)
+            .doReturn(Optional.of(fixture.receipt()))
+            .when(repository)
+            .read(NAMESPACE, binding.intakeRequestId());
+
+        assertThatThrownBy(() -> service.read(terminalRequest))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                error -> {
+                  var status = Status.fromThrowable(error);
+                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+                  assertThat(status.getDescription())
+                      .isEqualTo("Entity terminal receipt storage is unavailable");
+                  assertThat(status.getDescription())
+                      .doesNotContain("private jOOQ", "private Spring");
+                  assertThat(((StatusRuntimeException) error).getCause()).isNull();
+                  assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+                });
+
+        var recovered = service.read(terminalRequest);
+        assertThat(recovered.request()).isSameAs(terminalRequest);
+        assertThat(recovered.receipt()).isSameAs(fixture.receipt());
+        assertThat(recovered.receipt().canonicalBytes())
+            .isEqualTo(fixture.receipt().canonicalBytes());
+      }
     } finally {
       accountContext.detach(previous);
     }

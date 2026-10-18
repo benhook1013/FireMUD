@@ -227,6 +227,36 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void multiplePriorScopeOrOperationMatchesProduceTheOwnerConflict() {
+    var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
+    var binding = fixture.authorization();
+    seedAssociation(
+        UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"),
+        UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1"),
+        UUID.fromString("cccccccc-cccc-4ccc-8ccc-ccccccccccc1"),
+        UUID.fromString("dddddddd-dddd-4ddd-8ddd-ddddddddddd1"),
+        EntityEmptySelectedSourceIntakePostgresFixture.TENANT,
+        EntityEmptySelectedSourceIntakePostgresFixture.VERSION,
+        91001L,
+        91002L);
+    seedAssociation(
+        UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"),
+        binding.operationId(),
+        UUID.fromString("cccccccc-cccc-4ccc-8ccc-ccccccccccc2"),
+        UUID.fromString("dddddddd-dddd-4ddd-8ddd-ddddddddddd2"),
+        UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+        UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+        91003L,
+        91004L);
+
+    assertThatThrownBy(() -> repository.retainFresh(fixture.inputs(), requestDigest(fixture)))
+        .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.IntakeConflictException.class)
+        .hasMessage("Entity selected scope or owner operation is already associated");
+    assertThat(rowCount("SELECT COUNT(*) FROM entity_empty_selected_source_association"))
+        .isEqualTo(2L);
+  }
+
+  @Test
   void selectedEmptyPublicationReaderResolvesOnlyTheValidatedReceiptForTenantAndGameDesignRow() {
     var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
     EntityEmptySelectedSourceIntakeReceipt receipt =
@@ -464,6 +494,54 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     } catch (NoSuchAlgorithmException impossible) {
       throw new AssertionError(impossible);
     }
+  }
+
+  private void seedAssociation(
+      UUID genesisId,
+      UUID operationId,
+      UUID fenceId,
+      UUID intakeRequestId,
+      UUID tenantId,
+      UUID versionId,
+      long localTenantKey,
+      long localVersionKey) {
+    dsl.execute(
+        "INSERT INTO entity_empty_source_numeric_key_reservation "
+            + "(key_kind, numeric_key, claim_kind) VALUES "
+            + "('TENANT', ?, 'CANONICAL_EMPTY_SOURCE'), "
+            + "('VERSION', ?, 'CANONICAL_EMPTY_SOURCE')",
+        localTenantKey,
+        localVersionKey);
+    String digest = "sha256:" + "a".repeat(64);
+    dsl.execute(
+        "INSERT INTO entity_empty_selected_source_association "
+            + "(target_namespace, genesis_id, operation_id, fence_id, intake_request_id, "
+            + "canonical_tenant_id, canonical_version_id, selected_commit_id, "
+            + "source_revision_id, source_revision_order, local_tenant_key, local_version_key, "
+            + "request_digest, schema_digest, authorization_binding_digest, "
+            + "selected_source_digest, world_read_request_id, world_read_request_digest, "
+            + "world_closure_digest, receipt_digest, associated_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            + "CURRENT_TIMESTAMP)",
+        EntityEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+        genesisId,
+        operationId,
+        fenceId,
+        intakeRequestId,
+        tenantId,
+        versionId,
+        UUID.fromString("12121212-1212-4212-8212-121212121212"),
+        UUID.fromString("13131313-1313-4313-8313-131313131313"),
+        localTenantKey,
+        localVersionKey,
+        digest,
+        digest,
+        digest,
+        digest,
+        UUID.fromString("14141414-1414-4414-8414-141414141414"),
+        digest,
+        digest,
+        digest);
   }
 
   private static void appendDigestSegment(ByteArrayOutputStream output, String value) {
