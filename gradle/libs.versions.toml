@@ -1,6 +1,6 @@
 [versions]
 spring-boot = "4.1.1"
-jackson-2 = "2.22.3"
+jackson-2 = "2.22.4"
 jackson-3 = "3.2.3"
 tomcat = "11.0.27"
 jooq = "3.21.9"
