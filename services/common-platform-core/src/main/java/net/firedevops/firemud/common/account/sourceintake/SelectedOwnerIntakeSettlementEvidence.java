@@ -43,17 +43,6 @@ public final class SelectedOwnerIntakeSettlementEvidence {
           || transportRequestId.equals(authorizationBinding.intakeRequestId())) {
         throw invalid("Independent settlement transport correlation required");
       }
-      byte[] bytes = authorizationBinding.canonicalBytes();
-      if (bytes.length == 0
-          || bytes.length > SelectedOwnerIntakeAuthorizationBinding.MAX_BYTES
-          || !DraftAuthorizationFenceBinding.digest(bytes).equals(authorizationBinding.digest())) {
-        throw invalid("Canonical original authorization is required");
-      }
-      var decoded = SelectedOwnerIntakeAuthorizationBinding.fromStored(bytes);
-      if (!Arrays.equals(bytes, decoded.canonicalBytes())
-          || !authorizationBinding.digest().equals(decoded.digest())) {
-        throw invalid("Canonical original authorization is required");
-      }
     }
 
     public static Request create(
@@ -82,16 +71,12 @@ public final class SelectedOwnerIntakeSettlementEvidence {
           && schemaVersion == other.schemaVersion
           && targetNamespace.equals(other.targetNamespace)
           && transportRequestId.equals(other.transportRequestId)
-          && Arrays.equals(authorizationBindingBytes(), other.authorizationBindingBytes());
+          && authorizationBinding.equals(other.authorizationBinding);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(
-          schemaVersion,
-          targetNamespace,
-          transportRequestId,
-          Arrays.hashCode(authorizationBindingBytes()));
+      return Objects.hash(schemaVersion, targetNamespace, transportRequestId, authorizationBinding);
     }
   }
 
