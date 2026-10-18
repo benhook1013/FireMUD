@@ -204,3 +204,19 @@ Entry format:
   - Observation: Both runs rejected the selected test-merge commit because it did not have its exact parents. Runtime failed before image production; Preview exhausted five merge-computation attempts. The PR Runtime path uses `GITHUB_SHA`; an empty dispatch-only `EVENT_MERGE_SHA` is not the cause. The reason for the mismatched merge selection is unconfirmed.
   - Expected pattern: The previous parent's green runs do not qualify the new pair. Preserve the exact-parent guard and do not rerun blindly. No guard was weakened and no blind rerun was requested.
   - Recovery: Gameplay reported the captured failures to Overseer in controller message `64512c73-9fa2-44b5-b2b7-e5b607155777`, with Preview evidence in reply `0de28b96-8790-4e5e-b8e5-a915d96de829`. After normal parent reconciliation and the required correction push to `a9d9f27a4139c2be2cbf9b7c1df4c4a33d6b8bf3` on `develop` at `efbc55874894ce5b2b420e19fac5ab23d66e384e`, replacement Runtime Images run `39094799761` and Preview run `39094798308` both succeeded. This establishes recovery of those metadata checks after that publication boundary, without explaining the original mismatch or claiming whole-CI success.
+
+- `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
+  - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
+  - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.
+  - Expected pattern: assess and communicate this queue consequence before insertion; preserve the product's qualified head, original parent and proof rather than rebasing it onto unmerged maintenance. Keep the temporary maintenance front through its normal review requirements and release the integration fence at its human-authorized merge. This records the current operational limitation, not a new queue design or review-policy exception.
+  - Reconsideration trigger: if existing tooling gains independent maintenance-root scheduling, qualify its parent/proof behavior before changing this operational assumption.
+
+- `2026-10-19`: Paginate the complete CI observer context inventory
+  - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, the first 100 GraphQL contexts omitted the [#3249 Smoke Gate failure](https://github.com/benhook1013/FireMUD/actions/runs/39142129196/job/117718532427) at `b83`, delaying its detection by about 19 minutes; the complete inventory contained 186 contexts. The private observer now reads all pages within its bound and fails closed if the final `pageInfo.hasNextPage` remains true, errors occur, or head identity differs.
+  - Observation: A first-page result can miss a later failure in the same run. The observer now fails closed when pagination or response checks are incomplete; this records the observer recovery and does not establish or claim an underlying gate bug fix.
+  - Expected pattern: Treat a complete paginated inventory as authoritative, verify page completion, errors, and the requested head, and report no complete result when any check fails.
+
+- `2026-10-19`: Tie routed review-thread closure to the published candidate
+  - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, Main prematurely resolved a routed #3269 H1 thread after the parent #3249 fix was published but before the child carry was published. The thread was immediately reopened and finally resolved after child commit `bc10` was published.
+  - Observation: A routed parent fix alone did not prove that the child candidate carried the fix.
+  - Expected pattern: Close a routed thread only against the relevant published candidate; verify the child carry publication before treating the thread as resolved.
