@@ -4,27 +4,20 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.automationscripting.v1.AutomationSelectedSourceIntakeCommandServiceGrpc;
-import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerCredentials;
-import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandEvidence;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandEvidence.Request;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandGrpcCodec;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.common.security.SessionContext;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** File-backed mTLS client for Automation's unregistered selected-source command. */
 public final class GrpcAutomationSelectedSourceIntakeCommandClient
@@ -34,8 +27,6 @@ public final class GrpcAutomationSelectedSourceIntakeCommandClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public GrpcAutomationSelectedSourceIntakeCommandClient(
       ServiceEndpointsProperties endpoints,
@@ -44,7 +35,8 @@ public final class GrpcAutomationSelectedSourceIntakeCommandClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireFileBackedMtls(tlsProperties),
+        SelectedSourceIntakeClientTls.requireFileBackedMtls(
+            tlsProperties, "Automation selected-source command"),
         channelFactory,
         GrpcAutomationSelectedSourceIntakeCommandClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -54,15 +46,9 @@ public final class GrpcAutomationSelectedSourceIntakeCommandClient
   }
 
   public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("Automation selected-source command client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("Automation selected-source command stub unavailable");
-    }
-    initialized = true;
+    initOnce(
+        "Automation selected-source command client is closed",
+        "Automation selected-source command stub unavailable");
   }
 
   /** Returns only the exact immutable receipt echoed for this complete original request. */
@@ -74,7 +60,9 @@ public final class GrpcAutomationSelectedSourceIntakeCommandClient
           "Automation selected-source command must use the configured workload namespace");
     }
     var wireRequest = AutomationSelectedSourceIntakeCommandGrpcCodec.toRequest(request);
-    var current = requireStub();
+    var current =
+        requireInitializedStub(
+            "Automation selected-source command client is not initialized and available");
     try {
       var response =
           current
@@ -116,74 +104,13 @@ public final class GrpcAutomationSelectedSourceIntakeCommandClient
         .withCompression("gzip");
   }
 
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private AutomationSelectedSourceIntakeCommandServiceGrpc
-          .AutomationSelectedSourceIntakeCommandServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "Automation selected-source command client is not initialized and available");
-    }
-    return currentStub;
-  }
-
   private static void requireWorkloadOnlyContext() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new IllegalStateException(
-          "Automation selected-source command requires no ambient SQL or synchronization");
-    }
-    if (SessionContext.hasAuthenticatedCallerContext()
-        || AccountOriginalDraftOrderCredentials.CONTEXT_KEY.get() != null
-        || AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY.get() != null
-        || SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY.get() != null) {
-      throw new IllegalStateException(
-          "Automation selected-source command requires workload-only context");
-    }
+    requireNoAmbientSql(
+        "Automation selected-source command requires no ambient SQL or synchronization");
+    SelectedSourceIntakeClientTls.requireWorkloadOnlyContext("Automation selected-source command");
   }
 
   private static String automationServerPeerUri(String namespace) {
     return "spiffe://firemud/ns/" + namespace + "/sa/automation-scripting-service";
-  }
-
-  private static CommonGrpcClientProperties requireFileBackedMtls(
-      CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Automation selected-source command requires workload mTLS");
-    }
-    requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
-    requireReadableFile(tlsProperties.getPrivateKey(), "private key");
-    requireReadableFile(tlsProperties.getCaCert(), "CA certificate");
-    return tlsProperties;
-  }
-
-  private static void requireReadableFile(String configuredPath, String label) {
-    if (configuredPath == null
-        || configuredPath.isBlank()
-        || configuredPath.trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Automation selected-source command requires file-backed certificate, key, and CA material");
-    }
-    Path path;
-    try {
-      path = Path.of(configuredPath.trim());
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException(
-          "Invalid Automation selected-source command " + label + " path");
-    }
-    if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-      throw new IllegalArgumentException(
-          "Automation selected-source command " + label + " must be an existing readable file");
-    }
   }
 }
