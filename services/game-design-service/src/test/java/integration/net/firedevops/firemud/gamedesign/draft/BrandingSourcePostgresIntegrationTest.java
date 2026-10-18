@@ -3,8 +3,8 @@ package net.firedevops.firemud.gamedesign.draft;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.nio.charset.StandardCharsets;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -17,8 +17,8 @@ import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
-import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
@@ -37,8 +37,8 @@ import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperatio
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
-import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -301,7 +301,8 @@ class BrandingSourcePostgresIntegrationTest {
             "asset",
             retainedCapture(f, "game_design_asset_source_capture", operation.workflowId()),
             "template_config",
-            retainedCapture(f, "game_design_template_config_source_capture", operation.workflowId()));
+            retainedCapture(
+                f, "game_design_template_config_source_capture", operation.workflowId()));
     var operationBefore =
         f.dsl.fetchSingle(
             "SELECT request_bytes, xmin::text AS row_xmin FROM game_design_publication_operation "
@@ -336,6 +337,7 @@ class BrandingSourcePostgresIntegrationTest {
     var retained = new GameDesignSourceRepository(f.dsl).readCapture(operation).orElseThrow();
     assertThat(retained.branding()).isEmpty();
     assertThat(retained.gameplay()).isEmpty();
+    assertThat(retained.policy().policies()).hasSize(1);
     assertThat(retained.command().canonicalBytes())
         .containsExactly(captureRows.get("command").captureBytes());
     assertThat(retained.policy().canonicalBytes())
@@ -355,6 +357,13 @@ class BrandingSourcePostgresIntegrationTest {
     var f = fixture(null);
     var operation = retainFreshV2CaptureWithoutBranding(f);
     assertThat(new BrandingSourceRepository(f.dsl).readGenesis(f.target)).isPresent();
+    var selectedCommit = operation.account().input().selection().selectedCommit();
+    assertThat(
+            new RealmPolicySourceRepository(f.dsl)
+                .readSnapshot(f.target, selectedCommit.commitId())
+                .orElseThrow()
+                .policies())
+        .hasSize(1);
     for (String table :
         List.of(
             "game_design_command_source_capture",
@@ -416,12 +425,19 @@ class BrandingSourcePostgresIntegrationTest {
   }
 
   private DraftCommitBinding retainPreBrandingSourceCommit(Fixture f) {
-    var original = binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"));
+    var original =
+        binding(
+            f,
+            "0",
+            CommandSource.SCOPE,
+            commandUpsert("BRANDING_HISTORICAL"),
+            policyPayload());
     f.tx.executeWithoutResult(
         ignored -> {
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
           coordinator.claim(original);
-          var policyGenesis = new RealmPolicySourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
+          var policyGenesis =
+              new RealmPolicySourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
           var commands = new CommandSourceRepository(f.dsl);
           var commandGenesis = commands.readNewDraftGenesis(f.target).orElseThrow();
           var assetGenesis = new AssetSourceRepository(f.dsl).readGenesis(f.target).orElseThrow();
@@ -441,29 +457,22 @@ class BrandingSourcePostgresIntegrationTest {
           coordinator.claimApplicationSlot(original);
           coordinator.markOwnerInProgress(
               original, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-          var applied = commands.apply(original).orElseThrow();
-          var out = new java.io.ByteArrayOutputStream();
-          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-              out, "game-design-control-plane-command-application/v1");
-          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-              out, original.canonicalBytes());
-          net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-              out, applied.canonicalBytes());
-          var outcome =
-              new DraftCommitCoordinatorRepository.OwnerOutcome(
-                  DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
-                  original.commitId(),
-                  original.digest(),
-                  applied.resultIdentity(),
-                  out.toByteArray(),
-                  List.of(applied.commandAppliedEpoch()));
-          coordinator.recordOwnerOutcome(original, outcome);
+          var policies = new RealmPolicySourceRepository(f.dsl);
+          var command = commands.apply(original).orElseThrow();
+          var policy = policies.applyMutation(original);
+          byte[] siblingEvidence = command.canonicalBytes();
+          var appliedEpochs =
+              List.of(
+                  command.commandAppliedEpoch(),
+                  policy.ownerOutcome().appliedEpochs().getFirst());
+          policies.recordCombinedOwnerOutcome(original, siblingEvidence, appliedEpochs);
+          var outcome = policy.combinedOwnerOutcome(siblingEvidence, appliedEpochs);
           coordinator.advanceVisibilityFence(
               original,
-              new DraftCommitCoordinatorRepository.CoordinatorProof(original, List.of(outcome)));
+              new DraftCommitCoordinatorRepository.CoordinatorProof(
+                  original, List.of(outcome)));
           commands.captureSynchronized(original);
-          new RealmPolicySourceRepository(f.dsl).captureSynchronized(original);
+          policies.captureSynchronized(original);
           new AssetSourceRepository(f.dsl).captureSynchronized(original);
           new GameplayRuleSourceRepository(f.dsl).captureSynchronized(original);
           new TemplateConfigSourceRepository(f.dsl).captureSynchronized(original);
@@ -474,8 +483,7 @@ class BrandingSourcePostgresIntegrationTest {
 
   private GameDesignPublicationOperation retainPreBrandingV2Capture(
       Fixture f, DraftCommitBinding original) throws Exception {
-    var seed =
-        IsolatedPublicationOperationFixtures.fresh(f.target, original.commitId().toString());
+    var seed = IsolatedPublicationOperationFixtures.fresh(f.target, original.commitId().toString());
     var selectedCommit = seed.account().input().selection().selectedCommit();
     var world = seed.world();
     return Objects.requireNonNull(
@@ -485,9 +493,9 @@ class BrandingSourcePostgresIntegrationTest {
               var sources = new GameDesignSourceRepository(f.dsl);
               var originalSources =
                   sources.readSynchronized(f.target, original.commitId()).orElseThrow();
-              var originalOutcome =
-                  coordinator.read(f.target, original.requestId()).orElseThrow();
-              var reviewed = GameDesignReviewedBaseEvidence.authored(originalSources, originalOutcome);
+              var originalOutcome = coordinator.read(f.target, original.requestId()).orElseThrow();
+              var reviewed =
+                  GameDesignReviewedBaseEvidence.authored(originalSources, originalOutcome);
               sources.claimReviewed(selectedCommit, reviewed);
               coordinator.claimApplicationSlot(selectedCommit);
               coordinator.markOwnerInProgress(
@@ -502,7 +510,9 @@ class BrandingSourcePostgresIntegrationTest {
                                   unit.scopeType(),
                                   unit.scopeId(),
                                   unit.expectedEpoch(),
-                                  new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                                  new BigInteger(unit.expectedEpoch())
+                                      .add(BigInteger.ONE)
+                                      .toString()))
                       .toList();
               var outcome =
                   new DraftCommitCoordinatorRepository.OwnerOutcome(
@@ -580,12 +590,19 @@ class BrandingSourcePostgresIntegrationTest {
   }
 
   private GameDesignPublicationOperation retainFreshV2CaptureWithoutBranding(Fixture f) {
+    var sourceCommit = binding(f, "0", RealmPolicySource.SCOPE, policyPayload());
+    apply(f, sourceCommit);
     return Objects.requireNonNull(
         f.tx.execute(
             ignored -> {
               try {
                 var operation =
-                    IsolatedPublicationOwnerSetup.retainSourceBacked(f.dsl, f.target, 1);
+                    IsolatedPublicationOwnerSetup.retainSourceBacked(
+                        f.dsl,
+                        f.target,
+                        1,
+                        "ISOLATED enrolled partial capture without branding",
+                        sourceCommit.commitId().toString());
                 new CommandSourceRepository(f.dsl).freeze(operation);
                 new RealmPolicySourceRepository(f.dsl).freeze(operation);
                 new AssetSourceRepository(f.dsl).freeze(operation);
