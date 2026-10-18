@@ -9,7 +9,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -22,6 +24,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationRepository.State;
@@ -84,6 +87,8 @@ import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -324,7 +329,7 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             UUID.randomUUID(),
             Clock.systemUTC(),
             null,
-            Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-290)))) {
+            Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-270)))) {
       var issued = fixture.issueCreator();
       var f = issued.sources();
       var selected = selectedForSettlement(f.tenant);
@@ -487,6 +492,126 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       assertThat(f.tx(() -> repository.settleEntityCommittedEmpty(terminal).canonicalBytes()))
           .isEqualTo(settlement.canonicalBytes());
       assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isFalse();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"REVOKING", "REVOKED"})
+  void expiredPreliminaryRecoveryAcceptsRetainedExpiredIssuersAndKeepsFinalAuthorization(
+      String issuerStatus) throws Exception {
+    var serviceClock = new MutableOffsetClock(Clock.systemUTC(), -270L);
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            null,
+            serviceClock)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var preliminary =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.AUTOMATION_SCRIPTING,
+                      selected,
+                      issued.environment()));
+      var finalized =
+          finalizeEntityBinding(issued, reservations, repository, selected, issuerStatus);
+      var finalizedScope = finalized.content().scope();
+      UUID issuanceOperationId =
+          f.dsl
+              .fetchSingle(
+                  "SELECT issuance_operation_id FROM account_selected_owner_intake_source_read_reservations"
+                      + " WHERE operation_id = ?",
+                  preliminary.operationId())
+              .get("issuance_operation_id", UUID.class);
+
+      assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
+      awaitIssuerExpiry(f.dsl, issuanceOperationId);
+      var issuanceRepository = new AccountControlUiIssuanceRepository(f.dsl);
+      if ("REVOKING".equals(issuerStatus)) {
+        var original =
+            f.tx(
+                () ->
+                    issuanceRepository.findToken(
+                        AccountControlUiIssuanceRepository.hash(
+                            issued.compact().getBytes(StandardCharsets.US_ASCII))));
+        assertThat(original).isNotNull();
+        var revoking = f.tx(() -> issuanceRepository.beginRecoveryFailure(original));
+        assertThat(revoking.status).isEqualTo("REVOKING");
+      } else {
+        serviceClock.advance(Duration.ofSeconds(31));
+        assertThatThrownBy(fixture::issueCreator).isInstanceOf(IllegalStateException.class);
+      }
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT status FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+                      issuanceOperationId)
+                  .get("status", String.class))
+          .isEqualTo(issuerStatus);
+
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isEqualTo(1);
+
+      assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(f.tx(() -> repository.recoverSourceRead(finalizedScope).state()))
+          .isEqualTo(State.FINALIZED);
+      assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isFalse();
+      assertThat(sourceReadPending(f.dsl, finalizedScope.operationId())).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT scope_bytes FROM account_selected_owner_intake_source_read_reservations"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get("scope_bytes", byte[].class))
+          .isEqualTo(preliminary.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT binding_bytes FROM account_selected_owner_intake_authorizations"
+                          + " WHERE operation_id = ?",
+                      finalizedScope.operationId())
+                  .get("binding_bytes", byte[].class))
+          .isEqualTo(finalized.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      finalizedScope.operationId())
+                  .get(0, Long.class))
+          .isZero();
+
+      var sourceChange =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), finalized.sources(), new byte[] {2});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(sourceChange))).isFalse();
+      assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(sourceChange))).isFalse();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isZero();
     }
   }
 
@@ -2405,6 +2530,35 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
         .get(0, Boolean.class);
   }
 
+  private static final class MutableOffsetClock extends Clock {
+    private final Clock base;
+    private final AtomicLong offsetSeconds;
+
+    MutableOffsetClock(Clock base, long offsetSeconds) {
+      this.base = base;
+      this.offsetSeconds = new AtomicLong(offsetSeconds);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return base.getZone();
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new MutableOffsetClock(base.withZone(zone), offsetSeconds.get());
+    }
+
+    @Override
+    public Instant instant() {
+      return base.instant().plusSeconds(offsetSeconds.get());
+    }
+
+    void advance(Duration duration) {
+      offsetSeconds.addAndGet(duration.getSeconds());
+    }
+  }
+
   private static boolean issuerExpiryReached(DSLContext dsl, UUID issuanceOperationId) {
     return dsl.fetchSingle(
             "SELECT extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second"
@@ -2415,7 +2569,7 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
 
   private static void awaitIssuerExpiry(DSLContext dsl, UUID issuanceOperationId)
       throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
     do {
       if (issuerExpiryReached(dsl, issuanceOperationId)) return;
       Thread.sleep(10);

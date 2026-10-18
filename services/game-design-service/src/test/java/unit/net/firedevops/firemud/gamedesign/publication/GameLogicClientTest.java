@@ -10,6 +10,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.ClientInterceptor;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -113,6 +115,25 @@ class GameLogicClientTest {
     assertThat(result.errorCode()).isEqualTo("RESPONSE_TERMINAL_MISMATCH");
     assertThat(result.contentDigest()).isNull();
     assertThat(result.abilitySchemaDigest()).isNull();
+  }
+
+  @Test
+  void propagatesUnavailableTransportFailureForRetry(@TempDir Path tlsDirectory)
+      throws IOException {
+    var receipt = SelectedDraftGameLogicReceiptTest.fixture();
+    var publication = publicationBinding(receipt);
+    var clientAndStub = client(tlsDirectory);
+    when(clientAndStub.stub().getDraftDesignDigest(any(GetDraftDesignDigestRequest.class)))
+        .thenThrow(Status.UNAVAILABLE.withDescription("readback unavailable").asRuntimeException());
+
+    assertThatThrownBy(
+            () -> clientAndStub.client().getDraftDesignDigestForVersion(publication, receipt))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAVAILABLE));
+    verify(clientAndStub.stub()).getDraftDesignDigest(any(GetDraftDesignDigestRequest.class));
   }
 
   @Test

@@ -22,9 +22,11 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Structural owner-read proof; mocks do not establish physical PostgreSQL source provenance. */
@@ -178,6 +180,34 @@ class SelectedDraftPublicationDigestReadServiceTest {
         .requireExactSelection(fixture.operation());
     assertCode(Status.Code.FAILED_PRECONDITION, () -> service.read(NAMESPACE, request));
     verify(owner, never()).readSourceCapture(any());
+  }
+
+  @Test
+  void transactionAcquisitionFailureIsSanitizedAsUnavailable() throws Exception {
+    var fixture = fixture();
+    var request = request(fixture.operation());
+    when(transactions.getTransaction(any()))
+        .thenThrow(new CannotCreateTransactionException("database-secret"));
+    var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
+
+    assertSanitizedUnavailable(service, request);
+    verifyNoInteractions(owner);
+  }
+
+  @Test
+  void transactionRollbackFailureIsSanitizedAsUnavailable() throws Exception {
+    var fixture = fixture();
+    var request = request(fixture.operation());
+    when(transactions.getTransaction(any())).thenReturn(transactionStatus);
+    org.mockito.Mockito.doThrow(new TransactionSystemException("rollback-database-secret"))
+        .when(transactions)
+        .rollback(transactionStatus);
+    org.mockito.Mockito.doThrow(new IllegalStateException("selection-secret"))
+        .when(owner)
+        .read(request.derivedWorkflowIdentity());
+    var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
+
+    assertSanitizedUnavailable(service, request);
   }
 
   @Test
@@ -412,6 +442,20 @@ class SelectedDraftPublicationDigestReadServiceTest {
         .isInstanceOf(StatusRuntimeException.class)
         .satisfies(
             failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
+  }
+
+  private void assertSanitizedUnavailable(
+      SelectedDraftPublicationDigestReadService service, PublicationDigestRequestBinding request) {
+    assertThatThrownBy(() -> service.read(NAMESPACE, request))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = ((StatusRuntimeException) failure).getStatus();
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription())
+                  .isEqualTo("Selected publication source readback unavailable")
+                  .doesNotContain("secret");
+            });
   }
 
   private record Fixture(
