@@ -98,8 +98,12 @@ public final class AuthoredInitialActorCoreReadGrpcCodec {
             .build();
     var resolved =
         StartSessionLaunchDescriptorGrpcCodec.fromResponse(expectedRequest, descriptorEnvelope);
-    var descriptor =
-        ((StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome) resolved.outcome()).descriptor();
+    if (!(resolved.outcome()
+        instanceof StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome descriptorOutcome)) {
+      throw new IllegalArgumentException(
+          "Authored-core read requires a complete launch descriptor outcome");
+    }
+    var descriptor = descriptorOutcome.descriptor();
     List<AuthoredInitialActorCoreProjection> projections =
         response.getProjectionsList().stream()
             .map(
