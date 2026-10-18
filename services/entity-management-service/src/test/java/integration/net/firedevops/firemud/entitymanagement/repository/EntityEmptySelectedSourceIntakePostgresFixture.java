@@ -56,7 +56,7 @@ import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifac
  * Test-only synthetic inputs built through the same typed Common decoders as the shared fixture.
  * They are not authenticated Account or World producer evidence or physical owner proof.
  */
-final class EntityEmptySelectedSourceIntakePostgresFixture {
+public final class EntityEmptySelectedSourceIntakePostgresFixture {
   static final String NAMESPACE = "test";
   static final UUID TENANT = id("11111111-1111-4111-8111-111111111111");
   static final UUID VERSION = id("22222222-2222-4222-8222-222222222222");
@@ -77,7 +77,7 @@ final class EntityEmptySelectedSourceIntakePostgresFixture {
 
   private EntityEmptySelectedSourceIntakePostgresFixture() {}
 
-  static Fixture create(String sourceEpoch) {
+  public static Fixture create(String sourceEpoch) {
     DraftCommitBinding selected = selected();
     var scope =
         new net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope(
@@ -460,7 +460,7 @@ final class EntityEmptySelectedSourceIntakePostgresFixture {
     return UUID.fromString(value);
   }
 
-  record Fixture(
+  public record Fixture(
       SelectedOwnerIntakeAuthorizationBinding authorization,
       WorldSelectedDraftPublicationFreezeEvidence freezeEvidence,
       SelectedOwnerWorldInventoryReadEvidence worldEvidence,
