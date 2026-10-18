@@ -25,7 +25,6 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
-import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -368,16 +367,14 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
   }
 
   private void requireWorldPeer() {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
+    ActivationProtectionPeers.WorldPeerStatus peerStatus =
+        ActivationProtectionPeers.worldPeerStatus(workloadNamespace);
+    if (peerStatus == ActivationProtectionPeers.WorldPeerStatus.MISSING) {
       throw Status.UNAUTHENTICATED
           .withDescription("Verified World workload identity required")
           .asRuntimeException();
     }
-    if (SessionContext.hasAuthenticatedCallerContext()
-        || !workloadNamespace.equals(peer.namespace())
-        || !peer.uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service")) {
+    if (peerStatus == ActivationProtectionPeers.WorldPeerStatus.INVALID) {
       throw Status.PERMISSION_DENIED
           .withDescription("Exact same-namespace World workload without end-user context required")
           .asRuntimeException();
