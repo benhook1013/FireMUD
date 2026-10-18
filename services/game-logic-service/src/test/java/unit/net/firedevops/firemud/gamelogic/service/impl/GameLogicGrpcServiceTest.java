@@ -508,16 +508,12 @@ class GameLogicGrpcServiceTest {
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
 
-    AtomicReference<GetDraftDesignDigestResponse> responseReference = new AtomicReference<>();
+    AtomicReference<StatusRuntimeException> failureReference = new AtomicReference<>();
     runAsGameDesign(
-        () -> responseReference.set(invokeDigest(service, fullDigestRequest(changedBinding))));
-    GetDraftDesignDigestResponse response = responseReference.get();
+        () ->
+            failureReference.set(invokeDigestFailure(service, fullDigestRequest(changedBinding))));
 
-    assertEquals("ALREADY_EXISTS", response.getError().getCode());
-    assertEquals("", response.getContentDigest());
-    assertEquals("", response.getAbilitySchemaDigest());
-    assertEquals(0, response.getDigestSchemaVersion());
-    assertEquals(ByteString.EMPTY, response.getRetainedIntakeTerminal());
+    assertThat(failureReference.get().getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
     Mockito.verify(repository).findTerminal(authorization.operationId());
   }
 
@@ -554,31 +550,13 @@ class GameLogicGrpcServiceTest {
               Status.fromCode(code)
                   .withDescription("database-password-secret")
                   .asRuntimeException());
-      AtomicReference<Throwable> failure = new AtomicReference<>();
-
+      AtomicReference<StatusRuntimeException> failure = new AtomicReference<>();
       runAsGameDesign(
           () ->
-              service.getDraftDesignDigest(
-                  fullDigestRequest(TEST_TENANT.toString(), "7"),
-                  new StreamObserver<>() {
-                    @Override
-                    public void onNext(GetDraftDesignDigestResponse value) {
-                      fail("expected a transport failure, got response: " + value);
-                    }
+              failure.set(
+                  invokeDigestFailure(service, fullDigestRequest(TEST_TENANT.toString(), "7"))));
 
-                    @Override
-                    public void onError(Throwable t) {
-                      failure.set(t);
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                      fail("transport failure must not complete successfully");
-                    }
-                  }));
-
-      assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
-      var statusFailure = (StatusRuntimeException) failure.get();
+      var statusFailure = failure.get();
       assertThat(statusFailure.getStatus().getCode()).isEqualTo(code);
       assertThat(statusFailure.getStatus().getDescription())
           .isEqualTo("Exact retained publication source read failed")
@@ -726,6 +704,36 @@ class GameLogicGrpcServiceTest {
       throw new AssertionError("getDraftDesignDigest completed without a response");
     }
     return response;
+  }
+
+  private StatusRuntimeException invokeDigestFailure(
+      GameLogicGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            fail("expected a transport failure, got response: " + value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            failure.set(t);
+          }
+
+          @Override
+          public void onCompleted() {
+            fail("transport failure must not complete successfully");
+          }
+        });
+    if (failure.get() == null) {
+      throw new AssertionError("getDraftDesignDigest completed without a transport failure");
+    }
+    if (!(failure.get() instanceof StatusRuntimeException statusFailure)) {
+      throw new AssertionError("getDraftDesignDigest returned a non-status failure", failure.get());
+    }
+    return statusFailure;
   }
 
   private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
