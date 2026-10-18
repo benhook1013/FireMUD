@@ -133,11 +133,16 @@ class AutomationSelectedSourceIntakeCommandGrpcServiceTest {
   void mapsStorageCorruptionOutagesAndRemoteEchoFailuresToSanitizedStatuses() {
     var fixture = EntitySelectedSourceIntakeTerminalReadFixtures.create();
     var freeze = fixture.inputs().worldInventoryReadEvidence().request().freezeEvidence();
+    String namespace = fixture.wrongOwnerAuthorization().targetNamespace();
     var command =
         AutomationSelectedSourceIntakeCommandEvidence.Request.create(
-            NAMESPACE, fixture.wrongOwnerAuthorization(), freeze);
+            namespace, fixture.wrongOwnerAuthorization(), freeze);
     var wire = AutomationSelectedSourceIntakeCommandGrpcCodec.toRequest(command);
-    var peer = new GrpcPeerIdentity(GAME_DESIGN_URI, NAMESPACE, "game-design-service");
+    var peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + namespace + "/sa/game-design-service",
+            namespace,
+            "game-design-service");
     var peerContext = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     var previous = peerContext.attach();
     try {
@@ -164,7 +169,8 @@ class AutomationSelectedSourceIntakeCommandGrpcServiceTest {
       RuntimeException failure, RetainSelectedSourceRequest request, Status.Code expectedCode) {
     var owner = mock(AutomationEmptySelectedSourceIntakeService.class);
     doThrow(failure).when(owner).retain(any(), any(), any());
-    var service = new AutomationSelectedSourceIntakeCommandGrpcService(owner, NAMESPACE);
+    var service =
+        new AutomationSelectedSourceIntakeCommandGrpcService(owner, request.getTargetNamespace());
     var observer = new CapturingObserver();
     service.retainSelectedSource(request, observer);
 
