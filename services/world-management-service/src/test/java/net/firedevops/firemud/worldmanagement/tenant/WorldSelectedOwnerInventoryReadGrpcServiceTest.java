@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.Status;
@@ -313,6 +314,10 @@ class WorldSelectedOwnerInventoryReadGrpcServiceTest {
     }
 
     @Override
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification =
+            "The test collector retains the original throwable for identity and status assertions.")
     public void onError(Throwable failure) {
       error = failure;
     }
