@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -147,63 +148,147 @@ def _same_checkpoint(comment, canonical_body, *, repo, source_pr):
     ))
 
 
+def _publication_context(store, *, repo, source_pr, run_id, adapter):
+    github.parse_repo(repo)
+    body, marker = checkpoint_body(store, repo=repo, source_pr=source_pr, run_id=run_id)
+    identity = adapter._fetch_api_object(f"repos/{repo}")
+    actor = adapter.fetch_authenticated_user()
+    if (identity.get("full_name") != repo or type(identity.get("id")) is not int
+            or identity["id"] <= 0 or type(actor.get("id")) is not int or actor["id"] <= 0
+            or not isinstance(actor.get("login"), str) or not actor["login"]):
+        _refuse("cannot verify authenticated publisher and repository identity")
+    intent = {"repository": repo, "repository_id": identity["id"], "source_pr": source_pr,
+              "run_id": run_id, "actor_id": actor["id"], "actor_login": actor["login"], "body": body}
+    marker_kind, marker_id = marker[5:-4].split(": ", 1)
+    identity_end = r"(?![0-9])" if marker_kind == "firemud-hosted-review" else r"(?![A-Za-z0-9])"
+    linkage = re.compile(r"<!--\s*" + re.escape(marker_kind) + r"\s*:\s*" + re.escape(marker_id) + identity_end)
+
+    def matching(comments):
+        matches = []
+        ids = set()
+        if not isinstance(comments, list):
+            _refuse("checkpoint comment history is incomplete or malformed")
+        for comment in comments:
+            if (not isinstance(comment, dict) or type(comment.get("id")) is not int or comment["id"] <= 0
+                    or comment["id"] in ids or not isinstance(comment.get("body"), str)
+                    or comment.get("issue_url") != f"https://api.github.com/repos/{repo}/issues/{source_pr}"):
+                _refuse("checkpoint comment history is incomplete or malformed")
+            ids.add(comment["id"])
+            # Inspect malformed/duplicate markers too, rather than posting again.
+            if not linkage.search(comment["body"]):
+                continue
+            user = comment.get("user") or {}
+            try:
+                same = _same_checkpoint(comment, body, repo=repo, source_pr=source_pr)
+            except (evidence.EvidenceError, KeyError, TypeError, ValueError):
+                same = False
+            if (not same or user.get("id") != actor["id"]
+                    or user.get("login", "").casefold() != actor["login"].casefold()):
+                _refuse("existing checkpoint conflicts with canonical attribution, counts or markers")
+            matches.append(comment)
+        if len(matches) > 1:
+            _refuse("multiple checkpoints already claim the same provider identity")
+        return matches[0] if matches else None
+
+    return intent, f"repos/{repo}/issues/{source_pr}/comments?per_page=100", matching
+
+
+def _append(store, run_id, state, event):
+    return store.append_checkpoint_publication_event(run_id, event, expected_state_sha256=state["state_sha256"])
+
+
+def _absence(comments):
+    # A digest/count is sufficient audit evidence; do not copy public prose into metadata.
+    content = json.dumps(sorted(comments, key=lambda item: item["id"]), sort_keys=True, separators=(",", ":"))
+    return {"comments": len(comments), "sha256": hashlib.sha256(content.encode()).hexdigest()}
+
+
+def _result(intent, comment, status):
+    return {"status": status, "source_pr": intent["source_pr"], "run_id": intent["run_id"],
+            "comment_id": comment["id"], "comment_url": comment.get("html_url"), "body": intent["body"]}
+
+
+def _post_once(store, *, intent, state, decision_id, endpoint, matching, adapter):
+    """The caller has durably consumed permission before this one possible POST."""
+    comment = None
+    outcome, http_status = "uncertain", None
+    try:
+        posted = adapter.post_issue_comment(intent["repository"], intent["source_pr"], intent["body"])
+        comment = matching([posted])
+        outcome = "published" if comment is not None else "invalid_response"
+    except github.CommentPostError as exc:
+        outcome, http_status = exc.category, exc.http_status
+    except Exception:  # noqa: BLE001 - never retain raw subprocess exception/arguments
+        outcome = "uncertain"
+    state = _append(store, intent["run_id"], state, {"type": "post_outcome", "decision_id": decision_id,
+        "outcome": outcome, "http_status": http_status, "comment_id": comment["id"] if comment else None})
+    if comment is None:
+        comment = matching(adapter.fetch_api_endpoint(endpoint))
+        if comment is not None:
+            _append(store, intent["run_id"], state, {"type": "reused", "decision_id": decision_id,
+                                                  "comment_id": comment["id"]})
+    if comment is None:
+        _refuse("checkpoint POST is uncertain; retained intent prevents another POST; retry read recovery later")
+    return _result(intent, comment, "published")
+
+
 def publish_checkpoint(store, *, repo, source_pr, run_id, adapter=github):
     """Serialize publishers, recover matching comments, and never retry uncertain POST."""
-    github.parse_repo(repo)
     with _locked(Path(str(store.path) + ".checkpoint-publication.lock")):
-        body, marker = checkpoint_body(store, repo=repo, source_pr=source_pr, run_id=run_id)
-        identity = adapter._fetch_api_object(f"repos/{repo}")
-        actor = adapter.fetch_authenticated_user()
-        if (identity.get("full_name") != repo or type(identity.get("id")) is not int
-                or identity["id"] <= 0 or type(actor.get("id")) is not int or actor["id"] <= 0
-                or not isinstance(actor.get("login"), str) or not actor["login"]):
-            _refuse("cannot verify authenticated publisher and repository identity")
-        endpoint = f"repos/{repo}/issues/{source_pr}/comments?per_page=100"
-        marker_kind, marker_id = marker[5:-4].split(": ", 1)
-        identity_end = r"(?![0-9])" if marker_kind == "firemud-hosted-review" else r"(?![A-Za-z0-9])"
-        linkage = re.compile(r"<!--\s*" + re.escape(marker_kind) + r"\s*:\s*" + re.escape(marker_id) + identity_end)
-
-        def matching(comments):
-            matches = []
-            for comment in comments:
-                text = comment.get("body", "")
-                # Inspect any occurrence of the linked provider identity, including
-                # malformed or duplicate markers, rather than silently posting again.
-                if not isinstance(text, str) or not linkage.search(text):
-                    continue
-                user = comment.get("user") or {}
-                try:
-                    same = _same_checkpoint(comment, body, repo=repo, source_pr=source_pr)
-                except (evidence.EvidenceError, KeyError, TypeError, ValueError):
-                    same = False
-                if (not same or user.get("id") != actor["id"]
-                        or user.get("login", "").casefold() != actor["login"].casefold()
-                        or type(comment.get("id")) is not int or comment["id"] <= 0
-                        or comment.get("issue_url") != f"https://api.github.com/repos/{repo}/issues/{source_pr}"):
-                    _refuse("existing checkpoint conflicts with canonical attribution, counts or markers")
-                matches.append(comment)
-            if len(matches) > 1:
-                _refuse("multiple checkpoints already claim the same provider identity")
-            return matches[0] if matches else None
-
-        intent = json.dumps({"repository": repo, "repository_id": identity["id"], "source_pr": source_pr,
-                             "run_id": run_id, "actor_id": actor["id"], "actor_login": actor["login"],
-                             "body": body}, sort_keys=True)
+        intent, endpoint, matching = _publication_context(
+            store, repo=repo, source_pr=source_pr, run_id=run_id, adapter=adapter)
         comment = matching(adapter.fetch_api_endpoint(endpoint))
-        # Even a public replay must reject an existing intent with conflicting author.
-        fresh = store.reserve_checkpoint_publication(run_id, intent)
+        fresh = store.reserve_checkpoint_publication(run_id, json.dumps(intent, sort_keys=True))
         if comment is not None:
-            status = "reused"
-        elif not fresh:
+            return _result(intent, comment, "reused")
+        if not fresh:
             _refuse("prior checkpoint POST may have occurred; no verified comment is visible; retry read recovery later")
-        else:
-            try:
-                posted = adapter.post_issue_comment(repo, source_pr, body)
-                comment = matching([posted])
-            except Exception:  # noqa: BLE001 - uncertain POST must recover, never reissue
-                comment = matching(adapter.fetch_api_endpoint(endpoint))
-            if comment is None:
-                _refuse("checkpoint POST is uncertain; retained intent prevents another POST; retry read recovery later")
-            status = "published"
-        return {"status": status, "source_pr": source_pr, "run_id": run_id,
-                "comment_id": comment["id"], "comment_url": comment.get("html_url"), "body": body}
+        state = store.checkpoint_publication_state(run_id)
+        state = _append(store, run_id, state, {"type": "post_started", "decision_id": None, "absence": None})
+        return _post_once(store, intent=intent, state=state, decision_id=None,
+                          endpoint=endpoint, matching=matching, adapter=adapter)
+
+
+def recover_checkpoint(store, *, repo, source_pr, run_id, expected_state_sha256, decision_id, reason,
+                       acknowledge_uncertain_delivery, adapter=github):
+    """Explicit operator acceptance of residual delayed-delivery risk, never proof of non-delivery."""
+    if acknowledge_uncertain_delivery is not True:
+        _refuse("checkpoint recovery requires acknowledgement of uncertain delivery and duplicate risk")
+    with _locked(Path(str(store.path) + ".checkpoint-publication.lock")):
+        state = store.checkpoint_publication_state(run_id)
+        intent, endpoint, matching = _publication_context(
+            store, repo=repo, source_pr=source_pr, run_id=run_id, adapter=adapter)
+        if state["intent"] is None or state["intent"] != intent:
+            _refuse("checkpoint recovery requires the exact original publication intent and authenticated publisher")
+        prior = [event for event in state["events"] if event.get("decision_id") == decision_id]
+        if prior:
+            decision = prior[0]
+            if (decision.get("type") != "recovery_decision" or decision.get("reason") != reason
+                    or decision.get("expected_state_sha256") != expected_state_sha256
+                    or decision.get("actor_id") != intent["actor_id"]
+                    or decision.get("actor_login") != intent["actor_login"]):
+                _refuse("checkpoint recovery decision ID conflicts with prior inputs")
+            return {"status": "decision_replayed", "run_id": run_id, "decision_id": decision_id,
+                    "events": prior, "message": "No POST authorized by replay; inspect publication status."}
+        if state["state_sha256"] != expected_state_sha256:
+            _refuse("checkpoint publication state digest is stale")
+        comments = adapter.fetch_api_endpoint(endpoint)
+        comment = matching(comments)
+        if comment is not None:
+            return _result(intent, comment, "reused")
+        decision = {"type": "recovery_decision", "decision_id": decision_id,
+                    "expected_state_sha256": expected_state_sha256, "actor_id": intent["actor_id"],
+                    "actor_login": intent["actor_login"], "reason": reason,
+                    "acknowledge_uncertain_delivery": True, "absence": _absence(comments)}
+        state = _append(store, run_id, state, decision)
+        # A comment can appear after the operator observation. Re-read all pages before consumption/POST.
+        comments = adapter.fetch_api_endpoint(endpoint)
+        comment = matching(comments)
+        if comment is not None:
+            _append(store, run_id, state, {"type": "reused", "decision_id": decision_id,
+                                          "comment_id": comment["id"]})
+            return _result(intent, comment, "reused")
+        state = _append(store, run_id, state, {"type": "post_started", "decision_id": decision_id,
+                                             "absence": _absence(comments)})
+        return _post_once(store, intent=intent, state=state, decision_id=decision_id,
+                          endpoint=endpoint, matching=matching, adapter=adapter)

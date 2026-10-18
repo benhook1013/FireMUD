@@ -1033,6 +1033,118 @@ class SqliteReviewRecords:
             return True
 
     @_translate_database_errors
+    def checkpoint_publication_state(self, attempt_id: str) -> dict[str, Any]:
+        """Local read-only publication projection; missing old diagnostics remain unknown."""
+        attempt = self.attempt(attempt_id)
+        if attempt["state"] != "completed" or attempt["run_id"] != attempt_id:
+            raise ReviewRecordsError("checkpoint publication requires an exact completed attempt")
+        return self._checkpoint_publication_state(attempt_id, attempt["metadata"])
+
+    @staticmethod
+    def _checkpoint_publication_state(attempt_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        intent = metadata.get("checkpoint_publication_intent")
+        events = metadata.get("checkpoint_publication_events", [])
+        if (intent is not None and not isinstance(intent, dict)) or not isinstance(events, list):
+            raise ReviewRecordsError("checkpoint publication metadata is malformed")
+        if any(not isinstance(event, dict) for event in events):
+            raise ReviewRecordsError("checkpoint publication events are malformed")
+        state = {"run_id": attempt_id, "intent": intent, "events": events}
+        digest = hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        intent_digest = (hashlib.sha256(json.dumps(intent, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                         if intent is not None else None)
+        outcomes = [event for event in events if event.get("type") in {"post_outcome", "reused"}]
+        original_outcomes = [event for event in outcomes if event.get("decision_id") is None]
+        return {**state, "state_sha256": digest, "intent_sha256": intent_digest,
+                "last_known_outcome": outcomes[-1] if outcomes else None,
+                "historical_outcome": "unknown" if intent is not None and not original_outcomes else None}
+
+    @_translate_database_errors
+    def append_checkpoint_publication_event(
+        self, attempt_id: str, event: Mapping[str, Any], *, expected_state_sha256: str,
+    ) -> dict[str, Any]:
+        """Append a publication-only audit event with transactional stale-state refusal.
+
+        Original intent, provider archives and review records are never rewritten.
+        The caller holds the publication lock through decision, consume and POST.
+        """
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        if not isinstance(expected_state_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_state_sha256):
+            raise ReviewRecordsError("checkpoint publication state digest is invalid")
+        event = dict(event)
+        kind = event.get("type")
+        fields = {
+            "recovery_decision": {"decision_id", "expected_state_sha256", "actor_id", "actor_login", "reason",
+                                  "acknowledge_uncertain_delivery", "absence"},
+            "post_started": {"decision_id", "absence"},
+            "post_outcome": {"decision_id", "outcome", "http_status", "comment_id"},
+            "reused": {"decision_id", "comment_id"},
+        }
+        if kind not in fields or set(event) != fields[kind] | {"type"}:
+            raise ReviewRecordsError("checkpoint publication event fields are invalid")
+        decision_id = event.get("decision_id")
+        if decision_id is not None:
+            _safe_identifier(decision_id, "publication decision ID", maximum=100)
+        if kind == "recovery_decision":
+            if (decision_id is None or event["expected_state_sha256"] != expected_state_sha256
+                    or type(event["actor_id"]) is not int or event["actor_id"] <= 0
+                    or event["acknowledge_uncertain_delivery"] is not True):
+                raise ReviewRecordsError("checkpoint recovery decision attribution is invalid")
+            event["actor_login"] = _bounded_text(event["actor_login"], "publisher login", maximum=100)
+            event["reason"] = _bounded_text(event["reason"], "recovery reason", maximum=300)
+            if _redact_archive_text(event["reason"])[1]:
+                raise ReviewRecordsError("checkpoint recovery reason contains credential material")
+        if kind in {"recovery_decision", "post_started"}:
+            absence = event["absence"]
+            if absence is not None and (
+                not isinstance(absence, dict) or set(absence) != {"comments", "sha256"}
+                or type(absence["comments"]) is not int or absence["comments"] < 0
+                or not isinstance(absence["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", absence["sha256"])
+            ):
+                raise ReviewRecordsError("checkpoint history observation is invalid")
+            if (kind == "recovery_decision" or decision_id is not None) and absence is None:
+                raise ReviewRecordsError("checkpoint recovery requires a complete absence observation")
+        if kind == "post_outcome" and (
+            event["outcome"] not in {"published", "uncertain", "http_error", "client_error", "timeout",
+                                     "client_unavailable", "invalid_response"}
+            or (event["http_status"] is not None and
+                (type(event["http_status"]) is not int or not 100 <= event["http_status"] <= 599))
+        ):
+            raise ReviewRecordsError("checkpoint POST outcome is invalid")
+        if kind == "post_outcome" and event["comment_id"] is not None and (
+            type(event["comment_id"]) is not int or event["comment_id"] <= 0
+        ):
+            raise ReviewRecordsError("checkpoint POST comment identity is invalid")
+        if kind == "reused" and (type(event["comment_id"]) is not int or event["comment_id"] <= 0):
+            raise ReviewRecordsError("checkpoint reused comment identity is invalid")
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+            ).fetchone()
+            if row is None or row[:2] != ("completed", attempt_id):
+                raise ReviewRecordsError("checkpoint publication requires an exact completed attempt")
+            metadata = json.loads(row[2])
+            state = self._checkpoint_publication_state(attempt_id, metadata)
+            if state["intent"] is None or state["state_sha256"] != expected_state_sha256:
+                raise ReviewRecordsError("checkpoint publication intent is missing or state digest is stale")
+            events = state["events"]
+            related = [item for item in events if item.get("decision_id") == decision_id]
+            if kind == "recovery_decision" and related:
+                raise ReviewRecordsError("checkpoint recovery decision ID already exists")
+            if kind == "post_started" and decision_id is not None and (
+                len(related) != 1 or related[0].get("type") != "recovery_decision"
+            ):
+                raise ReviewRecordsError("checkpoint recovery decision is missing or already consumed")
+            if kind == "post_started" and decision_id is None and related:
+                raise ReviewRecordsError("original checkpoint publication was already started")
+            if kind == "post_outcome" and (not related or related[-1].get("type") != "post_started"):
+                raise ReviewRecordsError("checkpoint POST outcome requires an uncompleted POST event")
+            event["recorded_at"] = datetime.now(timezone.utc).isoformat()
+            metadata["checkpoint_publication_events"] = [*events, event]
+            connection.execute("UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                               (json.dumps(metadata, sort_keys=True), attempt_id))
+            return self._checkpoint_publication_state(attempt_id, metadata)
+
+    @_translate_database_errors
     def run_source(self, run_id: str) -> dict[str, Any]:
         """Read the stored source identity for explicit CLI finalization."""
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
