@@ -250,7 +250,7 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
         91004L);
 
     assertThatThrownBy(() -> repository.retainFresh(fixture.inputs(), requestDigest(fixture)))
-        .isInstanceOf(EntityEmptySelectedSourceIntakeRepository.IntakeConflictException.class)
+        .isInstanceOf(IllegalStateException.class)
         .hasMessage("Entity selected scope or owner operation is already associated");
     assertThat(rowCount("SELECT COUNT(*) FROM entity_empty_selected_source_association"))
         .isEqualTo(2L);
