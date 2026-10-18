@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -130,9 +131,19 @@ final class WorldPublishedSpawnRequirementsReadOwner {
   private CompleteLaunchBindingEvidence readLaunchBinding(Request request) {
     try {
       return gameDesignClient.getComplete(request.launchBindingRequest());
-    } catch (RuntimeException unavailable) {
-      throw rejected(
-          Status.Code.UNAVAILABLE, "Authenticated Game Design release read did not complete");
+    } catch (StatusRuntimeException foreignFailure) {
+      Status.Code code = foreignFailure.getStatus().getCode();
+      Status.Code localCode =
+          switch (code) {
+            case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+                code;
+            default -> Status.Code.FAILED_PRECONDITION;
+          };
+      throw rejected(localCode, "Authenticated Game Design release read could not complete");
+    } catch (IllegalArgumentException | IllegalStateException invalidCarrier) {
+      throw rejected(Status.Code.INTERNAL, "Authenticated Game Design release evidence is invalid");
+    } catch (RuntimeException failure) {
+      throw rejected(Status.Code.INTERNAL, "Authenticated Game Design release read failed");
     }
   }
 

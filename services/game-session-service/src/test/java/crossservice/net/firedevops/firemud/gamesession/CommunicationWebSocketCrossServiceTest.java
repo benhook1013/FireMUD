@@ -47,8 +47,8 @@ class CommunicationWebSocketCrossServiceTest {
         "game_session_canonical_instance_launch",
         "game_session_canonical_instance_launch_no_truncate"),
     AUTHORED_ACTOR_CORE(
-        "game_session_original_start_session_authored_actor_core_retention",
-        "game_session_original_start_session_actor_core_retention_no_truncate");
+        "gs_original_start_session_authored_actor_core_retention",
+        "gs_original_start_session_actor_core_retention_no_truncate");
 
     private final String tableName;
     private final String triggerName;

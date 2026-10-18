@@ -1486,15 +1486,14 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "JOIN pg_class parent ON parent.oid = fk.confrelid "
                 + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
                 + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
-                + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND child.relname = 'gs_original_start_session_authored_actor_core_retention' "
                 + "AND child_namespace.nspname = current_schema() "
                 + "AND parent.relname = 'game_session_canonical_instance_launch' "
                 + "AND parent_namespace.nspname = current_schema()");
     assertThat(foreignKey.get("child_schema", String.class))
         .isEqualTo(foreignKey.get("parent_schema", String.class));
-    // PostgreSQL stores at most 63 bytes for a relation identifier.
     assertThat(foreignKey.get("child_table", String.class))
-        .isEqualTo("game_session_original_start_session_authored_actor_core_retenti");
+        .isEqualTo("gs_original_start_session_authored_actor_core_retention");
     assertThat(foreignKey.get("parent_table", String.class))
         .isEqualTo("game_session_canonical_instance_launch");
     assertThat(foreignKey.get("definition", String.class))
@@ -1515,7 +1514,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "JOIN pg_class parent ON parent.oid = fk.confrelid "
                 + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
                 + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
-                + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND child.relname = 'gs_original_start_session_authored_actor_core_retention' "
                 + "AND child_namespace.nspname = current_schema() "
                 + "AND parent.relname = 'game_session_canonical_instance_launch' "
                 + "AND parent_namespace.nspname = current_schema() "
@@ -1550,7 +1549,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "JOIN pg_namespace launch_namespace ON launch_namespace.oid = launch_parent.relnamespace "
                 + "WHERE fk.oid = trigger.tgconstraint "
                 + "AND fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
-                + "AND retention_child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND retention_child.relname = 'gs_original_start_session_authored_actor_core_retention' "
                 + "AND retention_namespace.nspname = current_schema() "
                 + "AND launch_parent.relname = 'game_session_canonical_instance_launch' "
                 + "AND launch_namespace.nspname = current_schema())) guard")
