@@ -227,7 +227,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             f.fences,
             lifecycle.signer,
             new AccountControlUiResponseCryptography(
-                new AccountControlUiKeyring(temporary.resolve("custody")), Clock.systemUTC()),
+                new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
             coordination,
             actors,
             f.manager,
