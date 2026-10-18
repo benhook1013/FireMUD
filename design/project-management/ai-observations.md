@@ -161,8 +161,8 @@ Entry format:
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
 - `2026-10-16`: Qualify tenant mutation predicates
-  - Context: Before relying on filtered readback or later owner guards, account for the template repository's global-ID update, which could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row.
-  - Observation: The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
+  - Context: Game Design template repository update path (`GameTemplateRepository.save`) and native `GameTemplateRepositoryPostgresIntegrationTest` on the template create/update correction lane.
+  - Observation: The global-ID update rewrote a retained row's tenant before returning it under the supplied tenant; tenant-filtered readback did not protect the original row. The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
   - Expected pattern: Test controlled pre-phase rows as well as later guarded owners. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
 
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
