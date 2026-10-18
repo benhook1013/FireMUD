@@ -494,14 +494,18 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
   }
 
   @Test
-  void downstreamStatusFailuresAreSanitizedForBothSelectedOwners() {
+  void downstreamStatusFailuresPreserveTerminalStatusesAndSanitizeOthersForBothOwners() {
     List<Status.Code> downstreamCodes =
         List.of(
+            Status.Code.NOT_FOUND,
+            Status.Code.ALREADY_EXISTS,
+            Status.Code.DATA_LOSS,
             Status.Code.PERMISSION_DENIED,
             Status.Code.UNAUTHENTICATED,
             Status.Code.INTERNAL,
             Status.Code.DEADLINE_EXCEEDED,
             Status.Code.RESOURCE_EXHAUSTED,
+            Status.Code.UNAVAILABLE,
             Status.Code.FAILED_PRECONDITION);
     for (Owner owner : List.of(Owner.AUTOMATION_SCRIPTING, Owner.ENTITY_MANAGEMENT)) {
       for (Status.Code downstreamCode : downstreamCodes) {
@@ -523,31 +527,47 @@ class AccountSelectedOwnerIntakeSettlementServiceTest {
           when(harness.entityClient.read(any())).thenThrow(poisoned);
         }
 
-        Status.Code expectedCode =
-            downstreamCode == Status.Code.FAILED_PRECONDITION
-                ? Status.Code.FAILED_PRECONDITION
-                : Status.Code.UNAVAILABLE;
-        String expectedDescription =
-            owner == Owner.AUTOMATION_SCRIPTING
-                ? downstreamCode == Status.Code.FAILED_PRECONDITION
-                    ? "Automation terminal evidence is not committed"
-                    : "Automation terminal evidence is unavailable"
-                : downstreamCode == Status.Code.FAILED_PRECONDITION
-                    ? "Entity terminal evidence is not committed"
-                    : "Entity terminal evidence is unavailable";
-        assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(binding)))
-            .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure -> {
-                  StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
-                  assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
-                  assertThat(statusFailure.getStatus().getDescription())
-                      .isEqualTo(expectedDescription);
-                  assertThat(statusFailure.getCause()).isNull();
-                  assertThat(statusFailure.getTrailers()).isNull();
-                });
+        if (downstreamCode == Status.Code.NOT_FOUND
+            || downstreamCode == Status.Code.ALREADY_EXISTS
+            || downstreamCode == Status.Code.DATA_LOSS) {
+          assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(binding)))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure -> {
+                    StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+                    assertThat(statusFailure.getStatus().getCode()).isEqualTo(downstreamCode);
+                    assertThat(statusFailure.getStatus().getDescription()).isNull();
+                    assertThat(statusFailure.getCause()).isNull();
+                    assertThat(statusFailure.getTrailers()).isNull();
+                  });
+        } else {
+          Status.Code expectedCode =
+              downstreamCode == Status.Code.FAILED_PRECONDITION
+                  ? Status.Code.FAILED_PRECONDITION
+                  : Status.Code.UNAVAILABLE;
+          String expectedDescription =
+              owner == Owner.AUTOMATION_SCRIPTING
+                  ? downstreamCode == Status.Code.FAILED_PRECONDITION
+                      ? "Automation terminal evidence is not committed"
+                      : "Automation terminal evidence is unavailable"
+                  : downstreamCode == Status.Code.FAILED_PRECONDITION
+                      ? "Entity terminal evidence is not committed"
+                      : "Entity terminal evidence is unavailable";
+          assertThatThrownBy(() -> asGameDesign(() -> harness.service.settle(binding)))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure -> {
+                    StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+                    assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
+                    assertThat(statusFailure.getStatus().getDescription())
+                        .isEqualTo(expectedDescription);
+                    assertThat(statusFailure.getCause()).isNull();
+                    assertThat(statusFailure.getTrailers()).isNull();
+                  });
+        }
         verify(harness.repository, never()).settleCommittedEmpty(any());
         verify(harness.repository, never()).settleEntityCommittedEmpty(any());
+        verify(harness.repository, times(1)).findSettlement(binding);
       }
     }
   }
