@@ -41,6 +41,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Physical mTLS proof against a labeled transport-only World source double. */
 class WorldPublishedSpawnRequirementsClientMtlsTest {
@@ -68,6 +69,7 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
 
   @AfterEach
   void stopTransport() throws Exception {
+    TransactionSynchronizationManager.clear();
     if (client != null) {
       client.close();
       client = null;
@@ -77,6 +79,28 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
       assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       server = null;
     }
+  }
+
+  @Test
+  void ambientTransactionAndSynchronizationAreRejectedBeforeTransport() throws Exception {
+    startServer(pki.worldServer(), Mode.EXACT);
+    client = newClient(server, pki.entityClient());
+    client.init();
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(() -> client.read(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("World spawn-requirements transport must run outside SQL");
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
+
+    TransactionSynchronizationManager.clear();
+    TransactionSynchronizationManager.initSynchronization();
+    assertThatThrownBy(() -> client.read(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("World spawn-requirements transport must run outside SQL");
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
   }
 
   @Test
@@ -135,6 +159,23 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
   }
 
   @Test
+  void rejectsResponseAboveExplicitWireLimitAtGrpcTransport() throws Exception {
+    var request = WorldPublishedSpawnRequirementsGrpcCodecTest.evidence().request();
+    startServer(pki.worldServer(), Mode.OVERSIZED);
+    client = newClient(server, pki.entityClient());
+    client.init();
+
+    assertThatThrownBy(() -> client.read(request))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            exception ->
+                assertThat(Status.fromThrowable(exception).getCode())
+                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+    assertThat(headers).hasValue(1);
+    assertThat(bodies).hasValue(1);
+  }
+
+  @Test
   void rejectsWrongLocalWorkloadPlaintextAndNonFileBackedTls() throws Exception {
     var request = WorldPublishedSpawnRequirementsGrpcCodecTest.evidence().request();
     startServer(pki.worldServer(), Mode.EXACT);
@@ -174,7 +215,8 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
     CHANGED_REQUEST,
     CHANGED_RELEASE,
     CHANGED_GRAPH,
-    CHANGED_FAMILY
+    CHANGED_FAMILY,
+    OVERSIZED
   }
 
   private void startServer(TestIdentity identity, Mode mode) throws Exception {
@@ -217,6 +259,15 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
                               .setFamily(
                                   net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType
                                       .WORLD_DESIGN_AGGREGATE_TYPE_UNSPECIFIED))
+                      .build();
+            } else if (mode == Mode.OVERSIZED) {
+              response =
+                  response.toBuilder()
+                      .setGraphDigest(
+                          "x"
+                              .repeat(
+                                  WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES
+                                      + 1))
                       .build();
             }
             observer.onNext(response);
@@ -329,12 +380,14 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
         throws Exception {
       Path certificate =
           writePem(
-              directory.resolve("entity-client.crt"),
+              directory.resolve(
+                  "client-" + identity.certificate().getSerialNumber().toString(16) + ".crt"),
               "CERTIFICATE",
               identity.certificate().getEncoded());
       Path privateKey =
           writePem(
-              directory.resolve("entity-client.key"),
+              directory.resolve(
+                  "client-" + identity.certificate().getSerialNumber().toString(16) + ".key"),
               "PRIVATE KEY",
               identity.privateKey().getEncoded());
       Path caFile =

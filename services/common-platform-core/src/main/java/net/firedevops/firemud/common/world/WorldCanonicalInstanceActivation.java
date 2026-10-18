@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
@@ -86,7 +87,7 @@ public final class WorldCanonicalInstanceActivation {
         request.put("activationRequestId", activationRequestId.toString());
         request.put("preparingEvidence", evidence);
         return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(request));
-      } catch (IOException invalid) {
+      } catch (IOException | JacksonException invalid) {
         throw new IllegalArgumentException("Canonical activation request is invalid", invalid);
       }
     }
@@ -199,7 +200,7 @@ public final class WorldCanonicalInstanceActivation {
           throw new IllegalArgumentException("Stored canonical activation result is not canonical");
         }
         return result;
-      } catch (IOException invalid) {
+      } catch (IOException | JacksonException invalid) {
         throw new IllegalArgumentException(
             "Stored canonical activation result is invalid", invalid);
       }

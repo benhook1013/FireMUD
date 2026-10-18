@@ -381,12 +381,17 @@ public final class GameDesignSourceRepository {
     }
     boolean historicalGameplay =
         !historicalOperation && gameplayCapture.isEmpty() && operationIsTerminal(operation);
+    boolean historicalTemplate =
+        historicalOperation
+            || (templateSourceEnrolled
+                && templateConfig.isEmpty()
+                && operationIsTerminal(operation));
     if (command.isEmpty()
         || policy.isEmpty()
         || (asset.isEmpty() && !historicalOperation)
         || (gameplayCapture.isEmpty() && !historicalOperation && !historicalGameplay)
         || (brand.isEmpty() && (!historicalOperation || brandingSourceEnrolled))
-        || (templateSourceEnrolled && templateConfig.isEmpty())) {
+        || (templateSourceEnrolled && templateConfig.isEmpty() && !historicalTemplate)) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
     }
     return Optional.of(

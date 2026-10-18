@@ -232,7 +232,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
               jdbc.execute(
                   """
                   TRUNCATE TABLE
-                      game_session_original_start_session_authored_actor_core_retention,
+                      gs_original_start_session_authored_actor_core_retention,
                       game_session_canonical_closed_admission_pointer_request,
                       gameplay_initial_admission_bind_attempt,
                       game_session_canonical_initial_admission_intent,
@@ -285,8 +285,8 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         "game_session_canonical_instance_launch_no_truncate"),
     AUTHORED_ACTOR_CORE(
         "authored actor-core retention",
-        "game_session_original_start_session_authored_actor_core_retention",
-        "game_session_original_start_session_actor_core_retention_no_truncate");
+        "gs_original_start_session_authored_actor_core_retention",
+        "gs_original_start_session_actor_core_retention_no_truncate");
 
     private final String description;
     private final String tableName;
