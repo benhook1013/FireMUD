@@ -300,7 +300,8 @@ class VersionCanonicalIdentityIntegrationTest {
                         owner.getId(),
                         owner.getTenantId(),
                         "NEW_GAME_ROW"))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("chk_version_canonical_identity_shape");
 
     assertThatThrownBy(
             () ->

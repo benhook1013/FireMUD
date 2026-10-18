@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamelogic.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -507,16 +508,12 @@ class GameLogicGrpcServiceTest {
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
 
-    AtomicReference<GetDraftDesignDigestResponse> responseReference = new AtomicReference<>();
+    AtomicReference<StatusRuntimeException> failureReference = new AtomicReference<>();
     runAsGameDesign(
-        () -> responseReference.set(invokeDigest(service, fullDigestRequest(changedBinding))));
-    GetDraftDesignDigestResponse response = responseReference.get();
+        () ->
+            failureReference.set(invokeDigestFailure(service, fullDigestRequest(changedBinding))));
 
-    assertEquals("ALREADY_EXISTS", response.getError().getCode());
-    assertEquals("", response.getContentDigest());
-    assertEquals("", response.getAbilitySchemaDigest());
-    assertEquals(0, response.getDigestSchemaVersion());
-    assertEquals(ByteString.EMPTY, response.getRetainedIntakeTerminal());
+    assertThat(failureReference.get().getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
     Mockito.verify(repository).findTerminal(authorization.operationId());
   }
 
@@ -537,6 +534,37 @@ class GameLogicGrpcServiceTest {
     assertTrue(response.get().hasError());
     assertEquals("INTERNAL", response.get().getError().getCode());
     assertEquals("Internal error", response.get().getError().getMessage());
+  }
+
+  @Test
+  void getDraftDesignDigestReturnsSanitizedTransportStatusesWhenSourceReadFails() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    GameLogicGrpcService service = newDigestService(digestService);
+    for (Status.Code code : List.of(Status.Code.FAILED_PRECONDITION, Status.Code.UNAVAILABLE)) {
+      Mockito.reset(digestService);
+      Mockito.when(
+              digestService.getDraftDesignDigest(any(GameLogicPublicationSourceReadBinding.class)))
+          .thenThrow(
+              Status.fromCode(code)
+                  .withDescription("database-password-secret")
+                  .asRuntimeException());
+      AtomicReference<StatusRuntimeException> failure = new AtomicReference<>();
+      runAsGameDesign(
+          () ->
+              failure.set(
+                  invokeDigestFailure(service, fullDigestRequest(TEST_TENANT.toString(), "7"))));
+
+      var statusFailure = failure.get();
+      assertThat(statusFailure.getStatus().getCode()).isEqualTo(code);
+      assertThat(statusFailure.getStatus().getDescription())
+          .isEqualTo("Exact retained publication source read failed")
+          .hasSizeLessThan(128)
+          .doesNotContain("secret", "database");
+      assertThat(statusFailure.getCause()).isNull();
+      assertThat(statusFailure.getTrailers()).isNull();
+    }
   }
 
   @Test
@@ -676,6 +704,36 @@ class GameLogicGrpcServiceTest {
       throw new AssertionError("getDraftDesignDigest completed without a response");
     }
     return response;
+  }
+
+  private StatusRuntimeException invokeDigestFailure(
+      GameLogicGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            fail("expected a transport failure, got response: " + value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            failure.set(t);
+          }
+
+          @Override
+          public void onCompleted() {
+            fail("transport failure must not complete successfully");
+          }
+        });
+    if (failure.get() == null) {
+      throw new AssertionError("getDraftDesignDigest completed without a transport failure");
+    }
+    if (!(failure.get() instanceof StatusRuntimeException statusFailure)) {
+      throw new AssertionError("getDraftDesignDigest returned a non-status failure", failure.get());
+    }
+    return statusFailure;
   }
 
   private static void withPeer(GrpcPeerIdentity peer, Runnable action) {

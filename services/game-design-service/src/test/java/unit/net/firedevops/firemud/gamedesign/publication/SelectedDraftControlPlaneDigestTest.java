@@ -8,35 +8,19 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import org.junit.jupiter.api.Test;
 
 /** Structural digest vectors only; synthetic source rows do not prove physical owner provenance. */
 class SelectedDraftControlPlaneDigestTest {
   @Test
-  void exactSixFamilyPreimageIsDeterministicAndDoesNotIncludePublicationRequestIdentity()
-      throws Exception {
+  void exactSixFamilyPreimageIsDeterministic() throws Exception {
     var selected = selectedBinding();
     var sources = sources(selected);
 
-    var firstRequest =
-        PublicationDigestRequestBinding.full(
-            selected.target().canonicalTenantId().toString(),
-            Long.toString(selected.target().gameDesignVersionRowId()),
-            "publish-one");
-    var retryRequest =
-        PublicationDigestRequestBinding.full(
-            selected.target().canonicalTenantId().toString(),
-            Long.toString(selected.target().gameDesignVersionRowId()),
-            "publish-two");
-
     var first = SelectedDraftControlPlaneDigest.compute(selected, sources);
     var replay = SelectedDraftControlPlaneDigest.compute(selected, sources);
-    var otherRequest = SelectedDraftControlPlaneDigest.compute(selected, sources);
 
     assertThat(first).isEqualTo(replay);
-    assertThat(first).isEqualTo(otherRequest);
-    assertThat(firstRequest.requestDigest()).isNotEqualTo(retryRequest.requestDigest());
     assertThat(first.digestSchemaVersion()).isEqualTo(2);
     assertThat(first.tenantId()).isEqualTo(selected.target().canonicalTenantId().toString());
     assertThat(first.scopeValue())

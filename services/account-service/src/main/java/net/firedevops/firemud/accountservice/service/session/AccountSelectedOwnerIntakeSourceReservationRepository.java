@@ -25,6 +25,8 @@ import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -33,6 +35,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class AccountSelectedOwnerIntakeSourceReservationRepository {
   public static final int MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE = 128;
+
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(AccountSelectedOwnerIntakeSourceReservationRepository.class);
 
   private static final String RESERVATIONS =
       "account_selected_owner_intake_source_read_reservations";
@@ -243,7 +248,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
                 + ABORTS
                 + " aborted ON aborted.operation_id = reservation.operation_id"
                 + " WHERE convert_from(namespace_part.frame_value, 'UTF8') = ?"
-                + " AND issuer.status = 'COMMITTED'"
+                + " AND issuer.status IN ('COMMITTED', 'REVOKING', 'REVOKED')"
                 + " AND extract(epoch FROM clock_timestamp()) >= issuer.expires_at_epoch_second"
                 + " AND finalized_reservation.operation_id IS NULL"
                 + " AND aborted.operation_id IS NULL"
@@ -252,14 +257,24 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
             namespace,
             limit);
     List<SelectedOwnerIntakeSourceReadScope> scopes = new ArrayList<>(rows.size());
+    int rowNumber = 0;
     for (Record row : rows) {
-      var scope =
-          SelectedOwnerIntakeSourceReadScope.fromStored(row.get("scope_bytes", byte[].class));
-      if (!namespace.equals(scope.targetNamespace())) {
-        throw new IllegalArgumentException("Expired reservation belongs to another namespace");
+      rowNumber++;
+      try {
+        var scope =
+            SelectedOwnerIntakeSourceReadScope.fromStored(row.get("scope_bytes", byte[].class));
+        if (!namespace.equals(scope.targetNamespace())) {
+          throw new IllegalArgumentException("Expired reservation belongs to another namespace");
+        }
+        requireReservation(row, scope);
+        scopes.add(scope);
+      } catch (IllegalArgumentException | IllegalStateException invalidRow) {
+        LOGGER.warn(
+            "Skipped invalid expired preliminary source-read row {}/{} (failureType={})",
+            rowNumber,
+            rows.size(),
+            invalidRow.getClass().getSimpleName());
       }
-      requireReservation(row, scope);
-      scopes.add(scope);
     }
     return List.copyOf(scopes);
   }
@@ -286,7 +301,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     UUID issuanceOperationId = row.get("issuance_operation_id", UUID.class);
     if (dsl.fetchOne(
             "SELECT operation_id FROM account_control_ui_issuance_operations"
-                + " WHERE operation_id = ? AND status = 'COMMITTED'"
+                + " WHERE operation_id = ? AND status IN ('COMMITTED', 'REVOKING', 'REVOKED')"
                 + " AND extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second",
             issuanceOperationId)
         == null) {
