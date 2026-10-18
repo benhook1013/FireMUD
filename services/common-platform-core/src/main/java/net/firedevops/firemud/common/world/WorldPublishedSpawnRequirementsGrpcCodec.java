@@ -21,6 +21,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldPublishedSpawnRequirements
 
 /** Closed mapping and exact request-echo validation for published spawn-requirement reads. */
 public final class WorldPublishedSpawnRequirementsGrpcCodec {
+  public static final int MAX_RESPONSE_WIRE_BYTES = 4 * 1024 * 1024;
+
   private WorldPublishedSpawnRequirementsGrpcCodec() {}
 
   public static ReadWorldPublishedSpawnRequirementsRequest toRequest(
@@ -115,7 +117,7 @@ public final class WorldPublishedSpawnRequirementsGrpcCodec {
               .setName(generation.name())
               .setValue(generation.value()));
     }
-    return builder.build();
+    return requireResponseWithinWireLimit(builder.build());
   }
 
   /** Validates the complete source response, exact request echo and complete Game Design pair. */
@@ -124,6 +126,7 @@ public final class WorldPublishedSpawnRequirementsGrpcCodec {
       ReadWorldPublishedSpawnRequirementsResponse response) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(response, "response");
+    requireResponseWithinWireLimit(response);
     requireNoUnknownFieldsRecursively(response, "ReadWorldPublishedSpawnRequirementsResponse");
     if (response.hasError()) {
       throw new IllegalArgumentException("World rejected the published spawn-requirements read");
@@ -318,5 +321,14 @@ public final class WorldPublishedSpawnRequirementsGrpcCodec {
         requireNoUnknownFieldsRecursively((Message) value, field.getName());
       }
     }
+  }
+
+  private static ReadWorldPublishedSpawnRequirementsResponse requireResponseWithinWireLimit(
+      ReadWorldPublishedSpawnRequirementsResponse response) {
+    if (response.getSerializedSize() > MAX_RESPONSE_WIRE_BYTES) {
+      throw new IllegalArgumentException(
+          "Published spawn-requirements response exceeds the maximum wire size");
+    }
+    return response;
   }
 }

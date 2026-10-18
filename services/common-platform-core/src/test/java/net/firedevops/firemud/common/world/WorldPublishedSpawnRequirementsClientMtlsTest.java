@@ -159,6 +159,23 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
   }
 
   @Test
+  void rejectsResponseAboveExplicitWireLimitAtGrpcTransport() throws Exception {
+    var request = WorldPublishedSpawnRequirementsGrpcCodecTest.evidence().request();
+    startServer(pki.worldServer(), Mode.OVERSIZED);
+    client = newClient(server, pki.entityClient());
+    client.init();
+
+    assertThatThrownBy(() -> client.read(request))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            exception ->
+                assertThat(Status.fromThrowable(exception).getCode())
+                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+    assertThat(headers).hasValue(1);
+    assertThat(bodies).hasValue(1);
+  }
+
+  @Test
   void rejectsWrongLocalWorkloadPlaintextAndNonFileBackedTls() throws Exception {
     var request = WorldPublishedSpawnRequirementsGrpcCodecTest.evidence().request();
     startServer(pki.worldServer(), Mode.EXACT);
@@ -198,7 +215,8 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
     CHANGED_REQUEST,
     CHANGED_RELEASE,
     CHANGED_GRAPH,
-    CHANGED_FAMILY
+    CHANGED_FAMILY,
+    OVERSIZED
   }
 
   private void startServer(TestIdentity identity, Mode mode) throws Exception {
@@ -241,6 +259,15 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
                               .setFamily(
                                   net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType
                                       .WORLD_DESIGN_AGGREGATE_TYPE_UNSPECIFIED))
+                      .build();
+            } else if (mode == Mode.OVERSIZED) {
+              response =
+                  response.toBuilder()
+                      .setGraphDigest(
+                          "x"
+                              .repeat(
+                                  WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES
+                                      + 1))
                       .build();
             }
             observer.onNext(response);

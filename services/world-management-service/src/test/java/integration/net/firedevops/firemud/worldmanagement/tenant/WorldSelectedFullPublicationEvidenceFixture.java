@@ -229,6 +229,10 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
                   return attempt;
                 }));
 
+    var checkpoint =
+        Objects.requireNonNull(
+            capturedCheckpoint.get(),
+            "World selected freeze reused an existing checkpoint; fixture requires a fresh capture");
     var retainedAccount = authorizationRepository.readCommitted(frozenAttempt).orElseThrow();
     if (!java.util.Arrays.equals(
         retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
@@ -280,8 +284,8 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var worldEvidence = publishedStartLocationEvidence(publishedSource);
     var worldDigest =
         new WorldDraftDesignDigestService.WorldDraftDesignDigest(
-            Long.toString(capturedCheckpoint.get().owner().localTenantKey()),
-            Long.toString(capturedCheckpoint.get().owner().localVersionKey()),
+            Long.toString(checkpoint.owner().localTenantKey()),
+            Long.toString(checkpoint.owner().localVersionKey()),
             frozenAttempt.checkpoint().appliedCommitId(),
             frozenAttempt.checkpoint().contentDigest(),
             frozenAttempt.checkpoint().digestSchemaVersion());
