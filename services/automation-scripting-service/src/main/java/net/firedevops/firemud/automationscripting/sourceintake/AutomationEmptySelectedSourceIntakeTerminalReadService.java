@@ -64,6 +64,10 @@ public final class AutomationEmptySelectedSourceIntakeTerminalReadService {
       throw Status.ALREADY_EXISTS
           .withDescription("Automation receipt differs from the complete original authorization")
           .asRuntimeException();
+    } catch (AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException corrupt) {
+      throw Status.DATA_LOSS
+          .withDescription("Automation committed receipt is invalid")
+          .asRuntimeException();
     } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("Automation terminal receipt storage is unavailable")

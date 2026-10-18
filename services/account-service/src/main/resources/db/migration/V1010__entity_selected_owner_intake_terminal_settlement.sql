@@ -1,5 +1,5 @@
 -- Add Entity's authenticated closed COMMITTED_EMPTY receipt to the existing immutable family.
--- V1008 Automation rows and receipt bytes are retained exactly; no pending predicate changes.
+-- V1009 Automation rows and receipt bytes are retained exactly; no pending predicate changes.
 -- [jooq ignore start]
 DO $migration$
 DECLARE
@@ -21,14 +21,14 @@ BEGIN
         expected_limit := CASE check_row.attname WHEN 'owner' THEN 'AUTOMATION_SCRIPTING'
             WHEN 'terminal_receipt_bytes' THEN '58736640' ELSE '92356608' END;
         IF position(expected_limit IN check_row.definition) = 0 THEN
-            RAISE EXCEPTION 'Unexpected retained V1008 settlement constraint: %', check_row.conname;
+            RAISE EXCEPTION 'Unexpected retained V1009 settlement constraint: %', check_row.conname;
         END IF;
         EXECUTE format('ALTER TABLE account_selected_owner_intake_settlements DROP CONSTRAINT %I',
             check_row.conname);
         changed_count := changed_count + 1;
     END LOOP;
     IF changed_count <> 3 THEN
-        RAISE EXCEPTION 'Expected all three retained V1008 settlement constraints';
+        RAISE EXCEPTION 'Expected all three retained V1009 settlement constraints';
     END IF;
 END;
 $migration$;
@@ -130,7 +130,7 @@ BEGIN
         OR NEW.binding_digest IS DISTINCT FROM original.binding_digest
         OR original.binding_digest IS DISTINCT FROM
             'sha256:' || encode(sha256(original.binding_bytes), 'hex') THEN
-        RAISE EXCEPTION 'Settlement must bind one exact active Automation authorization'
+        RAISE EXCEPTION 'Settlement must bind one exact active selected-owner authorization'
             USING ERRCODE = '23514';
     END IF;
 
@@ -139,7 +139,7 @@ BEGIN
     SELECT frame_value, next_position INTO parsed, p
         FROM account_publication_authorization_read_frame(original.binding_bytes, p);
     IF convert_from(parsed, 'UTF8') IS DISTINCT FROM (CASE original.owner WHEN 'AUTOMATION_SCRIPTING' THEN 'account-automation-intake-authorization/v1' ELSE 'account-entity-intake-authorization/v1' END) THEN
-        RAISE EXCEPTION 'Settlement original binding is not Automation authorization'
+        RAISE EXCEPTION 'Settlement original binding is not selected-owner authorization'
             USING ERRCODE = '23514';
     END IF;
     SELECT frame_value, next_position INTO content_bytes, p
@@ -301,7 +301,7 @@ BEGIN
     IF NEW.receipt_digest IS DISTINCT FROM 'sha256:' || encode(sha256(NEW.receipt_bytes), 'hex')
         OR NEW.terminal_receipt_digest IS DISTINCT FROM
             'sha256:' || encode(sha256(NEW.terminal_receipt_bytes), 'hex') THEN
-        RAISE EXCEPTION 'Settlement or Automation receipt digest differs' USING ERRCODE = '23514';
+        RAISE EXCEPTION 'Settlement or owner terminal receipt digest differs' USING ERRCODE = '23514';
     END IF;
     p := 1;
     SELECT frame_value, next_position INTO parsed, p
@@ -368,7 +368,7 @@ BEGIN
     IF owner_receipt IS DISTINCT FROM NEW.terminal_receipt_bytes
         OR marker IS DISTINCT FROM NEW.terminal_receipt_digest
         OR p <> octet_length(NEW.receipt_bytes) + 1 THEN
-        RAISE EXCEPTION 'Settlement receipt differs from exact Automation terminal bytes'
+        RAISE EXCEPTION 'Settlement receipt differs from exact owner terminal bytes'
             USING ERRCODE = '23514';
     END IF;
 

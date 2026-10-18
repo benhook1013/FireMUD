@@ -9,6 +9,7 @@ plugins {
 
 dependencies {
     compileOnly(libs.spotbugs.annotations)
+    testImplementation(testFixtures(project(":common-test-support")))
 }
 
 // Export only owner classes for composed proofs; application and Flyway resources stay local.

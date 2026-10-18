@@ -74,6 +74,11 @@ public final class AutomationSelectedSourceIntakeCommandGrpcService
       observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
     } catch (AutomationEmptySelectedSourceIntakeRepository.IntakeConflictException conflict) {
       observer.onError(Status.ALREADY_EXISTS.asRuntimeException());
+    } catch (AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException corrupt) {
+      observer.onError(Status.DATA_LOSS.asRuntimeException());
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException unavailable) {
+      observer.onError(Status.UNAVAILABLE.asRuntimeException());
     } catch (IllegalArgumentException | IllegalStateException unavailable) {
       observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
     } catch (RuntimeException failure) {
