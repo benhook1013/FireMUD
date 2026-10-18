@@ -275,14 +275,14 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
               + "ENABLE TRIGGER trg_automation_empty_source_receipt_immutable");
     }
     assertThatThrownBy(() -> repository.readCommittedTerminal(fixture.authorization()))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
     assertThatThrownBy(
             () ->
                 repository.readPublicationScope(
                     AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
                     AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
                     fixture.authorization().selected().target().gameDesignVersionRowId()))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.CorruptReceiptException.class);
   }
 
   @Test

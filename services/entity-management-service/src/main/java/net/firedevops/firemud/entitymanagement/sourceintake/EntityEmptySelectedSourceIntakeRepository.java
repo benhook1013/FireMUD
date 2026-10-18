@@ -132,20 +132,21 @@ public final class EntityEmptySelectedSourceIntakeRepository {
             UUID associatedCanonicalVersionId = association.get(0, UUID.class);
             UUID intakeRequestId = association.get(1, UUID.class);
             if (associatedCanonicalVersionId == null || intakeRequestId == null) {
-              throw new IllegalStateException("Entity publication association identity is corrupt");
+              throw new CorruptReceiptException(
+                  "Entity publication association identity is corrupt");
             }
             EntityEmptySelectedSourceIntakeReceipt receipt =
                 readValidated(tx, targetNamespace, intakeRequestId)
                     .orElseThrow(
                         () ->
-                            new IllegalStateException(
+                            new CorruptReceiptException(
                                 "Entity publication association has no committed receipt"));
             var target = receipt.authorizationBinding().selected().target();
             if (!canonicalTenantId.equals(receipt.canonicalTenantId())
                 || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
                 || !canonicalTenantId.equals(target.canonicalTenantId())
                 || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
-              throw new IllegalStateException(
+              throw new CorruptReceiptException(
                   "Entity publication association differs from the retained selected target");
             }
             if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
@@ -229,13 +230,13 @@ public final class EntityEmptySelectedSourceIntakeRepository {
         read(committed.targetNamespace(), committed.intakeRequestId())
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
+                    new CorruptReceiptException(
                         "Committed Entity source catalogue receipt is unavailable"));
     if (!Arrays.equals(committed.canonicalBytes(), readBack.canonicalBytes())
         || !committed.receiptDigest().equals(readBack.receiptDigest())
         || !committed.requestDigest().equals(readBack.requestDigest())
         || !committed.genesisId().equals(readBack.genesisId())) {
-      throw new IllegalStateException("Committed Entity source receipt readback differs");
+      throw new CorruptReceiptException("Committed Entity source receipt readback differs");
     }
     return readBack;
   }
@@ -713,10 +714,14 @@ public final class EntityEmptySelectedSourceIntakeRepository {
     if (row == null) return Optional.empty();
     byte[] receiptBytes = row.get(21, byte[].class);
     if (receiptBytes == null || row.get(22, OffsetDateTime.class) == null) {
-      throw new IllegalStateException("Entity source association has no committed receipt");
+      throw new CorruptReceiptException("Entity source association has no committed receipt");
     }
-    EntityEmptySelectedSourceIntakeReceipt receipt =
-        EntityEmptySelectedSourceIntakeReceipt.fromStored(receiptBytes);
+    final EntityEmptySelectedSourceIntakeReceipt receipt;
+    try {
+      receipt = EntityEmptySelectedSourceIntakeReceipt.fromStored(receiptBytes);
+    } catch (RuntimeException malformed) {
+      throw new CorruptReceiptException("Entity stored source receipt is corrupt");
+    }
     if (!Objects.equals(row.get(0, String.class), receipt.targetNamespace())
         || !Objects.equals(row.get(1, UUID.class), receipt.genesisId())
         || !Objects.equals(row.get(2, UUID.class), receipt.operationId())
@@ -739,7 +744,7 @@ public final class EntityEmptySelectedSourceIntakeRepository {
         || !Objects.equals(row.get(19, String.class), receipt.schemaDigest())
         || !Objects.equals(row.get(20, String.class), receipt.receiptDigest())
         || !sameInstant(row.get(22, OffsetDateTime.class), receipt.retainedAt())) {
-      throw new IllegalStateException("Entity association differs from its immutable receipt");
+      throw new CorruptReceiptException("Entity association differs from its immutable receipt");
     }
     requirePersistedEmptyOnlyProviderStates(tx, receipt);
     requirePersistedFamilyStates(tx, receipt);
@@ -759,7 +764,7 @@ public final class EntityEmptySelectedSourceIntakeRepository {
       }
       String table = EMPTY_ONLY_PROVIDER_TABLES.get(state.family());
       if (table == null) {
-        throw new IllegalStateException("Entity EMPTY-only family has no owner table");
+        throw new CorruptReceiptException("Entity EMPTY-only family has no owner table");
       }
       Record row =
           tx.fetchOne(
@@ -783,7 +788,7 @@ public final class EntityEmptySelectedSourceIntakeRepository {
           || !Objects.equals(row.get(7, String.class), receipt.worldClosureDigest())
           || !Objects.equals(row.get(8, String.class), receipt.providerStateDigest(state.family()))
           || !sameInstant(row.get(9, OffsetDateTime.class), receipt.retainedAt())) {
-        throw new IllegalStateException(
+        throw new CorruptReceiptException(
             "Entity EMPTY-only provider readback is missing or differs for " + state.family());
       }
     }
@@ -800,7 +805,7 @@ public final class EntityEmptySelectedSourceIntakeRepository {
             receipt.targetNamespace(),
             receipt.intakeRequestId());
     if (rows.size() != receipt.familyStates().size()) {
-      throw new IllegalStateException("Entity retained family-state vector is incomplete");
+      throw new CorruptReceiptException("Entity retained family-state vector is incomplete");
     }
     var expected =
         receipt.familyStates().stream()
@@ -819,7 +824,7 @@ public final class EntityEmptySelectedSourceIntakeRepository {
           || !Objects.equals(row.get(5, Long.class), state.retainedRowCount())
           || !Objects.equals(row.get(6, Long.class), state.selectedScopeRowCount())
           || !Objects.equals(row.get(7, Long.class), state.referenceCount())) {
-        throw new IllegalStateException("Entity retained family state differs from its receipt");
+        throw new CorruptReceiptException("Entity retained family state differs from its receipt");
       }
     }
   }
@@ -911,6 +916,13 @@ public final class EntityEmptySelectedSourceIntakeRepository {
 
   private static final class IntakeConflictException extends IllegalStateException {
     private IntakeConflictException(String message) {
+      super(message);
+    }
+  }
+
+  /** Indicates that retained receipt bytes or owner rows fail their immutable readback contract. */
+  public static final class CorruptReceiptException extends IllegalStateException {
+    public CorruptReceiptException(String message) {
       super(message);
     }
   }

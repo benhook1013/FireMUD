@@ -11,18 +11,8 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -33,9 +23,9 @@ import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySele
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -63,7 +53,6 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
   private static final String AUTOMATION =
       "spiffe://firemud/ns/test/sa/automation-scripting-service";
   private static final String WRONG_ACCOUNT = "spiffe://firemud/ns/other/sa/account-service";
-  private static final String PASSWORD = "test-only-store-password";
   private static final String MIGRATIONS =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
@@ -73,10 +62,10 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
-  private static Pki pki;
-  private static Identity serverIdentity;
-  private static Identity accountIdentity;
-  private static Identity wrongIdentity;
+  private static LoopbackMtlsTestPki.Pki pki;
+  private static LoopbackMtlsTestPki.Identity serverIdentity;
+  private static LoopbackMtlsTestPki.Identity accountIdentity;
+  private static LoopbackMtlsTestPki.Identity wrongIdentity;
 
   private String schema;
   private DSLContext dsl;
@@ -86,11 +75,16 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
 
   @BeforeAll
   static void issueCertificates() throws Exception {
-    pki = Pki.create(temp);
-    serverIdentity = Pki.issue(temp, pki.store(), pki.caFile(), "automation", AUTOMATION, true);
-    accountIdentity = Pki.issue(temp, pki.store(), pki.caFile(), "account", ACCOUNT, false);
-    wrongIdentity =
-        Pki.issue(temp, pki.store(), pki.caFile(), "wrong-account", WRONG_ACCOUNT, false);
+    pki =
+        LoopbackMtlsTestPki.create(
+            temp,
+            "FireMUD test CA",
+            new LoopbackMtlsTestPki.IdentitySpec("automation", AUTOMATION, true),
+            new LoopbackMtlsTestPki.IdentitySpec("account", ACCOUNT, false),
+            new LoopbackMtlsTestPki.IdentitySpec("wrong-account", WRONG_ACCOUNT, false));
+    serverIdentity = pki.identity("automation");
+    accountIdentity = pki.identity("account");
+    wrongIdentity = pki.identity("wrong-account");
   }
 
   @BeforeEach
@@ -213,8 +207,9 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
                     .AutomationSelectedSourceIntakeTerminalReadGrpcCodec.MAX_WIRE_BYTES)
             .sslContext(
                 GrpcSslContexts.configure(
-                        SslContextBuilder.forServer(serverIdentity.key(), serverIdentity.cert()))
-                    .trustManager(pki.caCert())
+                        SslContextBuilder.forServer(
+                            serverIdentity.privateKey(), serverIdentity.certificate()))
+                    .trustManager(pki.caCertificate())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build())
             .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
@@ -222,8 +217,8 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
             .start();
   }
 
-  private AutomationSelectedSourceIntakeTerminalReadClient newClient(Identity identity)
-      throws Exception {
+  private AutomationSelectedSourceIntakeTerminalReadClient newClient(
+      LoopbackMtlsTestPki.Identity identity) throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAutomationScriptingService("127.0.0.1:" + server.getPort());
     return new AutomationSelectedSourceIntakeTerminalReadClient(
@@ -245,211 +240,5 @@ class AutomationSelectedSourceIntakeTerminalReadMtlsPostgresIntegrationTest {
 
   private long count(String sql) {
     return dsl.fetchSingle(sql).get(0, Long.class);
-  }
-
-  private record Identity(PrivateKey key, X509Certificate cert) {}
-
-  private record Pki(X509Certificate caCert, Path store, Path caFile) {
-    static Pki create(Path dir) throws Exception {
-      Path store = dir.resolve("native-test-ca.p12");
-      Path ca = dir.resolve("native-test-ca.crt");
-      keytool(
-          "-genkeypair",
-          "-alias",
-          "test-ca",
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=FireMUD test CA",
-          "-validity",
-          "30",
-          "-ext",
-          "BC=ca:true",
-          "-ext",
-          "KU=keyCertSign,cRLSign",
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          PASSWORD,
-          "-keypass",
-          PASSWORD);
-      keytool(
-          "-exportcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-file",
-          ca.toString(),
-          "-rfc");
-      try (var in = Files.newInputStream(ca)) {
-        return new Pki(
-            (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(in),
-            store,
-            ca);
-      }
-    }
-
-    static Identity issue(
-        Path dir, Path caStore, Path caFile, String alias, String uri, boolean server)
-        throws Exception {
-      Path store = dir.resolve(alias + ".p12");
-      Path csr = dir.resolve(alias + ".csr");
-      Path cert = dir.resolve(alias + ".crt");
-      String san = "URI:" + uri + ",DNS:localhost,IP:127.0.0.1";
-      keytool(
-          "-genkeypair",
-          "-alias",
-          alias,
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=" + alias,
-          "-validity",
-          "30",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san,
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          PASSWORD,
-          "-keypass",
-          PASSWORD);
-      keytool(
-          "-certreq",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-file",
-          csr.toString(),
-          "-ext",
-          "SAN=" + san);
-      keytool(
-          "-gencert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-infile",
-          csr.toString(),
-          "-outfile",
-          cert.toString(),
-          "-validity",
-          "30",
-          "-rfc",
-          "-ext",
-          "BC=ca:false",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san);
-      keytool(
-          "-importcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-noprompt");
-      keytool(
-          "-importcert",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-file",
-          cert.toString(),
-          "-noprompt");
-      KeyStore keys = KeyStore.getInstance("PKCS12");
-      try (var in = Files.newInputStream(store)) {
-        keys.load(in, PASSWORD.toCharArray());
-      }
-      return new Identity(
-          (PrivateKey) keys.getKey(alias, PASSWORD.toCharArray()),
-          (X509Certificate) keys.getCertificate(alias));
-    }
-
-    CommonGrpcClientProperties clientProperties(Path dir, Identity identity) throws Exception {
-      Path clientDir = Files.createTempDirectory(dir, "terminal-client-");
-      Path chain =
-          pem(clientDir.resolve("client.crt"), "CERTIFICATE", identity.cert().getEncoded());
-      Path key = pem(clientDir.resolve("client.key"), "PRIVATE KEY", identity.key().getEncoded());
-      Path ca = pem(clientDir.resolve("client-ca.crt"), "CERTIFICATE", caCert.getEncoded());
-      var props = new CommonGrpcClientProperties();
-      props.setCertChain(chain.toString());
-      props.setPrivateKey(key.toString());
-      props.setCaCert(ca.toString());
-      return props;
-    }
-
-    private static void keytool(String... args) throws Exception {
-      Path bin =
-          Path.of(
-              System.getProperty("java.home"),
-              "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows")
-                  ? "keytool.exe"
-                  : "keytool");
-      var command = new ArrayList<String>();
-      command.add(bin.toString());
-      command.addAll(List.of(args));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      if (!process.waitFor(30, TimeUnit.SECONDS)) {
-        process.destroyForcibly();
-        process.waitFor(5, TimeUnit.SECONDS);
-        throw new IllegalStateException("keytool timed out");
-      }
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-      }
-      if (process.exitValue() != 0) {
-        throw new IllegalStateException("keytool failed: " + output);
-      }
-    }
-
-    private static Path pem(Path path, String label, byte[] bytes) throws IOException {
-      String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(bytes);
-      return Files.writeString(
-          path,
-          "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n",
-          StandardCharsets.US_ASCII);
-    }
   }
 }
