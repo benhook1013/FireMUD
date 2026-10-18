@@ -180,7 +180,15 @@ class WorldSelectedOwnerInventoryReadServiceTest {
                 () ->
                     withPeer(
                         peer(NAMESPACE, serviceName(owner)), () -> service.read(fixture.request())))
-            .isInstanceOf(SecurityException.class);
+            .isInstanceOfSatisfying(
+                WorldSelectedOwnerInventoryReadService.ReadFailure.class,
+                failure -> {
+                  assertThat(failure.statusCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+                  assertThat(failure.description())
+                      .isEqualTo(
+                          "Account did not confirm the exact selected-owner World closure read");
+                  assertThat(failure.getCause()).isNull();
+                });
         verify(inventoryRead, never()).readRetained(any());
       }
     }

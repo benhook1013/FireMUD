@@ -1,5 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeWorldClosureAuthorizationReadClient;
@@ -48,22 +50,67 @@ final class WorldSelectedOwnerInventoryReadService {
           SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence.Request.create(
               trustedNamespace, request.authorizationBinding());
     }
-    var accountEvidence = accountReadClient.readHeld(accountRequest);
+    final SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence accountEvidence;
+    try {
+      accountEvidence = accountReadClient.readHeld(accountRequest);
+    } catch (StatusRuntimeException failure) {
+      throw new ReadFailure(
+          statusFor(failure),
+          "Account did not confirm the exact selected-owner World closure read");
+    } catch (SecurityException denied) {
+      throw new ReadFailure(
+          Status.Code.PERMISSION_DENIED,
+          "Account did not confirm the exact selected-owner World closure read");
+    } catch (IllegalArgumentException invalid) {
+      throw new ReadFailure(
+          Status.Code.FAILED_PRECONDITION,
+          "Account did not confirm the exact selected-owner World closure read");
+    } catch (RuntimeException unavailable) {
+      throw new ReadFailure(
+          Status.Code.UNAVAILABLE,
+          "Account did not confirm the exact selected-owner World closure read");
+    }
     if (accountEvidence == null || !sameAccountRequest(accountRequest, accountEvidence.request())) {
-      throw new SecurityException("Account changed the exact World closure authorization read");
+      throw new ReadFailure(
+          Status.Code.PERMISSION_DENIED,
+          "Account did not confirm the exact selected-owner World closure read");
     }
 
-    var inventory = inventoryReadService.readRetained(request.freezeEvidence());
-    return new SelectedOwnerWorldInventoryReadEvidence(request, inventory);
+    try {
+      var inventory = inventoryReadService.readRetained(request.freezeEvidence());
+      return new SelectedOwnerWorldInventoryReadEvidence(request, inventory);
+    } catch (StatusRuntimeException failure) {
+      Status.Code status = statusFor(failure);
+      throw new ReadFailure(
+          status,
+          status == Status.Code.FAILED_PRECONDITION
+              ? "Exact retained World artifact inventory is unavailable"
+              : "World selected inventory owner storage is unavailable");
+    } catch (SecurityException denied) {
+      throw new ReadFailure(
+          Status.Code.PERMISSION_DENIED, "Exact retained World artifact inventory is unavailable");
+    } catch (WorldDesignPublicationFenceRepository.ConflictException
+        | IllegalArgumentException inconsistent) {
+      throw new ReadFailure(
+          Status.Code.FAILED_PRECONDITION,
+          "Exact retained World artifact inventory is unavailable");
+    } catch (org.springframework.dao.DataAccessException
+        | org.jooq.exception.DataAccessException unavailable) {
+      throw new ReadFailure(
+          Status.Code.UNAVAILABLE, "World selected inventory owner storage is unavailable");
+    } catch (RuntimeException unavailable) {
+      throw new ReadFailure(
+          Status.Code.UNAVAILABLE, "World selected-owner authorization or inventory read failed");
+    }
   }
 
   private void requireAuthenticatedRecipient(
       SelectedOwnerWorldInventoryReadEvidence.Request request) {
     var binding = request.authorizationBinding();
-    String service =
-        binding.owner() == Owner.ENTITY_MANAGEMENT
-            ? "entity-management-service"
-            : "automation-scripting-service";
+    String service = ownerService(binding.owner());
+    if (service == null) {
+      throw new SecurityException("Unsupported selected-owner World inventory recipient");
+    }
     String expected = "spiffe://firemud/ns/" + trustedNamespace + "/sa/" + service;
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (!expected.equals(binding.intendedReader())
@@ -73,6 +120,41 @@ final class WorldSelectedOwnerInventoryReadService {
         || !peer.isInNamespace(trustedNamespace)
         || SessionContext.hasAuthenticatedCallerContext()) {
       throw new SecurityException("Exact same-namespace selected-owner workload is required");
+    }
+  }
+
+  private static String ownerService(Owner owner) {
+    return switch (owner) {
+      case ENTITY_MANAGEMENT -> "entity-management-service";
+      case AUTOMATION_SCRIPTING -> "automation-scripting-service";
+      default -> null;
+    };
+  }
+
+  private static Status.Code statusFor(StatusRuntimeException failure) {
+    return failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION
+        ? Status.Code.FAILED_PRECONDITION
+        : Status.Code.UNAVAILABLE;
+  }
+
+  static final class ReadFailure extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private final Status.Code statusCode;
+    private final String description;
+
+    private ReadFailure(Status.Code statusCode, String description) {
+      super(description);
+      this.statusCode = statusCode;
+      this.description = description;
+    }
+
+    Status.Code statusCode() {
+      return statusCode;
+    }
+
+    String description() {
+      return description;
     }
   }
 
