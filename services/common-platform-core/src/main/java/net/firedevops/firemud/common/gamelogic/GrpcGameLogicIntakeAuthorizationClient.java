@@ -75,7 +75,14 @@ public final class GrpcGameLogicIntakeAuthorizationClient
     Objects.requireNonNull(request);
     if (!workloadNamespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Account intake authorization namespace mismatch");
-    var current = requireInitializedStub("Account intake authorization client unavailable");
+    AccountGameLogicIntakeAuthorizationServiceGrpc
+            .AccountGameLogicIntakeAuthorizationServiceBlockingStub
+        current;
+    try {
+      current = requireInitializedStub("Account intake authorization client unavailable");
+    } catch (IllegalStateException unavailable) {
+      throw Status.UNAVAILABLE.asRuntimeException();
+    }
     var credentials = credentials(originalCreatorCredential, operation);
     var wireRequest = GameLogicIntakeAuthorizationGrpcCodec.toRequest(request);
     try {

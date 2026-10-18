@@ -103,6 +103,12 @@ Entry format:
   - Expected pattern: treat the setting as a qualified local choice, not a repository-wide memory guarantee or a change to hosted sizing.
   - Reconsideration trigger: fresh OOM/GC thrashing or a concrete need to measure cold-build memory.
 
+- `2026-10-15`: Declare foreign migration inputs for classes-only compositions
+  - Context: A composed proof can read another owner’s Flyway migrations from disk while its classes-only test artifacts omit application and Flyway resources.
+  - Observation: Without declaring those migration directories as task inputs, a SQL-only change can leave the composition up-to-date.
+  - Expected pattern: Declare every foreign migration directory read by a composed test as a task input so SQL changes invalidate that proof.
+  - Reconsideration trigger: The composition no longer reads foreign migration files from disk, or its execution model tracks those files through another verified dependency.
+
 - `2026-10-15`: Verify the complete absolute patch destination after the first write
   - Context: Gameplay’s World digest-guard helper verified its checkout but mistyped the absolute migration path, creating a file in a similarly named sibling directory outside Git. This is distinct from the earlier relative-path incident: an absolute path alone does not identify the intended checkout.
   - Observation: Verifying the checkout did not prevent a typo in the absolute patch target. The helper reported the mistake; Main compared the misplaced and intended files byte-for-byte, removed only the confirmed new duplicate, and preserved the sibling directories. No misplaced file was published.
@@ -159,6 +165,13 @@ Entry format:
   - Observation: Admission reported a nonblocking `predecessor_terminal_capture` warning for the finalized first review: `Hosted finding comment contains unmarked content after its final cr-comment:v1 marker`. The original seven findings, accepted-fix records and checkpoint 6214527024 had already been recorded; the next request posted successfully as trigger 6214841384. The exact trailing-content cause remains unverified.
   - Expected pattern: Preserve completed review evidence and surface the exact capture incompatibility without silently replacing counts or requiring a quota reset. Overseer received the retained diagnostic; Gameplay made no database or installed-runtime bypass.
   - Reconsideration trigger: when the trailing-content cause after the final `cr-comment:v1` marker is identified, or a repeated capture of the affected finalized predecessor completes without the warning, verify the outcome and revisit this retained capture limitation.
+
+- `2026-10-18`: Retain admission context for independent review refusals
+  - Context: a CLI request returned `review-threads:1:0` while peer Hosted findings were recorded as accepted and fix preparation was underway; no provider call occurred.
+  - Observation: the short error does not establish why the documented peer-channel exception was not applied. Preserve the command result and any existing admission-audit pointer; no Controller defect or cause was established here.
+  - Expected pattern: retain the CLI result and admission-audit pointer for each independent review refusal, then inspect the recorded admission decision before assigning a cause.
+  - Outcome: ordinary qualified publication and thread resolution cleared admission, and the next request reached the provider. Overseer confirmed that independent-channel guidance remains valid and requested no new investigation or Controller change from this error alone.
+  - Reconsideration trigger: if this recurs, retain the existing admission context for adjudication rather than infer a cause from the short refusal.
 
 - `2026-10-18`: Expose review-allocation decision provenance beside its remaining budget
   - Context: #3233 had three lifetime Hosted results while the current native selector correctly showed a separate additional allowance with zero of two used. A retained handover incorrectly inferred exhaustion from the lifetime total.

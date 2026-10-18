@@ -31,6 +31,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,7 @@ class GameLogicIntakeSourceReadTransportTest {
   private static IntakeTestPki pki;
   private Server server;
   private GrpcGameLogicIntakeSourceReadClient client;
+  private GameplayRuleSourceReadClient sourceClient;
   private final AtomicInteger calls = new AtomicInteger();
   private volatile boolean stall;
   private volatile boolean substitute;
@@ -64,6 +66,10 @@ class GameLogicIntakeSourceReadTransportTest {
 
   @AfterEach
   void close() throws Exception {
+    if (sourceClient != null) {
+      sourceClient.close();
+      sourceClient = null;
+    }
     if (client != null) {
       client.close();
       client = null;
@@ -145,6 +151,44 @@ class GameLogicIntakeSourceReadTransportTest {
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class);
     assertThat(calls).hasValue(2);
+  }
+
+  @Test
+  void gameplayRuleSourceClientReportsUnavailableBeforeInitializationAndAfterClose()
+      throws Exception {
+    start(pki.server());
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("localhost:" + server.getPort());
+    sourceClient =
+        new GameplayRuleSourceReadClient(
+            endpoints,
+            pki.clientProperties(tempDirectory, pki.client()),
+            new GrpcChannelFactory(),
+            NAMESPACE);
+    var authorization =
+        ((GameplayRuleSourceReadEvidence.Finalized) requests().getLast().proof()).authorization();
+    var request =
+        GameplayRuleSourceReadEvidence.Request.forFinalizedIntake(NAMESPACE, authorization);
+
+    assertUnavailable(() -> sourceClient.read(request));
+    sourceClient.init();
+    sourceClient.close();
+    assertUnavailable(() -> sourceClient.read(request));
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
+  void reportsSanitizedUnavailableBeforeInitializationAndAfterCloseForBothReadBranches()
+      throws Exception {
+    start(pki.server());
+    client = newClient(pki.client());
+    var requests = requests();
+
+    for (var request : requests) assertUnavailable(() -> client.read(request));
+    client.init();
+    client.close();
+    for (var request : requests) assertUnavailable(() -> client.read(request));
+    assertThat(calls).hasValue(0);
   }
 
   @Test
@@ -527,5 +571,17 @@ class GameLogicIntakeSourceReadTransportTest {
                         "0",
                         "revisionId",
                         binding.revisions().getFirst().revisionId().toString())))));
+  }
+
+  private static void assertUnavailable(ThrowingCallable call) {
+    assertThatThrownBy(call)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(Status.fromThrowable(failure).getDescription()).isNull();
+              assertThat(failure.getCause()).isNull();
+            });
   }
 }
