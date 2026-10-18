@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -186,6 +189,38 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
         .isEqualTo(1L);
   }
 
+  @Test
+  void staleRepeatableReadWritersCannotMissACommittedCanonicalReservation() throws SQLException {
+    try (Connection staleRowWriter = repeatableReadSnapshot()) {
+      commitCanonicalReservation(99001L);
+      try {
+        assertThatThrownBy(
+                () ->
+                    execute(
+                        staleRowWriter,
+                        "INSERT INTO characters (account_id, name, tenant_id) "
+                            + "VALUES (99001, 'stale-snapshot-character', 99001)"))
+            .isInstanceOf(SQLException.class)
+            .hasMessageContaining(
+                "Entity authored-source row writes require READ COMMITTED isolation");
+      } finally {
+        staleRowWriter.rollback();
+      }
+    }
+
+    try (Connection staleTruncator = repeatableReadSnapshot()) {
+      commitCanonicalReservation(99002L);
+      try {
+        assertThatThrownBy(() -> execute(staleTruncator, "TRUNCATE TABLE items CASCADE"))
+            .isInstanceOf(SQLException.class)
+            .hasMessageContaining(
+                "Entity authored-source TRUNCATE requires READ COMMITTED isolation");
+      } finally {
+        staleTruncator.rollback();
+      }
+    }
+  }
+
   /** Storage retention only; synthetic parent rows establish no authenticated owner authority. */
   private static Map<String, List<String>> retainedParentRows(DSLContext source) {
     Map<String, List<String>> rows = new java.util.LinkedHashMap<>();
@@ -233,6 +268,39 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
 
   private void assertRejected(String sql) {
     assertThatThrownBy(() -> dsl.execute(sql)).isInstanceOf(DataAccessException.class);
+  }
+
+  private Connection repeatableReadSnapshot() throws SQLException {
+    Connection connection = dataSource(schema).getConnection();
+    connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+    connection.setAutoCommit(false);
+    try (Statement statement = connection.createStatement()) {
+      statement
+          .executeQuery("SELECT COUNT(*) FROM entity_empty_source_numeric_key_reservation")
+          .close();
+    }
+    return connection;
+  }
+
+  private void commitCanonicalReservation(long tenantKey) throws SQLException {
+    try (Connection founder = dataSource(schema).getConnection()) {
+      founder.setAutoCommit(false);
+      try (var reservation =
+          founder.prepareStatement(
+              "INSERT INTO entity_empty_source_numeric_key_reservation "
+                  + "(key_kind, numeric_key, claim_kind) "
+                  + "VALUES ('TENANT', ?, 'CANONICAL_EMPTY_SOURCE')")) {
+        reservation.setLong(1, tenantKey);
+        reservation.executeUpdate();
+      }
+      founder.commit();
+    }
+  }
+
+  private static void execute(Connection connection, String sql) throws SQLException {
+    try (Statement statement = connection.createStatement()) {
+      statement.execute(sql);
+    }
   }
 
   private record ReservedNumericKey(String keyKind, Long numericKey, String claimKind) {}

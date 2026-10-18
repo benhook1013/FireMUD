@@ -711,6 +711,9 @@ BEGIN
         DECLARE
             retained_claim TEXT;
         BEGIN
+            IF current_setting('transaction_isolation') <> 'read committed' THEN
+                RAISE EXCEPTION 'Entity authored-source row writes require READ COMMITTED isolation';
+            END IF;
             IF requested_key IS NULL OR requested_key <= 0 THEN
                 RETURN;
             END IF;
@@ -848,6 +851,9 @@ BEGIN
         SET search_path = pg_catalog, %I
         AS $body$
         BEGIN
+            IF current_setting('transaction_isolation') <> 'read committed' THEN
+                RAISE EXCEPTION 'Entity authored-source TRUNCATE requires READ COMMITTED isolation';
+            END IF;
             IF EXISTS (
                 SELECT 1 FROM %I.entity_empty_source_numeric_key_reservation
                 WHERE claim_kind = 'CANONICAL_EMPTY_SOURCE'
