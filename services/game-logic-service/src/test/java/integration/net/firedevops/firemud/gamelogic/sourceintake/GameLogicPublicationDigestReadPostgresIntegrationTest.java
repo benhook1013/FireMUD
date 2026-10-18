@@ -8,6 +8,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
@@ -127,10 +129,10 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
             authorization.fenceId(),
             authorization.intakeRequestId(),
             authorization.source());
-    assertError(
+    assertTransportError(
         receiver,
         GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(missing)),
-        "FAILED_PRECONDITION");
+        Status.Code.FAILED_PRECONDITION);
     var changed =
         copyAuthorization(
             authorization,
@@ -138,10 +140,10 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
             UUID.randomUUID(),
             authorization.intakeRequestId(),
             authorization.source());
-    assertError(
+    assertTransportError(
         receiver,
         GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(changed)),
-        "ALREADY_EXISTS");
+        Status.Code.ALREADY_EXISTS);
     assertError(
         receiver,
         request.toBuilder().clearSourceReadBinding().clearSourceReadBindingDigest().build(),
@@ -164,7 +166,7 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     SessionContext.clear();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertError(receiver, request, "FAILED_PRECONDITION");
+      assertTransportError(receiver, request, Status.Code.FAILED_PRECONDITION);
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
@@ -190,10 +192,10 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     verify(abortAccountReader).read(any());
     verify(unusedAbortSourceReader, never()).read(any());
     String aborted = row(f, abortedAuthorization.operationId());
-    assertError(
+    assertTransportError(
         receiver,
         GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(abortedAuthorization)),
-        "FAILED_PRECONDITION");
+        Status.Code.FAILED_PRECONDITION);
     assertThat(row(f, abortedAuthorization.operationId())).isEqualTo(aborted);
     assertThat(row(f, authorization.operationId())).isEqualTo(retained);
   }
@@ -244,6 +246,45 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     assertThat(response.getRetainedIntakeTerminal().isEmpty()).isTrue();
     assertThat(response.getContentDigest()).isEmpty();
     assertThat(response.getAbilitySchemaDigest()).isEmpty();
+  }
+
+  private static void assertTransportError(
+      GameLogicGrpcService receiver, GetDraftDesignDigestRequest request, Status.Code code)
+      throws Exception {
+    var failure = new AtomicReference<Throwable>();
+    var response = new AtomicReference<GetDraftDesignDigestResponse>();
+    var completed = new AtomicReference<>(false);
+    asGameDesign(
+        () -> {
+          receiver.getDraftDesignDigest(
+              request,
+              new StreamObserver<>() {
+                @Override
+                public void onNext(GetDraftDesignDigestResponse value) {
+                  response.set(value);
+                }
+
+                @Override
+                public void onError(Throwable value) {
+                  failure.set(value);
+                }
+
+                @Override
+                public void onCompleted() {
+                  completed.set(true);
+                }
+              });
+          return null;
+        });
+    assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+    var statusFailure = (StatusRuntimeException) failure.get();
+    assertThat(statusFailure.getStatus().getCode()).isEqualTo(code);
+    assertThat(statusFailure.getStatus().getDescription())
+        .isEqualTo("Exact retained publication source read failed");
+    assertThat(statusFailure.getCause()).isNull();
+    assertThat(statusFailure.getTrailers()).isNull();
+    assertThat(response.get()).isNull();
+    assertThat(completed.get()).isFalse();
   }
 
   private static String row(Fixture f, UUID operation) {
