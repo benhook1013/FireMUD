@@ -77,6 +77,11 @@ public final class GrpcAuthoredInitialActorCoreReadService
           Status.fromCode(Status.fromThrowable(failure).getCode())
               .withDescription("Exact authored-core owner read denied or unavailable")
               .asRuntimeException());
+    } catch (IllegalArgumentException invalidResult) {
+      observer.onError(
+          Status.INTERNAL
+              .withDescription("Game Design returned invalid authored-core owner evidence")
+              .asRuntimeException());
     } catch (RuntimeException unavailable) {
       observer.onError(
           Status.UNAVAILABLE

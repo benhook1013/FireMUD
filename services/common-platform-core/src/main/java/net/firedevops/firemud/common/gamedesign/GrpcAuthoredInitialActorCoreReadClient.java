@@ -25,8 +25,6 @@ public final class GrpcAuthoredInitialActorCoreReadClient
     implements AuthoredInitialActorCoreReadClient {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public GrpcAuthoredInitialActorCoreReadClient(
       ServiceEndpointsProperties endpoints,
@@ -44,12 +42,8 @@ public final class GrpcAuthoredInitialActorCoreReadClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Authored-core read client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) throw new IllegalStateException("Authored-core read client has no stub");
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce("Authored-core read client is closed", "Authored-core read client has no stub");
   }
 
   @Override
@@ -65,7 +59,7 @@ public final class GrpcAuthoredInitialActorCoreReadClient
           "Authored-core read namespace differs from client identity");
     }
     var response =
-        requireStub()
+        requireInitializedStub("Authored-core read client is not initialized")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readAuthoredInitialActorCore(AuthoredInitialActorCoreReadGrpcCodec.toRequest(request));
     try {
@@ -97,25 +91,6 @@ public final class GrpcAuthoredInitialActorCoreReadClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expected))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expected))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private GameDesignAuthoredInitialActorCoreReadServiceGrpc
-          .GameDesignAuthoredInitialActorCoreReadServiceBlockingStub
-      requireStub() {
-    var current = stub();
-    if (closed || !initialized || current == null) {
-      throw new IllegalStateException("Authored-core read client is not initialized");
-    }
-    return current;
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(
