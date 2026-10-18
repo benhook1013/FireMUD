@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
+import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceSnapshot;
 import net.firedevops.firemud.gamedesign.publication.TemplateReferenceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -67,6 +68,169 @@ class TemplateReferencePhasePostgresIntegrationTest {
         .hasMessage("TEMPLATE_REFERENCE_INVENTORY_EMPTY");
     assertThat(references.readPhase(fixture.target().canonicalTenantId()).orElseThrow())
         .isEqualTo(phase);
+    createTemplate(fixture, "Deleted", true);
+    String deletedTemplateId = templateId(fixture, "Deleted");
+    DraftCommitBinding deleted =
+        applyTemplateSourceMutation(
+            fixture, TemplateConfigSource.deletePayload(deletedTemplateId), "1");
+    assertThat(sourceSnapshot(fixture, deleted).entries()).isEmpty();
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .tx()
+                    .execute(
+                        ignored ->
+                            new TemplateReferenceRepository(fixture.dsl())
+                                .validateAndEnforce(fixture.target().canonicalTenantId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TEMPLATE_REFERENCE_INVENTORY_EMPTY");
+    assertThat(
+            new TemplateReferenceRepository(fixture.dsl())
+                .readPhase(fixture.target().canonicalTenantId())
+                .orElseThrow()
+                .phase())
+        .isEqualTo(phase.phase());
+  }
+
+  @Test
+  void latestDeleteAfterDecimalEpochBoundaryDoesNotBlockActiveTemplate() {
+    Fixture fixture = fixture();
+    DraftCommitBinding active = createTemplate(fixture, "Active", true);
+    applyTemplateSourceMutation(
+        fixture, TemplateConfigSource.createPayload("Deleted", templateConfig(fixture)), "1");
+    String deletedTemplateId = templateId(fixture, "Deleted");
+    for (int expectedEpoch = 2; expectedEpoch <= 9; expectedEpoch++) {
+      applyTemplateSourceMutation(
+          fixture,
+          TemplateConfigSource.upsertPayload(deletedTemplateId, templateConfig(fixture)),
+          Integer.toString(expectedEpoch));
+    }
+    DraftCommitBinding deleted =
+        applyTemplateSourceMutation(
+            fixture, TemplateConfigSource.deletePayload(deletedTemplateId), "10");
+
+    var currentSource = sourceSnapshot(fixture, deleted);
+    assertThat(currentSource.entries()).hasSize(1);
+    assertThat(currentSource.entries().getFirst().templateId())
+        .isEqualTo(templateId(fixture, "Active"));
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_templates WHERE tenant_id = ?",
+                    fixture.creation().sourceGameTenantKey())
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_source_qualification "
+                        + "WHERE canonical_tenant_id = ? AND template_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    Long.parseLong(deletedTemplateId))
+                .get(0, Long.class))
+        .isEqualTo(1L);
+
+    var enforced =
+        fixture
+            .tx()
+            .execute(
+                ignored ->
+                    new TemplateReferenceRepository(fixture.dsl())
+                        .validateAndEnforce(fixture.target().canonicalTenantId()));
+    assertThat(enforced).isNotNull();
+    assertThat(enforced.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
+    assertThat(enforced.inventoryTemplateCount()).isEqualTo(1L);
+    assertThat(currentSource.entries().getFirst().sourceBinding().commitId())
+        .isEqualTo(active.commitId());
+  }
+
+  @Test
+  void upsertCannotResurrectDeletedTemplateAndFailureLeavesCurrentSourceUsable() {
+    Fixture fixture = fixture();
+    DraftCommitBinding active = createTemplate(fixture, "Active", true);
+    applyTemplateSourceMutation(
+        fixture, TemplateConfigSource.createPayload("Reactivated", templateConfig(fixture)), "1");
+    String reactivatedTemplateId = templateId(fixture, "Reactivated");
+    DraftCommitBinding deleted =
+        applyTemplateSourceMutation(
+            fixture, TemplateConfigSource.deletePayload(reactivatedTemplateId), "2");
+    var currentSource = sourceSnapshot(fixture, deleted);
+    var phase =
+        new TemplateReferenceRepository(fixture.dsl())
+            .readPhase(fixture.target().canonicalTenantId())
+            .orElseThrow();
+    assertThat(currentSource.entries()).hasSize(1);
+    assertThat(currentSource.entries().getFirst().templateId())
+        .isEqualTo(templateId(fixture, "Active"));
+    assertThat(currentSource.entries().getFirst().sourceBinding().commitId())
+        .isEqualTo(active.commitId());
+
+    assertThatThrownBy(
+            () ->
+                applyTemplateSourceMutation(
+                    fixture,
+                    TemplateConfigSource.upsertPayload(
+                        reactivatedTemplateId, templateConfig(fixture)),
+                    "3"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Template source identity is not an existing qualified entry");
+    assertThat(sourceSnapshot(fixture, deleted)).isEqualTo(currentSource);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_templates WHERE tenant_id = ?",
+                    fixture.creation().sourceGameTenantKey())
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_source_qualification "
+                        + "WHERE canonical_tenant_id = ? AND template_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    Long.parseLong(reactivatedTemplateId))
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            new TemplateReferenceRepository(fixture.dsl())
+                .readPhase(fixture.target().canonicalTenantId())
+                .orElseThrow())
+        .isEqualTo(phase);
+
+    String activeTemplateId = templateId(fixture, "Active");
+    DraftCommitBinding activeUpsert =
+        applyTemplateSourceMutation(
+            fixture,
+            TemplateConfigSource.upsertPayload(activeTemplateId, templateConfig(fixture)),
+            "3");
+    var currentAfterActiveUpsert = sourceSnapshot(fixture, activeUpsert);
+    assertThat(currentAfterActiveUpsert.entries()).hasSize(1);
+    assertThat(currentAfterActiveUpsert.entries().getFirst().templateId())
+        .isEqualTo(activeTemplateId);
+    assertThat(currentAfterActiveUpsert.entries().getFirst().sourceBinding().commitId())
+        .isEqualTo(activeUpsert.commitId());
+    assertThat(currentAfterActiveUpsert.entries().getFirst().revisionId())
+        .isEqualTo(activeUpsert.revisions().getFirst().revisionId());
+    assertThat(
+            currentAfterActiveUpsert.entries().stream()
+                .map(TemplateConfigSource.Entry::templateId)
+                .toList())
+        .doesNotContain(reactivatedTemplateId);
+
+    var enforced =
+        fixture
+            .tx()
+            .execute(
+                ignored ->
+                    new TemplateReferenceRepository(fixture.dsl())
+                        .validateAndEnforce(fixture.target().canonicalTenantId()));
+    assertThat(enforced).isNotNull();
+    assertThat(enforced.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
+    assertThat(enforced.inventoryTemplateCount()).isEqualTo(1L);
   }
 
   @Test
@@ -225,18 +389,40 @@ class TemplateReferencePhasePostgresIntegrationTest {
 
   private DraftCommitBinding createTemplate(
       Fixture fixture, String name, boolean sourceAwareVisibility) {
-    var config =
-        new TemplateConfigSource.Config(
-            "{\"schemaVersion\":1,\"baseVersionId\":\""
-                + fixture.target().canonicalVersionId()
-                + "\",\"world\":{\"regions\":[],\"rooms\":[]},"
-                + "\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":[]},"
-                + "\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},"
-                + "\"supportedSettings\":[]}");
-    UUID revisionId = UUID.randomUUID();
     GameDesignSourceRepository sources = new GameDesignSourceRepository(fixture.dsl());
     String baseReference =
         "genesis:" + sources.readGenesis(fixture.target()).orElseThrow().policy().receiptId();
+    return applyTemplateSourceMutation(
+        fixture,
+        TemplateConfigSource.createPayload(name, templateConfig(fixture)),
+        "0",
+        baseReference,
+        sourceAwareVisibility);
+  }
+
+  private DraftCommitBinding applyTemplateSourceMutation(
+      Fixture fixture, String payload, String expectedEpoch) {
+    UUID visibleCommitId =
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT visible_commit_id FROM game_design_realm_policy_source "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    fixture.target().canonicalVersionId())
+                .get("visible_commit_id", UUID.class));
+    return applyTemplateSourceMutation(
+        fixture, payload, expectedEpoch, visibleCommitId.toString(), true);
+  }
+
+  private DraftCommitBinding applyTemplateSourceMutation(
+      Fixture fixture,
+      String payload,
+      String expectedEpoch,
+      String baseReference,
+      boolean sourceAwareVisibility) {
+    UUID revisionId = UUID.randomUUID();
     DraftCommitBinding binding =
         DraftCommitBinding.create(
             fixture.target(),
@@ -245,10 +431,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
             baseReference,
             List.of(
                 new DraftCommitBinding.RevisionPayload(
-                    "0",
-                    revisionId,
-                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                    TemplateConfigSource.createPayload(name, config))),
+                    "0", revisionId, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE, payload)),
             List.of(
                 new DraftCommitBinding.AffectedUnit(
                     DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -256,7 +439,8 @@ class TemplateReferencePhasePostgresIntegrationTest {
                     fixture.target().canonicalVersionId().toString(),
                     TemplateConfigSource.SCOPE,
                     TemplateConfigSource.SCOPE_ID,
-                    "0")));
+                    expectedEpoch)));
+    var sources = new GameDesignSourceRepository(fixture.dsl());
     fixture
         .tx()
         .executeWithoutResult(
@@ -286,6 +470,36 @@ class TemplateReferencePhasePostgresIntegrationTest {
               coordinator.releaseApplicationSlot(binding);
             });
     return binding;
+  }
+
+  private TemplateConfigSourceSnapshot sourceSnapshot(Fixture fixture, DraftCommitBinding binding) {
+    return new GameDesignSourceRepository(fixture.dsl())
+        .readSynchronized(fixture.target(), binding.commitId())
+        .orElseThrow()
+        .templateConfig()
+        .orElseThrow();
+  }
+
+  private TemplateConfigSource.Config templateConfig(Fixture fixture) {
+    return new TemplateConfigSource.Config(
+        "{\"schemaVersion\":1,\"baseVersionId\":\""
+            + fixture.target().canonicalVersionId()
+            + "\",\"world\":{\"regions\":[],\"rooms\":[]},"
+            + "\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":[]},"
+            + "\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},"
+            + "\"supportedSettings\":[]}");
+  }
+
+  private String templateId(Fixture fixture, String name) {
+    Long id =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT id FROM game_templates WHERE tenant_id = ? AND name = ?",
+                fixture.creation().sourceGameTenantKey(),
+                name)
+            .get("id", Long.class);
+    return Objects.requireNonNull(id).toString();
   }
 
   private Fixture fixture() {

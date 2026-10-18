@@ -26,8 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * runtime authority.
  */
 public final class GameSessionAuthoredActorCoreRetentionRepository {
-  private static final String TABLE =
-      "game_session_original_start_session_authored_actor_core_retention";
+  private static final String TABLE = "gs_original_start_session_authored_actor_core_retention";
 
   private final DSLContext dsl;
   private final String workloadNamespace;

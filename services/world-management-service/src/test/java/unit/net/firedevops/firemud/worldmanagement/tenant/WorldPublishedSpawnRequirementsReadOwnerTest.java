@@ -9,7 +9,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,6 +42,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -148,6 +152,90 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     }
     verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
     verifyNoInteractions(published, transactions);
+  }
+
+  @ParameterizedTest
+  @EnumSource(Status.Code.class)
+  void gameDesignStatusCodesAreMappedAndSanitizedBeforeWorldRead(Status.Code foreignCode) {
+    var wire = wireRequest(NAMESPACE);
+    Metadata foreignTrailers = new Metadata();
+    foreignTrailers.put(
+        Metadata.Key.of("x-private-detail", Metadata.ASCII_STRING_MARSHALLER), "secret");
+    StatusRuntimeException foreignFailure =
+        Status.fromCode(foreignCode)
+            .withDescription("foreign private description")
+            .withCause(new IllegalStateException("private cause"))
+            .asRuntimeException(foreignTrailers);
+    when(gameDesign.getComplete(any(GetLaunchDescriptorRequest.class))).thenThrow(foreignFailure);
+    var owner = owner();
+
+    try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
+      assertThatThrownBy(() -> owner.read(wire))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                Status.Code expected =
+                    switch (foreignCode) {
+                      case UNAVAILABLE,
+                          DEADLINE_EXCEEDED,
+                          CANCELLED,
+                          RESOURCE_EXHAUSTED,
+                          INTERNAL,
+                          UNKNOWN ->
+                          foreignCode;
+                      default -> Status.Code.FAILED_PRECONDITION;
+                    };
+                assertThat(rejected.code()).isEqualTo(expected);
+                assertThat(rejected.getMessage())
+                    .isEqualTo("Authenticated Game Design release read could not complete")
+                    .doesNotContain("foreign", "private", "secret");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
+    verifyNoInteractions(published, transactions);
+  }
+
+  @ParameterizedTest
+  @EnumSource(InvalidCarrierFailure.class)
+  void invalidOrUnexpectedGameDesignRuntimeFailureIsSanitizedInternal(
+      InvalidCarrierFailure failureKind) {
+    RuntimeException foreignFailure =
+        switch (failureKind) {
+          case ILLEGAL_ARGUMENT -> new IllegalArgumentException("private carrier detail");
+          case ILLEGAL_STATE -> new IllegalStateException("private carrier detail");
+          case UNEXPECTED -> new UnsupportedOperationException("private runtime detail");
+        };
+    when(gameDesign.getComplete(any(GetLaunchDescriptorRequest.class))).thenThrow(foreignFailure);
+
+    try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
+      assertThatThrownBy(() -> owner().read(wireRequest(NAMESPACE)))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                assertThat(rejected.code()).isEqualTo(Status.Code.INTERNAL);
+                assertThat(rejected.getMessage())
+                    .isEqualTo(
+                        failureKind == InvalidCarrierFailure.UNEXPECTED
+                            ? "Authenticated Game Design release read failed"
+                            : "Authenticated Game Design release evidence is invalid");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
+    verifyNoInteractions(published, transactions);
+  }
+
+  private enum InvalidCarrierFailure {
+    ILLEGAL_ARGUMENT,
+    ILLEGAL_STATE,
+    UNEXPECTED
   }
 
   @Test

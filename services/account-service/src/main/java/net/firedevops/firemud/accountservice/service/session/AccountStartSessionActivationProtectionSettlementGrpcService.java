@@ -11,7 +11,6 @@ import net.firedevops.firemud.account.v1.SettleOriginalStartSessionActivationPro
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionSettlementGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionSettlementInput;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.security.SessionContext;
 import org.jooq.exception.DataAccessException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -37,16 +36,14 @@ public final class AccountStartSessionActivationProtectionSettlementGrpcService
       SettleOriginalStartSessionActivationProtectionRequest request,
       StreamObserver<SettleOriginalStartSessionActivationProtectionResponse> observer) {
     Objects.requireNonNull(observer, "response observer is required");
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
-      observer.onError(Status.UNAUTHENTICATED.asRuntimeException());
-      return;
-    }
-    if (SessionContext.hasAuthenticatedCallerContext()
-        || !workloadNamespace.equals(peer.namespace())
-        || !peer.uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service")) {
-      observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
+    ActivationProtectionPeers.WorldPeerStatus peerStatus =
+        ActivationProtectionPeers.worldPeerStatus(workloadNamespace);
+    if (peerStatus != ActivationProtectionPeers.WorldPeerStatus.VERIFIED) {
+      observer.onError(
+          (peerStatus == ActivationProtectionPeers.WorldPeerStatus.MISSING
+                  ? Status.UNAUTHENTICATED
+                  : Status.PERMISSION_DENIED)
+              .asRuntimeException());
       return;
     }
     if (TransactionSynchronizationManager.isActualTransactionActive()

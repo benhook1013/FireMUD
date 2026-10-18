@@ -56,9 +56,9 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
       Status status =
           peer == null
               ? Status.UNAUTHENTICATED.withDescription(
-                  "Verified World Management workload required")
+                  "Verified World Management or Account workload required")
               : Status.PERMISSION_DENIED.withDescription(
-                  "Exact same-namespace World Management workload required");
+                  "Exact same-namespace World Management or Account workload required");
       observer.onError(status.asRuntimeException());
       return;
     }
