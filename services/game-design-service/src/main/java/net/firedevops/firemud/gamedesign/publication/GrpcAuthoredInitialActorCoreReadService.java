@@ -12,7 +12,13 @@ import net.firedevops.firemud.gamedesign.v1.GameDesignAuthoredInitialActorCoreRe
 import net.firedevops.firemud.gamedesign.v1.ReadAuthoredInitialActorCoreRequest;
 import net.firedevops.firemud.gamedesign.v1.ReadAuthoredInitialActorCoreResponse;
 
-/** Standalone, unregistered workload-authenticated authored-core projection endpoint. */
+/**
+ * Standalone, unregistered workload-authenticated authored-core projection endpoint.
+ *
+ * <p>The handler's 128 KiB request check runs after gRPC has received and buffered the message. Any
+ * future receiving server composition must enforce the same inbound limit before registering this
+ * adapter; the handler guard remains defense in depth.
+ */
 public final class GrpcAuthoredInitialActorCoreReadService
     extends GameDesignAuthoredInitialActorCoreReadServiceGrpc
         .GameDesignAuthoredInitialActorCoreReadServiceImplBase {
