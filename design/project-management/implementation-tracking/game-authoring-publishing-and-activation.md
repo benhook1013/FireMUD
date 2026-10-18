@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Selected Entity and Automation intake prerequisite
+
+The Entity and Automation owner-local empty selected-source intake commands, terminal and digest primitives, shared codecs and security clients are source-prepared and independently unqualified. Their preserved native, unit and mTLS proof has not been freshly executed here. Exact namespace, workload, current Account and World binding guards are included; the adapters and services remain standalone, unregistered and default-denied. This grants no fresh public publication, finalizer registration, continuous protection, genuine issuer or creator authority, admission or activation. Selected-full Game Design and Game Logic publication composition and five-store proof remain downstream in the existing 3251 closure. Canonical owner behavior remains in the [Entity contract](../../architecture/microservices/entity-management-service/api-contracts.md), [Automation contract](../../architecture/microservices/automation-scripting-service/api-contracts.md) and [Game Design selected-full profile](../../architecture/microservices/game-design-service/version-control.md#selected-full-publication-profile).
+
 ### Historical membership and upstream source validation proof
 
 The existing runtime membership validator test now checks three supported Account source event formats alongside a positive issuer source while retaining the original historical membership bytes. It verifies positive upstream evidence before returning an empty missing-membership result. Freshly resealed membership events cannot lead the current issuer generation, Account generation, issuance fence or historical Account cutoff sequence; equal and earlier valid Account cutoffs retain their original bytes. The added source fixtures use representable initialized counters above JavaScript's exact-integer range, while the existing maximum-counter case remains intact. The current exact tenant-generation and billing-cutoff rules retain their preceding tests and attribution.
