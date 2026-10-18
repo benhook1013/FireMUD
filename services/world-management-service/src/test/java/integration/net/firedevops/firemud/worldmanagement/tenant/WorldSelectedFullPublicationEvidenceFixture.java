@@ -143,6 +143,7 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     long expectedStateEpoch = Long.parseLong(selection.intent().expectedVersionStateEpoch());
     var intake = worldGraph.sourceIntake();
     var version = worldGraph.versionIdentity();
+    requireExactVersionIdentity(selection, intake, version);
     var controlledWorldSource = worldGraph.controlledWorldSource();
     var plan = worldGraph.plan();
     var application = worldGraph.application();
