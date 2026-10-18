@@ -1120,25 +1120,39 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         state = self.records.checkpoint_publication_state(run_id)
         self.assertEqual(state["historical_outcome"], "unknown")
         observation = {"comments": 0, "sha256": "a" * 64}
-        decision = {"type": "recovery_decision", "decision_id": "recovery-once",
-                    "expected_state_sha256": state["state_sha256"], "actor_id": 456, "actor_login": "owner",
-                    "reason": "Explicitly accept residual risk", "acknowledge_uncertain_delivery": True,
-                    "absence": observation, "matched_comment_id": None}
+        decision = {
+            "type": "recovery_decision",
+            "decision_id": "recovery-once",
+            "expected_state_sha256": state["state_sha256"],
+            "actor_id": 456,
+            "actor_login": "owner",
+            "reason": "Explicitly accept residual risk",
+            "acknowledge_uncertain_delivery": True,
+            "absence": observation,
+            "matched_comment_id": None,
+        }
         saved = self.records.append_checkpoint_publication_event(
-            run_id, decision, expected_state_sha256=state["state_sha256"])
+            run_id, decision, expected_state_sha256=state["state_sha256"]
+        )
         self.assertNotEqual(state["state_sha256"], saved["state_sha256"])
         self.assertEqual(state["intent_sha256"], saved["intent_sha256"])
         with self.assertRaisesRegex(ReviewRecordsError, "stale"):
             self.records.append_checkpoint_publication_event(
-                run_id, {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
-                expected_state_sha256=state["state_sha256"])
+                run_id,
+                {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
+                expected_state_sha256=state["state_sha256"],
+            )
         state = self.records.append_checkpoint_publication_event(
-            run_id, {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
-            expected_state_sha256=saved["state_sha256"])
+            run_id,
+            {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
+            expected_state_sha256=saved["state_sha256"],
+        )
         with self.assertRaisesRegex(ReviewRecordsError, "already consumed"):
             self.records.append_checkpoint_publication_event(
-                run_id, {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
-                expected_state_sha256=state["state_sha256"])
+                run_id,
+                {"type": "post_started", "decision_id": "recovery-once", "absence": observation},
+                expected_state_sha256=state["state_sha256"],
+            )
         self.assertEqual(self.records.checkpoint_publication_state(run_id), state)
         after = self.records.attempt(run_id)["metadata"]
         after.pop("checkpoint_publication_events")
@@ -1149,18 +1163,40 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         run_id, _, _ = corrected_native_fixture(self.records)
         state = self.records.checkpoint_publication_state(run_id)
         observation = {"comments": 0, "sha256": "a" * 64}
-        bad = [{"type": "post_started", "decision_id": "missing", "absence": observation},
-               {"type": "recovery_decision", "decision_id": "new", "expected_state_sha256": state["state_sha256"],
-                "actor_id": 456, "actor_login": "owner", "reason": "ghp_" + "a" * 40,
-                "acknowledge_uncertain_delivery": True, "absence": observation, "matched_comment_id": None},
-               {"type": "post_outcome", "decision_id": None, "outcome": "uncertain", "http_status": None,
-                "comment_id": None, "raw_stderr": "must never be stored"},
-               {"type": "post_outcome", "decision_id": None, "outcome": "uncertain", "http_status": None,
-                "comment_id": None}]
+        bad = [
+            {"type": "post_started", "decision_id": "missing", "absence": observation},
+            {
+                "type": "recovery_decision",
+                "decision_id": "new",
+                "expected_state_sha256": state["state_sha256"],
+                "actor_id": 456,
+                "actor_login": "owner",
+                "reason": "ghp_" + "a" * 40,
+                "acknowledge_uncertain_delivery": True,
+                "absence": observation,
+                "matched_comment_id": None,
+            },
+            {
+                "type": "post_outcome",
+                "decision_id": None,
+                "outcome": "uncertain",
+                "http_status": None,
+                "comment_id": None,
+                "raw_stderr": "must never be stored",
+            },
+            {
+                "type": "post_outcome",
+                "decision_id": None,
+                "outcome": "uncertain",
+                "http_status": None,
+                "comment_id": None,
+            },
+        ]
         for event in bad:
             with self.subTest(event=event), self.assertRaises(ReviewRecordsError):
                 self.records.append_checkpoint_publication_event(
-                    run_id, event, expected_state_sha256=state["state_sha256"])
+                    run_id, event, expected_state_sha256=state["state_sha256"]
+                )
         self.assertEqual(self.records.checkpoint_publication_state(run_id), state)
 
     def setUp(self) -> None:
@@ -3491,7 +3527,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
         self.assertEqual(self.records.history(2828)["findings"][0]["display_severity"], "Trivial")
 
-    def cli_display_capture(self, events, *, imported=False):
+    def cli_display_capture(self, events, *, imported=False, extra_events=()):
         self.bootstrap()
         run_id = "run.cli-display"
         observations = tuple(
@@ -3508,6 +3544,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             "\n".join(
                 json.dumps(event)
                 for event in [
+                    *extra_events,
                     *events,
                     {
                         "type": "complete",
@@ -3649,6 +3686,34 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.assertEqual(route["display_title"], first["display_title"])
             self.assertEqual(route["display_detail"], first["display_detail"])
             self.assertEqual(self.records.history_batch((2828,))[2828], history)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def test_cli_display_import_retains_original_event_interpretation_without_writes(self) -> None:
+        event = {
+            "type": "finding",
+            "title": "Keep retained evidence.",
+            "comment": "Full explanation.",
+            "codegenInstructions": "Update the guard.",
+            "severity": "minor",
+        }
+        run_id = self.cli_display_capture(
+            [event],
+            imported=True,
+            extra_events=({"type": "unknown"}, {"type": "error", "errorType": "connection", "recoverable": True}),
+        )
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+            stdout = connection.execute(
+                "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'cli_events'", (run_id,)
+            ).fetchone()[0]
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.parse_capture_events(stdout, strict=True)
+        with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
+            finding = self.records.history(2828)["findings"][0]
+            self.assertEqual(finding["display_title"], event["title"])
+            self.assertEqual(finding["display_detail"], event["comment"])
+            self.assertEqual(finding["display_severity"], "Minor")
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(list(connection.iterdump()), before)
 

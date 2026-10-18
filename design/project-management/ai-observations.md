@@ -241,3 +241,19 @@ Entry format:
   - Observation: The wrapper returned success but warned only that the SQLite review record was not saved. The durable capture contained the result while the canonical attempt remained started, so provider completion did not establish recorded review credit. The warning hid the underlying exception and referred to a recovery heading that was absent from the lifecycle guide; the existing migration command was broader than the required one-capture recovery.
   - Expected pattern: Preserve the immutable capture and original attempt identity, report the recording gap, and use an explicitly bounded canonical recovery before adjudication and finalization. Do not rerun a completed review, invent credit, or use an unrelated schema migration to repair its record.
   - Status and reconsideration: Overseer owns bounded recovery in #3271; no live recovery or migration is authorized yet. The exact persistence cause remains unconfirmed. Revisit after that maintenance change is qualified and promoted and the original capture is recovered through its exact native command.
+
+- `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
+  - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
+  - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.
+  - Expected pattern: assess and communicate this queue consequence before insertion; preserve the product's qualified head, original parent and proof rather than rebasing it onto unmerged maintenance. Keep the temporary maintenance front through its normal review requirements and release the integration fence at its human-authorized merge. This records the current operational limitation, not a new queue design or review-policy exception.
+  - Reconsideration trigger: if existing tooling gains independent maintenance-root scheduling, qualify its parent/proof behavior before changing this operational assumption.
+
+- `2026-10-19`: Paginate the complete CI observer context inventory
+  - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, the first 100 GraphQL contexts omitted the [#3249 Smoke Gate failure](https://github.com/benhook1013/FireMUD/actions/runs/39142129196/job/117718532427) at `b83`, delaying its detection by about 19 minutes; the complete inventory contained 186 contexts. The private observer now reads all pages within its bound and fails closed if the final `pageInfo.hasNextPage` remains true, errors occur, or head identity differs.
+  - Observation: A first-page result can miss a later failure in the same run. The observer now fails closed when pagination or response checks are incomplete; this records the observer recovery and does not establish or claim an underlying gate bug fix.
+  - Expected pattern: Treat a complete paginated inventory as authoritative, verify page completion, errors, and the requested head, and report no complete result when any check fails.
+
+- `2026-10-19`: Tie routed review-thread closure to the published candidate
+  - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, Main prematurely resolved a routed #3269 H1 thread after the parent #3249 fix was published but before the child carry was published. The thread was immediately reopened and finally resolved after child commit `bc10` was published.
+  - Observation: A routed parent fix alone did not prove that the child candidate carried the fix.
+  - Expected pattern: Close a routed thread only against the relevant published candidate; verify the child carry publication before treating the thread as resolved.
