@@ -1074,7 +1074,7 @@ class SqliteReviewRecords:
         kind = event.get("type")
         fields = {
             "recovery_decision": {"decision_id", "expected_state_sha256", "actor_id", "actor_login", "reason",
-                                  "acknowledge_uncertain_delivery", "absence"},
+                                  "acknowledge_uncertain_delivery", "absence", "matched_comment_id"},
             "post_started": {"decision_id", "absence"},
             "post_outcome": {"decision_id", "outcome", "http_status", "comment_id"},
             "reused": {"decision_id", "comment_id"},
@@ -1093,6 +1093,11 @@ class SqliteReviewRecords:
             event["reason"] = _bounded_text(event["reason"], "recovery reason", maximum=300)
             if _redact_archive_text(event["reason"])[1]:
                 raise ReviewRecordsError("checkpoint recovery reason contains credential material")
+            matched = event["matched_comment_id"]
+            if matched is not None and (type(matched) is not int or matched <= 0):
+                raise ReviewRecordsError("checkpoint recovery matched comment identity is invalid")
+            if (matched is None) == (event["absence"] is None):
+                raise ReviewRecordsError("checkpoint recovery requires exactly one absence or matching comment")
         if kind in {"recovery_decision", "post_started"}:
             absence = event["absence"]
             if absence is not None and (
@@ -1101,7 +1106,7 @@ class SqliteReviewRecords:
                 or not isinstance(absence["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", absence["sha256"])
             ):
                 raise ReviewRecordsError("checkpoint history observation is invalid")
-            if (kind == "recovery_decision" or decision_id is not None) and absence is None:
+            if kind == "post_started" and decision_id is not None and absence is None:
                 raise ReviewRecordsError("checkpoint recovery requires a complete absence observation")
         if kind == "post_outcome" and (
             event["outcome"] not in {"published", "uncertain", "http_error", "client_error", "timeout",
@@ -1132,6 +1137,7 @@ class SqliteReviewRecords:
                 raise ReviewRecordsError("checkpoint recovery decision ID already exists")
             if kind == "post_started" and decision_id is not None and (
                 len(related) != 1 or related[0].get("type") != "recovery_decision"
+                or related[0].get("matched_comment_id") is not None
             ):
                 raise ReviewRecordsError("checkpoint recovery decision is missing or already consumed")
             if kind == "post_started" and decision_id is None and related:

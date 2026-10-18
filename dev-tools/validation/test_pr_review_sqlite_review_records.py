@@ -1123,7 +1123,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         decision = {"type": "recovery_decision", "decision_id": "recovery-once",
                     "expected_state_sha256": state["state_sha256"], "actor_id": 456, "actor_login": "owner",
                     "reason": "Explicitly accept residual risk", "acknowledge_uncertain_delivery": True,
-                    "absence": observation}
+                    "absence": observation, "matched_comment_id": None}
         saved = self.records.append_checkpoint_publication_event(
             run_id, decision, expected_state_sha256=state["state_sha256"])
         self.assertNotEqual(state["state_sha256"], saved["state_sha256"])
@@ -1152,7 +1152,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         bad = [{"type": "post_started", "decision_id": "missing", "absence": observation},
                {"type": "recovery_decision", "decision_id": "new", "expected_state_sha256": state["state_sha256"],
                 "actor_id": 456, "actor_login": "owner", "reason": "ghp_" + "a" * 40,
-                "acknowledge_uncertain_delivery": True, "absence": observation},
+                "acknowledge_uncertain_delivery": True, "absence": observation, "matched_comment_id": None},
                {"type": "post_outcome", "decision_id": None, "outcome": "uncertain", "http_status": None,
                 "comment_id": None, "raw_stderr": "must never be stored"},
                {"type": "post_outcome", "decision_id": None, "outcome": "uncertain", "http_status": None,

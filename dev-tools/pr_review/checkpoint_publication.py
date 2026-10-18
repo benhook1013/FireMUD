@@ -274,13 +274,17 @@ def recover_checkpoint(store, *, repo, source_pr, run_id, expected_state_sha256,
             _refuse("checkpoint publication state digest is stale")
         comments = adapter.fetch_api_endpoint(endpoint)
         comment = matching(comments)
-        if comment is not None:
-            return _result(intent, comment, "reused")
         decision = {"type": "recovery_decision", "decision_id": decision_id,
                     "expected_state_sha256": expected_state_sha256, "actor_id": intent["actor_id"],
                     "actor_login": intent["actor_login"], "reason": reason,
-                    "acknowledge_uncertain_delivery": True, "absence": _absence(comments)}
+                    "acknowledge_uncertain_delivery": True,
+                    "absence": _absence(comments) if comment is None else None,
+                    "matched_comment_id": comment["id"] if comment is not None else None}
         state = _append(store, run_id, state, decision)
+        if comment is not None:
+            _append(store, run_id, state, {"type": "reused", "decision_id": decision_id,
+                                          "comment_id": comment["id"]})
+            return _result(intent, comment, "reused")
         # A comment can appear after the operator observation. Re-read all pages before consumption/POST.
         comments = adapter.fetch_api_endpoint(endpoint)
         comment = matching(comments)

@@ -297,7 +297,10 @@ class CheckpointPublicationTests(unittest.TestCase):
         self.github.posts = 0
         self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "reused")
         self.assertEqual(self.github.posts, 0)
-        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"], [])
+        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"][0]["matched_comment_id"], 789)
+        self.github.comments = []
+        self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "decision_replayed")
+        self.assertEqual(self.github.posts, 0)
 
     def test_recovery_incomplete_history_refuses_before_or_after_decision(self):
         options = self.prepare_recovery()
@@ -425,13 +428,15 @@ class CheckpointPublicationTests(unittest.TestCase):
             self.assertEqual(publication.recover_checkpoint(self.store, **options)["status"], "reused")
         self.assertIn("--paginate", api.call_args.args[0])
         self.assertIn("--slurp", api.call_args.args[0])
+        state = self.store.checkpoint_publication_state(RUN)
+        options.update(decision_id="operator-2", expected_state_sha256=state["state_sha256"])
         partial = subprocess.CalledProcessError(1, ["gh"], output=json.dumps([[unrelated]]), stderr="page failure")
         with (patch.object(self.github, "fetch_api_endpoint", side_effect=github.fetch_api_endpoint),
               patch.object(github.subprocess, "run", side_effect=partial),
               self.assertRaisesRegex(RuntimeError, "page failure")):
             publication.recover_checkpoint(self.store, **options)
         self.assertEqual(self.github.posts, 0)
-        self.assertEqual(self.store.checkpoint_publication_state(RUN)["events"], [])
+        self.assertEqual(self.store.checkpoint_publication_state(RUN), state)
 
     def test_recovery_conflict_on_final_read_holds_recorded_decision(self):
         options = self.prepare_recovery()
