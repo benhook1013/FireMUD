@@ -211,7 +211,7 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     try (Connection staleTruncator = repeatableReadSnapshot()) {
       commitCanonicalReservation(99002L);
       try {
-        assertThatThrownBy(() -> execute(staleTruncator, "TRUNCATE TABLE items"))
+        assertThatThrownBy(() -> execute(staleTruncator, "TRUNCATE TABLE items CASCADE"))
             .isInstanceOf(SQLException.class)
             .hasMessageContaining(
                 "Entity authored-source TRUNCATE requires READ COMMITTED isolation");
