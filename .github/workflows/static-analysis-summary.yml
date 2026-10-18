@@ -14,9 +14,10 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}
+  group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
   # Serialize the CodeQL and license completion events so a pending summary
-  # cannot race a terminal summary into creating two comments.
+  # cannot race a terminal summary into creating two comments. A superseded head
+  # cannot replace the pending callback for the current head.
   cancel-in-progress: false
 
 jobs:
@@ -61,15 +62,21 @@ jobs:
               ".github/workflows/codeql.yml": "CodeQL Analysis",
               ".github/workflows/license-scan.yml": "License Gate",
             })[sourceWorkflowPath];
-            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
+            // The completion is a wake signal, never proof for the current base.
+            // An older-base callback can replace a pending callback in this head's
+            // concurrency group, so validate its original title and snapshot the live tuple.
+            const sourceBaseSha = String(context.payload.workflow_run.display_title || "")
+              .match(/ base-([0-9a-f]{40}) head-/)?.[1];
+            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${sourceBaseSha} head-${headSha}`;
             if (
               currentPullRequest.state !== "open" ||
               !sourceWorkflowName ||
+              !sourceBaseSha ||
               (context.payload.workflow_run.name !== sourceWorkflowName &&
                 context.payload.workflow_run.name !== expectedSourceTitle) ||
               context.payload.workflow_run.display_title !== expectedSourceTitle
             ) {
-              core.info("The source run is not bound to the current open pull-request base and head.");
+              core.info("The source run is not bound to the current open pull request and head.");
               return;
             }
             const detailChecks = [
@@ -80,16 +87,6 @@ jobs:
               ["CodeQL gate", "CodeQL Gate", "codeql"],
               ["License gate", "License Gate", "license"],
             ];
-            const terminalConclusions = new Set([
-              "success",
-              "failure",
-              "cancelled",
-              "timed_out",
-              "action_required",
-              "neutral",
-              "skipped",
-            ]);
-
             const statusIcon = (value) => {
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
@@ -221,23 +218,13 @@ jobs:
                 return [label, normalizeStatus(selectedCheckRun, checkName, workflowRun)];
               });
 
-            let workflowRuns = {
+            const workflowRuns = {
               codeql: await workflowRunFor("codeql.yml"),
               license: await workflowRunFor("license-scan.yml"),
             };
-            let checks = resolveStatuses(await loadChecks(), workflowRuns);
-            for (let attempt = 0; attempt < 10; attempt += 1) {
-              const allCompleted = checks.every(([, result]) => terminalConclusions.has(result));
-              if (allCompleted) {
-                break;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 30000));
-              workflowRuns = {
-                codeql: await workflowRunFor("codeql.yml"),
-                license: await workflowRunFor("license-scan.yml"),
-              };
-              checks = resolveStatuses(await loadChecks(), workflowRuns);
-            }
+            // Each serialized producer completion publishes one bounded snapshot.
+            // A running counterpart stays pending until its completion callback refreshes this comment.
+            const checks = resolveStatuses(await loadChecks(), workflowRuns);
 
             const gateResults = checks.slice(0, gateChecks.length);
             const detailResults = checks.slice(gateChecks.length);

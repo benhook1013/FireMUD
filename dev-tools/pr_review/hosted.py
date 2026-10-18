@@ -1436,6 +1436,10 @@ def review_publications(
     return publications
 
 
+class _PublicationCommentCountUnknown(ValueError):
+    """Finding-count uncertainty after owned comment identities are validated."""
+
+
 def validate_publication_comments(
     publication: dict[str, Any], pull_request: dict[str, Any], head: str, after: datetime
 ) -> None:
@@ -1446,9 +1450,6 @@ def validate_publication_comments(
     """
     body = _without_fenced_code(_unquoted(publication["primary"].get("body") or ""))
     counts = re.findall(r"^[ \t]*\*\*Actionable comments posted: ([0-9]+)\*\*[ \t]*\r?$", body, re.MULTILINE)
-    if len(counts) != 1 or int(counts[0]) > 200:
-        raise ValueError("Hosted publication has no unique bounded actionable-comment count")
-    expected = int(counts[0])
     finished = strict_provider_timestamp(publication["finished_at"])
     owned_ids: set[int] = set()
     for thread in (pull_request.get("reviewThreads") or {}).get("nodes", []):
@@ -1474,7 +1475,9 @@ def validate_publication_comments(
         if identity is None or identity in owned_ids or not isinstance(comment.get("body"), str):
             raise ValueError("Hosted publication owned root has incomplete or duplicated immutable identity")
         owned_ids.add(identity)
-    if len(owned_ids) != expected:
+    if len(counts) != 1 or int(counts[0]) > 200:
+        raise _PublicationCommentCountUnknown("Hosted publication has no unique bounded actionable-comment count")
+    if len(owned_ids) != int(counts[0]):
         raise ValueError("Hosted publication owned actionable-comment evidence is incomplete or conflicting")
 
 
@@ -2486,9 +2489,48 @@ def trigger_state(
     *,
     now: datetime | None = None,
 ) -> TriggerState:
+    """Evaluate strict result completeness for credit, capture and adoption."""
+    return _trigger_state(repo, pr_number, payload, record, current_record_path, now=now)
+
+
+def operational_trigger_state(
+    repo: str,
+    pr_number: int,
+    payload: dict[str, Any],
+    record: dict[str, Any],
+    current_record_path: str | Path | None = None,
+    *,
+    now: datetime | None = None,
+) -> TriggerState:
+    """Evaluate provider exclusion only; an ambiguous result earns no credit."""
+    return _trigger_state(repo, pr_number, payload, record, current_record_path, now=now, operational=True)
+
+
+def _trigger_state(
+    repo: str,
+    pr_number: int,
+    payload: dict[str, Any],
+    record: dict[str, Any],
+    current_record_path: str | Path | None = None,
+    *,
+    now: datetime | None = None,
+    operational: bool = False,
+) -> TriggerState:
     pr = payload["data"]["repository"]["pullRequest"]
     current_head = pr.get("headRefOid", "")
     base = _state_base(repo, pr_number, record, current_head)
+    if operational and pr.get("number", pr_number) != pr_number:
+        return TriggerState(
+            "ambiguous",
+            False,
+            False,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="Hosted publication pull-request identity differs",
+        )
     trigger = record.get("trigger")
     trigger_id, trigger_at = (trigger or {}).get("id"), (trigger or {}).get("created_at")
     trigger_dt = parse_timestamp(trigger_at)
@@ -2585,13 +2627,25 @@ def trigger_state(
         )
     ]
     next_dt = min((parse_timestamp(item.get("createdAt")) for item in newer), default=None)
+    count_ambiguity = None
     try:
         publications = review_publications(reviews, record["head_sha"], trigger_dt, next_dt)
         complete_publications = [publication for publication in publications if publication["complete"]]
         if len(complete_publications) > 1:
             raise ValueError("more than one complete Hosted publication is eligible for the captured trigger")
         for publication in complete_publications:
-            validate_publication_comments(publication, pr, record["head_sha"], trigger_dt)
+            try:
+                validate_publication_comments(publication, pr, record["head_sha"], trigger_dt)
+            except _PublicationCommentCountUnknown as exc:
+                if not operational:
+                    raise
+                if any(
+                    provider_file_ceiling_skip(review.get("body"))
+                    or _summary_has_explicit_incomplete_coverage(review.get("body") or "")
+                    for review in publication["reviews"]
+                ):
+                    raise ValueError("Hosted publication explicitly reports incomplete file coverage") from exc
+                count_ambiguity = str(exc)
     except ValueError as exc:
         return TriggerState(
             "ambiguous",
@@ -2740,6 +2794,20 @@ def trigger_state(
     # the final request state and must not be hidden by that review.
     if review_candidates:
         latest_review_at = max(item[0] for item in review_candidates)
+        if count_ambiguity is not None and any(
+            item[1] == "active" and item[0] > latest_review_at for item in candidates
+        ):
+            return TriggerState(
+                "active",
+                False,
+                True,
+                **base,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                cooldown_until=None,
+                reason="Hosted active acknowledgement follows the publication",
+            )
         later_terminal_comments = [
             item
             for item in candidates
@@ -2796,6 +2864,18 @@ def trigger_state(
             response_url=None,
             cooldown_until=None,
             reason="no attributable terminal response",
+        )
+    if count_ambiguity is not None and len(candidates) != 1:
+        return TriggerState(
+            "ambiguous",
+            False,
+            False,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="Hosted operational terminal result is not unique",
         )
     _, state, response, cooldown = max(candidates, key=lambda item: (item[0], immutable_database_id(item[2]) or -1))
     if unresolved_rate_limit_timestamp and state != "rate_limited":
@@ -2904,7 +2984,10 @@ def trigger_state(
             cooldown_basis=cooldown_basis,
             reason="terminal response has no immutable numeric GitHub identity",
         )
+    if count_ambiguity is not None and publication is not None and state == "completed":
+        state = "ambiguous"
     reason = {
+        "ambiguous": count_ambiguity,
         "completed": "attributable substantive review completed",
         "rate_limited": "CodeRabbit explicitly rate limited the request",
         "noop": "request acknowledged without reviewing commits",
