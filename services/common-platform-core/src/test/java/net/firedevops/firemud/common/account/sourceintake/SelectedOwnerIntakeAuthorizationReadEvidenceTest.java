@@ -3,23 +3,16 @@ package net.firedevops.firemud.common.account.sourceintake;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationReadEvidence.Request;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
-import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
-import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import org.junit.jupiter.api.Test;
 
 /** Synthetic lookup evidence only; Account authentication establishes the HELD result. */
@@ -73,57 +66,8 @@ class SelectedOwnerIntakeAuthorizationReadEvidenceTest {
     var scope =
         new SelectedOwnerIntakeSourceReadScope(
             owner, "test", OPERATION, FENCE, INTAKE, actor, selected);
-    var content = content(scope);
+    var content = SelectedOwnerIntakeSourceTestFixtures.content(scope);
     return new SelectedOwnerIntakeAuthorizationBinding(content, sources(actor, tenant));
-  }
-
-  private static SelectedOwnerIntakeSourceContent content(
-      SelectedOwnerIntakeSourceReadScope scope) {
-    var out = new ByteArrayOutputStream();
-    frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
-    frame(out, scope.canonicalBytes());
-    frame(out, scope.digest());
-    for (String family :
-        List.of(
-            "COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG")) {
-      byte[] snapshot = snapshot(family, scope.selected());
-      frame(out, family);
-      frame(out, snapshot);
-      frame(out, DraftAuthorizationFenceBinding.digest(snapshot));
-    }
-    byte[] bytes = out.toByteArray();
-    return SelectedOwnerIntakeSourceContent.fromStored(
-        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
-  }
-
-  private static byte[] snapshot(String family, DraftCommitBinding selected) {
-    if ("GAMEPLAY_RULE".equals(family)) {
-      return new GameplayRuleSelectedSource(
-              GameplayRuleManifest.canonical(
-                  Map.of(
-                      "schema",
-                      "game-design-gameplay-rule-source-snapshot/v1",
-                      "bindingJson",
-                      selected.canonicalJson(),
-                      "bindingDigest",
-                      selected.digest(),
-                      "sourceEpoch",
-                      "0",
-                      "inheritedCommitId",
-                      "",
-                      "genesisReceiptId",
-                      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                      "manifestJson",
-                      GameplayRuleManifest.explicitEmpty().canonicalJson(),
-                      "entries",
-                      List.of())))
-          .canonicalBytes();
-    }
-    if ("TEMPLATE_CONFIG".equals(family))
-      return new TemplateConfigSourceSnapshot(
-              selected, "0", null, id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), List.of())
-          .canonicalBytes();
-    return SelectedOwnerIntakeSourceTestFixtures.snapshot(family, selected);
   }
 
   private static List<SourceEvidence> sources(UUID actor, UUID tenant) {
@@ -161,14 +105,6 @@ class SelectedOwnerIntakeAuthorizationReadEvidenceTest {
                 "TEMPLATE_CONFIG",
                 "ALL",
                 "0")));
-  }
-
-  private static void frame(ByteArrayOutputStream out, String value) {
-    DraftAuthorizationFenceBinding.frame(out, value);
-  }
-
-  private static void frame(ByteArrayOutputStream out, byte[] value) {
-    DraftAuthorizationFenceBinding.frame(out, value);
   }
 
   private static UUID id(String value) {

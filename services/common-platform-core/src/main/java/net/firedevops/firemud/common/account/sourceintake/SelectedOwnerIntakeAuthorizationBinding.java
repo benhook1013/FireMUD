@@ -19,31 +19,47 @@ import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent
  * not authenticate Account, establish HELD/current authority, prove a complete source census, or
  * create an owner receipt.
  */
-public record SelectedOwnerIntakeAuthorizationBinding(
-    SelectedOwnerIntakeSourceContent content, List<SourceEvidence> sources) {
+public final class SelectedOwnerIntakeAuthorizationBinding {
   public static final int MAX_BYTES = 16 * 1024 * 1024;
 
-  public SelectedOwnerIntakeAuthorizationBinding {
-    Objects.requireNonNull(content, "content");
-    SelectedOwnerIntakeSourceReadScope scope = content.scope();
+  private final SelectedOwnerIntakeSourceContent content;
+  private final List<SourceEvidence> sources;
+  private final byte[] canonicalBytes;
+  private final String digest;
+  private final int hashCode;
+
+  public SelectedOwnerIntakeAuthorizationBinding(
+      SelectedOwnerIntakeSourceContent content, List<SourceEvidence> sources) {
+    SelectedOwnerIntakeSourceContent validatedContent = Objects.requireNonNull(content, "content");
+    SelectedOwnerIntakeSourceReadScope scope = validatedContent.scope();
     schemaFor(scope.owner());
-    sources =
+    List<SourceEvidence> sortedSources =
         List.copyOf(Objects.requireNonNull(sources, "sources")).stream()
             .sorted(Comparator.comparing(SourceEvidence::key))
             .toList();
-    if (sources.isEmpty()
-        || sources.stream().map(SourceEvidence::key).distinct().count() != sources.size()) {
+    if (sortedSources.isEmpty()
+        || sortedSources.stream().map(SourceEvidence::key).distinct().count()
+            != sortedSources.size()) {
       throw new IllegalArgumentException("Complete distinct Account sources required");
     }
-    for (SourceEvidence source : sources) requireActorTenantScope(source, scope);
-    canonicalBytes(
-        content,
-        sources,
-        intendedReader(scope.owner(), scope.targetNamespace()),
-        purposeFor(scope.owner()));
+    for (SourceEvidence source : sortedSources) requireActorTenantScope(source, scope);
+
+    this.content = validatedContent;
+    this.sources = sortedSources;
+    this.canonicalBytes =
+        canonicalBytes(
+            validatedContent,
+            sortedSources,
+            intendedReader(scope.owner(), scope.targetNamespace()),
+            purposeFor(scope.owner()));
+    this.digest = DraftAuthorizationFenceBinding.digest(this.canonicalBytes);
+    this.hashCode = Arrays.hashCode(this.canonicalBytes);
   }
 
-  @Override
+  public SelectedOwnerIntakeSourceContent content() {
+    return content;
+  }
+
   public List<SourceEvidence> sources() {
     return List.copyOf(sources);
   }
@@ -97,11 +113,23 @@ public record SelectedOwnerIntakeAuthorizationBinding(
   }
 
   public byte[] canonicalBytes() {
-    return canonicalBytes(content, sources, intendedReader(), purpose());
+    return canonicalBytes.clone();
   }
 
   public String digest() {
-    return DraftAuthorizationFenceBinding.digest(canonicalBytes());
+    return digest;
+  }
+
+  @Override
+  public boolean equals(Object other) {
+    return this == other
+        || (other instanceof SelectedOwnerIntakeAuthorizationBinding binding
+            && Arrays.equals(canonicalBytes, binding.canonicalBytes));
+  }
+
+  @Override
+  public int hashCode() {
+    return hashCode;
   }
 
   /**
@@ -152,7 +180,7 @@ public record SelectedOwnerIntakeAuthorizationBinding(
     if (!schema.equals(result.schema())
         || !recipientReader.equals(result.intendedReader())
         || !purpose.equals(result.purpose())
-        || !Arrays.equals(stored, result.canonicalBytes())) {
+        || !Arrays.equals(stored, result.canonicalBytes)) {
       throw new IllegalArgumentException("Noncanonical selected owner intake authorization");
     }
     return result;

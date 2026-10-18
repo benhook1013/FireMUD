@@ -78,11 +78,23 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
   }
 
   @Test
+  void equalityUsesCanonicalBytesForEquivalentConstructionAndStoredReadback() {
+    var content = content(Owner.ENTITY_MANAGEMENT, ACTOR);
+    var original = new SelectedOwnerIntakeAuthorizationBinding(content, unsortedSources(ACTOR));
+    var equivalent = new SelectedOwnerIntakeAuthorizationBinding(content, unsortedSources(ACTOR));
+    var restored = SelectedOwnerIntakeAuthorizationBinding.fromStored(original.canonicalBytes());
+
+    assertThat(equivalent).isEqualTo(original).hasSameHashCodeAs(original);
+    assertThat(restored).isEqualTo(original).hasSameHashCodeAs(original);
+  }
+
+  @Test
   void preservesDefensiveCopiesOfSourceListAndCanonicalContent() {
     var content = content(Owner.ENTITY_MANAGEMENT, ACTOR);
     var input = new ArrayList<>(unsortedSources(ACTOR));
     var binding = new SelectedOwnerIntakeAuthorizationBinding(content, input);
     byte[] expected = binding.canonicalBytes();
+    String expectedDigest = binding.digest();
     byte[] exposed = binding.canonicalBytes();
     exposed[0] ^= 0x7f;
     input.clear();
@@ -92,6 +104,7 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
     exposedContent[0] ^= 0x7f;
 
     assertThat(binding.canonicalBytes()).isEqualTo(expected);
+    assertThat(binding.digest()).isEqualTo(expectedDigest);
     assertThat(binding.content().canonicalBytes()).isNotEqualTo(exposedContent);
     assertThat(binding.sources()).hasSize(3);
     assertThat(binding.sources().getFirst().evidence()).isNotEqualTo(exposedEvidence);
@@ -264,6 +277,7 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
     var changed = new SelectedOwnerIntakeAuthorizationBinding(content, changedSources);
 
     assertThat(changed.digest()).isNotEqualTo(original.digest());
+    assertThat(changed).isNotEqualTo(original);
     assertThat(
             SelectedOwnerIntakeAuthorizationBinding.fromStored(changed.canonicalBytes())
                 .canonicalBytes())

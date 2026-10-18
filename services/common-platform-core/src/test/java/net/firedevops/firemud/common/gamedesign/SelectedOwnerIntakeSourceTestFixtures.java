@@ -1,8 +1,12 @@
 package net.firedevops.firemud.common.gamedesign;
 
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
@@ -11,11 +15,31 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 public final class SelectedOwnerIntakeSourceTestFixtures {
   private static final UUID GENESIS = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final String GENESIS_DIGEST = "sha256:" + "a".repeat(64);
+  private static final List<String> CONTENT_FAMILIES =
+      List.of("COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG");
 
   private SelectedOwnerIntakeSourceTestFixtures() {}
 
   public static byte[] snapshot(String family, DraftCommitBinding selected) {
     return snapshot(family, selected, 0);
+  }
+
+  /** Builds canonical six-family content for a selected-owner intake scope. */
+  public static SelectedOwnerIntakeSourceContent content(SelectedOwnerIntakeSourceReadScope scope) {
+    Objects.requireNonNull(scope, "scope");
+    var out = new ByteArrayOutputStream();
+    frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
+    frame(out, scope.canonicalBytes());
+    frame(out, scope.digest());
+    for (String family : CONTENT_FAMILIES) {
+      byte[] sourceSnapshot = snapshot(family, scope.selected());
+      frame(out, family);
+      frame(out, sourceSnapshot);
+      frame(out, DraftAuthorizationFenceBinding.digest(sourceSnapshot));
+    }
+    byte[] bytes = out.toByteArray();
+    return SelectedOwnerIntakeSourceContent.fromStored(
+        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
   }
 
   /** Canonical delete of a synthetic command for otherwise inert selected-source bindings. */
@@ -80,5 +104,13 @@ public final class SelectedOwnerIntakeSourceTestFixtures {
                 "genesisReceiptId", GENESIS.toString(),
                 "manifestJson", GameplayRuleManifest.explicitEmpty().canonicalJson(),
                 "entries", List.of())));
+  }
+
+  private static void frame(ByteArrayOutputStream out, String value) {
+    DraftAuthorizationFenceBinding.frame(out, value);
+  }
+
+  private static void frame(ByteArrayOutputStream out, byte[] value) {
+    DraftAuthorizationFenceBinding.frame(out, value);
   }
 }
