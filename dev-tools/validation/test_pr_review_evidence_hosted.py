@@ -717,6 +717,18 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(cli_attempts._UnrecordableCapture, recovery_error):
                     cli_attempts._parse_successful_stdout(stdout)
 
+    def test_successful_cli_loader_preserves_archived_invalid_json_diagnostic(self):
+        expected = "linked capture stdout has invalid JSON at line 1"
+        with self.assertRaises(evidence.EvidenceError) as direct:
+            evidence.parse_capture_events("invalid JSON\n")
+        self.assertEqual(str(direct.exception), expected)
+        with tempfile.TemporaryDirectory() as directory:
+            stdout_path = Path(directory) / "stdout"
+            stdout_path.write_text("invalid JSON\n", encoding="utf-8")
+            with self.assertRaises(evidence.CaptureInvalid) as loaded:
+                evidence._parse_capture_stdout(stdout_path)
+        self.assertEqual(str(loaded.exception), expected)
+
     def test_successful_cli_parser_rejects_error_unknown_and_ambiguous_event_streams(self):
         finding = '{"type":"finding","codegenInstructions":"Use the safer path."}\n'
         complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
@@ -747,6 +759,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         for finding in (
             {"type": "finding", "message": "Legacy issue"},
             {"type": "finding", "title": "Legacy title", "comment": "Retain this issue", "codegenInstructions": ""},
+            {"type": "finding", "codegenInstructions": ["Review comment at @src/A.java:1", "Retain list instructions"]},
         ):
             stdout = json.dumps(finding) + "\n"
             complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
@@ -756,6 +769,18 @@ class GithubAndEvidenceTests(unittest.TestCase):
                     evidence.parse_partial_capture_events(stdout)
                 with self.assertRaises(evidence.EvidenceError):
                     evidence.parse_failed_capture_events(stdout + complete)
+
+    def test_successful_cli_parser_rejects_unsupported_instruction_value_types(self):
+        complete = '{"type":"complete","status":"review_completed","findings":1,"reviewedFiles":["a"]}\n'
+        for instructions in ({"text": "hidden finding"}, 17, True, 1.5):
+            finding = json.dumps({"type": "finding", "codegenInstructions": instructions}) + "\n"
+            with self.subTest(instructions=instructions):
+                with self.assertRaisesRegex(evidence.EvidenceError, "invalid finding instructions"):
+                    evidence.parse_capture_events(finding + complete)
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_failed_capture_events(finding + complete)
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.parse_partial_capture_events(finding)
 
     def test_successful_and_failed_cli_streams_share_strict_progress_rules(self):
         progress = "".join(

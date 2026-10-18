@@ -567,7 +567,12 @@ def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, A
 def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Parse and validate the newline-delimited events from a successful CLI capture."""
 
-    findings, completes = _parse_strict_capture_events(value, successful=True)
+    try:
+        findings, completes = _parse_strict_capture_events(value, successful=True)
+    except EvidenceError as exc:
+        # Retained repair diagnostics use the historical successful-loader
+        # prefix; failed/partial callers keep their existing strict errors.
+        raise EvidenceError(f"linked {exc}") from exc
     if (
         len(completes) != 1
         or completes[0].get("status") != "review_completed"
@@ -686,6 +691,8 @@ def _parse_strict_capture_events(
             raise EvidenceError(f"capture stdout has an invalid event type at line {number}")
         if event_type == "finding":
             instructions = event.get("codegenInstructions")
+            if instructions is not None and not isinstance(instructions, (str, list)):
+                raise EvidenceError(f"capture stdout has invalid finding instructions at line {number}")
             if not successful and (not isinstance(instructions, str) or not instructions.strip()):
                 raise EvidenceError(f"capture stdout has a finding without instruction text at line {number}")
             # Historical successful findings can carry title/comment or message
