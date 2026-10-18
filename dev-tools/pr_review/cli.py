@@ -362,6 +362,21 @@ def _parser() -> argparse.ArgumentParser:
     source_finalize.add_argument("--finalized-at")
     source_finalize.add_argument("--repo", help="provider publication repository; defaults to the current repository")
     records_database(source_finalize)
+    publication_status = source_subcommands.add_parser(
+        "publication-status", help="read one exact run's local publication intent and audit without provider reads"
+    )
+    publication_status.add_argument("--run-id", required=True)
+    records_database(publication_status)
+    publication_recover = source_subcommands.add_parser(
+        "publication-recover", help="record explicit operator acceptance of uncertain-delivery duplicate risk"
+    )
+    publication_recover.add_argument("--run-id", required=True)
+    publication_recover.add_argument("--expected-state-sha256", required=True)
+    publication_recover.add_argument("--decision-id", required=True)
+    publication_recover.add_argument("--reason", required=True, help="operator justification (maximum 300 characters)")
+    publication_recover.add_argument("--acknowledge-uncertain-delivery", action="store_true", required=True)
+    publication_recover.add_argument("--repo", help="publication repository; defaults to the current repository")
+    records_database(publication_recover)
     source_resolve = source_subcommands.add_parser(
         "resolve", help="record an accepted-fix proof for one exact accepted source finding"
     )
@@ -1433,7 +1448,18 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
         unresolved = any(result.get(bucket) for bucket in ("pending", "ambiguous", "errors"))
         return {"api_version": 1, "result": result}, 2 if unresolved else 0
     if args.records_command == "source":
-        if args.source_command == "finalize":
+        if args.source_command == "publication-status":
+            result = store.checkpoint_publication_state(args.run_id)
+        elif args.source_command == "publication-recover":
+            from .checkpoint_publication import recover_checkpoint
+
+            source = store.run_source(args.run_id)
+            result = recover_checkpoint(
+                store, repo=github.infer_repo(args.repo), source_pr=source["source_pr"], run_id=args.run_id,
+                expected_state_sha256=args.expected_state_sha256, decision_id=args.decision_id,
+                reason=args.reason, acknowledge_uncertain_delivery=args.acknowledge_uncertain_delivery,
+            )
+        elif args.source_command == "finalize":
             result = store.finalize_run(args.run_id, finalized_at=args.finalized_at)
             source = store.run_source(args.run_id)
             if source["channel"] in {"hosted", "cli"} and source["outcome"] == "completed" and source["attributable"]:
