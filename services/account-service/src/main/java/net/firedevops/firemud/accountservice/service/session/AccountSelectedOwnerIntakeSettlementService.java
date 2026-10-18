@@ -5,6 +5,7 @@ import io.grpc.StatusRuntimeException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeSettlementReceipt;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -114,91 +115,21 @@ public final class AccountSelectedOwnerIntakeSettlementService {
 
     AutomationSelectedSourceIntakeTerminalReadEvidence.Request request =
         AutomationSelectedSourceIntakeTerminalReadEvidence.Request.create(namespace, original);
-    requireNoAmbientTransaction();
-    AutomationSelectedSourceIntakeTerminalReadEvidence remote;
-    try {
-      remote = automationClient.read(request);
-    } catch (StatusRuntimeException failure) {
-      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
-        throw Status.FAILED_PRECONDITION
-            .withDescription("Automation terminal evidence is not committed")
-            .asRuntimeException();
-      }
-      Status.Code code = failure.getStatus().getCode();
-      if (code == Status.Code.NOT_FOUND
-          || code == Status.Code.ALREADY_EXISTS
-          || code == Status.Code.DATA_LOSS) {
-        throw Status.fromCode(code).asRuntimeException();
-      }
-      throw Status.UNAVAILABLE
-          .withDescription("Automation terminal evidence is unavailable")
-          .asRuntimeException();
-    } catch (RuntimeException unavailable) {
-      throw Status.UNAVAILABLE
-          .withDescription("Automation terminal evidence is unavailable")
-          .withCause(unavailable)
-          .asRuntimeException();
-    }
+    AutomationSelectedSourceIntakeTerminalReadEvidence remote =
+        readOwnerTerminal("Automation", () -> automationClient.read(request));
     AutomationSelectedSourceIntakeTerminalReadEvidence exactEvidence =
         requireExactTerminal(request, original, remote);
 
-    requireNoAmbientTransaction();
-    AccountSelectedOwnerIntakeSettlementReceipt committed =
-        ownerTransaction.execute(ignored -> repository.settleCommittedEmpty(exactEvidence));
-    requireSettlement(committed, original, exactEvidence);
-
-    // This independent lookup is deliberately lookup-only. An unknown first commit remains
-    // unresolved; replaying settleCommittedEmpty here could conceal its outcome.
-    requireNoAmbientTransaction();
-    AccountSelectedOwnerIntakeSettlementReceipt readback =
-        ownerTransaction.execute(
-            ignored ->
-                Objects.requireNonNull(
-                        repository.findSettlement(original),
-                        "Account settlement readback returned no result")
-                    .orElseThrow(
-                        () ->
-                            Status.FAILED_PRECONDITION
-                                .withDescription("Committed Account settlement is not readable")
-                                .asRuntimeException()));
-    requireSettlement(readback, original, exactEvidence);
-    if (!sameSettlement(committed, readback)) {
-      throw Status.FAILED_PRECONDITION
-          .withDescription("Committed Account settlement readback differs")
-          .asRuntimeException();
-    }
-    return readback;
+    return commitAndReadBack(
+        original, exactEvidence, () -> repository.settleCommittedEmpty(exactEvidence));
   }
 
   private AccountSelectedOwnerIntakeSettlementReceipt settleEntity(
       SelectedOwnerIntakeAuthorizationBinding original) {
     var request =
         EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(namespace, original);
-    requireNoAmbientTransaction();
-    final EntitySelectedSourceIntakeTerminalReadEvidence remote;
-    try {
-      remote = entityClient.read(request);
-    } catch (StatusRuntimeException failure) {
-      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
-        throw Status.FAILED_PRECONDITION
-            .withDescription("Entity terminal evidence is not committed")
-            .asRuntimeException();
-      }
-      Status.Code code = failure.getStatus().getCode();
-      if (code == Status.Code.NOT_FOUND
-          || code == Status.Code.ALREADY_EXISTS
-          || code == Status.Code.DATA_LOSS) {
-        throw Status.fromCode(code).asRuntimeException();
-      }
-      throw Status.UNAVAILABLE
-          .withDescription("Entity terminal evidence is unavailable")
-          .asRuntimeException();
-    } catch (RuntimeException unavailable) {
-      throw Status.UNAVAILABLE
-          .withDescription("Entity terminal evidence is unavailable")
-          .withCause(unavailable)
-          .asRuntimeException();
-    }
+    final EntitySelectedSourceIntakeTerminalReadEvidence remote =
+        readOwnerTerminal("Entity", () -> entityClient.read(request));
     final EntitySelectedSourceIntakeTerminalReadEvidence exact;
     try {
       if (remote == null
@@ -236,26 +167,72 @@ public final class AccountSelectedOwnerIntakeSettlementService {
           .withCause(invalid)
           .asRuntimeException();
     }
+    return commitAndReadBack(original, exact, () -> repository.settleEntityCommittedEmpty(exact));
+  }
+
+  private <R> R readOwnerTerminal(String ownerLabel, Supplier<R> read) {
     requireNoAmbientTransaction();
-    var committed =
-        ownerTransaction.execute(ignored -> repository.settleEntityCommittedEmpty(exact));
-    requireSettlement(committed, original, exact);
+    try {
+      return read.get();
+    } catch (StatusRuntimeException failure) {
+      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription(ownerLabel + " terminal evidence is not committed")
+            .asRuntimeException();
+      }
+      Status.Code code = failure.getStatus().getCode();
+      if (code == Status.Code.NOT_FOUND
+          || code == Status.Code.ALREADY_EXISTS
+          || code == Status.Code.DATA_LOSS) {
+        throw Status.fromCode(code).asRuntimeException();
+      }
+      throw Status.UNAVAILABLE
+          .withDescription(ownerLabel + " terminal evidence is unavailable")
+          .asRuntimeException();
+    } catch (RuntimeException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription(ownerLabel + " terminal evidence is unavailable")
+          .withCause(unavailable)
+          .asRuntimeException();
+    }
+  }
+
+  private AccountSelectedOwnerIntakeSettlementReceipt commitAndReadBack(
+      SelectedOwnerIntakeAuthorizationBinding original,
+      Object exactOwnerTerminal,
+      Supplier<AccountSelectedOwnerIntakeSettlementReceipt> commit) {
     requireNoAmbientTransaction();
-    var readback =
+    AccountSelectedOwnerIntakeSettlementReceipt committed =
+        ownerTransaction.execute(ignored -> commit.get());
+    requireSettlement(committed, original, exactOwnerTerminal);
+
+    // This independent lookup is deliberately lookup-only. An unknown first commit remains
+    // unresolved; replaying settleCommittedEmpty here could conceal its outcome.
+    requireNoAmbientTransaction();
+    boolean entityOwner = original.owner() == Owner.ENTITY_MANAGEMENT;
+    AccountSelectedOwnerIntakeSettlementReceipt readback =
         ownerTransaction.execute(
             ignored ->
                 Objects.requireNonNull(
-                        repository.findSettlement(original), "Account lookup returned no result")
+                        repository.findSettlement(original),
+                        entityOwner
+                            ? "Account lookup returned no result"
+                            : "Account settlement readback returned no result")
                     .orElseThrow(
                         () ->
                             Status.FAILED_PRECONDITION
                                 .withDescription(
-                                    "Committed Account Entity settlement is not readable")
+                                    entityOwner
+                                        ? "Committed Account Entity settlement is not readable"
+                                        : "Committed Account settlement is not readable")
                                 .asRuntimeException()));
-    requireSettlement(readback, original, exact);
+    requireSettlement(readback, original, exactOwnerTerminal);
     if (!sameSettlement(committed, readback)) {
       throw Status.FAILED_PRECONDITION
-          .withDescription("Committed Account Entity readback differs")
+          .withDescription(
+              entityOwner
+                  ? "Committed Account Entity readback differs"
+                  : "Committed Account settlement readback differs")
           .asRuntimeException();
     }
     return readback;
