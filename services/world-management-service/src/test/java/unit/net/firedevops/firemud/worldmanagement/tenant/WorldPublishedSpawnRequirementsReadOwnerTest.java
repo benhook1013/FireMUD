@@ -3,26 +3,39 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
 import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.EntityTemplateReference;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.FamilyCount;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.GenerationRequirement;
@@ -30,7 +43,10 @@ import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEviden
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.OwnedAffectedTuple;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Family;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Row;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Template;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.FreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
@@ -235,6 +251,90 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
 
     verify(gameDesign).getComplete(any(GetLaunchDescriptorRequest.class));
     verifyNoInteractions(published, transactions);
+  }
+
+  @Test
+  void readsRequirementsFromTheExactReleaseAndOwnedFrozenSource() throws Exception {
+    var fixture = publishedReadFixture();
+    when(gameDesign.getComplete(eq(fixture.request().getLaunchBindingRequest())))
+        .thenReturn(fixture.launchBinding());
+    when(published.readInOwnedSnapshot(eq(fixture.readCaptureRequest())))
+        .thenReturn(Optional.of(fixture.source()));
+
+    WorldPublishedSpawnRequirementsEvidence evidence;
+    try (var ignored = attach(peer("entity-management-service", fixture.namespace()))) {
+      evidence = owner(fixture.namespace()).read(fixture.request());
+    }
+
+    assertThat(evidence.request().targetNamespace()).isEqualTo(fixture.namespace());
+    assertThat(evidence.launchBinding()).isEqualTo(fixture.launchBinding());
+    assertThat(evidence.captureId()).isEqualTo(fixture.source().frozenTopology().captureId());
+    assertThat(evidence.graphDigest())
+        .isEqualTo(
+            WorldDraftGraphAppliedResult.digest(fixture.source().frozenTopology().graphBytes()));
+    assertThat(evidence.familyCounts())
+        .extracting(FamilyCount::count)
+        .containsExactly(1, 1, 2, 1, 1, 1);
+    assertThat(evidence.spawnRequirements())
+        .singleElement()
+        .satisfies(
+            spawn -> {
+              assertThat(spawn.roomTemplate())
+                  .isEqualTo(
+                      fixture.plan().graph().freshGraphDeclaration().orElseThrow().startLocation());
+              assertThat(spawn.entityTemplate().kind())
+                  .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
+              assertThat(spawn.spawnCount()).isEqualTo(3);
+              assertThat(spawn.respawnDelaySeconds()).isEqualTo(90);
+            });
+    assertThat(evidence.generationRequirements())
+        .singleElement()
+        .satisfies(
+            generation -> {
+              assertThat(generation.name()).isEqualTo("density");
+              assertThat(generation.value()).isEqualTo("sparse");
+            });
+
+    verify(gameDesign).getComplete(eq(fixture.request().getLaunchBindingRequest()));
+    verify(published).readInOwnedSnapshot(eq(fixture.readCaptureRequest()));
+  }
+
+  @ParameterizedTest
+  @EnumSource(ReleaseSourceMismatch.class)
+  void releaseAndFrozenSourceMismatchesFailAfterTheOwnedRead(ReleaseSourceMismatch mismatch)
+      throws Exception {
+    var fixture = mismatchedPublishedReadFixture(mismatch);
+    when(gameDesign.getComplete(eq(fixture.request().getLaunchBindingRequest())))
+        .thenReturn(fixture.launchBinding());
+    when(published.readInOwnedSnapshot(eq(fixture.readCaptureRequest())))
+        .thenReturn(Optional.of(fixture.source()));
+
+    try (var ignored = attach(peer("entity-management-service", fixture.namespace()))) {
+      assertThatThrownBy(() -> owner(fixture.namespace()).read(fixture.request()))
+          .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
+          .satisfies(
+              failure -> {
+                var rejected =
+                    (WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException) failure;
+                assertThat(rejected.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                assertThat(rejected.getMessage())
+                    .isEqualTo("Frozen World source differs from authenticated release evidence")
+                    .doesNotContain("private", "SQL", "receipt");
+                assertThat(rejected.getCause()).isNull();
+              });
+    }
+
+    verify(gameDesign).getComplete(eq(fixture.request().getLaunchBindingRequest()));
+    verify(published).readInOwnedSnapshot(eq(fixture.readCaptureRequest()));
+  }
+
+  private enum ReleaseSourceMismatch {
+    CONTENT_DIGEST,
+    APPLIED_COMMIT,
+    WORLD_PARTICIPANT_SCOPE,
+    WORLD_PARTICIPANT_DIGEST_SCHEMA,
+    SELECTOR_RECEIPT_BINDING_DIGEST,
+    SELECTED_ROOM_COUNT
   }
 
   private enum InvalidCarrierFailure {
@@ -575,9 +675,571 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
                 "unchanged-value"));
   }
 
+  private static PublishedReadFixture publishedReadFixture() throws Exception {
+    var plan =
+        includeControlPlaneOwner(WorldDraftTopologyCommitPlanTest.selectedPlanWithAllFamilies());
+    var capture = captureRequest(plan, 4, plan.binding().commitId().toString(), "e".repeat(64));
+    var applied = appliedSelection(plan, capture);
+    var frozen = frozenTopology(plan, capture, applied, uuid(800));
+    var source =
+        new WorldPublishedStartLocationSource(
+            frozen,
+            applied.appliedResult(),
+            applied.appliedResult().startLocationReceipt().orElseThrow());
+    var launchBinding = launchBinding(capture, applied.selectorEvidence(), 901, 3);
+    return new PublishedReadFixture(
+        plan,
+        capture,
+        source,
+        launchBinding,
+        wireRequest(launchBinding),
+        applied.selectorEvidence());
+  }
+
+  private static PublishedReadFixture mismatchedPublishedReadFixture(ReleaseSourceMismatch mismatch)
+      throws Exception {
+    var baseline = publishedReadFixture();
+    return switch (mismatch) {
+      case CONTENT_DIGEST -> {
+        var request = copyCaptureRequest(baseline.readCaptureRequest(), 4, null, "f".repeat(64));
+        var selector = selectorEvidence(baseline.source().appliedResult(), request);
+        var binding = launchBinding(request, selector, 901, 3);
+        yield new PublishedReadFixture(
+            baseline.plan(), request, baseline.source(), binding, wireRequest(binding), selector);
+      }
+      case APPLIED_COMMIT -> {
+        UUID changedCommit = uuid(801);
+        var plan = rebindPlan(baseline.plan(), changedCommit, false);
+        var request =
+            copyCaptureRequest(baseline.readCaptureRequest(), 4, changedCommit.toString(), null);
+        var applied = appliedSelection(plan, request);
+        var binding = launchBinding(request, applied.selectorEvidence(), 901, 3);
+        yield new PublishedReadFixture(
+            baseline.plan(),
+            request,
+            baseline.source(),
+            binding,
+            wireRequest(binding),
+            applied.selectorEvidence());
+      }
+      case WORLD_PARTICIPANT_SCOPE -> {
+        var binding =
+            launchBinding(baseline.readCaptureRequest(), baseline.releaseSelector(), 902, 3);
+        yield new PublishedReadFixture(
+            baseline.plan(),
+            baseline.readCaptureRequest(),
+            baseline.source(),
+            binding,
+            wireRequest(binding),
+            baseline.releaseSelector());
+      }
+      case WORLD_PARTICIPANT_DIGEST_SCHEMA -> {
+        var request = copyCaptureRequest(baseline.readCaptureRequest(), 3, null, null);
+        var selector = selectorEvidence(baseline.source().appliedResult(), request);
+        var binding =
+            launchBinding(
+                request,
+                selector,
+                901,
+                AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+        yield new PublishedReadFixture(
+            baseline.plan(), request, baseline.source(), binding, wireRequest(binding), selector);
+      }
+      case SELECTOR_RECEIPT_BINDING_DIGEST -> {
+        var plan = rebindPlan(baseline.plan(), null, true);
+        var applied = appliedSelection(plan, baseline.readCaptureRequest());
+        var binding =
+            launchBinding(baseline.readCaptureRequest(), applied.selectorEvidence(), 901, 3);
+        yield new PublishedReadFixture(
+            baseline.plan(),
+            baseline.readCaptureRequest(),
+            baseline.source(),
+            binding,
+            wireRequest(binding),
+            applied.selectorEvidence());
+      }
+      case SELECTED_ROOM_COUNT -> {
+        var source = withDuplicateSelectedRoom(baseline.source());
+        yield new PublishedReadFixture(
+            baseline.plan(),
+            baseline.readCaptureRequest(),
+            source,
+            baseline.launchBinding(),
+            baseline.request(),
+            baseline.releaseSelector());
+      }
+    };
+  }
+
+  private static WorldDraftTopologyCommitPlan includeControlPlaneOwner(
+      WorldDraftTopologyCommitPlan source) {
+    var binding = source.binding();
+    List<RevisionPayload> revisions = new ArrayList<>(binding.revisions());
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            uuid(802),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "complete-release-owner-binding"));
+    List<AffectedUnit> affectedUnits = new ArrayList<>(binding.affectedUnits());
+    affectedUnits.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "RELEASE",
+            "selected-release",
+            "VERSION",
+            Long.toString(binding.target().gameDesignVersionRowId()),
+            "0"));
+    var completeBinding =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            revisions,
+            affectedUnits);
+    return WorldDraftTopologyCommitPlan.create(completeBinding, source.ownerBinding());
+  }
+
+  private static CaptureRequest captureRequest(
+      WorldDraftTopologyCommitPlan plan,
+      int digestSchemaVersion,
+      String appliedCommitId,
+      String contentDigest) {
+    var owner = plan.ownerBinding();
+    return new CaptureRequest(
+        owner.targetNamespace(),
+        owner.canonicalTenantId(),
+        owner.canonicalVersionId(),
+        owner.intakeRequestId(),
+        uuid(803),
+        "published-spawn-read-publication",
+        "a".repeat(64),
+        6,
+        PublicationDigestRequestBinding.full(
+                owner.canonicalTenantId().toString(),
+                Long.toString(owner.gameDesignVersionId()),
+                "published-spawn-read-publication")
+            .derivedWorkflowIdentity(),
+        appliedCommitId,
+        contentDigest,
+        digestSchemaVersion,
+        plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    new OwnedAffectedTuple(
+                        unit.owner().name(),
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch()))
+            .toList());
+  }
+
+  private static CaptureRequest copyCaptureRequest(
+      CaptureRequest source,
+      int digestSchemaVersion,
+      String appliedCommitId,
+      String contentDigest) {
+    return new CaptureRequest(
+        source.targetNamespace(),
+        source.canonicalTenantId(),
+        source.canonicalVersionId(),
+        source.intakeRequestId(),
+        source.publicationFence(),
+        source.publicationRequestId(),
+        source.requestDigest(),
+        source.versionStateEpoch(),
+        source.publishWorkflowId(),
+        appliedCommitId == null ? source.appliedCommitId() : appliedCommitId,
+        contentDigest == null ? source.contentDigest() : contentDigest,
+        digestSchemaVersion,
+        source.suppliedOwnedAffectedTuples());
+  }
+
+  private static AppliedSelection appliedSelection(
+      WorldDraftTopologyCommitPlan plan, CaptureRequest captureRequest) throws Exception {
+    byte[] graphBytes = canonicalGraphBytes(plan);
+    var graph = new WorldCanonicalAuthoredGraphReader().read(plan, graphBytes);
+    var binding = plan.binding();
+    var accountBinding =
+        new DraftAuthorizationFenceBinding(
+                uuid(804),
+                binding.requestId(),
+                binding.commitId(),
+                uuid(805),
+                uuid(806),
+                binding.target().canonicalTenantId(),
+                binding.target().canonicalVersionId(),
+                binding.baseCommitId(),
+                "0",
+                binding.canonicalBytes(),
+                binding.canonicalBytes(),
+                binding.digest(),
+                List.of(
+                    new DraftAuthorizationFenceBinding.SourceEvidence(
+                        DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                        uuid(807).toString(),
+                        null,
+                        "1",
+                        null,
+                        null,
+                        new byte[] {1})))
+            .withRequiredOwners();
+    var operation =
+        new WorldDraftTerminalOperation(
+            accountBinding.operationId(),
+            accountBinding.requestId(),
+            accountBinding.commitId(),
+            accountBinding.fenceId(),
+            accountBinding.tenantId(),
+            accountBinding.versionId(),
+            binding,
+            plan.ownerBinding(),
+            accountBinding.canonicalBytes());
+    var appliedResult =
+        WorldDraftGraphAppliedResult.create(
+            new WorldDraftGraphApplication(operation, plan), graphBytes);
+    var selectorEvidence = selectorEvidence(appliedResult, captureRequest);
+    return new AppliedSelection(graphBytes, graph, appliedResult, selectorEvidence);
+  }
+
+  private static WorldPublishedStartLocationEvidence selectorEvidence(
+      WorldDraftGraphAppliedResult appliedResult, CaptureRequest captureRequest) {
+    var receipt = appliedResult.startLocationReceipt().orElseThrow();
+    return new WorldPublishedStartLocationEvidence(
+        selectorRequest(captureRequest),
+        receipt.canonicalBytes(),
+        appliedResult.application().operation().accountBindingBytes(),
+        appliedResult.canonicalBytes());
+  }
+
+  private static WorldPublishedStartLocationEvidence.Request selectorRequest(
+      CaptureRequest captureRequest) {
+    return new WorldPublishedStartLocationEvidence.Request(
+        captureRequest.targetNamespace(),
+        captureRequest.canonicalTenantId(),
+        captureRequest.canonicalVersionId(),
+        captureRequest.intakeRequestId(),
+        captureRequest.publicationFence(),
+        captureRequest.publicationRequestId(),
+        captureRequest.requestDigest(),
+        captureRequest.versionStateEpoch(),
+        captureRequest.publishWorkflowId(),
+        captureRequest.appliedCommitId(),
+        captureRequest.contentDigest(),
+        captureRequest.digestSchemaVersion(),
+        captureRequest.suppliedOwnedAffectedTuples().stream()
+            .map(
+                tuple ->
+                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                        tuple.owner(),
+                        tuple.aggregateType(),
+                        tuple.aggregateId(),
+                        tuple.scopeType(),
+                        tuple.scopeId(),
+                        tuple.expectedEpoch()))
+            .toList());
+  }
+
+  private static WorldCanonicalFrozenTopology frozenTopology(
+      WorldDraftTopologyCommitPlan plan,
+      CaptureRequest captureRequest,
+      AppliedSelection applied,
+      UUID captureId) {
+    return new WorldCanonicalFrozenTopology(
+        captureId,
+        new WorldCanonicalFrozenTopology.Request(plan, captureRequest),
+        mock(WorldAuthoredVersionIdentityReceipt.class),
+        applied.graph(),
+        applied.graphBytes(),
+        applied.appliedResult().canonicalBytes(),
+        applied.appliedResult().canonicalBytes());
+  }
+
+  private static CompleteLaunchBindingEvidence launchBinding(
+      CaptureRequest captureRequest,
+      WorldPublishedStartLocationEvidence selectorEvidence,
+      int descriptorVersionId,
+      int attestationSchemaVersion) {
+    String namespace = captureRequest.targetNamespace();
+    UUID sourceOperationId = uuid(808);
+    String sourceEvidenceDigest = "sha256:" + "b".repeat(64);
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            namespace,
+            "control-plane-request",
+            captureRequest.canonicalTenantId(),
+            "world",
+            sourceOperationId,
+            sourceEvidenceDigest,
+            77,
+            false,
+            null,
+            false,
+            null,
+            true,
+            (long) descriptorVersionId,
+            false,
+            null);
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "launch-descriptor",
+            descriptorVersionId,
+            false,
+            null,
+            "{}",
+            "generation-config-v1",
+            captureRequest.versionStateEpoch(),
+            8,
+            "published-release-bundle",
+            false,
+            null);
+    String commitId = selectorEvidence.request().appliedCommitId();
+    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
+        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant,
+                        Integer.toString(descriptorVersionId),
+                        false,
+                        null,
+                        commitId,
+                        "WORLD_MANAGEMENT".equals(participant)
+                            ? selectorEvidence.request().contentDigest()
+                            : "c".repeat(64),
+                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                            participant, attestationSchemaVersion),
+                        "GAME_LOGIC".equals(participant),
+                        "GAME_LOGIC".equals(participant) ? "sha256:" + "d".repeat(64) : null))
+            .toList();
+    var release =
+        attestationSchemaVersion == AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION
+            ? AuthoredWorldReleaseAttestationEvidence.create(
+                namespace,
+                descriptor.resultDigest(),
+                captureRequest.canonicalTenantId(),
+                captureRequest.canonicalVersionId(),
+                descriptor.worldSlug(),
+                descriptor.authoredWorldSourceOperationId(),
+                descriptor.authoredWorldSourceEvidenceDigest(),
+                descriptor.launchDescriptorId(),
+                descriptor.publishedReleaseBundleRef(),
+                descriptor.versionStateEpoch(),
+                captureRequest.publishWorkflowId(),
+                commitId,
+                participants,
+                "sha256:" + "e".repeat(64),
+                1,
+                List.of(),
+                List.of(),
+                List.of(),
+                descriptor.generationConfigRevision(),
+                selectorEvidence)
+            : AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+                namespace,
+                descriptor.resultDigest(),
+                captureRequest.canonicalTenantId(),
+                captureRequest.canonicalVersionId(),
+                descriptor.worldSlug(),
+                descriptor.authoredWorldSourceOperationId(),
+                descriptor.authoredWorldSourceEvidenceDigest(),
+                descriptor.launchDescriptorId(),
+                descriptor.publishedReleaseBundleRef(),
+                descriptor.versionStateEpoch(),
+                captureRequest.publishWorkflowId(),
+                commitId,
+                participants,
+                "sha256:" + "e".repeat(64),
+                1,
+                List.of(),
+                List.of(),
+                List.of(),
+                descriptor.generationConfigRevision(),
+                selectorEvidence);
+    return new CompleteLaunchBindingEvidence(descriptor, release);
+  }
+
+  private static ReadWorldPublishedSpawnRequirementsRequest wireRequest(
+      CompleteLaunchBindingEvidence launchBinding) {
+    var descriptor = launchBinding.descriptor();
+    var bindingRequest =
+        GetLaunchDescriptorRequest.newBuilder()
+            .setRequestId(READ_ID.toString())
+            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
+            .setWorldSlug(descriptor.worldSlug())
+            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
+            .setExpectedRequestDigest(descriptor.requestDigest())
+            .setExpectedResultDigest(descriptor.resultDigest())
+            .build();
+    return ReadWorldPublishedSpawnRequirementsRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setTargetNamespace(descriptor.targetNamespace())
+        .setReadRequestId(READ_ID.toString())
+        .setLaunchBindingRequest(bindingRequest)
+        .setExpectedReleaseAttestationDigest(launchBinding.releaseAttestation().evidenceDigest())
+        .build();
+  }
+
+  private static byte[] canonicalGraphBytes(WorldDraftTopologyCommitPlan plan) throws Exception {
+    Map<String, Long> privateKeys = new LinkedHashMap<>();
+    long privateKey = 100;
+    for (Node node : plan.graph().nodes()) {
+      privateKeys.put(
+          WorldDraftTopologyCommitRepository.family(node) + ":" + node.templateId(), privateKey++);
+    }
+
+    List<Map<String, Object>> rows = new ArrayList<>();
+    long mappingId = 1;
+    for (Node node : plan.graph().nodes()) {
+      String family = WorldDraftTopologyCommitRepository.family(node);
+      Map<String, Object> mapping = new LinkedHashMap<>();
+      mapping.put("id", mappingId++);
+      mapping.put("target_namespace", plan.ownerBinding().targetNamespace());
+      mapping.put("canonical_tenant_id", plan.graph().tenantId().toString());
+      mapping.put("canonical_version_id", plan.graph().versionId().toString());
+      mapping.put("family", family);
+      mapping.put("template_id", node.templateId().toString());
+      mapping.put("private_row_key", privateKeys.get(family + ":" + node.templateId()));
+      mapping.put("tenant_id", 17);
+      mapping.put("version_id", 29);
+      mapping.put(
+          "version_identity_operation_id",
+          plan.ownerBinding().versionIdentityOperationId().toString());
+      mapping.put("request_id", plan.binding().requestId().toString());
+      mapping.put("commit_id", plan.binding().commitId().toString());
+      mapping.put("revision_id", node.revisionId().toString());
+      mapping.put("revision_order", node.revisionOrder());
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("mapping", mapping);
+      row.put(
+          "content", WorldDraftTopologyCommitRepository.expectedContent(node, privateKeys, 17, 29));
+      rows.add(row);
+    }
+
+    Map<String, Object> graph = new LinkedHashMap<>();
+    graph.put("schemaVersion", "3");
+    graph.put("canonicalTenantId", plan.graph().tenantId().toString());
+    graph.put("canonicalVersionId", plan.graph().versionId().toString());
+    graph.put(
+        "inboundSourceClosure",
+        plan.graph()
+            .freshGraphDeclaration()
+            .orElseThrow()
+            .inboundSourceClosure()
+            .orElseThrow()
+            .content());
+    graph.put("rows", rows);
+    return new tools.jackson.databind.ObjectMapper().writeValueAsBytes(graph);
+  }
+
+  private static WorldDraftTopologyCommitPlan rebindPlan(
+      WorldDraftTopologyCommitPlan source, UUID commitId, boolean changeGenerationInput) {
+    var binding = source.binding();
+    List<RevisionPayload> revisions = new ArrayList<>();
+    for (RevisionPayload revision : binding.revisions()) {
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        revisions.add(revision);
+        continue;
+      }
+      var mutation = WorldDesignMutationRevision.newBuilder();
+      try {
+        JsonFormat.parser().merge(revision.payload(), mutation);
+      } catch (InvalidProtocolBufferException invalid) {
+        throw new IllegalStateException("Test World revision could not be decoded", invalid);
+      }
+      if (commitId != null) {
+        mutation.setCommitId(commitId.toString());
+      }
+      if (changeGenerationInput
+          && mutation.getAggregateType()
+              == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE) {
+        mutation.setGenerationRule(
+            mutation.getGenerationRule().toBuilder().setValue("changed-generation-input"));
+      }
+      try {
+        revisions.add(
+            new RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                JsonFormat.printer().print(mutation.build())));
+      } catch (InvalidProtocolBufferException invalid) {
+        throw new IllegalStateException("Test World revision could not be encoded", invalid);
+      }
+    }
+    var changedBinding =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            commitId == null ? binding.commitId() : commitId,
+            binding.baseCommitId(),
+            revisions,
+            binding.affectedUnits());
+    return WorldDraftTopologyCommitPlan.create(changedBinding, source.ownerBinding());
+  }
+
+  private static WorldPublishedStartLocationSource withDuplicateSelectedRoom(
+      WorldPublishedStartLocationSource source) {
+    var frozen = source.frozenTopology();
+    UUID selectedRoom = source.selectorReceipt().startLocation().roomTemplateId();
+    var rows = new ArrayList<>(frozen.graph().rows());
+    Row selectedRow =
+        frozen.graph().family(Family.ROOM).stream()
+            .filter(row -> row.template().templateId().equals(selectedRoom))
+            .findFirst()
+            .orElseThrow();
+    rows.add(selectedRow);
+    var duplicateRoomGraph =
+        new WorldCanonicalAuthoredGraph(
+            frozen.graph().tenantId(),
+            frozen.graph().versionId(),
+            frozen.graph().localTenantKey(),
+            frozen.graph().localVersionKey(),
+            rows,
+            frozen.graph().inboundSourceClosure());
+    var duplicateRoomFrozen =
+        new WorldCanonicalFrozenTopology(
+            frozen.captureId(),
+            frozen.request(),
+            frozen.sourceIdentity(),
+            duplicateRoomGraph,
+            frozen.graphBytes(),
+            frozen.storageResultBytes(),
+            frozen.resultBytes());
+    return new WorldPublishedStartLocationSource(
+        duplicateRoomFrozen, source.appliedResult(), source.selectorReceipt());
+  }
+
+  private record AppliedSelection(
+      byte[] graphBytes,
+      WorldCanonicalAuthoredGraph graph,
+      WorldDraftGraphAppliedResult appliedResult,
+      WorldPublishedStartLocationEvidence selectorEvidence) {}
+
+  private record PublishedReadFixture(
+      WorldDraftTopologyCommitPlan plan,
+      CaptureRequest readCaptureRequest,
+      WorldPublishedStartLocationSource source,
+      CompleteLaunchBindingEvidence launchBinding,
+      ReadWorldPublishedSpawnRequirementsRequest request,
+      WorldPublishedStartLocationEvidence releaseSelector) {
+    String namespace() {
+      return launchBinding.descriptor().targetNamespace();
+    }
+  }
+
   private WorldPublishedSpawnRequirementsReadOwner owner() {
     return new WorldPublishedSpawnRequirementsReadOwner(
         NAMESPACE, gameDesign, published, transactions);
+  }
+
+  private WorldPublishedSpawnRequirementsReadOwner owner(String namespace) {
+    return new WorldPublishedSpawnRequirementsReadOwner(
+        namespace, gameDesign, published, transactions);
   }
 
   private static ReadWorldPublishedSpawnRequirementsRequest wireRequest(String namespace) {

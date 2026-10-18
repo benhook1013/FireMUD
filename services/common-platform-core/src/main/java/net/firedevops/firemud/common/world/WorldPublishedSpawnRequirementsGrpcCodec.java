@@ -5,12 +5,10 @@ import com.google.protobuf.Message;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
-import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedSpawnRequirementsRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedSpawnRequirementsResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef;
@@ -226,70 +224,12 @@ public final class WorldPublishedSpawnRequirementsGrpcCodec {
       GetLaunchDescriptorRequest request, CompleteLaunchBindingEvidence evidence) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(evidence, "evidence");
-    AuthoredWorldLaunchDescriptorEvidence descriptor = evidence.descriptor();
-    var bindingBuilder =
-        net.firedevops.firemud.gamedesign.v1.AuthoredWorldLaunchDescriptorEvidence.newBuilder()
-            .setSchemaVersion(descriptor.schemaVersion())
-            .setTargetNamespace(descriptor.targetNamespace())
-            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
-            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
-            .setWorldSlug(descriptor.worldSlug())
-            .setAuthoredWorldSourceOperationId(
-                descriptor.authoredWorldSourceOperationId().toString())
-            .setAuthoredWorldSourceEvidenceDigest(descriptor.authoredWorldSourceEvidenceDigest())
-            .setGameTemplateId(descriptor.gameTemplateId())
-            .setRequestDigest(descriptor.requestDigest())
-            .setLaunchDescriptorId(descriptor.launchDescriptorId())
-            .setVersionId(descriptor.versionId())
-            .setRuntimeFlagsJson(descriptor.runtimeFlagsJson())
-            .setGenerationConfigRevision(descriptor.generationConfigRevision())
-            .setVersionStateEpoch(descriptor.versionStateEpoch())
-            .setReleaseBundleId(descriptor.releaseBundleId())
-            .setPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef())
-            .setResultDigest(descriptor.resultDigest());
-    if (descriptor.requestedScriptPatchVersionPresent()) {
-      bindingBuilder.setRequestedScriptPatchVersion(descriptor.requestedScriptPatchVersion());
-    }
-    if (descriptor.sourceVersionIdPresent()) {
-      bindingBuilder.setSourceVersionId(descriptor.sourceVersionId());
-    }
-    if (descriptor.targetVersionIdPresent()) {
-      bindingBuilder.setTargetVersionId(descriptor.targetVersionId());
-    }
-    if (descriptor.requestedRuntimeFlagsJsonPresent()) {
-      bindingBuilder.setRequestedRuntimeFlagsJson(descriptor.requestedRuntimeFlagsJson());
-    }
-    if (descriptor.scriptPatchVersionPresent()) {
-      bindingBuilder.setScriptPatchVersion(descriptor.scriptPatchVersion());
-    }
-    if (descriptor.remapSetIdPresent()) {
-      bindingBuilder.setRemapSetId(descriptor.remapSetId());
-    }
-
-    var descriptorBuilder =
-        LaunchDescriptor.newBuilder()
-            .setLaunchDescriptorId(descriptor.launchDescriptorId())
-            .setCanonicalTenantId(descriptor.canonicalTenantId().toString())
-            .setGameTemplateId(descriptor.gameTemplateId())
-            .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
-            .setVersionId(descriptor.versionId())
-            .setRuntimeFlagsJson(descriptor.runtimeFlagsJson())
-            .setGenerationConfigRevision(descriptor.generationConfigRevision())
-            .setVersionStateEpoch(descriptor.versionStateEpoch())
-            .setReleaseBundleId(descriptor.releaseBundleId())
-            .setPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef())
-            .setAuthoredWorldBinding(bindingBuilder.build());
-    if (descriptor.scriptPatchVersionPresent()) {
-      descriptorBuilder.setScriptPatchVersion(descriptor.scriptPatchVersion());
-    }
-    if (descriptor.remapSetIdPresent()) {
-      descriptorBuilder.setRemapSetId(descriptor.remapSetId());
-    }
-
     GetCompleteLaunchBindingResponse response =
         GetCompleteLaunchBindingResponse.newBuilder()
             .setRequestId(request.getRequestId())
-            .setLaunchDescriptor(descriptorBuilder)
+            .setLaunchDescriptor(
+                AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(
+                    evidence.descriptor()))
             .setReleaseAttestation(
                 AuthoredWorldLaunchDescriptorGrpcCodec.toReleaseAttestation(
                     evidence.releaseAttestation()))
