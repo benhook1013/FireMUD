@@ -44,3 +44,20 @@ val worldClassesProof by configurations.creating {
     extendsFrom(configurations.implementation.get())
     outgoing.artifact(worldClassesProofJar)
 }
+
+// Only the selected-publication fixture classes cross the proof boundary; service resources stay local.
+val worldSelectedPublicationProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("selected-publication-proof")
+    dependsOn(tasks.named("integrationTestClasses"))
+    from(sourceSets["integrationTest"].output.classesDirs) {
+        include("net/firedevops/firemud/worldmanagement/tenant/WorldSelectedFullPublicationEvidenceFixture.class")
+        include("net/firedevops/firemud/worldmanagement/tenant/WorldSelectedFullPublicationEvidenceFixture\$*.class")
+    }
+}
+
+val worldSelectedPublicationProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(worldSelectedPublicationProofJar)
+}

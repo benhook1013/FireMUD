@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+import "game-design/v1/start_session_template_association_service.proto";
+import "game-design/v1/game_design_service.proto";
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered read of the minimal authored initial actor core. The
+// server authenticates Game Session or Entity before decoding and independently
+// rechecks the original Account operation. This read is evidence, not admission.
+service GameDesignAuthoredInitialActorCoreReadService {
+  rpc ReadAuthoredInitialActorCore(ReadAuthoredInitialActorCoreRequest)
+      returns (ReadAuthoredInitialActorCoreResponse);
+}
+
+message ReadAuthoredInitialActorCoreRequest {
+  // Exact Game Session-pinned association request in ExactReplay mode.
+  ReadStartSessionTemplateAssociationRequest association_request = 1;
+}
+
+message ReadAuthoredInitialActorCoreProjection {
+  // Closed RFC 8785 public projection; private proof bytes are never transported.
+  bytes canonical_projection_bytes = 1;
+  string projection_digest = 2;
+}
+
+message ReadAuthoredInitialActorCoreResponse {
+  int32 schema_version = 1;
+  ReadStartSessionTemplateAssociationRequest request = 2;
+  ReadStartSessionTemplateAssociationResponse association_read = 3;
+  gamedesign.v1.LaunchDescriptor launch_descriptor = 4;
+  repeated ReadAuthoredInitialActorCoreProjection projections = 5;
+  // Canonical closed result envelope and its digest bind the exact echo and
+  // ordered public projection list; they do not authenticate the producer.
+  bytes canonical_result_bytes = 6;
+  string result_digest = 7;
+}

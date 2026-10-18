@@ -43,6 +43,7 @@ import net.firedevops.firemud.gamedesign.publication.GameplayRuleSnapshot;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
+import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -1052,6 +1053,7 @@ class GameDesignSourcePostgresIntegrationTest {
         () -> {
           new CommandSourceRepository(fixture.dsl()).freeze(operation);
           new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+          new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
           var attempts = new PublishAttemptRepository(fixture.dsl());
           var attempt =
               attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
@@ -1071,6 +1073,66 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThatThrownBy(() -> fixture.sources().readCapture(operation))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
+  }
+
+  @Test
+  void terminalV2RetainsMissingTemplateCaptureButPendingV2RequiresIt() {
+    Fixture fixture = fixture();
+    var authored =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            null,
+            "main",
+            true);
+    synchronize(fixture, authored, apply(fixture, authored));
+    var operation = retainSelectedOperation(fixture);
+
+    fixture.tx(
+        () -> {
+          new CommandSourceRepository(fixture.dsl()).freeze(operation);
+          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+          new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
+              .freeze(operation);
+          new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation);
+          return null;
+        });
+
+    assertThatThrownBy(() -> fixture.sources().readCapture(operation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
+
+    fixture.tx(
+        () -> {
+          var attempts = new PublishAttemptRepository(fixture.dsl());
+          var attempt =
+              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          attempt.setFailureCode("ISOLATED_TERMINAL_CAPTURE_WITHOUT_TEMPLATE");
+          attempts.save(attempt);
+          new GameDesignPublicationOperationRepository(fixture.dsl())
+              .seal(
+                  operation.tenantKey(),
+                  operation.workflowId(),
+                  operation.versionId(),
+                  operation.selectionDigest(),
+                  false);
+          return null;
+        });
+
+    var retained = fixture.sources().readCapture(operation).orElseThrow();
+    assertThat(retained.command()).isNotNull();
+    assertThat(retained.policy()).isNotNull();
+    assertThat(retained.asset()).isPresent();
+    assertThat(retained.gameplay()).isPresent();
+    assertThat(retained.templateConfig()).isEmpty();
   }
 
   @Test
@@ -1112,6 +1174,7 @@ class GameDesignSourcePostgresIntegrationTest {
           new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
           new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
               .freeze(operation);
+          new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
           var attempts = new PublishAttemptRepository(fixture.dsl());
           var attempt =
               attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
@@ -1142,6 +1205,8 @@ class GameDesignSourcePostgresIntegrationTest {
     var commandBefore = retainedCapture(fixture, "game_design_command_source_capture");
     var policyBefore = retainedCapture(fixture, "game_design_realm_policy_capture");
     var assetBefore = retainedCapture(fixture, "game_design_asset_source_capture");
+    var templateConfigBefore =
+        retainedCapture(fixture, "game_design_template_config_source_capture");
 
     var migrationDataSource =
         new DriverManagerDataSource(
@@ -1176,6 +1241,8 @@ class GameDesignSourcePostgresIntegrationTest {
     assertCaptureRetained(fixture, "game_design_command_source_capture", commandBefore);
     assertCaptureRetained(fixture, "game_design_realm_policy_capture", policyBefore);
     assertCaptureRetained(fixture, "game_design_asset_source_capture", assetBefore);
+    assertCaptureRetained(
+        fixture, "game_design_template_config_source_capture", templateConfigBefore);
 
     var historical = fixture.sources().readCapture(operation).orElseThrow();
     assertThat(historical.gameplay()).isEmpty();
@@ -1192,6 +1259,8 @@ class GameDesignSourcePostgresIntegrationTest {
     assertCaptureRetained(fixture, "game_design_command_source_capture", commandBefore);
     assertCaptureRetained(fixture, "game_design_realm_policy_capture", policyBefore);
     assertCaptureRetained(fixture, "game_design_asset_source_capture", assetBefore);
+    assertCaptureRetained(
+        fixture, "game_design_template_config_source_capture", templateConfigBefore);
   }
 
   private static void assertInvalidGameplayCaptureInsert(

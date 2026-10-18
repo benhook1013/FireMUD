@@ -1,9 +1,12 @@
 package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.net.URI;
+import java.sql.SQLException;
 import java.time.Duration;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
@@ -38,6 +41,23 @@ class CommunicationWebSocketCrossServiceTest {
   private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
+
+  private enum BaselineTruncateGuard {
+    CANONICAL_LAUNCH(
+        "game_session_canonical_instance_launch",
+        "game_session_canonical_instance_launch_no_truncate"),
+    AUTHORED_ACTOR_CORE(
+        "gs_original_start_session_authored_actor_core_retention",
+        "gs_original_start_session_actor_core_retention_no_truncate");
+
+    private final String tableName;
+    private final String triggerName;
+
+    BaselineTruncateGuard(String tableName, String triggerName) {
+      this.tableName = tableName;
+      this.triggerName = triggerName;
+    }
+  }
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -265,28 +285,35 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void freshGameplayBaselineRestoresAlwaysEnabledLaunchTruncateGuard() throws Exception {
+  void freshGameplayBaselineRestoresAlwaysEnabledLaunchAndActorCoreTruncateGuards()
+      throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
     JdbcTemplate jdbc = STACK.jdbc();
-    String originalState = launchGuardState(jdbc);
-    assertThat(originalState).isIn("O", "A");
+    Map<BaselineTruncateGuard, String> originalStates = new EnumMap<>(BaselineTruncateGuard.class);
+    for (BaselineTruncateGuard guard : BaselineTruncateGuard.values()) {
+      String originalState = truncateGuardState(jdbc, guard);
+      assertThat(originalState).isIn("O", "A");
+      originalStates.put(guard, originalState);
+    }
 
     try {
-      jdbc.execute(
-          "ALTER TABLE game_session_canonical_instance_launch ENABLE ALWAYS TRIGGER "
-              + "game_session_canonical_instance_launch_no_truncate");
-      assertThat(launchGuardState(jdbc)).isEqualTo("A");
+      for (BaselineTruncateGuard guard : BaselineTruncateGuard.values()) {
+        setTruncateGuardState(jdbc, guard, "A");
+        assertThat(truncateGuardState(jdbc, guard)).isEqualTo("A");
+      }
 
       prepareGameInstance();
 
-      assertThat(launchGuardState(jdbc)).isEqualTo("A");
+      for (BaselineTruncateGuard guard : BaselineTruncateGuard.values()) {
+        assertThat(truncateGuardState(jdbc, guard)).isEqualTo("A");
+      }
+      assertOrdinaryTruncateIsRejected(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE);
     } finally {
-      String enableMode = "A".equals(originalState) ? "ENABLE ALWAYS" : "ENABLE";
-      jdbc.execute(
-          "ALTER TABLE game_session_canonical_instance_launch "
-              + enableMode
-              + " TRIGGER game_session_canonical_instance_launch_no_truncate");
+      originalStates.forEach((guard, state) -> setTruncateGuardState(jdbc, guard, state));
+    }
+    for (BaselineTruncateGuard guard : BaselineTruncateGuard.values()) {
+      assertThat(truncateGuardState(jdbc, guard)).isEqualTo(originalStates.get(guard));
     }
   }
 
@@ -642,12 +669,52 @@ class CommunicationWebSocketCrossServiceTest {
         Long.parseLong(ChatTestFixtures.PLAYER_NYX));
   }
 
-  private static String launchGuardState(JdbcTemplate jdbc) {
-    return jdbc.queryForObject(
-        "SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = "
-            + "'game_session_canonical_instance_launch'::regclass AND tgname = "
-            + "'game_session_canonical_instance_launch_no_truncate' AND NOT tgisinternal",
-        String.class);
+  private static String truncateGuardState(JdbcTemplate jdbc, BaselineTruncateGuard guard) {
+    List<String> states =
+        jdbc.query(
+            """
+            SELECT tgenabled::text
+            FROM pg_trigger
+            WHERE tgrelid = CAST(? AS regclass)
+              AND tgname = CAST(? AS name)
+              AND NOT tgisinternal
+            """,
+            (row, rowNumber) -> row.getString(1),
+            guard.tableName,
+            guard.triggerName);
+    assertThat(states).hasSize(1);
+    return states.getFirst();
+  }
+
+  private static void setTruncateGuardState(
+      JdbcTemplate jdbc, BaselineTruncateGuard guard, String state) {
+    String enableMode =
+        switch (state) {
+          case "O" -> "ENABLE";
+          case "A" -> "ENABLE ALWAYS";
+          default -> throw new IllegalArgumentException("Unsupported enabled trigger state");
+        };
+    jdbc.execute(
+        "ALTER TABLE " + guard.tableName + " " + enableMode + " TRIGGER " + guard.triggerName);
+  }
+
+  private static void assertOrdinaryTruncateIsRejected(
+      JdbcTemplate jdbc, BaselineTruncateGuard guard) {
+    Throwable failure = catchThrowable(() -> jdbc.execute("TRUNCATE TABLE " + guard.tableName));
+    assertThat(failure).isNotNull();
+    SQLException sqlException = mostSpecificSqlException(failure);
+    assertThat((Throwable) sqlException).isNotNull();
+    assertThat(sqlException.getSQLState()).isEqualTo("23514");
+  }
+
+  private static SQLException mostSpecificSqlException(Throwable failure) {
+    SQLException result = null;
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) {
+        result = sqlException;
+      }
+    }
+    return result;
   }
 
   private void seedLiveTargetSession() {
