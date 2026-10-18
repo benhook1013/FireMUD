@@ -119,7 +119,14 @@ public final class AccountSelectedOwnerIntakeSettlementService {
     try {
       remote = automationClient.read(request);
     } catch (StatusRuntimeException failure) {
-      throw failure;
+      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Automation terminal evidence is not committed")
+            .asRuntimeException();
+      }
+      throw Status.UNAVAILABLE
+          .withDescription("Automation terminal evidence is unavailable")
+          .asRuntimeException();
     } catch (RuntimeException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("Automation terminal evidence is unavailable")
@@ -166,7 +173,14 @@ public final class AccountSelectedOwnerIntakeSettlementService {
     try {
       remote = entityClient.read(request);
     } catch (StatusRuntimeException failure) {
-      throw failure;
+      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Entity terminal evidence is not committed")
+            .asRuntimeException();
+      }
+      throw Status.UNAVAILABLE
+          .withDescription("Entity terminal evidence is unavailable")
+          .asRuntimeException();
     } catch (RuntimeException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("Entity terminal evidence is unavailable")
