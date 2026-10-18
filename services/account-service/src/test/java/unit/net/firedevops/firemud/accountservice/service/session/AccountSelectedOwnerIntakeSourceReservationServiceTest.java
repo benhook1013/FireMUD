@@ -284,6 +284,74 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
     verify(repository).recoverSourceRead(scope);
   }
 
+  @Test
+  void expiredPreliminaryRecoveryBoundsWorkAndUsesOneOwnerTransactionPerCandidate() {
+    var selected = selected();
+    var first =
+        new SelectedOwnerIntakeSourceReadScope(
+            DraftCommitBinding.Owner.ENTITY_MANAGEMENT,
+            "test",
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+            selected.requestId(),
+            UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+            selected);
+    var second =
+        new SelectedOwnerIntakeSourceReadScope(
+            DraftCommitBinding.Owner.AUTOMATION_SCRIPTING,
+            "test",
+            UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+            selected.requestId(),
+            UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+            selected);
+    when(transactions.getTransaction(any(TransactionDefinition.class)))
+        .thenReturn(
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus());
+    when(repository.findExpiredPreliminarySourceReadScopes(128, "test"))
+        .thenReturn(List.of(first, second));
+    when(repository.abortExpiredPreliminarySourceRead(first, "test")).thenReturn(true);
+    when(repository.abortExpiredPreliminarySourceRead(second, "test")).thenReturn(false);
+
+    assertThat(service.recoverExpiredPreliminarySourceReads(129)).isEqualTo(1);
+
+    var definitions = org.mockito.ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactions, org.mockito.Mockito.times(3)).getTransaction(definitions.capture());
+    assertThat(definitions.getAllValues())
+        .allSatisfy(
+            definition -> {
+              assertThat(definition.getPropagationBehavior())
+                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+              assertThat(definition.getIsolationLevel())
+                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+              assertThat(definition.isReadOnly()).isFalse();
+            });
+    verify(repository).findExpiredPreliminarySourceReadScopes(128, "test");
+    verify(repository).abortExpiredPreliminarySourceRead(first, "test");
+    verify(repository).abortExpiredPreliminarySourceRead(second, "test");
+    verifyNoInteractions(actors, fences);
+  }
+
+  @Test
+  void expiredPreliminaryRecoveryRejectsNonpositivePagesBeforeOpeningTransactions() {
+    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(-1))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(actors, fences, repository, transactions);
+  }
+
+  @Test
+  void expiredPreliminaryRecoveryRejectsAmbientTransactionsBeforeOwnerAccess() {
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(1))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("independent transaction");
+    verifyNoInteractions(actors, fences, repository, transactions);
+  }
+
   private static AccountControlUiAuthority.Snapshot snapshot(
       List<DraftAuthorizationFenceBinding.SourceEvidence> sources) {
     var snapshot = mock(AccountControlUiAuthority.Snapshot.class);

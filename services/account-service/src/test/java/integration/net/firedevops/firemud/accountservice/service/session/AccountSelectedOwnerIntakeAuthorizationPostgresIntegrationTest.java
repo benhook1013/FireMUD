@@ -8,6 +8,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -306,6 +307,186 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(sourceChange))).isFalse();
       assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(sourceChange))).isFalse();
       assertThat(scopes).hasSize(2);
+    }
+  }
+
+  @Test
+  void expiredRecoveryUsesDatabaseCutoffAndPreservesFinalizedOwnerUntilExactSettlement()
+      throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            null,
+            Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-290)))) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var preliminary =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.AUTOMATION_SCRIPTING,
+                      selected,
+                      issued.environment()));
+      var finalizingScope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
+      var alreadyFinalized =
+          finalizeEntityBinding(issued, reservations, repository, selected, "recovery-committed");
+      UUID issuanceOperationId =
+          f.dsl
+              .fetchSingle(
+                  "SELECT issuance_operation_id FROM account_selected_owner_intake_source_read_reservations"
+                      + " WHERE operation_id = ?",
+                  preliminary.operationId())
+              .get("issuance_operation_id", UUID.class);
+
+      assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isZero();
+      assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
+          .isEqualTo(State.RESERVED);
+      assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isTrue();
+      var finalizationContent = content(finalizingScope, "recovery-race-finalized");
+      var authorizationInserted = new CountDownLatch(1);
+      var allowFinalizationCommit = new CountDownLatch(1);
+      var recoveryStarted = new CountDownLatch(1);
+      var finalizationBackendPid = new AtomicInteger();
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      try {
+        var finalizing =
+            executor.submit(
+                () ->
+                    asGameDesign(
+                        () ->
+                            issued
+                                .actors()
+                                .withCurrent(
+                                    issued.compact(),
+                                    f.tenant,
+                                    issued.environment(),
+                                    current -> {
+                                      var binding =
+                                          repository.finalizeSourceRead(
+                                              finalizingScope,
+                                              finalizationContent,
+                                              current,
+                                              () ->
+                                                  f.fences.requireSelectedOwnerIntakeAdmission(
+                                                      current.source().sources(), selected));
+                                      finalizationBackendPid.set(
+                                          f.dsl
+                                              .fetchSingle("SELECT pg_backend_pid()")
+                                              .get(0, Integer.class));
+                                      authorizationInserted.countDown();
+                                      awaitFinalizationCommit(allowFinalizationCommit);
+                                      return binding;
+                                    })));
+        assertThat(authorizationInserted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
+
+        awaitIssuerExpiry(f.dsl, issuanceOperationId);
+        var recovering =
+            executor.submit(
+                () -> {
+                  recoveryStarted.countDown();
+                  return reservations.recoverExpiredPreliminarySourceReads(128);
+                });
+        assertThat(recoveryStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        awaitRecoverySourceLockWait(f.dsl, finalizationBackendPid.get());
+        assertThat(recovering.isDone()).isFalse();
+
+        allowFinalizationCommit.countDown();
+        Throwable finalizationFailure = null;
+        try {
+          finalizing.get(10, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException expected) {
+          finalizationFailure = expected;
+        }
+        assertThat(finalizationFailure).isNotNull();
+        Throwable rootCause = finalizationFailure;
+        while (rootCause.getCause() != null) rootCause = rootCause.getCause();
+        assertThat(rootCause.getMessage())
+            .contains("Finalized authorization requires exact current committed creator evidence");
+        assertThat(recovering.get(10, TimeUnit.SECONDS)).isEqualTo(2);
+      } finally {
+        allowFinalizationCommit.countDown();
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isZero();
+      assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(f.tx(() -> repository.recoverSourceRead(finalizingScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isFalse();
+      assertThat(sourceReadPending(f.dsl, finalizingScope.operationId())).isFalse();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT scope_bytes FROM account_selected_owner_intake_source_read_reservations"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get("scope_bytes", byte[].class))
+          .isEqualTo(preliminary.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      finalizingScope.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+
+      var committedScope = alreadyFinalized.content().scope();
+      assertThat(f.tx(() -> repository.recoverSourceRead(committedScope).state()))
+          .isEqualTo(State.FINALIZED);
+      assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT binding_bytes FROM account_selected_owner_intake_authorizations"
+                          + " WHERE operation_id = ?",
+                      alreadyFinalized.operationId())
+                  .get("binding_bytes", byte[].class))
+          .isEqualTo(alreadyFinalized.canonicalBytes());
+      var terminal = entityTerminalEvidence(alreadyFinalized, 9851, 9852);
+      var settlement = f.tx(() -> repository.settleEntityCommittedEmpty(terminal));
+      assertThat(
+              f.tx(
+                  () -> repository.findSettlement(alreadyFinalized).orElseThrow().canonicalBytes()))
+          .isEqualTo(settlement.canonicalBytes());
+      assertThat(f.tx(() -> repository.settleEntityCommittedEmpty(terminal).canonicalBytes()))
+          .isEqualTo(settlement.canonicalBytes());
+      assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isFalse();
     }
   }
 
@@ -2215,6 +2396,62 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("Interrupted concurrent settlement boundary", interrupted);
+    }
+  }
+
+  private static boolean sourceReadPending(DSLContext dsl, UUID operationId) {
+    return dsl.fetchSingle(
+            "SELECT account_selected_owner_intake_source_read_is_pending(?)", operationId)
+        .get(0, Boolean.class);
+  }
+
+  private static boolean issuerExpiryReached(DSLContext dsl, UUID issuanceOperationId) {
+    return dsl.fetchSingle(
+            "SELECT extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second"
+                + " FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+            issuanceOperationId)
+        .get(0, Boolean.class);
+  }
+
+  private static void awaitIssuerExpiry(DSLContext dsl, UUID issuanceOperationId)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    do {
+      if (issuerExpiryReached(dsl, issuanceOperationId)) return;
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Original Account issuance did not reach its immutable DB expiry");
+  }
+
+  private static void awaitRecoverySourceLockWait(DSLContext dsl, int finalizationBackendPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    do {
+      if (Boolean.TRUE.equals(
+          dsl.fetchSingle(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                      + " WHERE pid <> pg_backend_pid() AND datname = current_database()"
+                      + " AND wait_event_type = 'Lock'"
+                      + " AND ? = ANY(pg_blocking_pids(pid))"
+                      + " AND query LIKE '%account_draft_authorization_source_locks%'"
+                      + " AND query LIKE '%FOR UPDATE%')",
+                  finalizationBackendPid)
+              .get(0, Boolean.class))) {
+        return;
+      }
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Expired recovery did not wait on finalization-held source locks");
+  }
+
+  private static void awaitFinalizationCommit(CountDownLatch latch) {
+    try {
+      if (!latch.await(30, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Finalization commit was not released");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted finalization lock race", interrupted);
     }
   }
 

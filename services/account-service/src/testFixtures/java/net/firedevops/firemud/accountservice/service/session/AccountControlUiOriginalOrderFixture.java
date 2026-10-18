@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
@@ -109,11 +110,42 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       Clock actorClock,
       String migrationTarget)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        Clock.systemUTC());
+  }
+
+  /**
+   * Test-only owner fixture with a separately injectable issuance clock; actor validation remains
+   * on its independently supplied clock.
+   */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock)
+      throws Exception {
     this.temporary = temporary;
+    Objects.requireNonNull(actorClock, "actorClock");
+    Objects.requireNonNull(serviceClock, "serviceClock");
     f =
         new AccountControlUiOwnerSourcesFixture(
             jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
-    var lifecycle = new AccountControlUiSignerFixture(f, temporary);
+    var lifecycle = new AccountControlUiSignerFixture(f, temporary, serviceClock);
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
     assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
@@ -195,11 +227,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             f.fences,
             lifecycle.signer,
             new AccountControlUiResponseCryptography(
-                new AccountControlUiKeyring(temporary.resolve("custody")), Clock.systemUTC()),
+                new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
             coordination,
             actors,
             f.manager,
-            Clock.systemUTC(),
+            serviceClock,
             300_000L,
             AccountControlUiOwnerSourcesFixture.CALLER);
   }
