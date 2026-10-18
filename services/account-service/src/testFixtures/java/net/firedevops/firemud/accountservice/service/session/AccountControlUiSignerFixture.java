@@ -24,6 +24,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -113,10 +114,17 @@ final class AccountControlUiSignerFixture {
   final AccountJwtSignerBootstrapCoordinator coordinator;
   final AccountJwtSignerMaterializationService materializer;
   final AccountControlUiSignerOwner signer;
+  private final Clock clock;
 
   AccountControlUiSignerFixture(AccountControlUiOwnerSourcesFixture fixture, Path root)
       throws Exception {
+    this(fixture, root, Clock.systemUTC());
+  }
+
+  AccountControlUiSignerFixture(
+      AccountControlUiOwnerSourcesFixture fixture, Path root, Clock clock) throws Exception {
     f = fixture;
+    this.clock = Objects.requireNonNull(clock, "clock");
     privateRoot = Files.createDirectories(root.resolve("private"));
     publicRoot = Files.createDirectories(root.resolve("public"));
     desired = new AccountJwtSignerDesiredStateRepository(f.dsl);
@@ -344,7 +352,7 @@ final class AccountControlUiSignerFixture {
           new AccountJwtReadinessProbeService(
               readiness,
               f.transactions,
-              Clock.systemUTC(),
+              clock,
               privateRoot,
               Path.of("pending.key"),
               publicRoot,
@@ -480,8 +488,8 @@ final class AccountControlUiSignerFixture {
 
   private record PublicJwk(String json, String jsonWithoutKeyOps, String fingerprint) {}
 
-  private static Instant now() {
-    return Instant.ofEpochSecond(Instant.now().getEpochSecond());
+  private Instant now() {
+    return Instant.ofEpochSecond(clock.instant().getEpochSecond());
   }
 
   private static TrustFence trust() {

@@ -394,7 +394,9 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                                                   f.fences.requireSelectedOwnerIntakeAdmission(
                                                       current.source().sources(), selected));
                                       finalizationBackendPid.set(
-                                          f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                                          f.dsl
+                                              .fetchSingle("SELECT pg_backend_pid()")
+                                              .get(0, Integer.class));
                                       authorizationInserted.countDown();
                                       awaitFinalizationCommit(allowFinalizationCommit);
                                       return binding;
@@ -480,15 +482,9 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       var settlement = f.tx(() -> repository.settleEntityCommittedEmpty(terminal));
       assertThat(
               f.tx(
-                  () ->
-                      repository
-                          .findSettlement(alreadyFinalized)
-                          .orElseThrow()
-                          .canonicalBytes()))
+                  () -> repository.findSettlement(alreadyFinalized).orElseThrow().canonicalBytes()))
           .isEqualTo(settlement.canonicalBytes());
-      assertThat(
-              f.tx(
-                  () -> repository.settleEntityCommittedEmpty(terminal).canonicalBytes()))
+      assertThat(f.tx(() -> repository.settleEntityCommittedEmpty(terminal).canonicalBytes()))
           .isEqualTo(settlement.canonicalBytes());
       assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isFalse();
     }
@@ -2404,15 +2400,13 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
   }
 
   private static boolean sourceReadPending(DSLContext dsl, UUID operationId) {
-    return dsl
-        .fetchSingle(
+    return dsl.fetchSingle(
             "SELECT account_selected_owner_intake_source_read_is_pending(?)", operationId)
         .get(0, Boolean.class);
   }
 
   private static boolean issuerExpiryReached(DSLContext dsl, UUID issuanceOperationId) {
-    return dsl
-        .fetchSingle(
+    return dsl.fetchSingle(
             "SELECT extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second"
                 + " FROM account_control_ui_issuance_operations WHERE operation_id = ?",
             issuanceOperationId)

@@ -138,17 +138,16 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
   }
 
   /**
-   * Performs one bounded Account-internal reconciliation page before any receiver is registered.
-   * It is not a transport or scheduled job: the caller owns invocation and readiness policy.
-   * Each candidate is rechecked and, if still eligible, durably aborted in its own independent
+   * Performs one bounded Account-internal reconciliation page before any receiver is registered. It
+   * is not a transport or scheduled job: the caller owns invocation and readiness policy. Each
+   * candidate is rechecked and, if still eligible, durably aborted in its own independent
    * READ_COMMITTED owner transaction. Finalized and concurrently changed candidates are skipped.
    *
    * @return abort rows committed by this page; this is not a global completion signal
    */
   public int recoverExpiredPreliminarySourceReads(int maximumCandidates) {
     if (maximumCandidates <= 0) {
-      throw new IllegalArgumentException(
-          "Expired preliminary recovery batch must be positive");
+      throw new IllegalArgumentException("Expired preliminary recovery batch must be positive");
     }
     requireNoAmbientTransaction();
     int boundedCandidates =
@@ -167,9 +166,9 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
     int aborted = 0;
     for (SelectedOwnerIntakeSourceReadScope scope : candidates) {
       if (Objects.requireNonNull(
-              ownerTransaction.execute(
-                  ignored -> repository.abortExpiredPreliminarySourceRead(scope, namespace)),
-              "Expired source-read recovery returned no result")) {
+          ownerTransaction.execute(
+              ignored -> repository.abortExpiredPreliminarySourceRead(scope, namespace)),
+          "Expired source-read recovery returned no result")) {
         aborted++;
       }
     }

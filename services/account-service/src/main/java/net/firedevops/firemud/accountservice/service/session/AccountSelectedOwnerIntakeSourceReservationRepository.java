@@ -212,8 +212,8 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
   }
 
   /**
-   * Finds a bounded page of exact, expired, unfinalized reservations for one Account namespace.
-   * The scope and complete retained source vector are validated before a candidate is returned.
+   * Finds a bounded page of exact, expired, unfinalized reservations for one Account namespace. The
+   * scope and complete retained source vector are validated before a candidate is returned.
    */
   List<SelectedOwnerIntakeSourceReadScope> findExpiredPreliminarySourceReadScopes(
       int limit, String namespace) {
@@ -253,8 +253,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     List<SelectedOwnerIntakeSourceReadScope> scopes = new ArrayList<>(rows.size());
     for (Record row : rows) {
       var scope =
-          SelectedOwnerIntakeSourceReadScope.fromStored(
-              row.get("scope_bytes", byte[].class));
+          SelectedOwnerIntakeSourceReadScope.fromStored(row.get("scope_bytes", byte[].class));
       if (!namespace.equals(scope.targetNamespace())) {
         throw new IllegalArgumentException("Expired reservation belongs to another namespace");
       }

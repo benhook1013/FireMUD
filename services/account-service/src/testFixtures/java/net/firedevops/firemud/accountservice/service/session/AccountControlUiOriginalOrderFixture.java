@@ -145,7 +145,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     f =
         new AccountControlUiOwnerSourcesFixture(
             jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
-    var lifecycle = new AccountControlUiSignerFixture(f, temporary);
+    var lifecycle = new AccountControlUiSignerFixture(f, temporary, serviceClock);
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
     assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
