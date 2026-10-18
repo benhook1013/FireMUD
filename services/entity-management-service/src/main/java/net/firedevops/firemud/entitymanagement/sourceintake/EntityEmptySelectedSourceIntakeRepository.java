@@ -68,7 +68,8 @@ public final class EntityEmptySelectedSourceIntakeRepository {
           + "a.local_tenant_key, a.local_version_key, a.request_digest, a.schema_digest, "
           + "a.authorization_binding_digest, a.selected_source_digest, a.world_read_request_id, "
           + "a.world_read_request_digest, a.world_closure_digest, a.receipt_digest, a.associated_at, "
-          + "r.request_digest, r.schema_digest, r.receipt_digest, r.receipt_bytes, r.retained_at "
+          + "r.request_digest, r.schema_digest, r.receipt_digest, r.receipt_bytes, r.retained_at, "
+          + "a.selected_commit_id, a.source_revision_id, a.source_revision_order "
           + "FROM "
           + ASSOCIATION
           + " a LEFT JOIN "
@@ -743,7 +744,10 @@ public final class EntityEmptySelectedSourceIntakeRepository {
         || !Objects.equals(row.get(18, String.class), receipt.requestDigest())
         || !Objects.equals(row.get(19, String.class), receipt.schemaDigest())
         || !Objects.equals(row.get(20, String.class), receipt.receiptDigest())
-        || !sameInstant(row.get(22, OffsetDateTime.class), receipt.retainedAt())) {
+        || !sameInstant(row.get(22, OffsetDateTime.class), receipt.retainedAt())
+        || !Objects.equals(row.get(23, UUID.class), receipt.selectedCommitId())
+        || !Objects.equals(row.get(24, UUID.class), receipt.sourceRevisionId())
+        || !Objects.equals(row.get(25, String.class), receipt.sourceRevisionOrder())) {
       throw new CorruptReceiptException("Entity association differs from its immutable receipt");
     }
     requirePersistedEmptyOnlyProviderStates(tx, receipt);
