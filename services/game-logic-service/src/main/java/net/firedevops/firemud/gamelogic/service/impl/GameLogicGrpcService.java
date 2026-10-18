@@ -70,6 +70,8 @@ import org.springframework.grpc.server.service.GrpcService;
 @GrpcService
 public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(GameLogicGrpcService.class);
+  private static final String PUBLICATION_READ_FAILURE_DESCRIPTION =
+      "Exact retained publication source read failed";
   private final PingService pingService;
   private final CommandService commandService;
   private final LookAggregationService lookAggregationService;
@@ -211,22 +213,11 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
               .build());
       responseObserver.onCompleted();
     } catch (StatusRuntimeException ex) {
-      Status status = ex.getStatus();
-      String description =
-          status.getDescription() == null
-              ? "Exact retained publication source read was denied"
-              : status.getDescription();
-      responseObserver.onNext(
-          GetDraftDesignDigestResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "GetDraftDesignDigest",
-                      status.getCode().name(),
-                      description))
-              .build());
-      responseObserver.onCompleted();
+      Status status = Status.fromThrowable(ex);
+      responseObserver.onError(
+          Status.fromCode(status.getCode())
+              .withDescription(PUBLICATION_READ_FAILURE_DESCRIPTION)
+              .asRuntimeException());
     } catch (Exception ex) {
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()

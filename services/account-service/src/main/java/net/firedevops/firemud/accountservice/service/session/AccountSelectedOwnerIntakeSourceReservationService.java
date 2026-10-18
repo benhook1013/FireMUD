@@ -13,6 +13,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -20,6 +22,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Unregistered preliminary source-read producer; it grants no owner retention authority. */
 public final class AccountSelectedOwnerIntakeSourceReservationService {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(AccountSelectedOwnerIntakeSourceReservationService.class);
+
   private final AccountControlUiActorService actors;
   private final DraftAuthorizationFenceRepository fences;
   private final AccountSelectedOwnerIntakeSourceReservationRepository repository;
@@ -164,12 +169,22 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
                         boundedCandidates, namespace)),
             "Expired source-read candidate lookup returned no result");
     int aborted = 0;
+    int candidateNumber = 0;
     for (SelectedOwnerIntakeSourceReadScope scope : candidates) {
-      if (Objects.requireNonNull(
-          ownerTransaction.execute(
-              ignored -> repository.abortExpiredPreliminarySourceRead(scope, namespace)),
-          "Expired source-read recovery returned no result")) {
-        aborted++;
+      candidateNumber++;
+      try {
+        if (Objects.requireNonNull(
+            ownerTransaction.execute(
+                ignored -> repository.abortExpiredPreliminarySourceRead(scope, namespace)),
+            "Expired source-read recovery returned no result")) {
+          aborted++;
+        }
+      } catch (RuntimeException candidateFailure) {
+        LOGGER.warn(
+            "Skipped failed expired preliminary source-read candidate {}/{} (failureType={})",
+            candidateNumber,
+            candidates.size(),
+            candidateFailure.getClass().getSimpleName());
       }
     }
     return aborted;

@@ -253,7 +253,8 @@ class PublishGateServiceImplTest {
     assertEquals("UNAVAILABLE", digests.get(2).errorCode());
     PublishGateFailureException thrown =
         assertThrows(
-            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+            PublishGateFailureException.class,
+            () -> service.assertSelectedGatePassed(version, digests));
     assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(thrown));
   }
 

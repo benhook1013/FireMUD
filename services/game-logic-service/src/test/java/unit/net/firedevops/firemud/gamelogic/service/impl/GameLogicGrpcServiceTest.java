@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamelogic.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -537,6 +538,55 @@ class GameLogicGrpcServiceTest {
     assertTrue(response.get().hasError());
     assertEquals("INTERNAL", response.get().getError().getCode());
     assertEquals("Internal error", response.get().getError().getMessage());
+  }
+
+  @Test
+  void getDraftDesignDigestReturnsSanitizedTransportStatusesWhenSourceReadFails() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    GameLogicGrpcService service = newDigestService(digestService);
+    for (Status.Code code : List.of(Status.Code.FAILED_PRECONDITION, Status.Code.UNAVAILABLE)) {
+      Mockito.reset(digestService);
+      Mockito.when(
+              digestService.getDraftDesignDigest(any(GameLogicPublicationSourceReadBinding.class)))
+          .thenThrow(
+              Status.fromCode(code)
+                  .withDescription("database-password-secret")
+                  .asRuntimeException());
+      AtomicReference<Throwable> failure = new AtomicReference<>();
+
+      runAsGameDesign(
+          () ->
+              service.getDraftDesignDigest(
+                  fullDigestRequest(TEST_TENANT.toString(), "7"),
+                  new StreamObserver<>() {
+                    @Override
+                    public void onNext(GetDraftDesignDigestResponse value) {
+                      fail("expected a transport failure, got response: " + value);
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                      failure.set(t);
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                      fail("transport failure must not complete successfully");
+                    }
+                  }));
+
+      assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
+      var statusFailure = (StatusRuntimeException) failure.get();
+      assertThat(statusFailure.getStatus().getCode()).isEqualTo(code);
+      assertThat(statusFailure.getStatus().getDescription())
+          .isEqualTo("Exact retained publication source read failed")
+          .hasSizeLessThan(128)
+          .doesNotContain("secret", "database");
+      assertThat(statusFailure.getCause()).isNull();
+      assertThat(statusFailure.getTrailers()).isNull();
+    }
   }
 
   @Test

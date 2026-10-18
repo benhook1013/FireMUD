@@ -71,6 +71,7 @@ import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
@@ -82,6 +83,7 @@ import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.impl.PublishGateServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedReleaseBundleServiceImpl;
@@ -486,9 +488,12 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                 validAutomation.abilitySchemaDigest(),
                 validAutomation.errorCode(),
                 validAutomation.errorMessage()));
-        gate.assertSelectedGatePassed(versionDto, participantDigests);
         assertThatThrownBy(() -> gate.assertSelectedGatePassed(versionDto, altered))
-            .isInstanceOf(RuntimeException.class);
+            .isInstanceOf(PublishGateFailureException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((PublishGateFailureException) failure).failureCode())
+                        .isEqualTo(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA));
 
         var releaseService =
             new PublishedReleaseBundleServiceImpl(
@@ -565,7 +570,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                                     "controlled-generation-input",
                                     altered,
                                     worldOwners.startLocationEvidence())))
-            .isInstanceOf(RuntimeException.class);
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Selected-full release requires the exact 4/3/1/6/2");
         assertThat(
                 gds.dsl()
                     .fetchSingle(

@@ -15,8 +15,12 @@ import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -73,7 +77,11 @@ public final class SelectedDraftPublicationDigestReadService {
           "Selected publication digest snapshot returned no result");
     } catch (StatusRuntimeException failure) {
       throw failure;
-    } catch (DataAccessException unavailable) {
+    } catch (DataAccessException
+        | TransientDataAccessException
+        | DataAccessResourceFailureException
+        | CannotCreateTransactionException
+        | TransactionSystemException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("Selected publication source readback unavailable")
           .withCause(unavailable)

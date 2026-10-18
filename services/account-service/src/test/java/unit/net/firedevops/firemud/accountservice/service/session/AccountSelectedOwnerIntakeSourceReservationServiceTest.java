@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -335,6 +336,58 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
   }
 
   @Test
+  void expiredPreliminaryRecoveryContinuesAfterFirstAndLaterCandidateFailures() {
+    var selected = selected();
+    var first = recoveryScope(selected, "11111111-1111-4111-8111-111111111111");
+    var successful = recoveryScope(selected, "22222222-2222-4222-8222-222222222222");
+    var later = recoveryScope(selected, "33333333-3333-4333-8333-333333333333");
+    when(transactions.getTransaction(any(TransactionDefinition.class)))
+        .thenReturn(
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus());
+    when(repository.findExpiredPreliminarySourceReadScopes(3, "test"))
+        .thenReturn(List.of(first, successful, later));
+    when(repository.abortExpiredPreliminarySourceRead(first, "test"))
+        .thenThrow(new IllegalStateException("synthetic source payload must not be logged"));
+    when(repository.abortExpiredPreliminarySourceRead(successful, "test")).thenReturn(true);
+    when(repository.abortExpiredPreliminarySourceRead(later, "test"))
+        .thenThrow(new IllegalArgumentException("synthetic credential must not be logged"));
+
+    assertThat(service.recoverExpiredPreliminarySourceReads(3)).isEqualTo(1);
+
+    verify(repository).abortExpiredPreliminarySourceRead(first, "test");
+    verify(repository).abortExpiredPreliminarySourceRead(successful, "test");
+    verify(repository).abortExpiredPreliminarySourceRead(later, "test");
+    verify(transactions, times(4)).getTransaction(any(TransactionDefinition.class));
+  }
+
+  @Test
+  void expiredPreliminaryRecoveryContinuesAndReturnsZeroWhenEveryCandidateFails() {
+    var selected = selected();
+    var first = recoveryScope(selected, "44444444-4444-4444-8444-444444444444");
+    var second = recoveryScope(selected, "55555555-5555-4555-8555-555555555555");
+    when(transactions.getTransaction(any(TransactionDefinition.class)))
+        .thenReturn(
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus());
+    when(repository.findExpiredPreliminarySourceReadScopes(2, "test"))
+        .thenReturn(List.of(first, second));
+    when(repository.abortExpiredPreliminarySourceRead(first, "test"))
+        .thenThrow(new IllegalStateException("synthetic failure"));
+    when(repository.abortExpiredPreliminarySourceRead(second, "test"))
+        .thenThrow(new IllegalStateException("synthetic failure"));
+
+    assertThat(service.recoverExpiredPreliminarySourceReads(2)).isZero();
+
+    verify(repository).abortExpiredPreliminarySourceRead(first, "test");
+    verify(repository).abortExpiredPreliminarySourceRead(second, "test");
+    verify(transactions, times(3)).getTransaction(any(TransactionDefinition.class));
+  }
+
+  @Test
   void expiredPreliminaryRecoveryRejectsNonpositivePagesBeforeOpeningTransactions() {
     assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(0))
         .isInstanceOf(IllegalArgumentException.class);
@@ -360,6 +413,18 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
     when(snapshot.outboxCheckpoints())
         .thenReturn(List.of(Map.of("stream", "account", "sequence", 7)));
     return snapshot;
+  }
+
+  private static SelectedOwnerIntakeSourceReadScope recoveryScope(
+      DraftCommitBinding selected, String operationId) {
+    return new SelectedOwnerIntakeSourceReadScope(
+        DraftCommitBinding.Owner.ENTITY_MANAGEMENT,
+        "test",
+        UUID.fromString(operationId),
+        UUID.randomUUID(),
+        selected.requestId(),
+        UUID.randomUUID(),
+        selected);
   }
 
   private static AccountControlUiIssuanceRepository.Stored stored(UUID actorId, UUID tenantId) {
