@@ -152,6 +152,49 @@ class ReviewRecordsCliTest(unittest.TestCase):
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
 
+    def test_publication_status_is_local_read_only_and_preserves_unknown_history(self):
+        from test_pr_review_sqlite_review_records import corrected_native_fixture
+
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        run_id, _, _ = corrected_native_fixture(records)
+        before = records.attempt(run_id)
+        with (patch.object(cli.github, "infer_repo", side_effect=AssertionError("no provider or Git discovery")),
+              patch.object(SqliteReviewRecords, "_write_connection", side_effect=AssertionError("read only"))):
+            code, result = self.invoke("source", "publication-status", "--run-id", run_id,
+                                       "--database", str(self.database))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["result"]["historical_outcome"], "unknown")
+        self.assertEqual(result["result"]["intent"], before["metadata"]["checkpoint_publication_intent"])
+        self.assertEqual(len(result["result"]["state_sha256"]), 64)
+        self.assertEqual(records.attempt(run_id), before)
+
+    def test_publication_recover_dispatches_without_finalizing_or_review_discovery(self):
+        from pr_review import checkpoint_publication
+        from test_pr_review_sqlite_review_records import corrected_native_fixture
+
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        run_id, _, _ = corrected_native_fixture(records)
+        with (patch.object(checkpoint_publication, "recover_checkpoint", return_value={"status": "reused"}) as recover,
+              patch.object(SqliteReviewRecords, "finalize_run", side_effect=AssertionError("counts already frozen"))):
+            code, result = self.invoke("source", "publication-recover", "--run-id", run_id,
+                "--expected-state-sha256", "a" * 64, "--decision-id", "operator-1", "--reason", "Accepted risk",
+                "--acknowledge-uncertain-delivery", "--repo", "owner/repo", "--database", str(self.database))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(recover.call_args.kwargs["source_pr"], 42)
+        self.assertTrue(recover.call_args.kwargs["acknowledge_uncertain_delivery"])
+        self.assertEqual(recover.call_args.kwargs["expected_state_sha256"], "a" * 64)
+        self.assertEqual(result["result"]["status"], "reused")
+
+    def test_publication_recover_requires_explicit_acknowledgement_and_bound_inputs(self):
+        prefix = ["records", "source", "publication-recover", "--run-id", "run.Exact",
+                  "--expected-state-sha256", "a" * 64, "--decision-id", "operator-1", "--reason", "Accepted risk"]
+        with self.assertRaises(SystemExit):
+            cli._parser().parse_args(prefix)
+        parsed = cli._parser().parse_args([*prefix, "--acknowledge-uncertain-delivery"])
+        self.assertTrue(parsed.acknowledge_uncertain_delivery)
+
     def test_cli_correct_routes_accepted_finding_with_optional_target(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         records = SqliteReviewRecords(self.database)
