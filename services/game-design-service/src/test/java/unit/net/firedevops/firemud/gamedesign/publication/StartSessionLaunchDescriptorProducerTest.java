@@ -577,7 +577,8 @@ class StartSessionLaunchDescriptorProducerTest {
         worldEvidence.request().publishWorkflowId(),
         digest('e'),
         List.of("branding/logo"),
-        PublishedWorldSelectorFixtures.participants(1L, worldEvidence),
+        PublishedWorldSelectorFixtures.participants(
+            1L, worldEvidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
         List.of("look"),
         "generation-config-r1",
         false,
