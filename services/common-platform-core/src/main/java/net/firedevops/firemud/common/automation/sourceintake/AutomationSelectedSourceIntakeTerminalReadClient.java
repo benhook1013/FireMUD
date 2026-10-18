@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.automation.sourceintake;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -62,7 +63,10 @@ public final class AutomationSelectedSourceIntakeTerminalReadClient
     try {
       return AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
-      throw new IllegalStateException("Automation returned invalid terminal evidence", invalid);
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Automation returned invalid terminal evidence")
+          .withCause(invalid)
+          .asRuntimeException();
     }
   }
 
