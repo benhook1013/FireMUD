@@ -32,6 +32,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGrap
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedSpawnRequirementsRequest;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.RecoverableDataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -161,10 +162,10 @@ final class WorldPublishedSpawnRequirementsReadOwner {
       throw rejected(
           Status.Code.FAILED_PRECONDITION,
           "Frozen World source conflicts with the exact publication selection");
-    } catch (TransientDataAccessException unavailable) {
+    } catch (TransientDataAccessException | RecoverableDataAccessException unavailable) {
       throw rejected(Status.Code.UNAVAILABLE, "World published source is temporarily unavailable");
-    } catch (DataAccessException unavailable) {
-      throw rejected(Status.Code.UNAVAILABLE, "World published source is temporarily unavailable");
+    } catch (DataAccessException failure) {
+      throw rejected(Status.Code.INTERNAL, "World published source read failed");
     } catch (RuntimeException failure) {
       throw rejected(Status.Code.INTERNAL, "World published source read failed");
     }

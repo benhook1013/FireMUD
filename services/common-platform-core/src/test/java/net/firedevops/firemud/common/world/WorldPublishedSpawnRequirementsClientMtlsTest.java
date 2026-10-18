@@ -41,6 +41,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Physical mTLS proof against a labeled transport-only World source double. */
 class WorldPublishedSpawnRequirementsClientMtlsTest {
@@ -68,6 +69,7 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
 
   @AfterEach
   void stopTransport() throws Exception {
+    TransactionSynchronizationManager.clear();
     if (client != null) {
       client.close();
       client = null;
@@ -77,6 +79,28 @@ class WorldPublishedSpawnRequirementsClientMtlsTest {
       assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       server = null;
     }
+  }
+
+  @Test
+  void ambientTransactionAndSynchronizationAreRejectedBeforeTransport() throws Exception {
+    startServer(pki.worldServer(), Mode.EXACT);
+    client = newClient(server, pki.entityClient());
+    client.init();
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(() -> client.read(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("World spawn-requirements transport must run outside SQL");
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
+
+    TransactionSynchronizationManager.clear();
+    TransactionSynchronizationManager.initSynchronization();
+    assertThatThrownBy(() -> client.read(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("World spawn-requirements transport must run outside SQL");
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
   }
 
   @Test

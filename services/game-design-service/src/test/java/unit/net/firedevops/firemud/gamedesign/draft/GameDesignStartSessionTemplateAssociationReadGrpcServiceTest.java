@@ -83,6 +83,31 @@ class GameDesignStartSessionTemplateAssociationReadGrpcServiceTest {
     }
   }
 
+  @Test
+  void mapsResponseEncodingFailureToInternal() {
+    var request = ReadStartSessionTemplateAssociationRequest.getDefaultInstance();
+    var decoded = mock(StartSessionTemplateAssociationReadEvidence.Request.class);
+    var result = mock(StartSessionTemplateAssociationReadEvidence.Result.class);
+    Mockito.when(decoded.targetNamespace()).thenReturn("world-runtime");
+
+    try (MockedStatic<StartSessionTemplateAssociationReadGrpcCodec> codec =
+        Mockito.mockStatic(StartSessionTemplateAssociationReadGrpcCodec.class)) {
+      codec
+          .when(() -> StartSessionTemplateAssociationReadGrpcCodec.fromRequest(request))
+          .thenReturn(decoded);
+      codec
+          .when(() -> StartSessionTemplateAssociationReadGrpcCodec.toResponse(result))
+          .thenThrow(new IllegalArgumentException("invalid retained response"));
+      Mockito.when(owner.read(decoded)).thenReturn(result);
+
+      var observer = invokeAs(request, "game-session-service");
+
+      assertThat(observer.error).isEqualTo(Status.Code.INTERNAL);
+      assertThat(observer.value).isNull();
+      assertThat(observer.completed).isFalse();
+    }
+  }
+
   private Collector invokeAs(ReadStartSessionTemplateAssociationRequest request, String workload) {
     var peer =
         new GrpcPeerIdentity(
