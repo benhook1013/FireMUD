@@ -431,8 +431,7 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
               PSQLException postgresFailure = postgresException(failure);
               assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
               assertThat(postgresFailure.getServerErrorMessage().getMessage())
-                  .isEqualTo(
-                      "Preliminary owner scope requires exact current committed creator evidence");
+                  .isEqualTo("Preliminary owner scope digest does not match canonical bytes");
             });
 
     assertThat(insertedRows[0]).isEqualTo(1);
