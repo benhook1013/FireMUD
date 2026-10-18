@@ -286,6 +286,54 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void priorScopeUniquenessUsesTenantAndVersionTogether() {
+    var fixture = AutomationEmptySelectedSourceIntakePostgresFixture.create("1");
+    UUID otherVersion = UUID.fromString("33333333-3333-4333-8333-333333333333");
+    seedAssociation(
+        UUID.fromString("44444444-4444-4444-8444-444444444444"),
+        UUID.fromString("55555555-5555-4555-8555-555555555555"),
+        AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+        otherVersion,
+        UUID.fromString("66666666-6666-4666-8666-666666666666"),
+        90001L,
+        90002L);
+
+    var secondVersion = repository.retainFresh(fixture.inputs(), requestDigest(fixture));
+
+    assertThat(secondVersion.canonicalTenantId())
+        .isEqualTo(AutomationEmptySelectedSourceIntakePostgresFixture.TENANT);
+    assertThat(secondVersion.canonicalVersionId())
+        .isEqualTo(AutomationEmptySelectedSourceIntakePostgresFixture.VERSION);
+    assertThat(
+            rowCount(
+                "SELECT COUNT(*) FROM automation_empty_selected_source_association "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+                AutomationEmptySelectedSourceIntakePostgresFixture.TENANT))
+        .isEqualTo(2L);
+  }
+
+  @Test
+  void priorCanonicalScopeStillProducesTheIntakeConflict() {
+    var conflictingFixture = AutomationEmptySelectedSourceIntakePostgresFixture.create("2");
+    seedAssociation(
+        UUID.fromString("77777777-7777-4777-8777-777777777778"),
+        UUID.fromString("88888888-8888-4888-8888-888888888888"),
+        AutomationEmptySelectedSourceIntakePostgresFixture.TENANT,
+        AutomationEmptySelectedSourceIntakePostgresFixture.VERSION,
+        UUID.fromString("99999999-9999-4999-8999-999999999998"),
+        90003L,
+        90004L);
+
+    assertThatThrownBy(
+            () ->
+                repository.retainFresh(
+                    conflictingFixture.inputs(), requestDigest(conflictingFixture)))
+        .isInstanceOf(AutomationEmptySelectedSourceIntakeRepository.IntakeConflictException.class)
+        .hasMessage("Automation canonical scope or owner operation is already associated");
+  }
+
+  @Test
   void selectedEmptyPublicationReaderUsesTheRetainedTargetProofAndReturnsSchemaSixDigest() {
     AutomationEmptySelectedSourceIntakePostgresFixture.Fixture fixture =
         AutomationEmptySelectedSourceIntakePostgresFixture.create("1");
@@ -528,6 +576,44 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     output.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
     output.write(':');
     output.writeBytes(bytes);
+  }
+
+  private void seedAssociation(
+      UUID operationId,
+      UUID fenceId,
+      UUID tenantId,
+      UUID versionId,
+      UUID intakeRequestId,
+      long localTenantKey,
+      long localVersionKey) {
+    dsl.execute(
+        "INSERT INTO automation_empty_source_numeric_key_reservation "
+            + "(key_kind, numeric_key, claim_kind) VALUES "
+            + "('TENANT', ?, 'CANONICAL_EMPTY_SOURCE'), "
+            + "('VERSION', ?, 'CANONICAL_EMPTY_SOURCE')",
+        localTenantKey,
+        localVersionKey);
+    String digest = "sha256:" + "a".repeat(64);
+    dsl.execute(
+        "INSERT INTO automation_empty_selected_source_association "
+            + "(target_namespace, operation_id, fence_id, intake_request_id, "
+            + "canonical_tenant_id, canonical_version_id, selected_commit_id, "
+            + "source_revision_id, source_revision_order, local_tenant_key, local_version_key, "
+            + "request_digest, authorization_binding_digest, receipt_digest, associated_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '0', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+        AutomationEmptySelectedSourceIntakePostgresFixture.NAMESPACE,
+        operationId,
+        fenceId,
+        intakeRequestId,
+        tenantId,
+        versionId,
+        UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        localTenantKey,
+        localVersionKey,
+        digest,
+        digest,
+        digest);
   }
 
   private long rowCount(String sql, Object... parameters) {

@@ -88,7 +88,7 @@ class AutomationEmptySelectedSourceIntakeValueTest {
         mock(SelectedOwnerWorldInventoryReadClient.class);
     AutomationEmptySelectedSourceIntakeService service =
         new AutomationEmptySelectedSourceIntakeService(
-            repository, authorizationReadClient, worldInventoryReadClient);
+            repository, authorizationReadClient, worldInventoryReadClient, "example");
 
     assertThatThrownBy(() -> service.retain("example", null, null))
         .isInstanceOf(SecurityException.class)
@@ -125,6 +125,39 @@ class AutomationEmptySelectedSourceIntakeValueTest {
   }
 
   @Test
+  void configuredNamespaceRejectsMismatchedTargetBeforeAnyOwnerRead() {
+    AutomationEmptySelectedSourceIntakeRepository repository =
+        mock(AutomationEmptySelectedSourceIntakeRepository.class);
+    SelectedOwnerIntakeAuthorizationReadClient authorizationReadClient =
+        mock(SelectedOwnerIntakeAuthorizationReadClient.class);
+    SelectedOwnerWorldInventoryReadClient worldInventoryReadClient =
+        mock(SelectedOwnerWorldInventoryReadClient.class);
+    assertThatThrownBy(
+            () ->
+                new AutomationEmptySelectedSourceIntakeService(
+                    repository, authorizationReadClient, worldInventoryReadClient, "bad namespace"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Canonical namespace");
+
+    AutomationEmptySelectedSourceIntakeService service =
+        new AutomationEmptySelectedSourceIntakeService(
+            repository, authorizationReadClient, worldInventoryReadClient, "example");
+    GrpcPeerIdentity peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/example/sa/game-design-service", "example", "game-design-service");
+    Context peerContext = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = peerContext.attach();
+    try {
+      assertThatThrownBy(() -> service.retain("other", null, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("configured namespace");
+    } finally {
+      peerContext.detach(previous);
+    }
+    verifyNoInteractions(repository, authorizationReadClient, worldInventoryReadClient);
+  }
+
+  @Test
   void retainRejectsAmbientOwnerSqlBeforeReadingAnyOwnerEvidence() {
     AutomationEmptySelectedSourceIntakeRepository repository =
         mock(AutomationEmptySelectedSourceIntakeRepository.class);
@@ -134,7 +167,7 @@ class AutomationEmptySelectedSourceIntakeValueTest {
         mock(SelectedOwnerWorldInventoryReadClient.class);
     AutomationEmptySelectedSourceIntakeService service =
         new AutomationEmptySelectedSourceIntakeService(
-            repository, authorizationReadClient, worldInventoryReadClient);
+            repository, authorizationReadClient, worldInventoryReadClient, "example");
     GrpcPeerIdentity peer =
         new GrpcPeerIdentity(
             "spiffe://firemud/ns/example/sa/game-design-service", "example", "game-design-service");
@@ -200,7 +233,7 @@ class AutomationEmptySelectedSourceIntakeValueTest {
     when(repository.read(namespace, requestId)).thenReturn(java.util.Optional.of(receipt));
     AutomationEmptySelectedSourceIntakeService service =
         new AutomationEmptySelectedSourceIntakeService(
-            repository, authorizationReadClient, worldInventoryReadClient);
+            repository, authorizationReadClient, worldInventoryReadClient, namespace);
     GrpcPeerIdentity peer =
         new GrpcPeerIdentity(
             "spiffe://firemud/ns/example/sa/game-design-service", "example", "game-design-service");

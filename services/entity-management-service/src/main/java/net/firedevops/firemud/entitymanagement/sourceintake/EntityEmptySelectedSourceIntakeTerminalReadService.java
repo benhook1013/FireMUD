@@ -7,6 +7,7 @@ import java.util.Objects;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.jooq.exception.DataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Account-only lookup over Entity's immutable selected-source terminal receipt. */
@@ -61,7 +62,11 @@ public final class EntityEmptySelectedSourceIntakeTerminalReadService {
               .orElseThrow(() -> Status.NOT_FOUND.asRuntimeException());
     } catch (StatusRuntimeException denied) {
       throw denied;
-    } catch (RuntimeException corrupt) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Entity terminal receipt storage is unavailable")
+          .asRuntimeException();
+    } catch (IllegalArgumentException | IllegalStateException corrupt) {
       throw Status.DATA_LOSS
           .withDescription("Entity committed receipt is invalid")
           .asRuntimeException();
@@ -74,7 +79,7 @@ public final class EntityEmptySelectedSourceIntakeTerminalReadService {
     }
     try {
       return new EntitySelectedSourceIntakeTerminalReadEvidence(request, receipt);
-    } catch (RuntimeException corrupt) {
+    } catch (IllegalArgumentException corrupt) {
       throw Status.DATA_LOSS
           .withDescription("Entity receipt differs from its original order")
           .asRuntimeException();

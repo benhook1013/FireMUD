@@ -20,17 +20,8 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -47,12 +38,13 @@ import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedS
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeCommandGrpcCodec;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
-import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.SelectedOwnerWorldInventoryReadEvidence;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.security.sourceintake.SelectedSourceIntakeCommandTestPki.Identity;
+import net.firedevops.firemud.common.security.sourceintake.SelectedSourceIntakeCommandTestPki.Pki;
 import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures;
 import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures.Fixture;
 import org.junit.jupiter.api.AfterEach;
@@ -71,11 +63,10 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
       "spiffe://firemud/ns/test/sa/automation-scripting-service";
   private static final String WRONG_AUTOMATION_URI = "spiffe://firemud/ns/test/sa/automation-other";
   private static final String GAME_DESIGN_URI = "spiffe://firemud/ns/test/sa/game-design-service";
-  private static final String STORE_PASSWORD = "synthetic-test-store-password";
 
   @TempDir static Path tempDirectory;
   private static Fixture fixture;
-  private static TestPki pki;
+  private static Pki pki;
   private Server server;
   private GrpcAutomationSelectedSourceIntakeCommandClient client;
   private AtomicInteger headers;
@@ -114,7 +105,13 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
             0,
             0,
             java.time.OffsetDateTime.parse("2026-10-01T00:00:00Z"));
-    pki = TestPki.create(tempDirectory);
+    pki =
+        SelectedSourceIntakeCommandTestPki.create(
+            tempDirectory,
+            "FireMUD Automation command test CA",
+            AUTOMATION_URI,
+            WRONG_AUTOMATION_URI,
+            GAME_DESIGN_URI);
   }
 
   @AfterEach
@@ -141,7 +138,7 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
             NAMESPACE, fixture.wrongOwnerAuthorization(), freeze);
     byte[] receiptBytes = receipt.canonicalBytes();
 
-    startServer(pki.automationServer());
+    startServer(pki.server());
     client = newClient(server, pki.gameDesignClient());
     client.init();
     var actual = client.retain(request);
@@ -174,7 +171,7 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
     var request =
         AutomationSelectedSourceIntakeCommandEvidence.Request.create(
             NAMESPACE, fixture.wrongOwnerAuthorization(), freeze);
-    startServer(pki.automationServer(), true);
+    startServer(pki.server(), true);
     client = newClient(server, pki.gameDesignClient());
     client.init();
 
@@ -196,7 +193,10 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
             fixture.inputs().worldInventoryReadEvidence().request().freezeEvidence());
     var wrongNamespaceClient =
         new GrpcAutomationSelectedSourceIntakeCommandClient(
-            new ServiceEndpointsProperties(), placeholderTls(dir), factory, "other");
+            new ServiceEndpointsProperties(),
+            SelectedSourceIntakeCommandTestPki.placeholderTls(dir),
+            factory,
+            "other");
     try {
       assertThatThrownBy(() -> wrongNamespaceClient.retain(request))
           .isInstanceOf(IllegalArgumentException.class)
@@ -208,7 +208,10 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
 
     var client =
         new GrpcAutomationSelectedSourceIntakeCommandClient(
-            new ServiceEndpointsProperties(), placeholderTls(dir), factory, NAMESPACE);
+            new ServiceEndpointsProperties(),
+            SelectedSourceIntakeCommandTestPki.placeholderTls(dir),
+            factory,
+            NAMESPACE);
     try {
       TransactionSynchronizationManager.setActualTransactionActive(true);
       assertThatThrownBy(() -> client.retain(null))
@@ -262,11 +265,11 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
     }
   }
 
-  private void startServer(TestIdentity identity) throws Exception {
+  private void startServer(Identity identity) throws Exception {
     startServer(identity, false);
   }
 
-  private void startServer(TestIdentity identity, boolean malformedResponse) throws Exception {
+  private void startServer(Identity identity, boolean malformedResponse) throws Exception {
     headers = new AtomicInteger();
     bodies = new AtomicInteger();
     deadline = new AtomicReference<>();
@@ -324,8 +327,8 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
             .start();
   }
 
-  private GrpcAutomationSelectedSourceIntakeCommandClient newClient(
-      Server target, TestIdentity local) throws Exception {
+  private GrpcAutomationSelectedSourceIntakeCommandClient newClient(Server target, Identity local)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAutomationScriptingService("localhost:" + target.getPort());
     return new GrpcAutomationSelectedSourceIntakeCommandClient(
@@ -341,242 +344,6 @@ class GrpcAutomationSelectedSourceIntakeCommandClientMtlsTest {
       server.shutdownNow();
       assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       server = null;
-    }
-  }
-
-  private static CommonGrpcClientProperties placeholderTls(Path directory) throws IOException {
-    var tls = new CommonGrpcClientProperties();
-    tls.setPlaintext(false);
-    tls.setCertChain(
-        Files.writeString(directory.resolve("client.crt"), "synthetic cert").toString());
-    tls.setPrivateKey(
-        Files.writeString(directory.resolve("client.key"), "synthetic key").toString());
-    tls.setCaCert(Files.writeString(directory.resolve("ca.crt"), "synthetic CA").toString());
-    return tls;
-  }
-
-  private record TestIdentity(PrivateKey privateKey, X509Certificate certificate) {}
-
-  private record TestPki(
-      X509Certificate caCertificate,
-      TestIdentity automationServer,
-      TestIdentity wrongServer,
-      TestIdentity gameDesignClient) {
-    private static TestPki create(Path directory) throws Exception {
-      Path caStore = directory.resolve("entity-command-test-ca.p12");
-      runKeytool(
-          "-genkeypair",
-          "-alias",
-          "test-ca",
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=FireMUD Automation command test CA",
-          "-validity",
-          "30",
-          "-ext",
-          "BC=ca:true",
-          "-ext",
-          "KU=keyCertSign,cRLSign",
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          caStore.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      Path caFile = directory.resolve("entity-command-test-ca.crt");
-      runKeytool(
-          "-exportcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-rfc");
-      var caCertificate = readCertificate(caFile);
-      return new TestPki(
-          caCertificate,
-          issueIdentity(directory, caStore, caFile, "entity-server", AUTOMATION_URI, true),
-          issueIdentity(
-              directory, caStore, caFile, "wrong-entity-server", WRONG_AUTOMATION_URI, true),
-          issueIdentity(directory, caStore, caFile, "game-design-client", GAME_DESIGN_URI, false));
-    }
-
-    private CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
-        throws Exception {
-      Path certificate =
-          writePem(
-              directory.resolve("game-design-client.crt"),
-              "CERTIFICATE",
-              identity.certificate().getEncoded());
-      Path privateKey =
-          writePem(
-              directory.resolve("game-design-client.key"),
-              "PRIVATE KEY",
-              identity.privateKey().getEncoded());
-      Path caFile =
-          writePem(
-              directory.resolve("entity-command-client-ca.crt"),
-              "CERTIFICATE",
-              caCertificate.getEncoded());
-      var properties = new CommonGrpcClientProperties();
-      properties.setPlaintext(false);
-      properties.setCertChain(certificate.toString());
-      properties.setPrivateKey(privateKey.toString());
-      properties.setCaCert(caFile.toString());
-      return properties;
-    }
-
-    private static TestIdentity issueIdentity(
-        Path directory, Path caStore, Path caFile, String alias, String workloadUri, boolean server)
-        throws Exception {
-      Path store = directory.resolve(alias + ".p12");
-      Path request = directory.resolve(alias + ".csr");
-      Path certificate = directory.resolve(alias + ".crt");
-      String san = "URI:" + workloadUri + ",DNS:localhost,IP:127.0.0.1";
-      runKeytool(
-          "-genkeypair",
-          "-alias",
-          alias,
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=" + alias,
-          "-validity",
-          "30",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san,
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      runKeytool(
-          "-certreq",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          request.toString(),
-          "-ext",
-          "SAN=" + san);
-      runKeytool(
-          "-gencert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-infile",
-          request.toString(),
-          "-outfile",
-          certificate.toString(),
-          "-validity",
-          "30",
-          "-rfc",
-          "-ext",
-          "BC=ca:false",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san);
-      runKeytool(
-          "-importcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-noprompt");
-      runKeytool(
-          "-importcert",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          certificate.toString(),
-          "-noprompt");
-      KeyStore keyStore = KeyStore.getInstance("PKCS12");
-      try (var input = Files.newInputStream(store)) {
-        keyStore.load(input, STORE_PASSWORD.toCharArray());
-      }
-      return new TestIdentity(
-          (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
-          (X509Certificate) keyStore.getCertificate(alias));
-    }
-
-    private static void runKeytool(String... arguments) throws Exception {
-      Path keytool =
-          Path.of(
-              System.getProperty("java.home"),
-              "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows")
-                  ? "keytool.exe"
-                  : "keytool");
-      var command = new ArrayList<String>();
-      command.add(keytool.toString());
-      command.addAll(List.of(arguments));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-      }
-      if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
-        process.destroyForcibly();
-        throw new IllegalStateException("keytool failed: " + output);
-      }
-    }
-
-    private static X509Certificate readCertificate(Path path) throws Exception {
-      try (var input = Files.newInputStream(path)) {
-        return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
-      }
-    }
-
-    private static Path writePem(Path path, String label, byte[] bytes) throws IOException {
-      String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(bytes);
-      return Files.writeString(
-          path,
-          "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n",
-          StandardCharsets.US_ASCII);
     }
   }
 }
