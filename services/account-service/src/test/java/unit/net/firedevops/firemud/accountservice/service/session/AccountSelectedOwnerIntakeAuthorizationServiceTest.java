@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.ByteArrayOutputStream;
@@ -424,6 +425,75 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
             any(Runnable.class));
     verify(repository, never()).finalizeSourceRead(any(), any(), any(), any());
     verify(repository, never()).abortSourceRead(any());
+  }
+
+  @Test
+  void downstreamSourceStatusesAreSanitizedAndKeepThePreliminaryReservationHeld() {
+    for (Status.Code downstreamCode :
+        List.of(
+            Status.Code.PERMISSION_DENIED,
+            Status.Code.UNAUTHENTICATED,
+            Status.Code.INTERNAL,
+            Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.RESOURCE_EXHAUSTED,
+            Status.Code.FAILED_PRECONDITION)) {
+      org.mockito.Mockito.reset(actors, fences, repository, sources, transactions);
+      var selected = selected();
+      var scope = scope(Owner.ENTITY_MANAGEMENT, selected, OPERATION, FENCE);
+      var current = current(ACTOR, TENANT);
+      var environment = mock(CapturedEnvironmentBoundary.class);
+      stubFreshReservation(selected, scope, current);
+      Metadata poisonTrailers = new Metadata();
+      poisonTrailers.put(
+          Metadata.Key.of("x-downstream-poison", Metadata.ASCII_STRING_MARSHALLER), "private");
+      StatusRuntimeException poisoned =
+          Status.fromCode(downstreamCode)
+              .withDescription("downstream secret detail")
+              .withCause(new IllegalStateException("downstream secret cause"))
+              .asRuntimeException(poisonTrailers);
+      when(sources.read(any(SelectedOwnerIntakeSourceReadEvidence.Request.class)))
+          .thenThrow(poisoned);
+
+      Status.Code expectedCode =
+          downstreamCode == Status.Code.FAILED_PRECONDITION
+              ? Status.Code.FAILED_PRECONDITION
+              : Status.Code.UNAVAILABLE;
+      assertThatThrownBy(
+              () ->
+                  asPeerResult(
+                      "test",
+                      "game-design-service",
+                      () ->
+                          service.authorizeWithEnvironmentCapture(
+                              TOKEN,
+                              selected.requestId(),
+                              Owner.ENTITY_MANAGEMENT,
+                              selected,
+                              () -> environment)))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure -> {
+                StatusRuntimeException statusFailure = (StatusRuntimeException) failure;
+                assertThat(statusFailure.getStatus().getCode()).isEqualTo(expectedCode);
+                assertThat(statusFailure.getStatus().getDescription())
+                    .isEqualTo("Game Design selected-owner source content is unavailable");
+                assertThat(statusFailure.getCause()).isNull();
+                assertThat(statusFailure.getTrailers()).isNull();
+              });
+
+      verify(repository)
+          .reserveSourceRead(
+              eq(selected.requestId()),
+              eq(Owner.ENTITY_MANAGEMENT),
+              eq(selected),
+              eq(current),
+              eq("test"),
+              any(Runnable.class));
+      verify(repository).recoverSourceRead(scope);
+      verify(sources).read(any(SelectedOwnerIntakeSourceReadEvidence.Request.class));
+      verify(repository, never()).finalizeSourceRead(any(), any(), any(), any());
+      verify(repository, never()).abortSourceRead(any());
+    }
   }
 
   @Test

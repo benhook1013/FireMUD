@@ -156,14 +156,6 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
     this.selectedScopePatchBaseBindingsRowCount =
         nonnegative(
             selectedScopePatchBaseBindingsRowCount, "selectedScopePatchBaseBindingsRowCount");
-    if (Math.addExact(unqualifiedScriptsRowCount, emptyAssociatedScriptsRowCount) != scriptsRowCount
-        || Math.addExact(unqualifiedEventBindingsRowCount, emptyAssociatedEventBindingsRowCount)
-            != eventBindingsRowCount
-        || Math.addExact(
-                unqualifiedPatchBaseBindingsRowCount, emptyAssociatedPatchBaseBindingsRowCount)
-            != patchBaseBindingsRowCount) {
-      throw new IllegalArgumentException("Automation source census partitions do not add up");
-    }
     if (unqualifiedScriptsRowCount != 0L
         || unqualifiedEventBindingsRowCount != 0L
         || unqualifiedPatchBaseBindingsRowCount != 0L
@@ -175,6 +167,14 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
         || selectedScopePatchBaseBindingsRowCount != 0L) {
       throw new IllegalArgumentException(
           "Fresh empty Automation intake requires a zero unqualified and selected-scope census");
+    }
+    if (Math.addExact(unqualifiedScriptsRowCount, emptyAssociatedScriptsRowCount) != scriptsRowCount
+        || Math.addExact(unqualifiedEventBindingsRowCount, emptyAssociatedEventBindingsRowCount)
+            != eventBindingsRowCount
+        || Math.addExact(
+                unqualifiedPatchBaseBindingsRowCount, emptyAssociatedPatchBaseBindingsRowCount)
+            != patchBaseBindingsRowCount) {
+      throw new IllegalArgumentException("Automation source census partitions do not add up");
     }
     this.retainedAt = Objects.requireNonNull(retainedAt, "retainedAt");
     if (retainedAt.getOffset().getTotalSeconds() != 0) {
@@ -532,7 +532,7 @@ public final class AutomationEmptySelectedSourceIntakeReceipt {
           "Automation receipt differs from its original Account binding");
     }
     var declaration =
-        new SelectedOwnerEmptySourceInputs(authorizationBinding, decodeWorldEvidence())
+        new SelectedOwnerEmptySourceInputs(authorizationBinding, worldInventoryReadEvidence)
             .ownerSourceInventoryDeclaration();
     if (declaration.owner() != Owner.AUTOMATION_SCRIPTING
         || !declaration.revisionId().equals(sourceRevisionId)
