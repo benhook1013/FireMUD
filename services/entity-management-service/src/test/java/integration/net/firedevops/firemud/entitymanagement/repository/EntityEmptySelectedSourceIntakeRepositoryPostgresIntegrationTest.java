@@ -477,6 +477,7 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
       assertThat(
               repository
                   .read(receipt.targetNamespace(), receipt.intakeRequestId())
+                  .orElseThrow()
                   .canonicalBytes())
           .containsExactly(canonicalReceiptBytes);
     }
