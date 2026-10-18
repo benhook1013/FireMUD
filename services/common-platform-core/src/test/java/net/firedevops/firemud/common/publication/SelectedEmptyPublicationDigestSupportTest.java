@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.publication;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 import java.util.UUID;
@@ -7,6 +8,16 @@ import net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTermi
 import org.junit.jupiter.api.Test;
 
 class SelectedEmptyPublicationDigestSupportTest {
+  @Test
+  void framingMatchesFixedAdr0047Utf8ByteLengthVector() {
+    // Fixed UTF-8 preimage: "17:digest-fixture/v11:62:é0:1::".
+    // Includes a multibyte value, an empty segment and a literal framing delimiter.
+    assertThat(
+            SelectedEmptyPublicationDigestSupport.framedSha256(
+                "digest-fixture/v1", 6, "é", "", ":"))
+        .isEqualTo("c10b89e19d156f8d0bd570229e67d913b3b3eefc094def4646b5a7650beee247");
+  }
+
   @Test
   void publicationVersionRowMustMatchTheRetainedSelectedTarget() {
     var fixture = EntitySelectedSourceIntakeTerminalReadFixtures.create();

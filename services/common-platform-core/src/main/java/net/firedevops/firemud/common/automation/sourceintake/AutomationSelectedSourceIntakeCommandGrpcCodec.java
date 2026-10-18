@@ -75,18 +75,28 @@ public final class AutomationSelectedSourceIntakeCommandGrpcCodec {
     if (!authorization.digest().equals(wire.getIntakeAuthorizationDigest())) {
       throw invalid("Original Account authorization digest differs");
     }
-    var freezeRequest =
-        WorldSelectedDraftPublicationFreezeGrpcCodec.fromRequest(wire.getFreezeRequest());
-    WorldSelectedDraftPublicationFreezeEvidence freezeEvidence =
-        WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
-            freezeRequest, wire.getFreezeAcknowledgement());
-    Request request =
-        new Request(
-            wire.getSchemaVersion(),
-            wire.getTargetNamespace(),
-            transportRequestId,
-            authorization,
-            freezeEvidence);
+    final WorldSelectedDraftPublicationFreezeEvidence freezeEvidence;
+    try {
+      var freezeRequest =
+          WorldSelectedDraftPublicationFreezeGrpcCodec.fromRequest(wire.getFreezeRequest());
+      freezeEvidence =
+          WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+              freezeRequest, wire.getFreezeAcknowledgement());
+    } catch (RuntimeException malformed) {
+      throw invalid("Complete original World freeze evidence is invalid", malformed);
+    }
+    final Request request;
+    try {
+      request =
+          new Request(
+              wire.getSchemaVersion(),
+              wire.getTargetNamespace(),
+              transportRequestId,
+              authorization,
+              freezeEvidence);
+    } catch (RuntimeException malformed) {
+      throw invalid("Automation selected-source command binding is invalid", malformed);
+    }
     if (!toRequest(request).equals(wire)) {
       throw invalid("Selected-source command request is not an exact canonical echo");
     }

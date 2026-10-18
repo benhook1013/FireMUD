@@ -741,19 +741,79 @@ BEGIN
             new_tenant_key BIGINT;
             old_version_key BIGINT;
             new_version_key BIGINT;
+            old_is_owner_resolved_character BOOLEAN := FALSE;
+            new_is_owner_resolved_character BOOLEAN := FALSE;
         BEGIN
             IF TG_OP IN ('UPDATE', 'DELETE') THEN
                 old_value := to_jsonb(OLD);
                 old_tenant_key := %I.entity_source_positive_numeric_key(old_value->>'tenant_id');
                 old_version_key := %I.entity_source_positive_numeric_key(old_value->>'version_id');
-                PERFORM %I.entity_require_source_numeric_key_unreserved('TENANT', old_tenant_key);
+                IF TG_TABLE_NAME = 'characters' THEN
+                    PERFORM %I.entity_require_source_numeric_key_unreserved(
+                        'TENANT', NULL::BIGINT);
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM %I.entity_tenant_identities tenant_identity
+                        JOIN %I.entity_playable_state_namespace_scopes namespace_scope
+                            ON namespace_scope.tenant_uuid = tenant_identity.canonical_tenant_uuid
+                        WHERE tenant_identity.entity_tenant_row_id = old_tenant_key
+                            AND tenant_identity.canonical_tenant_uuid =
+                                NULLIF(old_value->>'tenant_uuid', '')::UUID
+                            AND namespace_scope.playable_state_namespace_id =
+                                NULLIF(old_value->>'playable_state_namespace_id', '')::UUID
+                            AND namespace_scope.playable_state_scope =
+                                old_value->>'playable_state_scope'
+                            AND old_value->>'actor_identity_status' = 'OWNER_RESOLVED'
+                            AND old_value->>'actor_identity_quarantine_reason' IS NULL
+                            AND NULLIF(old_value->>'character_uuid', '')::UUID <>
+                                '00000000-0000-0000-0000-000000000000'::UUID
+                            AND NULLIF(old_value->>'account_uuid', '')::UUID <>
+                                '00000000-0000-0000-0000-000000000000'::UUID
+                    ) INTO old_is_owner_resolved_character;
+                    IF NOT old_is_owner_resolved_character THEN
+                        PERFORM %I.entity_require_source_numeric_key_unreserved(
+                            'TENANT', old_tenant_key);
+                    END IF;
+                ELSE
+                    PERFORM %I.entity_require_source_numeric_key_unreserved(
+                        'TENANT', old_tenant_key);
+                END IF;
                 PERFORM %I.entity_require_source_numeric_key_unreserved('VERSION', old_version_key);
             END IF;
             IF TG_OP IN ('INSERT', 'UPDATE') THEN
                 new_value := to_jsonb(NEW);
                 new_tenant_key := %I.entity_source_positive_numeric_key(new_value->>'tenant_id');
                 new_version_key := %I.entity_source_positive_numeric_key(new_value->>'version_id');
-                PERFORM %I.entity_require_source_numeric_key_unreserved('TENANT', new_tenant_key);
+                IF TG_TABLE_NAME = 'characters' THEN
+                    PERFORM %I.entity_require_source_numeric_key_unreserved(
+                        'TENANT', NULL::BIGINT);
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM %I.entity_tenant_identities tenant_identity
+                        JOIN %I.entity_playable_state_namespace_scopes namespace_scope
+                            ON namespace_scope.tenant_uuid = tenant_identity.canonical_tenant_uuid
+                        WHERE tenant_identity.entity_tenant_row_id = new_tenant_key
+                            AND tenant_identity.canonical_tenant_uuid =
+                                NULLIF(new_value->>'tenant_uuid', '')::UUID
+                            AND namespace_scope.playable_state_namespace_id =
+                                NULLIF(new_value->>'playable_state_namespace_id', '')::UUID
+                            AND namespace_scope.playable_state_scope =
+                                new_value->>'playable_state_scope'
+                            AND new_value->>'actor_identity_status' = 'OWNER_RESOLVED'
+                            AND new_value->>'actor_identity_quarantine_reason' IS NULL
+                            AND NULLIF(new_value->>'character_uuid', '')::UUID <>
+                                '00000000-0000-0000-0000-000000000000'::UUID
+                            AND NULLIF(new_value->>'account_uuid', '')::UUID <>
+                                '00000000-0000-0000-0000-000000000000'::UUID
+                    ) INTO new_is_owner_resolved_character;
+                    IF NOT new_is_owner_resolved_character THEN
+                        PERFORM %I.entity_require_source_numeric_key_unreserved(
+                            'TENANT', new_tenant_key);
+                    END IF;
+                ELSE
+                    PERFORM %I.entity_require_source_numeric_key_unreserved(
+                        'TENANT', new_tenant_key);
+                END IF;
                 PERFORM %I.entity_require_source_numeric_key_unreserved('VERSION', new_version_key);
             END IF;
             IF TG_OP = 'DELETE' THEN
@@ -762,7 +822,8 @@ BEGIN
             RETURN NEW;
         END;
         $body$
-    $function$, owner_schema, owner_schema, owner_schema, owner_schema,
+    $function$, owner_schema, owner_schema, owner_schema, owner_schema, owner_schema, owner_schema,
+        owner_schema, owner_schema, owner_schema, owner_schema, owner_schema, owner_schema,
         owner_schema, owner_schema, owner_schema, owner_schema, owner_schema, owner_schema);
 
     EXECUTE format($function$
