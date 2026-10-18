@@ -405,14 +405,16 @@ class CheckpointPublicationTests(unittest.TestCase):
                   (subprocess.TimeoutExpired(["gh", secret], 120, output=secret), "timeout", None),
                   (FileNotFoundError(secret), "client_unavailable", None)]
         for error, category, status in errors:
-            with self.subTest(category=category), patch.object(github.subprocess, "run", side_effect=error), self.assertRaises(github.CommentPostError) as caught:
-                github.post_issue_comment(REPO, PR, secret)
+            with self.subTest(category=category), patch.object(github.subprocess, "run", side_effect=error):
+                with self.assertRaises(github.CommentPostError) as caught:
+                    github.post_issue_comment(REPO, PR, secret)
                 self.assertEqual((caught.exception.category, caught.exception.http_status), (category, status))
                 self.assertNotIn(secret, str(caught.exception))
                 self.assertNotIn(secret, repr(caught.exception.__dict__))
         for output in ("not json " + secret, "[]"):
-            with patch.object(github.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)), self.assertRaises(github.CommentPostError) as caught:
-                github.post_issue_comment(REPO, PR, secret)
+            with patch.object(github.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)):
+                with self.assertRaises(github.CommentPostError) as caught:
+                    github.post_issue_comment(REPO, PR, secret)
                 self.assertEqual(caught.exception.category, "invalid_response")
                 self.assertNotIn(secret, str(caught.exception))
 
