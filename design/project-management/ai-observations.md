@@ -199,7 +199,7 @@ Entry format:
 
 - 2026-10-18: CodeRabbit full review 5560170943 for PR #3264 emitted a complete 1/1 publication with one outside-diff Major but no bounded actionable-comment count. The existing manual adoption correctly refused automatic attribution with `Hosted publication has no unique bounded actionable-comment count`. Exact trigger 6241278398, reviewed head `187ab53426caf78cd6a01b61e092b800186aaec2`, provider result and accepted obligation were retained in the CI validation throughput controller job history without invented Hosted credit; no controller adapter change was made in this CI patch. Reconsider format support only in a separately scoped controller maintenance task.
 
-### 2026-10-18 — PR retarget can fail exact merge-parent metadata checks
+## 2026-10-18 — PR retarget can fail exact merge-parent metadata checks
 
 After #3237 merged and #3246 was retargeted to `develop`, Runtime Images run `39093729815` and Preview run `39093729854` rejected the retargeted head/base pair because the selected test-merge commit did not have its exact parents. Runtime failed before image production; Preview exhausted five merge-computation attempts. The previous parent’s green runs do not qualify the new pair. The PR Runtime path uses `GITHUB_SHA`; an empty dispatch-only `EVENT_MERGE_SHA` is not the cause. The reason for the mismatched merge selection is unconfirmed.
 
