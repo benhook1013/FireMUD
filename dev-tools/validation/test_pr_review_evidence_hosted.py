@@ -1713,6 +1713,73 @@ class HostedEvidenceTests(unittest.TestCase):
             for identity, parent, created in ((30, 20, "2026-09-23T00:01:30Z"), (31, 21, "2026-09-23T00:02:30Z"))
         ]
 
+    def test_operational_publication_unknown_count_preserves_strict_credit_failure(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        for count in ("", "**Actionable comments posted: unknown**", "**Actionable comments posted: 201**"):
+            with self.subTest(count=count):
+                reviews = self.publication_reviews()
+                reviews[0]["body"] = reviews[0]["body"].replace(
+                    "**Actionable comments posted: 2**", "<!-- walkthrough_start -->\n" + count
+                )
+                payload = review_payload([trigger], reviews, head="c" * 40, threads=self.publication_threads())
+                strict = hosted.trigger_state(REPO, PR, payload, trigger_record())
+                self.assertFalse(strict.terminal)
+                self.assertFalse(strict.attributed)
+                operational = hosted.operational_trigger_state(REPO, PR, payload, trigger_record())
+                self.assertEqual(operational.state, "ambiguous")
+                self.assertTrue(operational.terminal)
+                self.assertTrue(operational.attributed)
+                self.assertEqual(operational.response_id, 20)
+                self.assertEqual(operational.publication_review_ids, (20, 21))
+                self.assertEqual(operational.head_sha, HEAD)
+                self.assertEqual(operational.current_head_sha, "c" * 40)
+
+    def test_operational_unknown_count_requires_complete_unambiguous_publication(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        for failure in (
+            "incomplete", "multiple", "wrong_author", "wrong_head", "malformed", "no_batches",
+            "late_batch", "wrong_root_head", "later_active", "extra_review", "wrong_pr", "incomplete_coverage",
+        ):
+            with self.subTest(failure=failure):
+                reviews = self.publication_reviews()
+                reviews[0]["body"] = reviews[0]["body"].replace(
+                    "**Actionable comments posted: 2**", "<!-- walkthrough_start -->"
+                )
+                comments = [trigger]
+                threads = self.publication_threads()
+                if failure == "incomplete":
+                    reviews.pop()
+                elif failure == "multiple":
+                    extra = self.publication_reviews()
+                    for review in extra:
+                        review["databaseId"] += 100
+                        review["body"] = review["body"].replace("e481ca4b", "f481ca4b")
+                    reviews += extra
+                elif failure == "wrong_author":
+                    reviews[1]["author"]["login"] = "other"
+                elif failure == "wrong_head":
+                    reviews[1]["commit"]["oid"] = "c" * 40
+                elif failure == "malformed":
+                    reviews[1]["body"] = reviews[1]["body"].replace("batch=2/2", "batch=0/2")
+                elif failure == "no_batches":
+                    reviews = []
+                elif failure == "late_batch":
+                    comments.append(comment(11, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:30Z"))
+                elif failure == "wrong_root_head":
+                    threads[0]["comments"]["nodes"][0]["originalCommit"]["oid"] = "c" * 40
+                elif failure == "later_active":
+                    comments.append(comment(12, "coderabbitai[bot]", "Full review triggered", "2026-09-23T00:04:00Z"))
+                elif failure == "incomplete_coverage":
+                    reviews[0]["body"] += "\nFiles not reviewed: 1"
+                elif failure == "extra_review":
+                    reviews.append({**reviews[0], "databaseId": 100, "body": "<!-- walkthrough_start -->"})
+                payload = review_payload(comments, reviews, threads=threads)
+                if failure == "wrong_pr":
+                    payload["data"]["repository"]["pullRequest"]["number"] = PR + 1
+                state = hosted.operational_trigger_state(REPO, PR, payload, trigger_record())
+                self.assertFalse(state.terminal)
+                self.assertNotEqual(state.state, "completed")
+
     def test_publication_order_does_not_change_primary_identity_or_last_batch_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         for reviews in (self.publication_reviews(), list(reversed(self.publication_reviews()))):

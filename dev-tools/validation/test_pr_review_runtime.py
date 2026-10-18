@@ -4377,6 +4377,36 @@ class RuntimeTest(unittest.TestCase):
         fetch_full.assert_called_once_with("owner/repo", 99)
         preceding.assert_called_once_with("owner/repo", 99, payload, 901, Path(directory))
 
+    def test_hosted_global_scan_accepts_terminal_publication_without_count_after_head_moves(self) -> None:
+        manual = {
+            "databaseId": 905,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-28T10:08:38Z",
+            "url": "https://example.test/comments/905",
+        }
+        review = {
+            "databaseId": 906,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "<!-- walkthrough_start -->\n"
+            "<!-- coderabbit-review-publication v1 publication=e481ca4b-4c4c-4c5b-89fb-a8ec99408867 "
+            "attempt=2fb88283-8806-4645-bfcb-836652c40071 batch=1/1 -->",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-28T10:19:19Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([manual], [review], head="c" * 40)
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", return_value=[{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]),
+            patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual]}),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+        ):
+            common = Path(directory)
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(42, common)
+            self.assertEqual(list(common.iterdir()), [])
+
     def test_hosted_global_scan_releases_slot_after_off_queue_manual_adoption(self) -> None:
         manual = {
             "databaseId": 905,
