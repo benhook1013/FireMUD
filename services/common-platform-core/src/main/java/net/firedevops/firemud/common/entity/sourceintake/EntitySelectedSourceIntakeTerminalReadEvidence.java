@@ -72,13 +72,12 @@ public record EntitySelectedSourceIntakeTerminalReadEvidence(
           && schemaVersion == other.schemaVersion
           && targetNamespace.equals(other.targetNamespace)
           && readRequestId.equals(other.readRequestId)
-          && Arrays.equals(binding.canonicalBytes(), other.binding.canonicalBytes());
+          && binding.equals(other.binding);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(
-          schemaVersion, targetNamespace, readRequestId, Arrays.hashCode(binding.canonicalBytes()));
+      return Objects.hash(schemaVersion, targetNamespace, readRequestId, binding);
     }
 
     private static boolean collides(
