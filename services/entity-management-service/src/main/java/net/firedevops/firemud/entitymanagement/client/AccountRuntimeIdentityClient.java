@@ -44,7 +44,9 @@ public final class AccountRuntimeIdentityClient
 
   /** Initializes the client only when an explicit caller owns activation of this handoff. */
   public void init() throws SSLException, IOException {
-    initReloadingClient();
+    initOnce(
+        "Account runtime identity client is closed",
+        "Account runtime identity client is not initialized");
   }
 
   @Override
@@ -76,10 +78,7 @@ public final class AccountRuntimeIdentityClient
     UUID requestUuid =
         EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(requestId, "request ID");
     RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub currentStub =
-        stub();
-    if (currentStub == null) {
-      throw new IllegalStateException("Account runtime identity client is not initialized");
-    }
+        requireInitializedStub("Account runtime identity client is not initialized");
 
     ResolveRuntimeAccountIdentityResponse response =
         currentStub

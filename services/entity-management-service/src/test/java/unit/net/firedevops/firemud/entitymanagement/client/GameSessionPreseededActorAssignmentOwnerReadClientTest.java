@@ -1,9 +1,18 @@
 package unit.net.firedevops.firemud.entitymanagement.client;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+import io.grpc.ManagedChannel;
+import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -11,7 +20,9 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionPreseededActorAssignmentOwnerReadClient;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class GameSessionPreseededActorAssignmentOwnerReadClientTest {
   private static final String NAMESPACE = "gameplay";
@@ -93,6 +104,42 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
     verifyNoInteractions(channelFactory);
   }
 
+  @Test
+  void initIsIdempotentAndClosedClientRefusesCallsWithoutUsingTheStaleStub(@TempDir Path directory)
+      throws Exception {
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    ManagedChannel channel = mock(ManagedChannel.class);
+    when(channelFactory.buildChannel(
+            eq("game-session-service:6565"),
+            eq(6565),
+            any(CommonGrpcClientProperties.class),
+            eq(true)))
+        .thenReturn(channel);
+    var client =
+        new GameSessionPreseededActorAssignmentOwnerReadClient(
+            new ServiceEndpointsProperties(), mtlsProperties(directory), channelFactory, NAMESPACE);
+
+    client.init();
+    client.init();
+    var staleStub =
+        mock(
+            CanonicalGameplayRosterOwnerReadServiceGrpc
+                .CanonicalGameplayRosterOwnerReadServiceBlockingStub.class);
+    setStub(client, staleStub);
+    client.close();
+
+    assertThatThrownBy(() -> client.getPreseededActorAssignmentOwnerRead(request(NAMESPACE)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+    verifyNoInteractions(staleStub);
+    verify(channelFactory, times(1))
+        .buildChannel(
+            eq("game-session-service:6565"),
+            eq(6565),
+            any(CommonGrpcClientProperties.class),
+            eq(true));
+  }
+
   private static PreseededActorAssignmentOwnerReadEvidence.Request request(String namespace) {
     return new PreseededActorAssignmentOwnerReadEvidence.Request(
         ASSIGNMENT,
@@ -115,6 +162,13 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
     return incompleteMtlsProperties("entity-client.crt", "entity-client.key", "gs-ca.crt");
   }
 
+  private static CommonGrpcClientProperties mtlsProperties(Path directory) throws Exception {
+    return incompleteMtlsProperties(
+        Files.createFile(directory.resolve("entity-client.crt")).toString(),
+        Files.createFile(directory.resolve("entity-client.key")).toString(),
+        Files.createFile(directory.resolve("gs-ca.crt")).toString());
+  }
+
   private static CommonGrpcClientProperties incompleteMtlsProperties(
       String certificate, String privateKey, String caCertificate) {
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
@@ -126,5 +180,18 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
 
   private static UUID uuid(String value) {
     return UUID.fromString(value);
+  }
+
+  private static void setStub(
+      GameSessionPreseededActorAssignmentOwnerReadClient client,
+      CanonicalGameplayRosterOwnerReadServiceGrpc
+              .CanonicalGameplayRosterOwnerReadServiceBlockingStub
+          stub)
+      throws Exception {
+    Field field =
+        net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient.class
+            .getDeclaredField("stub");
+    field.setAccessible(true);
+    field.set(client, stub);
   }
 }

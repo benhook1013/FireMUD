@@ -49,7 +49,9 @@ public final class GameSessionPreseededActorAssignmentOwnerReadClient
 
   /** Initializes file-backed workload mTLS only when run-owned assignment is enabled. */
   public void init() throws SSLException, IOException {
-    initReloadingClient();
+    initOnce(
+        "Game Session actor assignment owner read client is closed",
+        "Game Session actor assignment owner read client is not initialized");
   }
 
   @Override
@@ -83,11 +85,9 @@ public final class GameSessionPreseededActorAssignmentOwnerReadClient
           "Actor assignment owner read target namespace does not match Entity Management");
     }
 
-    var currentStub = stub();
-    if (currentStub == null) {
-      throw new IllegalStateException(
-          "Game Session actor assignment owner read client is not initialized");
-    }
+    var currentStub =
+        requireInitializedStub(
+            "Game Session actor assignment owner read client is not initialized");
     GetPreseededActorAssignmentOwnerReadResponse response =
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)

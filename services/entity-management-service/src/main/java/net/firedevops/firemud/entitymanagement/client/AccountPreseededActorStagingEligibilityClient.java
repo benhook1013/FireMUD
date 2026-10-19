@@ -54,7 +54,9 @@ public final class AccountPreseededActorStagingEligibilityClient
 
   /** Initializes the client only when an explicit caller owns activation of this handoff. */
   public void init() throws SSLException, IOException {
-    initReloadingClient();
+    initOnce(
+        "Account actor-staging eligibility client is closed",
+        "Account actor-staging eligibility client is not initialized");
   }
 
   @Override
@@ -91,11 +93,8 @@ public final class AccountPreseededActorStagingEligibilityClient
     UUID requestUuid =
         EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(requestId, "request ID");
     AccountActorStagingEligibilityServiceGrpc.AccountActorStagingEligibilityServiceBlockingStub
-        currentStub = stub();
-    if (currentStub == null) {
-      throw new IllegalStateException(
-          "Account actor-staging eligibility client is not initialized");
-    }
+        currentStub =
+            requireInitializedStub("Account actor-staging eligibility client is not initialized");
 
     ResolvePreseededActorStagingEligibilityResponse response =
         currentStub
