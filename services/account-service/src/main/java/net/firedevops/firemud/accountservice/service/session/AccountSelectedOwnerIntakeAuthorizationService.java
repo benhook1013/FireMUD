@@ -73,42 +73,28 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
     Objects.requireNonNull(selected, "selected Draft binding is required");
     Objects.requireNonNull(environmentCapture, "current Account environment capture is required");
 
-    Optional<SelectedOwnerIntakeSourceReadScope> retained =
-        findScope(originalCreatorCredential, intakeRequestId, owner, selected);
-    SelectedOwnerIntakeSourceReadScope scope = null;
-    if (retained.isPresent()) {
-      scope = retained.orElseThrow();
-      var recovery = recover(scope);
-      if (recovery.state() == AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED)
-        throw denied("Original selected-owner intake reservation was aborted");
-      if (recovery.state()
-          == AccountSelectedOwnerIntakeSourceReservationRepository.State.FINALIZED) {
-        var original =
-            findFinalAuthorization(scope)
-                .orElseThrow(
-                    () -> denied("Finalized selected-owner intake authorization is unavailable"));
-        return readFinalAuthorization(original);
-      }
-    } else {
-      var initialEnvironment = requireEnvironment(environmentCapture.get());
-      scope =
-          reserveSourceRead(
-              originalCreatorCredential, intakeRequestId, owner, selected, initialEnvironment);
-      var recovery = recover(scope);
-      if (recovery.state() == AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED)
-        throw denied("Original selected-owner intake reservation was aborted");
-      if (recovery.state()
-          == AccountSelectedOwnerIntakeSourceReservationRepository.State.FINALIZED) {
-        var original =
-            findFinalAuthorization(scope)
-                .orElseThrow(
-                    () -> denied("Finalized selected-owner intake authorization is unavailable"));
-        return readFinalAuthorization(original);
-      }
+    SelectedOwnerIntakeSourceReadScope scope =
+        findScope(originalCreatorCredential, intakeRequestId, owner, selected)
+            .orElseGet(
+                () ->
+                    reserveSourceRead(
+                        originalCreatorCredential,
+                        intakeRequestId,
+                        owner,
+                        selected,
+                        requireEnvironment(environmentCapture.get())));
+    var recovery = recover(scope);
+    if (recovery.state() == AccountSelectedOwnerIntakeSourceReservationRepository.State.ABORTED)
+      throw denied("Original selected-owner intake reservation was aborted");
+    if (recovery.state() == AccountSelectedOwnerIntakeSourceReservationRepository.State.FINALIZED) {
+      var original =
+          findFinalAuthorization(scope)
+              .orElseThrow(
+                  () -> denied("Finalized selected-owner intake authorization is unavailable"));
+      return readFinalAuthorization(original);
     }
 
     var request = SelectedOwnerIntakeSourceReadEvidence.Request.create(namespace, scope);
-    SelectedOwnerIntakeSourceReadScope reservationScope = scope;
     outsideSql();
     // The authenticated Game Design client enforces exact request echo, wire closure, six-family
     // content integrity and the absence of SQL or transaction synchronization during this call.
@@ -137,7 +123,7 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
               finalizationEnvironment,
               current ->
                   repository.finalizeSourceRead(
-                      reservationScope,
+                      scope,
                       content,
                       current,
                       () ->
@@ -148,7 +134,7 @@ public final class AccountSelectedOwnerIntakeAuthorizationService {
       // only the exact same content and operation; never allocate a replacement scope or fence.
       Optional<SelectedOwnerIntakeAuthorizationBinding> committed;
       try {
-        committed = findFinalAuthorization(reservationScope);
+        committed = findFinalAuthorization(scope);
       } catch (RuntimeException readFailure) {
         if (readFailure != finalizationFailure) finalizationFailure.addSuppressed(readFailure);
         throw finalizationFailure;
