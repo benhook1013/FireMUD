@@ -1003,7 +1003,12 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         var before = publicationOrderRows(sources.dsl);
         assertThat(before.get("account_selected_publication_authorizations")).isEmpty();
         assertThat(before.get("account_selected_publication_sources")).isEmpty();
-        assertThatThrownBy(() -> client.authorize(request)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> client.authorize(request))
+            .isInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                error ->
+                    assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                        .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
         assertThat(publicationOrderRows(sources.dsl)).isEqualTo(before);
         assertThat(reads.get()).isEqualTo(1);
         unavailable.set(false);
@@ -1178,7 +1183,12 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                           "SELECT owner_freeze_phase FROM world_design_publication_fence_owner")
                       .get(0, String.class))
               .isEqualTo("OPEN");
-          assertThatThrownBy(() -> freeze.begin(request)).isInstanceOf(RuntimeException.class);
+          assertThatThrownBy(() -> freeze.begin(request))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class)
+              .satisfies(
+                  error ->
+                      assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                          .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
           assertThat(freezeOwnerRows(world.dsl())).isEqualTo(before);
           assertThat(selectionCalls.get()).isEqualTo(1);
           assertThat(versionCalls.get()).isEqualTo(1);
@@ -1387,7 +1397,11 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                                 net.firedevops.firemud.common.publication
                                     .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
                                     NAMESPACE, operation.canonicalBytes())))
-                    .isInstanceOf(RuntimeException.class);
+                    .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                    .satisfies(
+                        error ->
+                            assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                                .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
                 return null;
               });
           assertThat(
