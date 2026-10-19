@@ -12,6 +12,9 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GameDesignSelectedDraftPublicationReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ReadSelectedDraftPublicationRequest;
 import net.firedevops.firemud.gamedesign.v1.ReadSelectedDraftPublicationResponse;
+import org.jooq.exception.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 
 /**
  * Standalone, unregistered immutable selection owner read. Does not inspect mutable Version state
@@ -84,10 +87,18 @@ public final class GameDesignSelectedDraftPublicationReadGrpcService
               .withDescription("Selected Draft publication read denied or unavailable")
               .asRuntimeException());
       return;
-    } catch (RuntimeException unavailable) {
+    } catch (DataAccessException
+        | TransientDataAccessException
+        | DataAccessResourceFailureException unavailable) {
       observer.onError(
           Status.UNAVAILABLE
               .withDescription("Game Design selection storage unavailable")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException invalid) {
+      observer.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Retained selected Draft publication evidence is invalid")
               .asRuntimeException());
       return;
     }
