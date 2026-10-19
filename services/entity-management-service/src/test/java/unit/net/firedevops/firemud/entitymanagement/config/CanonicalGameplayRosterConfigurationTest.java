@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -35,6 +36,9 @@ import net.firedevops.firemud.entitymanagement.service.impl.GameSessionCanonical
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ConfigurationClassPostProcessor;
 import org.springframework.core.env.MapPropertySource;
 
 class CanonicalGameplayRosterConfigurationTest {
@@ -53,12 +57,9 @@ class CanonicalGameplayRosterConfigurationTest {
                       "firemud.run-owned-preseeded-actor-assignment.enabled",
                       "true")));
       context.scan("net.firedevops.firemud.entitymanagement");
+      processConfigurationClasses(context);
 
-      Set<String> registeredClassNames =
-          Arrays.stream(context.getBeanFactory().getBeanDefinitionNames())
-              .map(name -> context.getBeanFactory().getBeanDefinition(name).getBeanClassName())
-              .filter(className -> className != null)
-              .collect(Collectors.toSet());
+      Set<String> registeredTypeNames = registeredTypeNames(context);
 
       assertThat(
               context
@@ -70,8 +71,8 @@ class CanonicalGameplayRosterConfigurationTest {
                   .getEnvironment()
                   .getProperty("firemud.run-owned-preseeded-actor-assignment.enabled"))
           .isEqualTo("true");
-      assertThat(registeredClassNames).contains(CharacterRepository.class.getName());
-      assertThat(registeredClassNames)
+      assertThat(registeredTypeNames).contains(CharacterRepository.class.getName());
+      assertThat(registeredTypeNames)
           .doesNotContain(
               CanonicalGameplayRosterConfiguration.class.getName(),
               PreseededActorAssignmentConfiguration.class.getName(),
@@ -85,6 +86,55 @@ class CanonicalGameplayRosterConfigurationTest {
               AccountPreseededActorStagingEligibilityClient.class.getName(),
               CanonicalGameplayRosterGrpcAdapter.class.getName(),
               CanonicalGameplayRosterPeerInterceptor.class.getName());
+    }
+  }
+
+  @Test
+  void beanFactoryReturnTypesAreDetectedWithoutInvokingTheFactoryMethod() {
+    PassiveFactoryMethodPositiveControl.FACTORY_METHOD_INVOCATIONS.set(0);
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context.register(PassiveFactoryMethodPositiveControl.class);
+      processConfigurationClasses(context);
+
+      assertThat(registeredTypeNames(context))
+          .contains(CanonicalGameplayRosterService.class.getName());
+      assertThat(PassiveFactoryMethodPositiveControl.FACTORY_METHOD_INVOCATIONS).hasValue(0);
+    }
+  }
+
+  private static void processConfigurationClasses(AnnotationConfigApplicationContext context) {
+    var processor = new ConfigurationClassPostProcessor();
+    processor.setBeanClassLoader(context.getClassLoader());
+    processor.setEnvironment(context.getEnvironment());
+    processor.setResourceLoader(context);
+    processor.postProcessBeanDefinitionRegistry(context.getDefaultListableBeanFactory());
+    processor.postProcessBeanFactory(context.getBeanFactory());
+  }
+
+  private static Set<String> registeredTypeNames(AnnotationConfigApplicationContext context) {
+    var beanFactory = context.getBeanFactory();
+    return Arrays.stream(beanFactory.getBeanDefinitionNames())
+        .flatMap(
+            name -> {
+              var definition = beanFactory.getBeanDefinition(name);
+              var beanType = beanFactory.getType(name, false);
+              return Arrays.stream(
+                  new String[] {
+                    definition.getBeanClassName(), beanType == null ? null : beanType.getName()
+                  });
+            })
+        .filter(typeName -> typeName != null)
+        .collect(Collectors.toSet());
+  }
+
+  @Configuration(proxyBeanMethods = false)
+  static class PassiveFactoryMethodPositiveControl {
+    private static final AtomicInteger FACTORY_METHOD_INVOCATIONS = new AtomicInteger();
+
+    @Bean
+    CanonicalGameplayRosterService guardedPassiveSource() {
+      FACTORY_METHOD_INVOCATIONS.incrementAndGet();
+      return null;
     }
   }
 
