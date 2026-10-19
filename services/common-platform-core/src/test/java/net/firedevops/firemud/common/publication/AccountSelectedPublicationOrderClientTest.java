@@ -83,6 +83,81 @@ class AccountSelectedPublicationOrderClientTest {
   }
 
   @Test
+  void validatesExactConfiguredTlsPathsBeforeCreatingAChannel(@TempDir Path directory)
+      throws Exception {
+    var factory = mock(GrpcChannelFactory.class);
+
+    var certChainTls = tls(directory);
+    certChainTls.setCertChain(certChainTls.getCertChain() + " ");
+    assertThat(Files.exists(Path.of(certChainTls.getCertChain()))).isFalse();
+    assertThat(Files.isReadable(Path.of(certChainTls.getCertChain().trim()))).isTrue();
+    assertThatThrownBy(
+            () ->
+                new AccountSelectedPublicationOrderClient(
+                    new ServiceEndpointsProperties(), certChainTls, factory, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account selected-publication")
+        .hasMessageNotContaining(certChainTls.getCertChain())
+        .hasNoCause();
+
+    var privateKeyTls = tls(directory);
+    privateKeyTls.setPrivateKey(privateKeyTls.getPrivateKey() + " ");
+    assertThat(Files.exists(Path.of(privateKeyTls.getPrivateKey()))).isFalse();
+    assertThat(Files.isReadable(Path.of(privateKeyTls.getPrivateKey().trim()))).isTrue();
+    assertThatThrownBy(
+            () ->
+                new AccountSelectedPublicationOrderClient(
+                    new ServiceEndpointsProperties(), privateKeyTls, factory, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account selected-publication")
+        .hasMessageNotContaining(privateKeyTls.getPrivateKey())
+        .hasNoCause();
+
+    var caCertTls = tls(directory);
+    caCertTls.setCaCert(caCertTls.getCaCert() + " ");
+    assertThat(Files.exists(Path.of(caCertTls.getCaCert()))).isFalse();
+    assertThat(Files.isReadable(Path.of(caCertTls.getCaCert().trim()))).isTrue();
+    assertThatThrownBy(
+            () ->
+                new AccountSelectedPublicationOrderClient(
+                    new ServiceEndpointsProperties(), caCertTls, factory, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account selected-publication")
+        .hasMessageNotContaining(caCertTls.getCaCert())
+        .hasNoCause();
+
+    verifyNoInteractions(factory);
+  }
+
+  @Test
+  void acceptsAndPreservesTrailingSpacesInExistingTlsPaths(@TempDir Path directory)
+      throws Exception {
+    var certChain = Files.writeString(directory.resolve("client.crt "), "certificate");
+    var privateKey = Files.writeString(directory.resolve("client.key "), "private-key");
+    var caCert = Files.writeString(directory.resolve("ca.crt "), "ca");
+    assertThat(Files.exists(directory.resolve("client.crt"))).isFalse();
+    assertThat(Files.exists(directory.resolve("client.key"))).isFalse();
+    assertThat(Files.exists(directory.resolve("ca.crt"))).isFalse();
+
+    var tls = new CommonGrpcClientProperties();
+    tls.setPlaintext(false);
+    tls.setCertChain(certChain.toString());
+    tls.setPrivateKey(privateKey.toString());
+    tls.setCaCert(caCert.toString());
+    var client =
+        new AccountSelectedPublicationOrderClient(
+            new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), "test");
+
+    var tlsPropsField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("tlsProps");
+    tlsPropsField.setAccessible(true);
+    var copiedTls = (CommonGrpcClientProperties) tlsPropsField.get(client);
+    assertThat(copiedTls.getCertChain()).isEqualTo(certChain.toString());
+    assertThat(copiedTls.getPrivateKey()).isEqualTo(privateKey.toString());
+    assertThat(copiedTls.getCaCert()).isEqualTo(caCert.toString());
+    client.close();
+  }
+
+  @Test
   void configuresExactAccountPeerDeadlineAndValidatesEchoOutsideSql(@TempDir Path directory)
       throws Exception {
     var factory = mock(GrpcChannelFactory.class);

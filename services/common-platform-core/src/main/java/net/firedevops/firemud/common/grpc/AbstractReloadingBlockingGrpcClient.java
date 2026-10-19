@@ -67,7 +67,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         throw new IllegalArgumentException(
             errorContext + " requires readable file-backed TLS material");
       }
-      String pathText = configuredPath.trim();
+      String pathText = configuredPath;
       if (pathText.startsWith("classpath:")) {
         throw new IllegalArgumentException(
             errorContext + " requires readable file-backed TLS material");
