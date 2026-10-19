@@ -1,5 +1,6 @@
 package unit.net.firedevops.firemud.entitymanagement.client;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -9,20 +10,28 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadEvidence;
+import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadGrpcCodec;
 import net.firedevops.firemud.entitymanagement.client.GameSessionPreseededActorAssignmentOwnerReadClient;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerReadRequest;
+import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerReadResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 
 class GameSessionPreseededActorAssignmentOwnerReadClientTest {
   private static final String NAMESPACE = "gameplay";
@@ -105,6 +114,92 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
   }
 
   @Test
+  void forwardsExactSelectorAndReturnsCodecValidatedEvidence() throws Exception {
+    var request = request(NAMESPACE);
+    var response =
+        GetPreseededActorAssignmentOwnerReadResponse.newBuilder()
+            .setRequest(PreseededActorAssignmentOwnerReadGrpcCodec.toRequest(request))
+            .setGameSessionOwnerProof(ByteString.copyFrom(new byte[] {1}))
+            .setPublishedPolicySetEvidence(ByteString.copyFrom(new byte[] {2}))
+            .setAdmissionPointerSnapshotDigest("a".repeat(64))
+            .build();
+    var evidence = mock(PreseededActorAssignmentOwnerReadEvidence.class);
+    var stub = mockStub();
+    when(stub.getPreseededActorAssignmentOwnerRead(any())).thenReturn(response);
+
+    try (MockedStatic<PreseededActorAssignmentOwnerReadGrpcCodec> codec =
+        Mockito.mockStatic(PreseededActorAssignmentOwnerReadGrpcCodec.class)) {
+      codec
+          .when(() -> PreseededActorAssignmentOwnerReadGrpcCodec.toRequest(request))
+          .thenCallRealMethod();
+      codec
+          .when(() -> PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(request, response))
+          .thenReturn(evidence);
+
+      assertThat(newClient(stub).getPreseededActorAssignmentOwnerRead(request)).isSameAs(evidence);
+
+      ArgumentCaptor<GetPreseededActorAssignmentOwnerReadRequest> captor =
+          ArgumentCaptor.forClass(GetPreseededActorAssignmentOwnerReadRequest.class);
+      verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+      verify(stub).getPreseededActorAssignmentOwnerRead(captor.capture());
+      var wire = captor.getValue();
+      assertThat(wire.getSchemaVersion()).isEqualTo(1);
+      assertThat(wire.getAssignmentUuid()).isEqualTo(ASSIGNMENT.toString());
+      assertThat(wire.getCanonicalAccountUuid()).isEqualTo(ACCOUNT.toString());
+      assertThat(wire.getTargetNamespace()).isEqualTo(NAMESPACE);
+      assertThat(wire.getCanonicalTenantUuid()).isEqualTo(TENANT.toString());
+      assertThat(wire.getWorldSlug()).isEqualTo("earth");
+      assertThat(wire.getRealmUuid()).isEqualTo(REALM.toString());
+      assertThat(wire.getRealmSlug()).isEqualTo("main");
+      assertThat(wire.getPlayableStateNamespaceUuid()).isEqualTo(PLAYABLE_NAMESPACE.toString());
+      assertThat(wire.getPlayableStateScope()).isEqualTo("SHARED");
+      assertThat(wire.getCanonicalGameInstanceUuid()).isEqualTo(INSTANCE.toString());
+      assertThat(wire.getCanonicalVersionUuid()).isEqualTo(VERSION.toString());
+      assertThat(wire.getExpectedCatalogRevision()).isEqualTo(71L);
+      assertThat(wire.getExpectedPolicyDigest()).isEqualTo("a".repeat(64));
+      assertThat(wire.getExpectedPublishedReleaseBundleRef()).isEqualTo("release:exact");
+      assertThat(wire.getUnknownFields().asMap()).isEmpty();
+      codec.verify(
+          () -> PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(request, response));
+    }
+  }
+
+  @Test
+  void rejectsAbsentResponseAndWrapsCodecRejectedResponse() throws Exception {
+    var request = request(NAMESPACE);
+    var absentStub = mockStub();
+    when(absentStub.getPreseededActorAssignmentOwnerRead(any())).thenReturn(null);
+    assertThatThrownBy(() -> newClient(absentStub).getPreseededActorAssignmentOwnerRead(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("response is absent");
+
+    var response =
+        GetPreseededActorAssignmentOwnerReadResponse.newBuilder()
+            .setRequest(PreseededActorAssignmentOwnerReadGrpcCodec.toRequest(request))
+            .setGameSessionOwnerProof(ByteString.copyFrom(new byte[] {1}))
+            .setPublishedPolicySetEvidence(ByteString.copyFrom(new byte[] {2}))
+            .setAdmissionPointerSnapshotDigest("a".repeat(64))
+            .build();
+    var stub = mockStub();
+    when(stub.getPreseededActorAssignmentOwnerRead(any())).thenReturn(response);
+    var invalid = new IllegalArgumentException("changed selector or owner evidence");
+    try (MockedStatic<PreseededActorAssignmentOwnerReadGrpcCodec> codec =
+        Mockito.mockStatic(PreseededActorAssignmentOwnerReadGrpcCodec.class)) {
+      codec
+          .when(() -> PreseededActorAssignmentOwnerReadGrpcCodec.toRequest(request))
+          .thenCallRealMethod();
+      codec
+          .when(() -> PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(request, response))
+          .thenThrow(invalid);
+
+      assertThatThrownBy(() -> newClient(stub).getPreseededActorAssignmentOwnerRead(request))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("response is invalid")
+          .hasCause(invalid);
+    }
+  }
+
+  @Test
   void initIsIdempotentAndClosedClientRefusesCallsWithoutUsingTheStaleStub(@TempDir Path directory)
       throws Exception {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
@@ -180,6 +275,37 @@ class GameSessionPreseededActorAssignmentOwnerReadClientTest {
 
   private static UUID uuid(String value) {
     return UUID.fromString(value);
+  }
+
+  private static GameSessionPreseededActorAssignmentOwnerReadClient newClient(
+      CanonicalGameplayRosterOwnerReadServiceGrpc
+              .CanonicalGameplayRosterOwnerReadServiceBlockingStub
+          stub)
+      throws Exception {
+    var client =
+        new GameSessionPreseededActorAssignmentOwnerReadClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            NAMESPACE);
+    setStub(client, stub);
+    Field initializedField =
+        net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient.class
+            .getDeclaredField("explicitlyInitialized");
+    initializedField.setAccessible(true);
+    initializedField.setBoolean(client, true);
+    return client;
+  }
+
+  private static CanonicalGameplayRosterOwnerReadServiceGrpc
+          .CanonicalGameplayRosterOwnerReadServiceBlockingStub
+      mockStub() {
+    var stub =
+        mock(
+            CanonicalGameplayRosterOwnerReadServiceGrpc
+                .CanonicalGameplayRosterOwnerReadServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    return stub;
   }
 
   private static void setStub(
