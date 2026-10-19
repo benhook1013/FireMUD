@@ -23,8 +23,11 @@ public final class CanonicalGameplayRosterPeerInterceptor implements ServerInter
   private final String trustedNamespace;
 
   public CanonicalGameplayRosterPeerInterceptor(String trustedNamespace) {
-    this.trustedNamespace =
-        GrpcPeerIdentity.isValidNamespace(trustedNamespace) ? trustedNamespace : "";
+    if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
+      throw new IllegalArgumentException(
+          "Entity Management workload namespace must be one DNS label");
+    }
+    this.trustedNamespace = trustedNamespace;
   }
 
   @Override

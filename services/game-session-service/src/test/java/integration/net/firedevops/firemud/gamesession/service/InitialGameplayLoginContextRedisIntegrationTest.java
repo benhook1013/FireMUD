@@ -737,6 +737,12 @@ class InitialGameplayLoginContextRedisIntegrationTest {
               assertThat(authority.active).isTrue();
               assertThat(authority.current).isTrue();
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(resultRef.get())
+                  .as(
+                      "late-custody scenario requires successful CREATE_PENDING and a returned "
+                          + "Authenticate response; provider command trace: %s",
+                      provider.traces)
+                  .isNotNull();
               assertThat(request.hasTokenWitness()).isTrue();
               assertThat(provider.traces).hasSize(4);
               assertThat(provider.traces.get(2)).containsSubsequence("evalsha", "WAITAOF", "close");

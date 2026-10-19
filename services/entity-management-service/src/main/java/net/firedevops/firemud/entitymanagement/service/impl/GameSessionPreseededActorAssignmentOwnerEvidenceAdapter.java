@@ -2,7 +2,6 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import java.util.Objects;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.common.account.AccountActorStagingEligibilityEvidence;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -15,13 +14,11 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentO
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.entitymanagement.validation.CanonicalEntitySourceValues;
 
 /** Maps the exact Game Session source proof and one Account staging snapshot for Entity. */
 public final class GameSessionPreseededActorAssignmentOwnerEvidenceAdapter
     implements PreseededActorAssignmentOwnerEvidencePort {
-  private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
-  private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
-
   private final GameSessionPreseededActorAssignmentOwnerReadClient gameSessionClient;
   private final String workloadNamespace;
 
@@ -147,24 +144,26 @@ public final class GameSessionPreseededActorAssignmentOwnerEvidenceAdapter
   }
 
   private static UUID canonicalUuid(String value, String name) {
+    String nonNullValue;
     try {
-      UUID parsed = UUID.fromString(Objects.requireNonNull(value, name));
-      if (!parsed.toString().equals(value) || new UUID(0L, 0L).equals(parsed)) {
-        throw new IllegalArgumentException(name + " must be a canonical non-nil UUID");
-      }
-      return parsed;
+      nonNullValue = Objects.requireNonNull(value, name);
     } catch (RuntimeException invalid) {
       throw new IllegalArgumentException(name + " must be a canonical non-nil UUID", invalid);
+    }
+    try {
+      return CanonicalEntitySourceValues.parseCanonicalNonNilUuid(nonNullValue);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalArgumentException(
+          name + " must be a canonical non-nil UUID",
+          invalid.getCause() == null ? invalid : invalid.getCause());
     }
   }
 
   private static String rawHexDigest(String digest) {
-    if (digest != null && PREFIXED_SHA256.matcher(digest).matches()) {
-      return digest.substring("sha256:".length());
+    try {
+      return CanonicalEntitySourceValues.normalizeSha256ToRawHex(digest);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalArgumentException("Canonical SHA-256 digest is required");
     }
-    if (digest != null && RAW_SHA256.matcher(digest).matches()) {
-      return digest;
-    }
-    throw new IllegalArgumentException("Canonical SHA-256 digest is required");
   }
 }
