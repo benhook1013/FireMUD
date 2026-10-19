@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.GetDraftDesignDigestRequest;
 import org.junit.jupiter.api.Test;
@@ -225,69 +226,74 @@ class GameLogicClientTest {
   }
 
   @Test
-  void missingWorkloadNamespaceDeniesBeforeRpc(@TempDir Path tlsDirectory) throws IOException {
+  void missingWorkloadNamespaceReturnsUnavailableBeforeRpc(@TempDir Path tlsDirectory)
+      throws IOException {
     var receipt = SelectedDraftGameLogicReceiptTest.fixture();
     var clientAndStub = client(tlsDirectory);
     ReflectionTestUtils.setField(clientAndStub.client(), "workloadNamespace", "");
 
-    assertThatThrownBy(
-            () ->
-                clientAndStub
-                    .client()
-                    .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("configured workload namespace");
+    var result =
+        clientAndStub.client().getDraftDesignDigestForVersion(publicationBinding(receipt), receipt);
+
+    assertConfigurationUnavailable(result);
     verifyNoInteractions(clientAndStub.stub());
   }
 
   @Test
-  void invalidWorkloadNamespaceDeniesBeforeRpc(@TempDir Path tlsDirectory) throws IOException {
+  void invalidWorkloadNamespaceReturnsUnavailableBeforeRpc(@TempDir Path tlsDirectory)
+      throws IOException {
     var receipt = SelectedDraftGameLogicReceiptTest.fixture();
     var clientAndStub = client(tlsDirectory);
     ReflectionTestUtils.setField(clientAndStub.client(), "workloadNamespace", "Not_A_Namespace");
 
-    assertThatThrownBy(
-            () ->
-                clientAndStub
-                    .client()
-                    .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("configured workload namespace");
+    var result =
+        clientAndStub.client().getDraftDesignDigestForVersion(publicationBinding(receipt), receipt);
+
+    assertConfigurationUnavailable(result);
     verifyNoInteractions(clientAndStub.stub());
   }
 
   @Test
-  void plaintextTlsConfigurationDeniesBeforeRpc(@TempDir Path tlsDirectory) throws IOException {
+  void plaintextTlsConfigurationReturnsUnavailableBeforeRpc(@TempDir Path tlsDirectory)
+      throws IOException {
     var receipt = SelectedDraftGameLogicReceiptTest.fixture();
     var tls = new CommonGrpcClientProperties();
     tls.setPlaintext(true);
     var clientAndStub = client(tlsDirectory, tls);
 
-    assertThatThrownBy(
-            () ->
-                clientAndStub
-                    .client()
-                    .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("file-backed workload mTLS");
+    var result =
+        clientAndStub.client().getDraftDesignDigestForVersion(publicationBinding(receipt), receipt);
+
+    assertConfigurationUnavailable(result);
     verifyNoInteractions(clientAndStub.stub());
   }
 
   @Test
-  void unreadableTlsMaterialDeniesBeforeRpc(@TempDir Path tlsDirectory) throws IOException {
+  void unreadableTlsMaterialReturnsUnavailableBeforeRpc(@TempDir Path tlsDirectory)
+      throws IOException {
     var receipt = SelectedDraftGameLogicReceiptTest.fixture();
     var tls = fileBackedTls(tlsDirectory);
     tls.setCaCert(tlsDirectory.resolve("missing-ca.crt").toString());
     var clientAndStub = client(tlsDirectory, tls);
 
-    assertThatThrownBy(
-            () ->
-                clientAndStub
-                    .client()
-                    .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("CA certificate")
-        .hasMessageContaining("readable file");
+    var result =
+        clientAndStub.client().getDraftDesignDigestForVersion(publicationBinding(receipt), receipt);
+
+    assertConfigurationUnavailable(result);
+    verifyNoInteractions(clientAndStub.stub());
+  }
+
+  @Test
+  void uninitializedClientReturnsUnavailableBeforeRpc(@TempDir Path tlsDirectory)
+      throws IOException {
+    var receipt = SelectedDraftGameLogicReceiptTest.fixture();
+    var clientAndStub = client(tlsDirectory);
+    ReflectionTestUtils.setField(clientAndStub.client(), "stub", null);
+
+    var result =
+        clientAndStub.client().getDraftDesignDigestForVersion(publicationBinding(receipt), receipt);
+
+    assertConfigurationUnavailable(result);
     verifyNoInteractions(clientAndStub.stub());
   }
 
@@ -339,6 +345,15 @@ class GameLogicClientTest {
 
   private static ClientAndStub client(Path tlsDirectory) throws IOException {
     return client(tlsDirectory, fileBackedTls(tlsDirectory));
+  }
+
+  private static void assertConfigurationUnavailable(PublishParticipantDigestDto result) {
+    assertThat(result.succeeded()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("PARTICIPANT_UNAVAILABLE");
+    assertThat(result.errorMessage())
+        .isEqualTo("Game Logic publication source read is not configured");
+    assertThat(result.contentDigest()).isNull();
+    assertThat(result.abilitySchemaDigest()).isNull();
   }
 
   private static ClientAndStub client(Path tlsDirectory, CommonGrpcClientProperties tls) {

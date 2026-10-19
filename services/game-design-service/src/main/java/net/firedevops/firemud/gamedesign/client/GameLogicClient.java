@@ -99,8 +99,17 @@ public class GameLogicClient
     GameLogicPublicationSourceReadBinding expectedBinding =
         new GameLogicPublicationSourceReadBinding(binding, receipt.authorization());
     var request = GameLogicPublicationSourceReadGrpcCodec.toRequest(expectedBinding);
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub publicationReadStub;
+    try {
+      publicationReadStub = requirePublicationReadStub();
+    } catch (IllegalStateException unavailableConfiguration) {
+      return failure(
+          versionId,
+          "PARTICIPANT_UNAVAILABLE",
+          "Game Logic publication source read is not configured");
+    }
     var response =
-        requirePublicationReadStub()
+        publicationReadStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .getDraftDesignDigest(request);
     if (response.hasError() && !response.getError().getCode().isBlank()) {

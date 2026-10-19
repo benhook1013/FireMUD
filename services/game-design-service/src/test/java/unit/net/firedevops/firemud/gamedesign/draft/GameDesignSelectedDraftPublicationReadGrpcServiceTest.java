@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -173,17 +174,35 @@ class GameDesignSelectedDraftPublicationReadGrpcServiceTest {
   }
 
   @Test
-  void corruptOrUnavailableStorageReturnsNoEvidence() {
+  void corruptRetainedSelectionIsDeniedAsNonRetryableWithoutLeakingEvidence() {
     for (RuntimeException failure :
         List.of(
             new IllegalStateException("corrupt retained selection"),
-            new org.jooq.exception.DataAccessException("storage unavailable"))) {
+            new IllegalArgumentException("invalid retained selection"))) {
       var repository = mock(AuthoredDraftPublishSelectionRepository.class);
       when(repository.read(any(), any(), any())).thenThrow(failure);
       var service = new GameDesignSelectedDraftPublicationReadGrpcService(repository, NAMESPACE);
-      assertFailure(
-          invokeAs(service, wireRequest(), peer("account-service", NAMESPACE)),
-          Status.Code.UNAVAILABLE);
+      var result = invokeAs(service, wireRequest(), peer("account-service", NAMESPACE));
+      assertFailure(result, Status.Code.FAILED_PRECONDITION);
+      assertSanitizedFailure(result, "Retained selected Draft publication evidence is invalid");
+    }
+  }
+
+  @Test
+  void typedStorageFailuresAreUnavailableWithoutReturningEvidence() {
+    for (RuntimeException failure :
+        List.of(
+            new org.jooq.exception.DataAccessException("storage unavailable"),
+            new org.springframework.dao.TransientDataAccessResourceException(
+                "temporary storage failure"),
+            new org.springframework.dao.DataAccessResourceFailureException(
+                "storage resource unavailable"))) {
+      var repository = mock(AuthoredDraftPublishSelectionRepository.class);
+      when(repository.read(any(), any(), any())).thenThrow(failure);
+      var service = new GameDesignSelectedDraftPublicationReadGrpcService(repository, NAMESPACE);
+      var result = invokeAs(service, wireRequest(), peer("account-service", NAMESPACE));
+      assertFailure(result, Status.Code.UNAVAILABLE);
+      assertSanitizedFailure(result, "Game Design selection storage unavailable");
     }
   }
 
@@ -203,6 +222,13 @@ class GameDesignSelectedDraftPublicationReadGrpcServiceTest {
     assertThat(collector.errorCode).isEqualTo(expected);
     assertThat(collector.value).isNull();
     assertThat(collector.completed).isFalse();
+  }
+
+  private static void assertSanitizedFailure(Collector collector, String description) {
+    assertThat(collector.failureIsStatusRuntimeException).isTrue();
+    assertThat(collector.failureDescription).isEqualTo(description);
+    assertThat(collector.failureHasCause).isFalse();
+    assertThat(collector.failureHasTrailers).isFalse();
   }
 
   private static Collector invokeAs(
@@ -282,6 +308,10 @@ class GameDesignSelectedDraftPublicationReadGrpcServiceTest {
       implements StreamObserver<ReadSelectedDraftPublicationResponse> {
     private ReadSelectedDraftPublicationResponse value;
     private Status.Code errorCode;
+    private String failureDescription;
+    private boolean failureIsStatusRuntimeException;
+    private boolean failureHasCause;
+    private boolean failureHasTrailers;
     private boolean completed;
 
     @Override
@@ -291,7 +321,14 @@ class GameDesignSelectedDraftPublicationReadGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      errorCode = Status.fromThrowable(failure).getCode();
+      var status = Status.fromThrowable(failure);
+      errorCode = status.getCode();
+      failureDescription = status.getDescription();
+      failureHasCause = failure.getCause() != null;
+      if (failure instanceof StatusRuntimeException statusFailure) {
+        failureIsStatusRuntimeException = true;
+        failureHasTrailers = statusFailure.getTrailers() != null;
+      }
     }
 
     @Override
