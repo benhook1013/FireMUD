@@ -964,6 +964,11 @@ class VersionPublishCommandServiceImplTest {
               org.mockito.ArgumentMatchers.eq("test"),
               org.mockito.ArgumentMatchers.argThat(exactBinding)))
           .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+      when(selectedDigestReader.read(
+              org.mockito.ArgumentMatchers.eq("test"),
+              org.mockito.ArgumentMatchers.argThat(exactBinding),
+              org.mockito.ArgumentMatchers.any(SelectedDraftGameLogicReceipt.class)))
+          .thenThrow(Status.UNAVAILABLE.asRuntimeException());
     } else {
       when(selectedDigestReader.read(
               org.mockito.ArgumentMatchers.eq("test"),
@@ -1063,7 +1068,9 @@ class VersionPublishCommandServiceImplTest {
       assertEquals("UNAVAILABLE", observed.getLast().errorCode());
       assertNull(observed.getLast().appliedCommitId());
       assertNull(observed.getLast().digestSchemaVersion());
-      assertTrue(observed.get(2).succeeded());
+      assertEquals("UNAVAILABLE", observed.get(2).errorCode());
+      assertNull(observed.get(2).appliedCommitId());
+      assertNull(observed.get(2).digestSchemaVersion());
     } else {
       assertTrue(observed.getFirst().succeeded());
       assertEquals(selectedCommit, observed.getFirst().appliedCommitId());
@@ -1096,6 +1103,17 @@ class VersionPublishCommandServiceImplTest {
         .read(
             org.mockito.ArgumentMatchers.eq("test"),
             org.mockito.ArgumentMatchers.argThat(exactBinding));
+    if (transientFailure == TransientCollectorFailure.SELECTED_SNAPSHOT_UNAVAILABLE) {
+      org.mockito.Mockito.verify(selectedDigestReader, org.mockito.Mockito.times(2))
+          .read(
+              org.mockito.ArgumentMatchers.eq("test"),
+              org.mockito.ArgumentMatchers.argThat(exactBinding),
+              org.mockito.ArgumentMatchers.any(SelectedDraftGameLogicReceipt.class));
+      verify(gameLogicClient, never())
+          .getDraftDesignDigestForVersion(
+              org.mockito.ArgumentMatchers.argThat(exactBinding),
+              org.mockito.ArgumentMatchers.any(SelectedDraftGameLogicReceipt.class));
+    }
     verify(publishAttemptService, never())
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
     verify(publishAttemptRepository, never())

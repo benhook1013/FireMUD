@@ -415,6 +415,14 @@ public final class PublishGateServiceImpl implements PublishGateService {
           "UNAVAILABLE",
           "immutable selected Game Logic receipt readback is temporarily unavailable");
     }
+    if (receipt == null) {
+      return failedObservation(
+          PublishParticipantKey.GAME_LOGIC,
+          binding.versionId(),
+          null,
+          "UNAVAILABLE",
+          "immutable selected Game Logic receipt readback returned no result");
+    }
     if (receipt.isEmpty()) {
       return failedObservation(
           PublishParticipantKey.GAME_LOGIC,
@@ -422,6 +430,42 @@ public final class PublishGateServiceImpl implements PublishGateService {
           null,
           "PARTICIPANT_UNAVAILABLE",
           "immutable selected Game Logic receipt is not available yet");
+    }
+    if (selectedPublicationDigestReader == null
+        || !GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+      return failedObservation(
+          PublishParticipantKey.GAME_LOGIC,
+          binding.versionId(),
+          null,
+          "PARTICIPANT_UNAVAILABLE",
+          "selected publication source reader is unavailable");
+    }
+    final SelectedDraftPublicationDigestReadService.ReadResult sourceRead;
+    try {
+      sourceRead =
+          selectedPublicationDigestReader.read(workloadNamespace, binding, receipt.orElseThrow());
+      if (sourceRead == null
+          || !Arrays.equals(
+              binding.canonicalPreimage(), sourceRead.requestBinding().canonicalPreimage())
+          || !binding.requestDigest().equals(sourceRead.requestDigest())
+          || !binding
+              .derivedWorkflowIdentity()
+              .equals(sourceRead.requestBinding().derivedWorkflowIdentity())) {
+        throw io.grpc.Status.FAILED_PRECONDITION
+            .withDescription("Selected Game Logic source read request echo differs")
+            .asRuntimeException();
+      }
+    } catch (RuntimeException unavailable) {
+      String failureCode =
+          unavailable instanceof StatusRuntimeException grpcFailure
+              ? grpcFailure.getStatus().getCode().name()
+              : "FAILED_PRECONDITION";
+      return failedObservation(
+          PublishParticipantKey.GAME_LOGIC,
+          binding.versionId(),
+          null,
+          failureCode,
+          "exact selected Game Logic source evidence unavailable");
     }
     return gameLogicClient.getDraftDesignDigestForVersion(binding, receipt.orElseThrow());
   }
