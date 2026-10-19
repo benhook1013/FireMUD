@@ -23,6 +23,7 @@ import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
@@ -365,6 +366,38 @@ class CanonicalGameplayRosterGrpcAdapterTest {
         unauthenticatedObserver = new RecordingObserver<>();
     unauthenticatedAdapter.listPreseededRoster(request(target()), unauthenticatedObserver);
     assertOnlyStatus(unauthenticatedObserver, Status.Code.UNAUTHENTICATED);
+  }
+
+  @Test
+  void unexpectedIllegalStateExceptionReturnsInternalAndRecordsInternalMetric() {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    AtomicInteger failures = new AtomicInteger();
+    CanonicalGameplayRosterGrpcAdapter adapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            new CanonicalGameplayRosterService(
+                request -> {
+                  throw new IllegalStateException(
+                      failures.getAndIncrement() == 0 ? null : "unexpected invariant");
+                },
+                mock(CharacterRepository.class)),
+            new CanonicalGameplayRosterSelectedAssignmentService(
+                request -> null, mock(CharacterRepository.class)),
+            meterRegistry);
+    RecordingObserver<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse>
+        observer = new RecordingObserver<>();
+    RecordingObserver<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse>
+        unexpectedMessageObserver = new RecordingObserver<>();
+
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
+        () -> adapter.listPreseededRoster(request(target()), observer));
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
+        () -> adapter.listPreseededRoster(request(target()), unexpectedMessageObserver));
+
+    assertOnlyStatus(observer, Status.Code.INTERNAL);
+    assertOnlyStatus(unexpectedMessageObserver, Status.Code.INTERNAL);
+    assertThat(meterRegistry.counter("grpc.app_error", "code", "INTERNAL").count()).isEqualTo(2.0);
   }
 
   @Test

@@ -5,6 +5,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -44,6 +45,16 @@ public final class CanonicalGameplayRosterGrpcAdapter
   private static final String OPERATION = "CanonicalGameplayRoster.ListPreseededRoster";
   private static final String SELECTED_ASSIGNMENT_OPERATION =
       "CanonicalGameplayRoster.ReadSelectedPreseededAssignment";
+  private static final Set<String> DOMAIN_REJECTION_REASON_CODES =
+      Set.of(
+          "CANONICAL_GAMEPLAY_ROSTER_OWNER_TARGET_MISMATCH",
+          "CANONICAL_GAMEPLAY_ROSTER_NAMESPACE_SCOPE_MISMATCH",
+          "CANONICAL_GAMEPLAY_ROSTER_SNAPSHOT_STALE",
+          "CANONICAL_GAMEPLAY_ROSTER_CHANGED_DURING_READ",
+          "SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH",
+          "SELECTED_PRESEEDED_ASSIGNMENT_NOT_IN_EXPECTED_SNAPSHOT",
+          "SELECTED_PRESEEDED_ASSIGNMENT_UNAVAILABLE",
+          "SELECTED_PRESEEDED_ASSIGNMENT_RECEIPT_MISMATCH");
 
   private final CanonicalGameplayRosterService rosterService;
   private final CanonicalGameplayRosterSelectedAssignmentService selectedAssignmentService;
@@ -287,7 +298,9 @@ public final class CanonicalGameplayRosterGrpcAdapter
           .withDescription("Request is malformed or inconsistent")
           .asRuntimeException();
     }
-    if (failure instanceof IllegalStateException) {
+    if (failure instanceof IllegalStateException stateFailure
+        && stateFailure.getMessage() != null
+        && DOMAIN_REJECTION_REASON_CODES.contains(stateFailure.getMessage())) {
       return Status.FAILED_PRECONDITION
           .withDescription("Request precondition is not satisfied")
           .asRuntimeException();
