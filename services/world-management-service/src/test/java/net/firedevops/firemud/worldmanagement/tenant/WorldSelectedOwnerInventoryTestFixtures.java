@@ -1,10 +1,8 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
@@ -15,15 +13,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
-import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
-import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
-import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
-import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent;
@@ -73,7 +64,13 @@ final class WorldSelectedOwnerInventoryTestFixtures {
             id("77777777-7777-4777-8777-777777777777"),
             actor,
             selected);
-    var content = sourceContent(scope);
+    var content =
+        SelectedOwnerIntakeSourceTestFixtures.content(
+            scope,
+            DraftAuthorizationFenceBinding.digest(
+                "synthetic-world-fixture".getBytes(StandardCharsets.UTF_8)),
+            id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            "0");
     var binding =
         new SelectedOwnerIntakeAuthorizationBinding(
             content,
@@ -136,69 +133,6 @@ final class WorldSelectedOwnerInventoryTestFixtures {
         binding,
         freezeEvidence,
         SelectedOwnerWorldInventoryReadEvidence.create(NAMESPACE, binding, freezeEvidence));
-  }
-
-  private static SelectedOwnerIntakeSourceContent sourceContent(
-      SelectedOwnerIntakeSourceReadScope scope) {
-    var out = new ByteArrayOutputStream();
-    DraftAuthorizationFenceBinding.frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
-    DraftAuthorizationFenceBinding.frame(out, scope.canonicalBytes());
-    DraftAuthorizationFenceBinding.frame(out, scope.digest());
-    for (String family :
-        List.of(
-            "COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG")) {
-      byte[] snapshot = sourceSnapshot(family, scope.selected());
-      DraftAuthorizationFenceBinding.frame(out, family);
-      DraftAuthorizationFenceBinding.frame(out, snapshot);
-      DraftAuthorizationFenceBinding.frame(out, DraftAuthorizationFenceBinding.digest(snapshot));
-    }
-    byte[] bytes = out.toByteArray();
-    return SelectedOwnerIntakeSourceContent.fromStored(
-        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
-  }
-
-  private static byte[] sourceSnapshot(String family, DraftCommitBinding selected) {
-    UUID genesis = id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    return switch (family) {
-      case "COMMAND" ->
-          new CommandSnapshot(
-                  selected,
-                  "0",
-                  null,
-                  DraftAuthorizationFenceBinding.digest(
-                      "synthetic-world-fixture".getBytes(StandardCharsets.UTF_8)),
-                  List.of())
-              .canonicalBytes();
-      case "REALM_POLICY" -> new RealmPolicySnapshot(selected, "0", List.of()).canonicalBytes();
-      case "ASSET" -> new AssetSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes();
-      case "GAMEPLAY_RULE" ->
-          new GameplayRuleSelectedSource(
-                  GameplayRuleManifest.canonical(
-                      Map.of(
-                          "schema",
-                          "game-design-gameplay-rule-source-snapshot/v1",
-                          "bindingJson",
-                          selected.canonicalJson(),
-                          "bindingDigest",
-                          selected.digest(),
-                          "sourceEpoch",
-                          "0",
-                          "inheritedCommitId",
-                          "",
-                          "genesisReceiptId",
-                          genesis.toString(),
-                          "manifestJson",
-                          GameplayRuleManifest.explicitEmpty().canonicalJson(),
-                          "entries",
-                          List.of())))
-              .canonicalBytes();
-      case "BRANDING" ->
-          new BrandingSourceSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes();
-      case "TEMPLATE_CONFIG" ->
-          new TemplateConfigSourceSnapshot(selected, "0", null, genesis, List.of())
-              .canonicalBytes();
-      default -> throw new IllegalArgumentException("Unsupported selected source fixture family");
-    };
   }
 
   private static SourceEvidence source(SourceKind kind, String scope, String marker) {
