@@ -42,11 +42,13 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerInta
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -116,6 +118,12 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
               "--replicaof",
               "selected-disclosure-primary",
               "6379");
+
+  @BeforeAll
+  static void awaitPostgresJdbcReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(GDS);
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(ACCOUNT);
+  }
 
   @TempDir Path temporary;
 
