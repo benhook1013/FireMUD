@@ -428,6 +428,7 @@ class VersionPublishCommandServiceImplTest {
   void selectedSucceededReplayRevalidatesExactTerminalEvidenceWithoutWriting(
       VersionLifecycleState lifecycleState) throws Exception {
     SelectedSucceededReplayFixture fixture = selectedSucceededReplayFixture(lifecycleState);
+    delegateGateAssertionsToRealGate();
 
     PublishWorkflowSnapshot snapshot = service.reconcileFullVersionPublish(fixture.request());
 
@@ -1573,13 +1574,14 @@ class VersionPublishCommandServiceImplTest {
   @Test
   void pendingAttemptStillReconcilesCompleteReadbackThroughCurrentGates() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
+    delegateGateAssertionsToRealGate();
     PublishWorkflowRequest request = fixture.request();
     String workflowId = request.publishWorkflowId();
     PublishAttempt attempt = fixture.attempt();
     Version version = fixture.version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(2L);
-    List<PublishParticipantDigestDto> participantDigests = participantDigests();
+    List<PublishParticipantDigestDto> participantDigests = legacyParticipantDigests();
     PublishedReleaseBundleDto bundle =
         publishedReleaseBundleDto(
             1L,
@@ -2465,6 +2467,7 @@ class VersionPublishCommandServiceImplTest {
   @Test
   void privateMechanicsReconcilesPendingAttemptThroughCurrentGates() throws Exception {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
+    delegateGateAssertionsToRealGate();
     SelectionSnapshot seedReservation = fixture.reservation();
     AuthoredDraftPublishSelection seedSelection = seedReservation.selection();
     DraftCommitBinding seedCommit = seedSelection.selectedCommit();
@@ -3221,6 +3224,63 @@ class VersionPublishCommandServiceImplTest {
             null,
             null,
             null));
+  }
+
+  private List<PublishParticipantDigestDto> legacyParticipantDigests() {
+    String appliedCommitId = selectedIntent().selectedCommitId().toString();
+    return List.of(
+        new PublishParticipantDigestDto(
+            "WORLD_MANAGEMENT", "10", null, appliedCommitId, "a".repeat(64), 3, null, null, null),
+        new PublishParticipantDigestDto(
+            "ENTITY_MANAGEMENT", "10", null, appliedCommitId, "b".repeat(64), 1, null, null, null),
+        new PublishParticipantDigestDto(
+            "GAME_LOGIC", "10", null, appliedCommitId, "c".repeat(64), 1, null, null, null),
+        new PublishParticipantDigestDto(
+            "AUTOMATION_SCRIPTING",
+            "10",
+            null,
+            appliedCommitId,
+            "e".repeat(64),
+            5,
+            null,
+            null,
+            null),
+        new PublishParticipantDigestDto(
+            "GAME_DESIGN_CONTROL_PLANE",
+            "10",
+            null,
+            appliedCommitId,
+            "f".repeat(64),
+            1,
+            null,
+            null,
+            null));
+  }
+
+  private void delegateGateAssertionsToRealGate() {
+    PublishGateServiceImpl realGate =
+        new PublishGateServiceImpl(
+            controlPlaneDigestService,
+            org.mockito.Mockito.mock(WorldManagementClient.class),
+            org.mockito.Mockito.mock(EntityManagementClient.class),
+            org.mockito.Mockito.mock(GameLogicClient.class),
+            org.mockito.Mockito.mock(AutomationScriptingClient.class),
+            org.mockito.Mockito.mock(SelectedDraftGameLogicReceiptRepository.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              realGate.assertSelectedGatePassed(
+                  invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(publishGateService)
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              realGate.assertGatePassed(invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(publishGateService)
+        .assertGatePassed(any(VersionDto.class), any(List.class));
   }
 
   private enum TransientCollectorFailure {
