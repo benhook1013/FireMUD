@@ -145,7 +145,11 @@ Entry format:
   - Observation: The global-ID update rewrote a retained row's tenant before returning it under the supplied tenant; tenant-filtered readback did not protect the original row. The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
   - Expected pattern: Test controlled pre-phase rows as well as later guarded owners. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
 
-- `2026-10-16`: Check existing successor repairs before reworking a failed fixture. While fixing the three #3251 publication transaction failures, two focused local gates failed before the worker noticed that the already-reconciled #2967 tree contained the complete selected-full schema-4 fixture repair. The first attempts corrected stale collector stubs but missed the dependent fixture profile. Compare the bounded failing test and its called helpers against known receiving successors before changing or rerunning it; reuse the complete canonical repair without removing assertions. The exact four-path backport at `4265a81f008d0dbd343cd9adf6413bd3ac5c8904` then passed 66 unit and 10 native cases. The failed attempts retain their original outcomes; this lesson does not establish a general infrastructure cause.
+- `2026-10-16`: Check existing successor repairs before reworking a failed fixture.
+  - Context: While fixing the three #3251 publication transaction failures, two focused local gates failed before the worker noticed that the already-reconciled #2967 tree contained the complete selected-full schema-4 fixture repair.
+  - Observation: The first attempts corrected stale collector stubs but missed the dependent fixture profile.
+  - Expected pattern: Compare the bounded failing test and its called helpers against known receiving successors before changing or rerunning it; reuse the complete canonical repair without removing assertions.
+  - Outcome: The exact four-path backport at `4265a81f008d0dbd343cd9adf6413bd3ac5c8904` then passed 66 unit and 10 native cases. The failed attempts retain their original outcomes; this lesson does not establish a general infrastructure cause.
 
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
   - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
@@ -255,7 +259,11 @@ Entry format:
   - Expected pattern: Preserve the immutable capture and original attempt identity, report the recording gap, and use an explicitly bounded canonical recovery before adjudication and finalization. Do not rerun a completed review, invent credit, or use an unrelated schema migration to repair its record.
   - Status and reconsideration: Overseer owns bounded recovery in #3271; no live recovery or migration is authorized yet. The exact persistence cause remains unconfirmed. Revisit after that maintenance change is qualified and promoted and the original capture is recovered through its exact native command.
 
-- 2026-10-15: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source. The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order. Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof. No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
+- `2026-10-15`: Normalize nested fixture payloads before computing a digest golden
+  - Context: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source.
+  - Observation: The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order.
+  - Expected pattern: Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof.
+  - Outcome: No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
 
 - `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
   - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
