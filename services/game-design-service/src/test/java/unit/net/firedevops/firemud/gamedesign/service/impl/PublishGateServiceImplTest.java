@@ -37,6 +37,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.dao.TransientDataAccessResourceException;
 
 class PublishGateServiceImplTest {
   @Mock private ControlPlaneDigestService controlPlaneDigestService;
@@ -245,6 +246,26 @@ class PublishGateServiceImplTest {
     PublicationDigestRequestBinding binding = selectedBinding(version);
     when(selectedGameLogicReceiptRepository.readForPublication(binding))
         .thenThrow(new org.jooq.exception.DataAccessException("database unavailable"));
+    stubNonGameLogicParticipants(version, binding);
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("UNAVAILABLE", digests.get(2).errorCode());
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class,
+            () -> service.assertSelectedGatePassed(version, digests));
+    assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(thrown));
+  }
+
+  @Test
+  void selectedReceiptSpringStorageInterruptionRemainsRetryable() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    when(selectedGameLogicReceiptRepository.readForPublication(binding))
+        .thenThrow(new TransientDataAccessResourceException("database unavailable"));
     stubNonGameLogicParticipants(version, binding);
 
     List<PublishParticipantDigestDto> digests =
