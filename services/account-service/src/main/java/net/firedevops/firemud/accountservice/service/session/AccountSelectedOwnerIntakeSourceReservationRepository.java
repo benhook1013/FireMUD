@@ -59,6 +59,26 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     ABORTED
   }
 
+  /** Keyset position for continuing one caller-owned expired-reservation sweep. */
+  public record RecoveryCursor(long expiresAtEpochSecond, UUID operationId) {
+    public RecoveryCursor {
+      DraftAuthorizationFenceBinding.requireUuid(operationId);
+    }
+  }
+
+  /** Valid scopes decoded from one raw page, with its continuation based on the last raw row. */
+  record ExpiredPreliminarySourceReadPage(
+      List<SelectedOwnerIntakeSourceReadScope> scopes,
+      int examinedCount,
+      RecoveryCursor nextCursor) {
+    ExpiredPreliminarySourceReadPage {
+      scopes = List.copyOf(scopes);
+      if (examinedCount < 0 || scopes.size() > examinedCount) {
+        throw new IllegalArgumentException("Invalid expired preliminary recovery page");
+      }
+    }
+  }
+
   /** Historical evidence only. RESERVED does not imply a live source-read permission. */
   public record Recovery(SelectedOwnerIntakeSourceReadScope scope, State state) {
     public Recovery {
@@ -217,21 +237,27 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     return new Recovery(scope, State.ABORTED);
   }
 
-  /**
-   * Finds a bounded page of exact, expired, unfinalized reservations for one Account namespace. The
-   * scope and complete retained source vector are validated before a candidate is returned.
-   */
-  List<SelectedOwnerIntakeSourceReadScope> findExpiredPreliminarySourceReadScopes(
-      int limit, String namespace) {
+  /** Finds one bounded, keyset-paged batch of exact expired reservations for one namespace. */
+  ExpiredPreliminarySourceReadPage findExpiredPreliminarySourceReadScopes(
+      int limit, String namespace, RecoveryCursor after) {
     requireTransaction();
     requireRecoveryLimit(limit);
     if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
       throw new IllegalArgumentException("Canonical Account workload namespace required");
     }
 
+    String continuation =
+        after == null
+            ? ""
+            : " AND (issuer.expires_at_epoch_second, reservation.operation_id) > (?, ?)";
+    Object[] parameters =
+        after == null
+            ? new Object[] {namespace, limit}
+            : new Object[] {namespace, after.expiresAtEpochSecond(), after.operationId(), limit};
     List<Record> rows =
         dsl.fetch(
-            "SELECT reservation.* FROM "
+            "SELECT reservation.*, issuer.expires_at_epoch_second AS recovery_expires_at_epoch_second, "
+                + "reservation.operation_id AS recovery_operation_id FROM "
                 + RESERVATIONS
                 + " reservation JOIN account_control_ui_issuance_operations issuer"
                 + " ON issuer.operation_id = reservation.issuance_operation_id"
@@ -252,14 +278,19 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
                 + " AND extract(epoch FROM clock_timestamp()) >= issuer.expires_at_epoch_second"
                 + " AND finalized_reservation.operation_id IS NULL"
                 + " AND aborted.operation_id IS NULL"
+                + continuation
                 + " ORDER BY issuer.expires_at_epoch_second, reservation.operation_id"
                 + " LIMIT ?",
-            namespace,
-            limit);
+            parameters);
     List<SelectedOwnerIntakeSourceReadScope> scopes = new ArrayList<>(rows.size());
+    RecoveryCursor nextCursor = null;
     int rowNumber = 0;
     for (Record row : rows) {
       rowNumber++;
+      nextCursor =
+          new RecoveryCursor(
+              row.get("recovery_expires_at_epoch_second", Long.class),
+              row.get("recovery_operation_id", UUID.class));
       try {
         var scope =
             SelectedOwnerIntakeSourceReadScope.fromStored(row.get("scope_bytes", byte[].class));
@@ -276,7 +307,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
             invalidRow.getClass().getSimpleName());
       }
     }
-    return List.copyOf(scopes);
+    return new ExpiredPreliminarySourceReadPage(scopes, rows.size(), nextCursor);
   }
 
   /**

@@ -346,27 +346,7 @@ class PublishedReleaseBundleServiceImplTest {
                 42L,
                 "tenant-1",
                 "NEW_GAME_ROW"));
-    var original = base.request();
-    var request =
-        new WorldPublishedStartLocationEvidence.Request(
-            original.targetNamespace(),
-            original.canonicalTenantId(),
-            original.canonicalVersionId(),
-            original.intakeRequestId(),
-            original.publicationFence(),
-            original.publicationRequestId(),
-            original.requestDigest(),
-            original.versionStateEpoch(),
-            original.publishWorkflowId(),
-            original.appliedCommitId(),
-            original.contentDigest(),
-            digestSchemaVersion,
-            original.worldAffectedTuples());
-    return new WorldPublishedStartLocationEvidence(
-        request,
-        base.selectorReceiptBytes(),
-        base.originalAccountBindingBytes(),
-        base.appliedResultBytes());
+    return PublishedWorldSelectorFixtures.withDigestSchemaVersion(base, digestSchemaVersion);
   }
 
   private VersionDto selectorVersion() {

@@ -311,12 +311,24 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
             new SimpleTransactionStatus(),
             new SimpleTransactionStatus(),
             new SimpleTransactionStatus());
-    when(repository.findExpiredPreliminarySourceReadScopes(128, "test"))
-        .thenReturn(List.of(first, second));
+    when(repository.findExpiredPreliminarySourceReadScopes(128, "test", null))
+        .thenReturn(
+            new AccountSelectedOwnerIntakeSourceReservationRepository
+                .ExpiredPreliminarySourceReadPage(
+                List.of(first, second),
+                2,
+                new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+                    10L, second.operationId())));
     when(repository.abortExpiredPreliminarySourceRead(first, "test")).thenReturn(true);
     when(repository.abortExpiredPreliminarySourceRead(second, "test")).thenReturn(false);
 
-    assertThat(service.recoverExpiredPreliminarySourceReads(129)).isEqualTo(1);
+    var result = service.recoverExpiredPreliminarySourceReads(129, null);
+    assertThat(result.abortedCount()).isEqualTo(1);
+    assertThat(result.examinedCount()).isEqualTo(2);
+    assertThat(result.nextCursor())
+        .isEqualTo(
+            new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+                10L, second.operationId()));
 
     var definitions = org.mockito.ArgumentCaptor.forClass(TransactionDefinition.class);
     verify(transactions, org.mockito.Mockito.times(3)).getTransaction(definitions.capture());
@@ -329,10 +341,61 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
                   .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
               assertThat(definition.isReadOnly()).isFalse();
             });
-    verify(repository).findExpiredPreliminarySourceReadScopes(128, "test");
+    verify(repository).findExpiredPreliminarySourceReadScopes(128, "test", null);
     verify(repository).abortExpiredPreliminarySourceRead(first, "test");
     verify(repository).abortExpiredPreliminarySourceRead(second, "test");
     verifyNoInteractions(actors, fences);
+  }
+
+  @Test
+  void expiredPreliminaryRecoveryCarriesCursorAcrossSkippedAndSuccessfulPages() {
+    var selected = selected();
+    var later = recoveryScope(selected, "22222222-2222-4222-8222-222222222222");
+    var firstCursor =
+        new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+            -17L, UUID.fromString("11111111-1111-4111-8111-111111111111"));
+    var secondCursor =
+        new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+            -17L, UUID.fromString("33333333-3333-4333-8333-333333333333"));
+    when(transactions.getTransaction(any(TransactionDefinition.class)))
+        .thenReturn(
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus(),
+            new SimpleTransactionStatus());
+    when(repository.findExpiredPreliminarySourceReadScopes(1, "test", null))
+        .thenReturn(
+            new AccountSelectedOwnerIntakeSourceReservationRepository
+                .ExpiredPreliminarySourceReadPage(List.of(), 1, firstCursor));
+    when(repository.findExpiredPreliminarySourceReadScopes(1, "test", firstCursor))
+        .thenReturn(
+            new AccountSelectedOwnerIntakeSourceReservationRepository
+                .ExpiredPreliminarySourceReadPage(List.of(later), 1, secondCursor));
+    when(repository.abortExpiredPreliminarySourceRead(later, "test")).thenReturn(true);
+
+    var firstPage = service.recoverExpiredPreliminarySourceReads(1, null);
+    assertThat(firstPage.abortedCount()).isZero();
+    assertThat(firstPage.examinedCount()).isEqualTo(1);
+    assertThat(firstPage.nextCursor()).isEqualTo(firstCursor);
+
+    var secondPage = service.recoverExpiredPreliminarySourceReads(1, firstPage.nextCursor());
+    assertThat(secondPage.abortedCount()).isEqualTo(1);
+    assertThat(secondPage.examinedCount()).isEqualTo(1);
+    assertThat(secondPage.nextCursor()).isEqualTo(secondCursor);
+
+    verify(repository).findExpiredPreliminarySourceReadScopes(1, "test", null);
+    verify(repository).findExpiredPreliminarySourceReadScopes(1, "test", firstCursor);
+    verify(repository).abortExpiredPreliminarySourceRead(later, "test");
+    var definitions = org.mockito.ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactions, times(3)).getTransaction(definitions.capture());
+    assertThat(definitions.getAllValues())
+        .allSatisfy(
+            definition -> {
+              assertThat(definition.getPropagationBehavior())
+                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+              assertThat(definition.getIsolationLevel())
+                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+              assertThat(definition.isReadOnly()).isFalse();
+            });
   }
 
   @Test
@@ -347,15 +410,21 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
             new SimpleTransactionStatus(),
             new SimpleTransactionStatus(),
             new SimpleTransactionStatus());
-    when(repository.findExpiredPreliminarySourceReadScopes(3, "test"))
-        .thenReturn(List.of(first, successful, later));
+    when(repository.findExpiredPreliminarySourceReadScopes(3, "test", null))
+        .thenReturn(
+            new AccountSelectedOwnerIntakeSourceReservationRepository
+                .ExpiredPreliminarySourceReadPage(
+                List.of(first, successful, later),
+                3,
+                new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+                    10L, later.operationId())));
     when(repository.abortExpiredPreliminarySourceRead(first, "test"))
         .thenThrow(new IllegalStateException("synthetic source payload must not be logged"));
     when(repository.abortExpiredPreliminarySourceRead(successful, "test")).thenReturn(true);
     when(repository.abortExpiredPreliminarySourceRead(later, "test"))
         .thenThrow(new IllegalArgumentException("synthetic credential must not be logged"));
 
-    assertThat(service.recoverExpiredPreliminarySourceReads(3)).isEqualTo(1);
+    assertThat(service.recoverExpiredPreliminarySourceReads(3, null).abortedCount()).isEqualTo(1);
 
     verify(repository).abortExpiredPreliminarySourceRead(first, "test");
     verify(repository).abortExpiredPreliminarySourceRead(successful, "test");
@@ -373,14 +442,20 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
             new SimpleTransactionStatus(),
             new SimpleTransactionStatus(),
             new SimpleTransactionStatus());
-    when(repository.findExpiredPreliminarySourceReadScopes(2, "test"))
-        .thenReturn(List.of(first, second));
+    when(repository.findExpiredPreliminarySourceReadScopes(2, "test", null))
+        .thenReturn(
+            new AccountSelectedOwnerIntakeSourceReservationRepository
+                .ExpiredPreliminarySourceReadPage(
+                List.of(first, second),
+                2,
+                new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+                    10L, second.operationId())));
     when(repository.abortExpiredPreliminarySourceRead(first, "test"))
         .thenThrow(new IllegalStateException("synthetic failure"));
     when(repository.abortExpiredPreliminarySourceRead(second, "test"))
         .thenThrow(new IllegalStateException("synthetic failure"));
 
-    assertThat(service.recoverExpiredPreliminarySourceReads(2)).isZero();
+    assertThat(service.recoverExpiredPreliminarySourceReads(2, null).abortedCount()).isZero();
 
     verify(repository).abortExpiredPreliminarySourceRead(first, "test");
     verify(repository).abortExpiredPreliminarySourceRead(second, "test");
@@ -389,9 +464,9 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
 
   @Test
   void expiredPreliminaryRecoveryRejectsNonpositivePagesBeforeOpeningTransactions() {
-    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(0))
+    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(0, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(-1))
+    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(-1, null))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(actors, fences, repository, transactions);
   }
@@ -399,7 +474,7 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
   @Test
   void expiredPreliminaryRecoveryRejectsAmbientTransactionsBeforeOwnerAccess() {
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(1))
+    assertThatThrownBy(() -> service.recoverExpiredPreliminarySourceReads(1, null))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("independent transaction");
     verifyNoInteractions(actors, fences, repository, transactions);

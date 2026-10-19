@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -648,9 +649,15 @@ class PublishGateServiceImplTest {
     assertEquals(5, digests.size());
     assertEquals("UNAVAILABLE", digests.getFirst().errorCode());
     assertEquals("UNAVAILABLE", digests.get(4).errorCode());
-    assertThrows(
-        PublishGateFailureException.class,
-        () -> service.assertSelectedGatePassed(version, digests));
+    assertNull(digests.getFirst().appliedCommitId());
+    assertNull(digests.getFirst().digestSchemaVersion());
+    PublishGateFailureException failure =
+        assertThrows(
+            PublishGateFailureException.class,
+            () -> service.assertSelectedGatePassed(version, digests));
+    assertEquals(PublishGateFailureCode.PARTICIPANT_UNAVAILABLE, failure.failureCode());
+    assertEquals("UNAVAILABLE", failure.participantFailureCode());
+    assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(failure));
     org.mockito.Mockito.verifyNoInteractions(worldManagementClient, controlPlaneDigestService);
     verify(gameLogicClient).getDraftDesignDigestForVersion(binding, receipt);
   }

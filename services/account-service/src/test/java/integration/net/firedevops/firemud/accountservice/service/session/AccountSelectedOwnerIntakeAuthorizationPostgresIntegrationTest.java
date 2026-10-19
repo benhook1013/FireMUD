@@ -367,7 +367,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
               .get("issuance_operation_id", UUID.class);
 
       assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
-      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isZero();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isZero();
       assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
           .isEqualTo(State.RESERVED);
       assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isTrue();
@@ -414,7 +415,9 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             executor.submit(
                 () -> {
                   recoveryStarted.countDown();
-                  return reservations.recoverExpiredPreliminarySourceReads(128);
+                  return reservations
+                      .recoverExpiredPreliminarySourceReads(128, null)
+                      .abortedCount();
                 });
         assertThat(recoveryStarted.await(10, TimeUnit.SECONDS)).isTrue();
         awaitRecoverySourceLockWait(f.dsl, finalizationBackendPid.get());
@@ -439,7 +442,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
         assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
       }
 
-      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isZero();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isZero();
       assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
           .isEqualTo(State.ABORTED);
       assertThat(f.tx(() -> repository.recoverSourceRead(finalizingScope).state()))
@@ -492,6 +496,86 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       assertThat(f.tx(() -> repository.settleEntityCommittedEmpty(terminal).canonicalBytes()))
           .isEqualTo(settlement.canonicalBytes());
       assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isFalse();
+    }
+  }
+
+  @Test
+  void expiredPreliminaryRecoveryContinuesAcrossSameExpiryRowsByKeyset() throws Exception {
+    var serviceClock = new MutableOffsetClock(Clock.systemUTC(), -270L);
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            null,
+            serviceClock)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var firstScope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
+      var secondScope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.AUTOMATION_SCRIPTING,
+                      selected,
+                      issued.environment()));
+      UUID issuanceOperationId =
+          f.dsl
+              .fetchSingle(
+                  "SELECT issuance_operation_id FROM account_selected_owner_intake_source_read_reservations"
+                      + " WHERE operation_id = ?",
+                  firstScope.operationId())
+              .get("issuance_operation_id", UUID.class);
+
+      awaitIssuerExpiry(f.dsl, issuanceOperationId);
+
+      var firstPage = reservations.recoverExpiredPreliminarySourceReads(1, null);
+      assertThat(firstPage.examinedCount()).isEqualTo(1);
+      assertThat(firstPage.abortedCount()).isEqualTo(1);
+      assertThat(firstPage.nextCursor()).isNotNull();
+      assertThat(firstPage.nextCursor().expiresAtEpochSecond())
+          .isEqualTo(issuerExpiryEpochSecond(f.dsl, issuanceOperationId));
+
+      var secondPage = reservations.recoverExpiredPreliminarySourceReads(1, firstPage.nextCursor());
+      assertThat(secondPage.examinedCount()).isEqualTo(1);
+      assertThat(secondPage.abortedCount()).isEqualTo(1);
+      assertThat(secondPage.nextCursor()).isNotNull();
+      assertThat(secondPage.nextCursor().expiresAtEpochSecond())
+          .isEqualTo(firstPage.nextCursor().expiresAtEpochSecond());
+      assertThat(secondPage.nextCursor().operationId())
+          .isNotEqualTo(firstPage.nextCursor().operationId());
+
+      var emptyPage = reservations.recoverExpiredPreliminarySourceReads(1, secondPage.nextCursor());
+      assertThat(emptyPage.examinedCount()).isZero();
+      assertThat(emptyPage.abortedCount()).isZero();
+      assertThat(emptyPage.nextCursor()).isNull();
+      assertThat(f.tx(() -> repository.recoverSourceRead(firstScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(f.tx(() -> repository.recoverSourceRead(secondScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(sourceReadPending(f.dsl, firstScope.operationId())).isFalse();
+      assertThat(sourceReadPending(f.dsl, secondScope.operationId())).isFalse();
     }
   }
 
@@ -565,7 +649,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                   .get("status", String.class))
           .isEqualTo(issuerStatus);
 
-      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isEqualTo(1);
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isEqualTo(1);
 
       assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
           .isEqualTo(State.ABORTED);
@@ -611,7 +696,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
               UUID.randomUUID(), finalized.sources(), new byte[] {2});
       assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(sourceChange))).isFalse();
       assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(sourceChange))).isFalse();
-      assertThat(reservations.recoverExpiredPreliminarySourceReads(128)).isZero();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isZero();
     }
   }
 
@@ -2565,6 +2651,14 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                 + " FROM account_control_ui_issuance_operations WHERE operation_id = ?",
             issuanceOperationId)
         .get(0, Boolean.class);
+  }
+
+  private static long issuerExpiryEpochSecond(DSLContext dsl, UUID issuanceOperationId) {
+    return dsl.fetchSingle(
+            "SELECT expires_at_epoch_second FROM account_control_ui_issuance_operations "
+                + "WHERE operation_id = ?",
+            issuanceOperationId)
+        .get("expires_at_epoch_second", Long.class);
   }
 
   private static void awaitIssuerExpiry(DSLContext dsl, UUID issuanceOperationId)
