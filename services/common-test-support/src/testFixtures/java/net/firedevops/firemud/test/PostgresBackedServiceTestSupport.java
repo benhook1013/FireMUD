@@ -4,6 +4,8 @@ import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.NetworkSettings;
 import com.github.dockerjava.api.model.Ports;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -112,6 +114,7 @@ public final class PostgresBackedServiceTestSupport {
     String containerId = postgres.getContainerId();
     String host = postgres.getHost();
     Integer mappedPort = postgres.getMappedPort(POSTGRES_PORT);
+    String resolvedHostAddresses = resolvedHostAddresses(host);
     InspectContainerResponse containerInfo = postgres.getCurrentContainerInfo();
     InspectContainerResponse.ContainerState state = containerInfo.getState();
     String logs = tailUtf8(postgres.getLogs(), MAX_DIAGNOSTIC_LOG_BYTES);
@@ -121,6 +124,12 @@ public final class PostgresBackedServiceTestSupport {
         + containerId
         + "\nhost="
         + host
+        + "\nresolvedHostAddresses="
+        + resolvedHostAddresses
+        + "\njava.net.preferIPv4Stack="
+        + jvmPreference("java.net.preferIPv4Stack")
+        + "\njava.net.preferIPv6Addresses="
+        + jvmPreference("java.net.preferIPv6Addresses")
         + "\nmappedPort="
         + mappedPort
         + "\nstate.running="
@@ -137,6 +146,37 @@ public final class PostgresBackedServiceTestSupport {
         + MAX_DIAGNOSTIC_LOG_BYTES
         + "):\n"
         + logs;
+  }
+
+  private static String resolvedHostAddresses(String host) {
+    try {
+      InetAddress[] addresses = InetAddress.getAllByName(host);
+      StringBuilder result = new StringBuilder();
+      int count = Math.min(addresses.length, 8);
+      for (int index = 0; index < count; index++) {
+        if (result.length() > 0) {
+          result.append(',');
+        }
+        result.append(addresses[index].getHostAddress());
+      }
+      if (addresses.length > count) {
+        result.append(",...(truncated)");
+      }
+      return result.toString();
+    } catch (UnknownHostException failure) {
+      return "<UnknownHostException>";
+    }
+  }
+
+  private static String jvmPreference(String name) {
+    String value = System.getProperty(name);
+    if (value == null) {
+      return "<unset>";
+    }
+    if (value.equals("true") || value.equals("false") || value.equals("system")) {
+      return value;
+    }
+    return "<other>";
   }
 
   private static String postgresPortBindings(InspectContainerResponse containerInfo) {
