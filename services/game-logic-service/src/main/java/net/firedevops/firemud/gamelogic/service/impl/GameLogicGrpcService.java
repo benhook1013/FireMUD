@@ -214,6 +214,8 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       responseObserver.onCompleted();
     } catch (StatusRuntimeException ex) {
       Status status = Status.fromThrowable(ex);
+      logger.warn("GetDraftDesignDigest retained source read failed: code={}", status.getCode());
+      meterRegistry.counter("grpc.app_error", "code", status.getCode().name()).increment();
       responseObserver.onError(
           Status.fromCode(status.getCode())
               .withDescription(PUBLICATION_READ_FAILURE_DESCRIPTION)

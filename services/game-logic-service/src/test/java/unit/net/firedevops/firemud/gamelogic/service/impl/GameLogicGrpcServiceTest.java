@@ -541,8 +541,15 @@ class GameLogicGrpcServiceTest {
     GameLogicDraftDesignDigestService digestService = mockDigestService();
     SessionContext.setContext(
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
-    GameLogicGrpcService service = newDigestService(digestService);
-    for (Status.Code code : List.of(Status.Code.FAILED_PRECONDITION, Status.Code.UNAVAILABLE)) {
+    var meters = new SimpleMeterRegistry();
+    GameLogicGrpcService service = newDigestService(digestService, TEST_NAMESPACE, meters);
+    for (Status.Code code :
+        List.of(
+            Status.Code.FAILED_PRECONDITION,
+            Status.Code.UNAVAILABLE,
+            Status.Code.ALREADY_EXISTS,
+            Status.Code.INTERNAL,
+            Status.Code.UNKNOWN)) {
       Mockito.reset(digestService);
       Mockito.when(
               digestService.getDraftDesignDigest(any(GameLogicPublicationSourceReadBinding.class)))
@@ -564,6 +571,8 @@ class GameLogicGrpcServiceTest {
           .doesNotContain("secret", "database");
       assertThat(statusFailure.getCause()).isNull();
       assertThat(statusFailure.getTrailers()).isNull();
+      assertThat(meters.get("grpc.app_error").tag("code", code.name()).counter().count())
+          .isEqualTo(1.0);
     }
   }
 
@@ -642,6 +651,13 @@ class GameLogicGrpcServiceTest {
 
   private GameLogicGrpcService newDigestService(
       GameLogicDraftDesignDigestService digestService, String workloadNamespace) {
+    return newDigestService(digestService, workloadNamespace, new SimpleMeterRegistry());
+  }
+
+  private GameLogicGrpcService newDigestService(
+      GameLogicDraftDesignDigestService digestService,
+      String workloadNamespace,
+      SimpleMeterRegistry meters) {
     return new GameLogicGrpcService(
         new PingServiceImpl(),
         new CommandServiceImpl(
@@ -653,7 +669,7 @@ class GameLogicGrpcServiceTest {
         Mockito.mock(ItemRuntimeService.class),
         digestService,
         mockAttestationService(),
-        new SimpleMeterRegistry(),
+        meters,
         workloadNamespace);
   }
 
