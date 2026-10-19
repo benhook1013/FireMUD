@@ -205,7 +205,7 @@ class PublishedReleaseBundleServiceImplTest {
             null,
             world.appliedCommitId(),
             "e".repeat(64),
-            3,
+            world.digestSchemaVersion(),
             null,
             null,
             null));
