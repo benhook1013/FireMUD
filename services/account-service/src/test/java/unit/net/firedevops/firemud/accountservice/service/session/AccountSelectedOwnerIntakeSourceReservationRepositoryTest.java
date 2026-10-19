@@ -61,6 +61,9 @@ class AccountSelectedOwnerIntakeSourceReservationRepositoryTest {
     assertThatThrownBy(() -> repository.settleCommittedEmpty(null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Writable Account owner transaction");
+    assertThatThrownBy(() -> repository.settleEntityCommittedEmpty(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Writable Account owner transaction");
 
     verifyNoInteractions(dsl);
   }

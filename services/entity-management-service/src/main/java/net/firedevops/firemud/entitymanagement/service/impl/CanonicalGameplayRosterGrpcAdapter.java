@@ -30,6 +30,7 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelecte
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.Builder;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.entitymanagement.validation.CanonicalEntitySourceValues;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
@@ -241,16 +242,12 @@ public final class CanonicalGameplayRosterGrpcAdapter
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " is required");
     }
-    UUID parsed;
     try {
-      parsed = UUID.fromString(value);
+      return CanonicalEntitySourceValues.parseCanonicalNonNilUuid(value);
     } catch (IllegalArgumentException invalid) {
-      throw new IllegalArgumentException(fieldName + " must be a canonical non-nil UUID", invalid);
+      throw new IllegalArgumentException(
+          fieldName + " must be a canonical non-nil UUID", invalid.getCause());
     }
-    if (parsed.equals(new UUID(0L, 0L)) || !parsed.toString().equals(value)) {
-      throw new IllegalArgumentException(fieldName + " must be a canonical non-nil UUID");
-    }
-    return parsed;
   }
 
   private void requireTrustedPeer() {

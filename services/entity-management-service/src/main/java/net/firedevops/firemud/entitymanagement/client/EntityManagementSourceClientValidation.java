@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.client;
 
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.entitymanagement.validation.CanonicalEntitySourceValues;
 
 /** Narrow validation shared by the passive Entity Management source clients. */
 final class EntityManagementSourceClientValidation {
@@ -34,16 +35,12 @@ final class EntityManagementSourceClientValidation {
     if (value == null) {
       throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
     }
-    UUID parsed;
     try {
-      parsed = UUID.fromString(value);
+      return CanonicalEntitySourceValues.parseCanonicalNonNilUuid(value);
     } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required", exception);
+      throw new IllegalArgumentException(
+          "Canonical nonnil " + label + " is required", exception.getCause());
     }
-    if (new UUID(0L, 0L).equals(parsed) || !parsed.toString().equals(value)) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
-    }
-    return parsed;
   }
 
   private static boolean hasText(String value) {

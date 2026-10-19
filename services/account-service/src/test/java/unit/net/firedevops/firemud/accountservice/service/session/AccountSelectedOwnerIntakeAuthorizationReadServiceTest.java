@@ -12,7 +12,6 @@ import static org.mockito.Mockito.when;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -25,15 +24,9 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
-import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
-import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
-import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
-import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -163,65 +156,12 @@ class AccountSelectedOwnerIntakeAuthorizationReadServiceTest {
 
   private static SelectedOwnerIntakeSourceContent content(
       SelectedOwnerIntakeSourceReadScope scope) {
-    var out = new ByteArrayOutputStream();
-    frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
-    frame(out, scope.canonicalBytes());
-    frame(out, scope.digest());
-    for (String family :
-        List.of(
-            "COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG")) {
-      byte[] snapshot = snapshot(family, scope.selected());
-      frame(out, family);
-      frame(out, snapshot);
-      frame(out, DraftAuthorizationFenceBinding.digest(snapshot));
-    }
-    byte[] bytes = out.toByteArray();
-    return SelectedOwnerIntakeSourceContent.fromStored(
-        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
-  }
-
-  private static byte[] snapshot(String family, DraftCommitBinding selected) {
-    UUID genesis = id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    return switch (family) {
-      case "COMMAND" ->
-          new CommandSnapshot(
-                  selected,
-                  "0",
-                  null,
-                  DraftAuthorizationFenceBinding.digest(
-                      "synthetic-read-fixture".getBytes(StandardCharsets.UTF_8)),
-                  List.of())
-              .canonicalBytes();
-      case "REALM_POLICY" -> new RealmPolicySnapshot(selected, "0", List.of()).canonicalBytes();
-      case "ASSET" -> new AssetSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes();
-      case "GAMEPLAY_RULE" ->
-          new GameplayRuleSelectedSource(
-                  GameplayRuleManifest.canonical(
-                      Map.of(
-                          "schema",
-                          "game-design-gameplay-rule-source-snapshot/v1",
-                          "bindingJson",
-                          selected.canonicalJson(),
-                          "bindingDigest",
-                          selected.digest(),
-                          "sourceEpoch",
-                          "0",
-                          "inheritedCommitId",
-                          "",
-                          "genesisReceiptId",
-                          genesis.toString(),
-                          "manifestJson",
-                          GameplayRuleManifest.explicitEmpty().canonicalJson(),
-                          "entries",
-                          List.of())))
-              .canonicalBytes();
-      case "BRANDING" ->
-          new BrandingSourceSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes();
-      case "TEMPLATE_CONFIG" ->
-          new TemplateConfigSourceSnapshot(selected, "0", null, genesis, List.of())
-              .canonicalBytes();
-      default -> throw new IllegalArgumentException("Unsupported selected source fixture family");
-    };
+    return SelectedOwnerIntakeSourceTestFixtures.content(
+        scope,
+        DraftAuthorizationFenceBinding.digest(
+            "synthetic-read-fixture".getBytes(StandardCharsets.UTF_8)),
+        id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "0");
   }
 
   private static List<SourceEvidence> sources(UUID actor, UUID tenant) {
@@ -258,14 +198,6 @@ class AccountSelectedOwnerIntakeAuthorizationReadServiceTest {
                 "TEMPLATE_CONFIG",
                 "ALL",
                 "0")));
-  }
-
-  private static void frame(ByteArrayOutputStream out, String value) {
-    DraftAuthorizationFenceBinding.frame(out, value);
-  }
-
-  private static void frame(ByteArrayOutputStream out, byte[] value) {
-    DraftAuthorizationFenceBinding.frame(out, value);
   }
 
   private static UUID id(String value) {

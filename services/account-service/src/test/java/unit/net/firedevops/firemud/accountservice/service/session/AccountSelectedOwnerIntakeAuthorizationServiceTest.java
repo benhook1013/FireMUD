@@ -17,7 +17,6 @@ import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -38,16 +37,10 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
-import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
-import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
-import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceClient;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
-import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceTestFixtures;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.jooq.Record;
@@ -656,59 +649,13 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
 
   private static SelectedOwnerIntakeSourceContent content(
       SelectedOwnerIntakeSourceReadScope scope, String marker) {
-    var selected = scope.selected();
     UUID markerGenesis = UUID.nameUUIDFromBytes(marker.getBytes(StandardCharsets.UTF_8));
     String markerEpoch = Integer.toUnsignedString(marker.hashCode());
-    var gameplay =
-        new GameplayRuleSelectedSource(
-            GameplayRuleManifest.canonical(
-                Map.of(
-                    "schema", "game-design-gameplay-rule-source-snapshot/v1",
-                    "bindingJson", selected.canonicalJson(),
-                    "bindingDigest", selected.digest(),
-                    "sourceEpoch", "0",
-                    "inheritedCommitId", "",
-                    "genesisReceiptId", markerGenesis.toString(),
-                    "manifestJson", GameplayRuleManifest.explicitEmpty().canonicalJson(),
-                    "entries", List.of())));
-    var template = new TemplateConfigSourceSnapshot(selected, "0", null, markerGenesis, List.of());
-    Map<String, byte[]> snapshots =
-        Map.of(
-            "COMMAND",
-            new CommandSnapshot(
-                    selected,
-                    "0",
-                    null,
-                    DraftAuthorizationFenceBinding.digest(marker.getBytes(StandardCharsets.UTF_8)),
-                    List.of())
-                .canonicalBytes(),
-            "REALM_POLICY",
-            new RealmPolicySnapshot(selected, markerEpoch, List.of()).canonicalBytes(),
-            "ASSET",
-            new AssetSnapshot(selected, "0", null, markerGenesis, List.of()).canonicalBytes(),
-            "BRANDING",
-            new BrandingSourceSnapshot(selected, "0", null, markerGenesis, List.of())
-                .canonicalBytes());
-    var out = new ByteArrayOutputStream();
-    DraftAuthorizationFenceBinding.frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
-    DraftAuthorizationFenceBinding.frame(out, scope.canonicalBytes());
-    DraftAuthorizationFenceBinding.frame(out, scope.digest());
-    for (String family :
-        List.of(
-            "COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG")) {
-      byte[] snapshot =
-          switch (family) {
-            case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
-            case "TEMPLATE_CONFIG" -> template.canonicalBytes();
-            default -> snapshots.get(family);
-          };
-      DraftAuthorizationFenceBinding.frame(out, family);
-      DraftAuthorizationFenceBinding.frame(out, snapshot);
-      DraftAuthorizationFenceBinding.frame(out, DraftAuthorizationFenceBinding.digest(snapshot));
-    }
-    byte[] bytes = out.toByteArray();
-    return SelectedOwnerIntakeSourceContent.fromStored(
-        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
+    return SelectedOwnerIntakeSourceTestFixtures.content(
+        scope,
+        DraftAuthorizationFenceBinding.digest(marker.getBytes(StandardCharsets.UTF_8)),
+        markerGenesis,
+        markerEpoch);
   }
 
   private static String tokenHash(String value) {

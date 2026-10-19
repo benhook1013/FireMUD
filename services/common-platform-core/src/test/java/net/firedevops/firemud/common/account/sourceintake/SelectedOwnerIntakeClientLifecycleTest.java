@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
+import net.firedevops.firemud.common.entity.sourceintake.GrpcEntitySelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.gamedesign.GrpcSelectedOwnerIntakeSourceClient;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -183,6 +184,7 @@ class SelectedOwnerIntakeClientLifecycleTest {
     AUTHORIZATION,
     WORLD_CLOSURE_AUTHORIZATION,
     SOURCE_READ,
+    ENTITY_TERMINAL,
     AUTOMATION_TERMINAL,
     GAME_DESIGN_SOURCE,
     WORLD_INVENTORY,
@@ -212,6 +214,11 @@ class SelectedOwnerIntakeClientLifecycleTest {
         }
         case SOURCE_READ -> {
           var client = new GrpcSelectedOwnerIntakeSourceReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case ENTITY_TERMINAL -> {
+          var client =
+              new GrpcEntitySelectedSourceIntakeTerminalReadClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
         case AUTOMATION_TERMINAL -> {

@@ -3,7 +3,6 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
@@ -18,6 +17,7 @@ import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOw
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.entitymanagement.validation.CanonicalEntitySourceValues;
 
 /**
  * Maps exact authenticated Game Session and sealed Game Design source evidence to Entity's roster
@@ -25,9 +25,6 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
  */
 public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
     implements CanonicalGameplayRosterOwnerEvidencePort {
-  private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
-  private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
-
   private final GameSessionCanonicalGameplayRosterOwnerReadClient gameSessionClient;
   private final String workloadNamespace;
 
@@ -216,20 +213,18 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
   }
 
   private static String rawHexDigest(String digest) {
-    if (digest != null && PREFIXED_SHA256.matcher(digest).matches()) {
-      return digest.substring("sha256:".length());
+    try {
+      return CanonicalEntitySourceValues.normalizeSha256ToRawHex(digest);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalArgumentException("Canonical SHA-256 digest is required");
     }
-    if (isRawDigest(digest)) {
-      return digest;
-    }
-    throw new IllegalArgumentException("Canonical SHA-256 digest is required");
   }
 
   private static boolean hasPrefixedDigest(String digest) {
-    return digest != null && PREFIXED_SHA256.matcher(digest).matches();
+    return CanonicalEntitySourceValues.isPrefixedSha256(digest);
   }
 
   private static boolean isRawDigest(String digest) {
-    return digest != null && RAW_SHA256.matcher(digest).matches();
+    return CanonicalEntitySourceValues.isRawSha256(digest);
   }
 }

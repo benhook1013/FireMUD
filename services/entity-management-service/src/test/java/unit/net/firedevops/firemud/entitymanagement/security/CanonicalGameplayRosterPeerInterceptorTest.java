@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -33,6 +34,16 @@ class CanonicalGameplayRosterPeerInterceptorTest {
   @AfterEach
   void clearSessionContext() {
     SessionContext.clear();
+  }
+
+  @Test
+  void rejectsInvalidTrustedNamespaceAtConstruction() {
+    assertThatThrownBy(() -> new CanonicalGameplayRosterPeerInterceptor("invalid/namespace"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Entity Management workload namespace must be one DNS label");
+    assertThatThrownBy(() -> new CanonicalGameplayRosterPeerInterceptor(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Entity Management workload namespace must be one DNS label");
   }
 
   @Test
