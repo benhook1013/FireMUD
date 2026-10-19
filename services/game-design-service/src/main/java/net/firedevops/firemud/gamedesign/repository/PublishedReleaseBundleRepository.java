@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
@@ -182,14 +183,14 @@ public class PublishedReleaseBundleRepository {
     rejectCallerIdentitySubstitution(bundle, source);
     verifySelectorSource(bundle, source);
     if (!"v1".equals(bundle.getAttestationSchemaVersion())
-        && !"v2".equals(bundle.getAttestationSchemaVersion())
-        && !"v4".equals(bundle.getAttestationSchemaVersion())) {
+        && !PublishedReleaseBundleDto.isSelectedAttestationSchema(
+            bundle.getAttestationSchemaVersion())) {
       throw new IllegalArgumentException(
           "Unsupported published release bundle attestation schema "
               + bundle.getAttestationSchemaVersion());
     }
-    if ("v2".equals(bundle.getAttestationSchemaVersion())
-        || "v4".equals(bundle.getAttestationSchemaVersion())) {
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(
+        bundle.getAttestationSchemaVersion())) {
       PublishedReleaseBundle existing =
           tx.selectFrom(TABLE_REF)
               .where(TENANT_ID.eq(bundle.getTenantId()).and(VERSION_ID.eq(bundle.getVersionId())))
@@ -365,8 +366,8 @@ public class PublishedReleaseBundleRepository {
 
   private static void verifySelectorSource(PublishedReleaseBundle bundle, CanonicalSource source) {
     String bytes = bundle.getWorldPublishedStartLocationEvidenceJson();
-    if (!"v2".equals(bundle.getAttestationSchemaVersion())
-        && !"v4".equals(bundle.getAttestationSchemaVersion())) {
+    if (!PublishedReleaseBundleDto.isSelectedAttestationSchema(
+        bundle.getAttestationSchemaVersion())) {
       if (bytes != null) {
         throw new IllegalArgumentException(
             "Selector evidence is forbidden on historical release schemas");

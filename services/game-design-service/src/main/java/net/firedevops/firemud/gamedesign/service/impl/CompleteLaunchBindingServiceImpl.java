@@ -297,9 +297,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         || !Objects.equals(snapshotCanonicalVersionId, bundle.canonicalVersionId())
         || !("v1".equals(bundle.attestationSchemaVersion())
                 && bundle.worldPublishedStartLocationEvidence() == null
-            || "v2".equals(bundle.attestationSchemaVersion())
-                && bundle.worldPublishedStartLocationEvidence() != null
-            || PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(
+            || PublishedReleaseBundleDto.isSelectedAttestationSchema(
                     bundle.attestationSchemaVersion())
                 && bundle.worldPublishedStartLocationEvidence() != null)
         || !Objects.equals(bundle.id(), descriptor.releaseBundleId())

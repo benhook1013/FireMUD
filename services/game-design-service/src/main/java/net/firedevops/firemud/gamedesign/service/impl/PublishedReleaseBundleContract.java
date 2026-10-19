@@ -238,8 +238,7 @@ final class PublishedReleaseBundleContract {
    * Descriptor resolution only; descriptor/v1 remains separate from the complete release carrier.
    */
   static void requireSupportedSchemaForLaunchDescriptor(PublishedReleaseBundleDto bundle) {
-    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())
-        || SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())) {
       requireSupportedSchemaForLaunch(bundle);
       return;
     }
@@ -248,8 +247,7 @@ final class PublishedReleaseBundleContract {
 
   static void requireExactRepairMatch(
       PublishedReleaseBundleDto bundle, ExportedAssetManifest exportedManifest) {
-    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())
-        || SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())) {
       requireSupportedSchemaForPublicationRead(bundle);
     } else {
       requireSupportedSchemaForRead(bundle);

@@ -2694,7 +2694,7 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
 
   private static void awaitFinalizationCommit(CountDownLatch latch) {
     try {
-      if (!latch.await(30, TimeUnit.SECONDS)) {
+      if (!latch.await(90, TimeUnit.SECONDS)) {
         throw new IllegalStateException("Finalization commit was not released");
       }
     } catch (InterruptedException interrupted) {

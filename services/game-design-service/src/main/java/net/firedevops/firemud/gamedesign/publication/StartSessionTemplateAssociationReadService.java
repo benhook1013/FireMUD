@@ -260,7 +260,7 @@ public final class StartSessionTemplateAssociationReadService {
                           .asRuntimeException());
       if (!canonicalTenantId.equals(configuredRelease.canonicalTenantId())
           || !canonicalVersionId.equals(configuredRelease.canonicalVersionId())
-          || !StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema(
+          || !PublishedReleaseBundleDto.isSelectedAttestationSchema(
               configuredRelease.attestationSchemaVersion())) {
         throw new IllegalStateException("START_SESSION_CONFIGURED_RELEASE_IDENTITY_CONFLICT");
       }
