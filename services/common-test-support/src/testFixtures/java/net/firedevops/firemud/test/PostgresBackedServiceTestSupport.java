@@ -2,7 +2,17 @@ package net.firedevops.firemud.test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
 import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicReference;
+import org.awaitility.Awaitility;
+import org.awaitility.core.ConditionTimeoutException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -31,6 +41,49 @@ public final class PostgresBackedServiceTestSupport {
       throw new IllegalArgumentException("Expected a digest-pinned official postgres image");
     }
     return image.asCompatibleSubstituteFor(DockerImageName.parse("postgres"));
+  }
+
+  public static void awaitPostgresJdbcReady(PostgreSQLContainer<?> postgres) {
+    String jdbcUrl = postgres.getJdbcUrl();
+    Properties connectionProperties = new Properties();
+    connectionProperties.setProperty("user", postgres.getUsername());
+    connectionProperties.setProperty("password", postgres.getPassword());
+    connectionProperties.setProperty("connectTimeout", "2");
+    connectionProperties.setProperty("socketTimeout", "2");
+    AtomicReference<SQLException> lastFailure = new AtomicReference<>();
+
+    try {
+      Awaitility.await()
+          .alias("PostgreSQL mapped JDBC readiness at " + jdbcUrl)
+          .pollInterval(Duration.ofMillis(100))
+          .atMost(Duration.ofSeconds(60))
+          .until(
+              () -> {
+                try (Connection connection =
+                        DriverManager.getConnection(jdbcUrl, connectionProperties);
+                    Statement statement = connection.createStatement();
+                    ResultSet result = statement.executeQuery("SELECT 1")) {
+                  if (result.next() && result.getInt(1) == 1) {
+                    return true;
+                  }
+                  lastFailure.set(new SQLException("PostgreSQL readiness query did not return 1"));
+                  return false;
+                } catch (SQLException failure) {
+                  lastFailure.set(failure);
+                  return false;
+                }
+              });
+    } catch (ConditionTimeoutException timeout) {
+      SQLException failure = lastFailure.get();
+      if (failure == null) {
+        throw timeout;
+      }
+      IllegalStateException readinessFailure =
+          new IllegalStateException(
+              "Timed out waiting for PostgreSQL mapped JDBC readiness", failure);
+      readinessFailure.addSuppressed(timeout);
+      throw readinessFailure;
+    }
   }
 
   public static void registerPostgresService(

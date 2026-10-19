@@ -18,6 +18,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import javax.sql.DataSource;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -51,6 +52,7 @@ class CredentialCleanupRepositoryIntegrationTest {
 
   @BeforeAll
   void setUpRepositories() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
     DriverManagerDataSource source = newDataSource();
     dataSource = source;
     Flyway.configure()
