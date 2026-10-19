@@ -205,6 +205,32 @@ Entry format:
   - Expected pattern: The previous parent's green runs do not qualify the new pair. Preserve the exact-parent guard and do not rerun blindly. No guard was weakened and no blind rerun was requested.
   - Recovery: Gameplay reported the captured failures to Overseer in controller message `64512c73-9fa2-44b5-b2b7-e5b607155777`, with Preview evidence in reply `0de28b96-8790-4e5e-b8e5-a915d96de829`. After normal parent reconciliation and the required correction push to `a9d9f27a4139c2be2cbf9b7c1df4c4a33d6b8bf3` on `develop` at `efbc55874894ce5b2b420e19fac5ab23d66e384e`, replacement Runtime Images run `39094799761` and Preview run `39094798308` both succeeded. This establishes recovery of those metadata checks after that publication boundary, without explaining the original mismatch or claiming whole-CI success.
 
+- `2026-10-15`: Allocate forward migrations against the resolved combined Flyway history
+  - Context: The selected-owner intake plan's older Account V161 and Automation V5 sketch would sort below already installed combined history, including shared Saga resources and later service-owned migrations.
+  - Observation: The receiving Account parent already reaches V1005, while Saga reaches V1002.
+  - Expected pattern: Preserve existing SQL and prove a retained upgrade from the actual combined parent instead of enabling out-of-order execution or inferring a frontier from the service's older application lineage.
+
+- `2026-10-16`: Use bounded admission for shared heavy runs
+  - Context: The canonical local resource lock already serializes eligible heavy runs across worktrees. Ordinary workers can submit through supported bounded admission and retry a busy result without peer permission or an idle reservation between scheduled wake-ups.
+  - Observation: A Document source gate automatically acquired the lock before its delayed peer completion message arrived.
+  - Expected pattern: Treat busy admission as unrun proof.
+
+- `2026-10-16`: Bound conflict markers and inspect reconstructed files
+  - Context: A multiline conflict-marker resolver truncated three trailing file portions during an unpublished selected-owner carry.
+  - Observation: Native `git merge-file` reconstruction from the exact parents recovered the complete files; a clean whitespace check alone cannot detect lost content.
+  - Expected pattern: Bound marker lines explicitly, verify conflict counts and file tails, and inspect the final net diff against both original parents before committing.
+
+- `2026-10-16`: Check both public mapping directions for transport identity
+  - Context: An internal read requires an identity distinct from its original operation. The launch-association receiver retained the guard while a refactor removed it from the request encoder.
+  - Observation: The receiver's refusal did not constrain local encoding. A producer refusal assertion reproduced the omission at `653c42cea1`, and restoring the existing encoder guard passed the full 917-case Common gate at `cefbf09ebb`.
+  - Expected pattern: Keep the transport identity rule at both boundaries and distinguish local codec proof from controlled socket responses or genuine owner authority.
+
+- `2026-10-18`: Keep automatic Git repack failures separate from local commit proof
+  - Context: The #3248 private-parent receiving commit `029b6299b0ec63a6cd0a1cd30197cc7b3ca56ded` triggered automatic Git maintenance in the shared repository.
+  - Observation: The commit succeeded, and background repack reported `fatal: bad object refs/remotes/origin/codex/document-original-world-preparation-20261015` and `fatal: failed to run repack`. The exact cause and repository object health remain unknown.
+  - Expected pattern: Record commit and receiving evidence separately from background maintenance results. Investigate only under qualified shared-repository maintenance or when an actual delivery blocker requires it; `gc.log` or unreachable-object warnings do not authorize cleanup.
+  - Status and reconsideration: The commit retained prospective tree `733ed58d9390a5ba00e24088435af7b847567527`, all 84 child-owned postimages and the deletion, and all 12 qualified incoming blobs. Evidence is in Controller current-gameplay update 2151, `private-parent-carry-via-09e-verification.json`, and `receive-qualified-private-cli1-parent.patch` under the private #3248 local current-parent-carry evidence. Revisit if a qualified maintenance pass identifies the cause or the failure blocks delivery.
+
 - `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
   - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
   - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.
@@ -220,3 +246,8 @@ Entry format:
   - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, Main prematurely resolved a routed #3269 H1 thread after the parent #3249 fix was published but before the child carry was published. The thread was immediately reopened and finally resolved after child commit `bc10` was published.
   - Observation: A routed parent fix alone did not prove that the child candidate carried the fix.
   - Expected pattern: Close a routed thread only against the relevant published candidate; verify the child carry publication before treating the thread as resolved.
+
+- `2026-10-20`: Preserve Testcontainers startup-failure limits
+  - Context: The focused canonical gate at `54e9ef35454f669a1f07cec73d13511febe12233` passed eight native cases across the two previously failing Account integration classes in 78.543 seconds, with zero failures, errors or skips; no Redis source or readiness change was made for this rerun.
+  - Observation: Testcontainers 2.0.5 `HostPortWaitStrategy` checks internal container and external mapped-port reachability concurrently, then reports a generic timeout without preserving the subcheck cause. Redis-ready logs alone do not isolate host forwarding. A child-command timeout or Future cancellation does not prove the Docker exec RPC ended.
+  - Expected pattern: Match exact container, fixture and mapped-port evidence before assigning a cause. Credit a focused rerun as its own proof; it neither erases the original failed aggregate nor proves a repair.

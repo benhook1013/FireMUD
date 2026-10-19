@@ -10,6 +10,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerStatus;
 import org.jooq.DSLContext;
@@ -127,9 +129,15 @@ public final class CommandSourceRepository {
     List<CommandSource.Mutation> mutations = CommandSource.mutations(binding);
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
     boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
+    boolean brandingMutation = !BrandingSource.mutations(binding).isEmpty();
     boolean templateConfigMutation = !TemplateConfigSource.mutations(binding).isEmpty();
     requireCompleteControlPlaneScopes(
-        binding, mutations, policyMutation, assetMutation, templateConfigMutation);
+        binding,
+        mutations,
+        policyMutation,
+        assetMutation,
+        brandingMutation,
+        templateConfigMutation);
     Optional<CommandApplication> existing = application(binding);
     if (existing.isPresent()) return existing;
     if (mutations.isEmpty()) return Optional.empty();
@@ -225,6 +233,7 @@ public final class CommandSourceRepository {
         mutations,
         CommandSource.hasRealmPolicyRevision(binding),
         !AssetSource.mutations(binding).isEmpty(),
+        !BrandingSource.mutations(binding).isEmpty(),
         !TemplateConfigSource.mutations(binding).isEmpty());
     List<CommandSource.Definition> definitions;
     if (!mutations.isEmpty()) {
@@ -551,6 +560,7 @@ public final class CommandSourceRepository {
       List<CommandSource.Mutation> commandMutations,
       boolean policyMutation,
       boolean assetMutation,
+      boolean brandingMutation,
       boolean templateConfigMutation) {
     List<DraftCommitBinding.AffectedUnit> units =
         binding.affectedUnits(Owner.GAME_DESIGN_CONTROL_PLANE);
@@ -560,6 +570,8 @@ public final class CommandSourceRepository {
         units.stream().filter(this::isPolicyScope).toList();
     List<DraftCommitBinding.AffectedUnit> assets =
         units.stream().filter(AssetSourceRepository::isScope).toList();
+    List<DraftCommitBinding.AffectedUnit> branding =
+        units.stream().filter(BrandingSourceRepository::isScope).toList();
     var gameplay =
         units.stream()
             .filter(net.firedevops.firemud.common.gamedesign.GameplayRuleSource::isScope)
@@ -570,11 +582,13 @@ public final class CommandSourceRepository {
     if (commands.size() != (commandMutations.isEmpty() ? 0 : 1)
         || policies.size() != (policyMutation ? 1 : 0)
         || assets.size() != (assetMutation ? 1 : 0)
+        || branding.size() != (brandingMutation ? 1 : 0)
         || gameplay.size() != (gameplayMutation ? 1 : 0)
         || templateConfigs.size() != (templateConfigMutation ? 1 : 0)
         || commands.size()
                 + policies.size()
                 + assets.size()
+                + branding.size()
                 + gameplay.size()
                 + templateConfigs.size()
             != units.size()) {
@@ -584,6 +598,7 @@ public final class CommandSourceRepository {
     if (!commands.isEmpty()) requireScopeTarget(commands.getFirst(), binding.target());
     if (!policies.isEmpty()) requireScopeTarget(policies.getFirst(), binding.target());
     if (!assets.isEmpty()) requireScopeTarget(assets.getFirst(), binding.target());
+    if (!branding.isEmpty()) requireScopeTarget(branding.getFirst(), binding.target());
     if (!gameplay.isEmpty()) requireScopeTarget(gameplay.getFirst(), binding.target());
     if (!templateConfigs.isEmpty())
       requireScopeTarget(templateConfigs.getFirst(), binding.target());

@@ -13,10 +13,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.publication.CommandApplication;
 import net.firedevops.firemud.gamedesign.publication.CommandSnapshot;
-import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
@@ -321,8 +321,7 @@ class CommandSourceTest {
         + "\"promptPolicy\":\"NEVER\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
         + "\"aliases\":[\""
         + alias
-        + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[],"
-        + "\"legacyExtension\":{\"kept\":true}}";
+        + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}";
   }
 
   private static DraftCommitBinding.RevisionPayload revision(

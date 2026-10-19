@@ -6,8 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -19,6 +22,7 @@ import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvide
 import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.Request;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class DraftSynchronizedVisibilityEvidenceTest {
   private static final String EXPECTED_EPOCH = "900719925474099312345678901234567890";
@@ -52,6 +56,59 @@ class DraftSynchronizedVisibilityEvidenceTest {
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("complete bound epoch declaration");
     }
+  }
+
+  @Test
+  void completeAllOwnerFenceValidatesAndReturnsDefensiveExactOwnerResults() {
+    var evidence = evidence(multiOwnerBinding(), resultVector(multiOwnerBinding()));
+
+    evidence.requireValid();
+    assertThat(evidence.appliedOwnerResults()).hasSize(2);
+    assertThat(evidence.appliedOwnerResult(Owner.WORLD_MANAGEMENT).resultIdentity())
+        .isEqualTo("world-result");
+    byte[] resultBytes = evidence.appliedOwnerResult(Owner.WORLD_MANAGEMENT).resultBytes();
+    resultBytes[0] = 0;
+    assertThat(evidence.appliedOwnerResult(Owner.WORLD_MANAGEMENT).resultBytes())
+        .containsExactly("world-result-bytes".getBytes(StandardCharsets.UTF_8));
+    assertThat(evidence.appliedOwnerResult(Owner.ENTITY_MANAGEMENT).resultIdentity())
+        .isEqualTo("entity-result");
+    byte[] entityBytes = evidence.appliedOwnerResult(Owner.ENTITY_MANAGEMENT).resultBytes();
+    entityBytes[0] = 0;
+    assertThat(evidence.appliedOwnerResult(Owner.ENTITY_MANAGEMENT).resultBytes())
+        .containsExactly("entity-result-bytes".getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void rejectsIncompleteOrSubstitutedFenceAndOwnerResults() {
+    DraftCommitBinding binding = multiOwnerBinding();
+    String vector = resultVector(binding);
+
+    assertThatThrownBy(() -> evidence(binding, vector.replace("APPLIED", "UNKNOWN")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("terminal APPLIED");
+    assertThatThrownBy(() -> evidence(binding, vector.replace("WORLD_TEMPLATE", "OTHER")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("bound epoch declaration");
+    assertThatThrownBy(
+            () ->
+                new DraftSynchronizedVisibilityEvidence(
+                    request(), binding, "APPLYING", fence(binding, vector)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not bound");
+    assertThatThrownBy(
+            () ->
+                new DraftSynchronizedVisibilityEvidence(
+                    request(),
+                    binding,
+                    "SYNCHRONIZED",
+                    new DraftSynchronizedVisibilityEvidence.Fence(
+                        REQUEST_ID,
+                        COMMIT_ID,
+                        "sha256:" + "f".repeat(64),
+                        vector,
+                        OffsetDateTime.parse("2026-10-06T00:00:00Z"))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("full input");
   }
 
   private static DraftSynchronizedVisibilityEvidence evidence(String resultingEpoch)
@@ -126,6 +183,100 @@ class DraftSynchronizedVisibilityEvidenceTest {
                 "ROOM_SCOPE",
                 "room-scope-3",
                 EXPECTED_EPOCH)));
+  }
+
+  private static DraftSynchronizedVisibilityEvidence evidence(
+      DraftCommitBinding binding, String vector) {
+    return new DraftSynchronizedVisibilityEvidence(
+        request(), binding, "SYNCHRONIZED", fence(binding, vector));
+  }
+
+  private static DraftSynchronizedVisibilityEvidence.Fence fence(
+      DraftCommitBinding binding, String vector) {
+    return new DraftSynchronizedVisibilityEvidence.Fence(
+        REQUEST_ID,
+        COMMIT_ID,
+        binding.digest(),
+        vector,
+        OffsetDateTime.parse("2026-10-06T00:00:00Z"));
+  }
+
+  private static DraftSynchronizedVisibilityEvidence.Request request() {
+    return new DraftSynchronizedVisibilityEvidence.Request(1, "test", READ_REQUEST_ID, target());
+  }
+
+  private static TargetProof target() {
+    return new TargetProof(
+        binding().target().canonicalTenantId(),
+        binding().target().canonicalVersionId(),
+        19L,
+        "tenant-key",
+        42L,
+        "tenant-key",
+        "NEW_GAME_ROW");
+  }
+
+  private static DraftCommitBinding multiOwnerBinding() {
+    return DraftCommitBinding.create(
+        target(),
+        REQUEST_ID,
+        COMMIT_ID,
+        "base-source-1",
+        List.of(
+            new RevisionPayload(
+                "0", uuid("66666666-6666-4666-8666-666666666666"), Owner.WORLD_MANAGEMENT, "{}"),
+            new RevisionPayload(
+                "1", uuid("77777777-7777-4777-8777-777777777777"), Owner.ENTITY_MANAGEMENT, "{}")),
+        List.of(
+            new AffectedUnit(
+                Owner.WORLD_MANAGEMENT, "WORLD_TEMPLATE", "world-1", "ROOM_SCOPE", "room-1", "0"),
+            new AffectedUnit(
+                Owner.ENTITY_MANAGEMENT,
+                "ENTITY_TEMPLATE",
+                "entity-1",
+                "ACTOR_SCOPE",
+                "actor-1",
+                "1")));
+  }
+
+  private static String resultVector(DraftCommitBinding binding) {
+    List<Map<String, Object>> vector = new ArrayList<>();
+    for (Owner owner : binding.requiredOwners()) {
+      AffectedUnit unit = binding.affectedUnits(owner).getFirst();
+      Map<String, Object> epoch = new LinkedHashMap<>();
+      epoch.put("aggregateType", unit.aggregateType());
+      epoch.put("aggregateId", unit.aggregateId());
+      epoch.put("scopeType", unit.scopeType());
+      epoch.put("scopeId", unit.scopeId());
+      epoch.put("expectedEpoch", unit.expectedEpoch());
+      epoch.put(
+          "resultingEpoch",
+          new java.math.BigInteger(unit.expectedEpoch()).add(java.math.BigInteger.ONE).toString());
+      Map<String, Object> item = new LinkedHashMap<>();
+      item.put("owner", owner.name());
+      item.put("status", "APPLIED");
+      item.put("commitId", COMMIT_ID.toString());
+      item.put("bindingDigest", binding.digest());
+      item.put(
+          "resultIdentity", owner == Owner.WORLD_MANAGEMENT ? "world-result" : "entity-result");
+      item.put(
+          "resultBytesBase64",
+          Base64.getEncoder()
+              .encodeToString(
+                  (owner == Owner.WORLD_MANAGEMENT ? "world-result-bytes" : "entity-result-bytes")
+                      .getBytes(StandardCharsets.UTF_8)));
+      item.put("appliedEpochs", List.of(epoch));
+      vector.add(item);
+    }
+    return canonical(new ObjectMapper().writeValueAsString(vector));
+  }
+
+  private static String canonical(String json) {
+    try {
+      return new String(Rfc8785CanonicalJson.canonicalizeUtf8(json), StandardCharsets.UTF_8);
+    } catch (java.io.IOException exception) {
+      throw new AssertionError(exception);
+    }
   }
 
   private static UUID uuid(String value) {
