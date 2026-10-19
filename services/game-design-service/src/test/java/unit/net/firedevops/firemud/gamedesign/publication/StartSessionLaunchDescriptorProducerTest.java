@@ -69,11 +69,11 @@ class StartSessionLaunchDescriptorProducerTest {
 
   @Test
   void selectedReleaseMatchingRetainsV2AndAcceptsOnlyFullV4() {
-    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v2")).isTrue();
-    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v4")).isTrue();
-    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v1")).isFalse();
-    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v3")).isFalse();
-    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema(null)).isFalse();
+    assertThat(PublishedReleaseBundleDto.isSelectedAttestationSchema("v2")).isTrue();
+    assertThat(PublishedReleaseBundleDto.isSelectedAttestationSchema("v4")).isTrue();
+    assertThat(PublishedReleaseBundleDto.isSelectedAttestationSchema("v1")).isFalse();
+    assertThat(PublishedReleaseBundleDto.isSelectedAttestationSchema("v3")).isFalse();
+    assertThat(PublishedReleaseBundleDto.isSelectedAttestationSchema(null)).isFalse();
   }
 
   @Test
