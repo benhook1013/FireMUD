@@ -22,7 +22,6 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -30,7 +29,6 @@ import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -40,6 +38,7 @@ import net.firedevops.firemud.account.v1.AccountSelectedPublicationOrderServiceG
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
 import net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderService;
+import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -355,7 +354,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
 
     private static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("selected-publication-test-ca.p12");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-genkeypair",
           "-alias",
           "test-ca",
@@ -380,7 +380,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
           "-keypass",
           STORE_PASSWORD);
       Path caFile = directory.resolve("selected-publication-test-ca.crt");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-exportcert",
           "-alias",
           "test-ca",
@@ -440,7 +441,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
       Path request = directory.resolve(alias + ".csr");
       Path certificate = directory.resolve(alias + ".crt");
       String san = "URI:" + workloadUri + ",DNS:localhost,IP:127.0.0.1";
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-genkeypair",
           "-alias",
           alias,
@@ -466,7 +468,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
           STORE_PASSWORD,
           "-keypass",
           STORE_PASSWORD);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-certreq",
           "-alias",
           alias,
@@ -480,7 +483,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
           request.toString(),
           "-ext",
           "SAN=" + san);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-gencert",
           "-alias",
           "test-ca",
@@ -505,7 +509,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
           "EKU=" + (server ? "serverAuth" : "clientAuth"),
           "-ext",
           "SAN=" + san);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-importcert",
           "-alias",
           "test-ca",
@@ -518,7 +523,8 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
           "-file",
           caFile.toString(),
           "-noprompt");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          directory,
           "-importcert",
           "-alias",
           alias,
@@ -539,28 +545,6 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
           alias,
           (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
           (X509Certificate) keyStore.getCertificate(alias));
-    }
-
-    private static void runKeytool(String... arguments) throws Exception {
-      Path keytool =
-          Path.of(
-              System.getProperty("java.home"),
-              "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows")
-                  ? "keytool.exe"
-                  : "keytool");
-      ArrayList<String> command = new ArrayList<>();
-      command.add(keytool.toString());
-      command.addAll(List.of(arguments));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-      }
-      if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
-        process.destroyForcibly();
-        throw new IllegalStateException("keytool failed: " + output);
-      }
     }
 
     private static X509Certificate readCertificate(Path path) throws Exception {

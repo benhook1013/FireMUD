@@ -15,7 +15,6 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit file-backed mTLS client for Account-owned selected-publication settlement. */
 public final class AccountSelectedPublicationSettlementClient
@@ -26,8 +25,6 @@ public final class AccountSelectedPublicationSettlementClient
   private static final long CALL_DEADLINE_SECONDS = 30L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public AccountSelectedPublicationSettlementClient(
       ServiceEndpointsProperties endpoints,
@@ -45,32 +42,23 @@ public final class AccountSelectedPublicationSettlementClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("Account publication settlement client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("Account publication settlement stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Account publication settlement client is closed",
+        "Account publication settlement stub unavailable");
   }
 
   /** Returns the exact original six-frame receipt after Account peer and receipt validation. */
   public byte[] settle(AccountSelectedPublicationSettlementGrpcCodec.Request request) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new IllegalStateException(
-          "Account publication settlement requires no owner transaction");
-    }
+    requireNoAmbientSql("Account publication settlement requires no owner transaction");
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
           "Account publication settlement must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "Account publication settlement client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .settleSelectedPublication(
                 AccountSelectedPublicationSettlementGrpcCodec.toRequest(request));
@@ -102,26 +90,6 @@ public final class AccountSelectedPublicationSettlementClient
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip")
         .withMaxInboundMessageSize(AccountSelectedPublicationSettlementGrpcCodec.MAX_MESSAGE_BYTES);
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private AccountSelectedPublicationSettlementServiceGrpc
-          .AccountSelectedPublicationSettlementServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "Account publication settlement client is not initialized and available");
-    }
-    return currentStub;
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(

@@ -1877,10 +1877,12 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   }
 
   private static final class SettlementDiagnostics {
+    private final boolean enabled = Boolean.getBoolean("firemud.settlementDiagnostics");
     private final AtomicLong sequence = new AtomicLong();
     private final long diagnosticOriginNanos = System.nanoTime();
 
     void logPostgres(String role, PostgreSQLContainer<?> postgres) {
+      if (!enabled) return;
       try {
         System.out.printf(
             "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s elapsed_since_diagnostic_start_nanos=%d container=%s host=%s mapped_port=%d running=%s%n",
@@ -2129,6 +2131,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     }
 
     private void event(long call, String stage, String event, long elapsedNanos, String result) {
+      if (!enabled) return;
       long elapsedSinceDiagnosticStartNanos = System.nanoTime() - diagnosticOriginNanos;
       System.out.printf(
           "SETTLEMENT_DIAGNOSTIC call=%d stage=%s event=%s elapsed_nanos=%d elapsed_since_diagnostic_start_nanos=%d result=%s%n",

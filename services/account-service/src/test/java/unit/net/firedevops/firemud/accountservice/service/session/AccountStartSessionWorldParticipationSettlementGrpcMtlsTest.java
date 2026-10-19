@@ -29,7 +29,6 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +39,7 @@ import net.firedevops.firemud.account.v1.AccountStartSessionWorldParticipationSe
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionWorldParticipationRequest;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementService;
+import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionWorldParticipationSettlementClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -50,7 +50,6 @@ import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -77,70 +76,6 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
   void clearThreadState() {
     SessionContext.clear();
     TransactionSynchronizationManager.clear();
-  }
-
-  @Test
-  @Timeout(15)
-  void keytoolTimeoutTerminatesAndReapsTheStalledChild() throws Exception {
-    Process process = keytoolAwaitingPassword();
-    try {
-      assertThatThrownBy(() -> TestPki.awaitKeytoolExit(process, 1, TimeUnit.SECONDS))
-          .isInstanceOf(IllegalStateException.class)
-          .hasMessageContaining("execution deadline");
-      assertThat(process.isAlive()).isFalse();
-      assertThat(process.exitValue()).isNotZero();
-    } finally {
-      cleanupKeytool(process);
-    }
-  }
-
-  @Test
-  @Timeout(15)
-  void keytoolInterruptionReapsTheChildAndPreservesTheInterruptFlag() throws Exception {
-    Process process = keytoolAwaitingPassword();
-    try {
-      Thread.currentThread().interrupt();
-      assertThatThrownBy(() -> TestPki.awaitKeytoolExit(process, 30, TimeUnit.SECONDS))
-          .isInstanceOf(InterruptedException.class);
-      assertThat(Thread.currentThread().isInterrupted()).isTrue();
-      Thread.interrupted();
-      assertThat(process.isAlive()).isFalse();
-      assertThat(process.exitValue()).isNotZero();
-    } finally {
-      Thread.interrupted();
-      cleanupKeytool(process);
-    }
-  }
-
-  private Process keytoolAwaitingPassword() throws Exception {
-    Path keytool =
-        Path.of(
-            System.getProperty("java.home"),
-            "bin",
-            System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("windows")
-                ? "keytool.exe"
-                : "keytool");
-    return new ProcessBuilder(
-            keytool.toString(),
-            "-genkeypair",
-            "-alias",
-            "controlled-timeout",
-            "-keyalg",
-            "RSA",
-            "-keystore",
-            temporaryDirectory.resolve("pending-password.p12").toString(),
-            "-storetype",
-            "PKCS12")
-        .redirectErrorStream(true)
-        .start();
-  }
-
-  private static void cleanupKeytool(Process process) throws Exception {
-    if (process.isAlive()) process.destroyForcibly();
-    assertThat(process.waitFor(5, TimeUnit.SECONDS)).isTrue();
-    process.getOutputStream().close();
-    process.getInputStream().close();
-    process.getErrorStream().close();
   }
 
   @Test
@@ -358,7 +293,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
 
     private static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("world-participation-settlement-test-ca.p12");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-genkeypair",
           "-alias",
@@ -384,7 +319,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
           "-keypass",
           STORE_PASSWORD);
       Path caFile = directory.resolve("world-participation-settlement-test-ca.crt");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-exportcert",
           "-alias",
@@ -460,7 +395,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
       Path certificate = directory.resolve(alias + "-signed.crt");
       String san = "URI:" + workloadUri + (server ? ",DNS:localhost,IP:127.0.0.1" : "");
       String usage = server ? "serverAuth" : "clientAuth";
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-genkeypair",
           "-alias",
@@ -487,7 +422,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
           STORE_PASSWORD,
           "-keypass",
           STORE_PASSWORD);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-certreq",
           "-alias",
@@ -502,7 +437,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
           request.toString(),
           "-ext",
           "SAN=" + san);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-gencert",
           "-alias",
@@ -528,7 +463,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
           "EKU=" + usage,
           "-ext",
           "SAN=" + san);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-importcert",
           "-alias",
@@ -542,7 +477,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
           "-file",
           caFile.toString(),
           "-noprompt");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
           directory,
           "-importcert",
           "-alias",
@@ -564,66 +499,6 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
           alias,
           (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
           (X509Certificate) keyStore.getCertificate(alias));
-    }
-
-    private static void runKeytool(Path directory, String... args) throws Exception {
-      Path keytool =
-          Path.of(
-              System.getProperty("java.home"),
-              "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows")
-                  ? "keytool.exe"
-                  : "keytool");
-      ArrayList<String> command = new ArrayList<>();
-      command.add(keytool.toString());
-      command.addAll(List.of(args));
-      Path output = Files.createTempFile(directory, "keytool-output-", ".log");
-      try {
-        Process process =
-            new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .redirectOutput(output.toFile())
-                .start();
-        awaitKeytoolExit(process, 30, TimeUnit.SECONDS);
-        if (process.exitValue() != 0) {
-          throw new IllegalStateException("test keytool failed: " + Files.readString(output));
-        }
-      } finally {
-        Files.deleteIfExists(output);
-      }
-    }
-
-    /** Waits before reading child output, then terminates and reaps on timeout or interruption. */
-    static void awaitKeytoolExit(Process process, long timeout, TimeUnit unit)
-        throws InterruptedException {
-      try {
-        if (!process.waitFor(timeout, unit)) {
-          throw new IllegalStateException("test keytool exceeded its execution deadline");
-        }
-      } catch (InterruptedException interrupted) {
-        Thread.currentThread().interrupt();
-        throw interrupted;
-      } finally {
-        boolean restoreInterrupt = Thread.interrupted();
-        try {
-          if (process.isAlive()) process.destroyForcibly();
-          long cleanupDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-          boolean reaped = false;
-          while (!reaped) {
-            long remaining = cleanupDeadline - System.nanoTime();
-            if (remaining <= 0) {
-              throw new IllegalStateException("test keytool could not be reaped after termination");
-            }
-            try {
-              reaped = process.waitFor(remaining, TimeUnit.NANOSECONDS);
-            } catch (InterruptedException interrupted) {
-              restoreInterrupt = true;
-            }
-          }
-        } finally {
-          if (restoreInterrupt) Thread.currentThread().interrupt();
-        }
-      }
     }
 
     private static X509Certificate readCertificate(Path path) throws Exception {

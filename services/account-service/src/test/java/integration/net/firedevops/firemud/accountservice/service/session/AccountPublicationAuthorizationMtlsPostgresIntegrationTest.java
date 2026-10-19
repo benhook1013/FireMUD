@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
@@ -894,7 +894,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
 
     TestPki(Path root) throws Exception {
       Path caStore = root.resolve("ca.p12");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          root,
           "-genkeypair",
           "-alias",
           "test-ca",
@@ -919,7 +920,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           "-keypass",
           PASSWORD);
       ca = root.resolve("ca.crt");
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          root,
           "-exportcert",
           "-alias",
           "test-ca",
@@ -970,7 +972,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
               + workload
               + ",DNS:localhost,IP:127.0.0.1";
       String eku = server ? "serverAuth" : "clientAuth";
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          root,
           "-genkeypair",
           "-alias",
           alias,
@@ -996,7 +999,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           PASSWORD,
           "-keypass",
           PASSWORD);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          root,
           "-certreq",
           "-alias",
           alias,
@@ -1010,7 +1014,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           request.toString(),
           "-ext",
           "SAN=" + san);
-      runKeytool(
+      AccountStartSessionReservationProofPki.runKeytool(
+          root,
           "-gencert",
           "-alias",
           "test-ca",
@@ -1054,29 +1059,6 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           StandardCharsets.US_ASCII);
       java.util.Arrays.fill(privateKey, (byte) 0);
       return new TestIdentity(certificate, key);
-    }
-
-    private static void runKeytool(String... arguments) throws Exception {
-      Path keytool =
-          Path.of(
-              System.getProperty("java.home"),
-              "bin",
-              System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("windows")
-                  ? "keytool.exe"
-                  : "keytool");
-      var command = new ArrayList<String>();
-      command.add(keytool.toString());
-      command.addAll(List.of(arguments));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      if (!process.waitFor(30, TimeUnit.SECONDS)) {
-        process.destroyForcibly();
-        throw new IllegalStateException("Ephemeral test certificate generation timed out");
-      }
-      try (var output = process.getInputStream()) {
-        String details = new String(output.readAllBytes(), StandardCharsets.UTF_8);
-        if (process.exitValue() != 0)
-          throw new IllegalStateException("Test keytool failed: " + details);
-      }
     }
   }
 }

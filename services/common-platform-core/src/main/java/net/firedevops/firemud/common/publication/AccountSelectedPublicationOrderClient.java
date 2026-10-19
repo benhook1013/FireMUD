@@ -18,7 +18,6 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Strict explicit mTLS client; never registers or enables the Account producer. */
 public final class AccountSelectedPublicationOrderClient
@@ -26,8 +25,6 @@ public final class AccountSelectedPublicationOrderClient
         AccountSelectedPublicationOrderServiceGrpc
             .AccountSelectedPublicationOrderServiceBlockingStub> {
   private final String namespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public AccountSelectedPublicationOrderClient(
       ServiceEndpointsProperties endpoints,
@@ -40,27 +37,19 @@ public final class AccountSelectedPublicationOrderClient
     this.namespace = namespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Account selected-publication client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null)
-      throw new IllegalStateException("Account selected-publication stub unavailable");
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Account selected-publication client is closed",
+        "Account selected-publication stub unavailable");
   }
 
   public AccountPublicationAuthorizationBinding authorize(
       AccountSelectedPublicationOrderGrpcCodec.Request request) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive())
-      throw new IllegalStateException(
-          "Account selected-publication transport requires no owner transaction");
+    requireNoAmbientSql("Account selected-publication transport requires no owner transaction");
     Objects.requireNonNull(request);
     if (!namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Account selected-publication namespace mismatch");
-    var current = stub();
-    if (closed || !initialized || current == null)
-      throw new IllegalStateException("Account selected-publication client unavailable");
+    var current = requireInitializedStub("Account selected-publication client unavailable");
     try {
       var response =
           current
@@ -104,15 +93,6 @@ public final class AccountSelectedPublicationOrderClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
   }
 
   private static CommonGrpcClientProperties requireMtls(CommonGrpcClientProperties tls) {

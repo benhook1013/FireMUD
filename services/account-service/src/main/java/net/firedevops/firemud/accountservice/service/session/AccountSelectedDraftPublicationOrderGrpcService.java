@@ -126,6 +126,9 @@ public final class AccountSelectedDraftPublicationOrderGrpcService implements Bi
     } catch (StatusRuntimeException failure) {
       deny(observer, Status.fromCode(failure.getStatus().getCode()));
       return;
+    } catch (IllegalArgumentException conflict) {
+      deny(observer, Status.FAILED_PRECONDITION);
+      return;
     } catch (RuntimeException unavailable) {
       deny(observer, Status.UNAVAILABLE);
       return;

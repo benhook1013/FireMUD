@@ -11,6 +11,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -268,12 +269,12 @@ public final class AccountStartSessionReservationProofPki {
         (X509Certificate) keyStore.getCertificate(alias));
   }
 
-  private static void runKeytool(Path directory, String... args) throws Exception {
+  public static void runKeytool(Path directory, String... args) throws Exception {
     Path keytool =
         Path.of(
             System.getProperty("java.home"),
             "bin",
-            System.getProperty("os.name").toLowerCase().contains("windows")
+            System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")
                 ? "keytool.exe"
                 : "keytool");
     ArrayList<String> command = new ArrayList<>();

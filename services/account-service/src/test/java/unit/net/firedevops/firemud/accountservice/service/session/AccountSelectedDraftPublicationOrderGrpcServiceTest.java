@@ -183,6 +183,24 @@ class AccountSelectedDraftPublicationOrderGrpcServiceTest {
   }
 
   @Test
+  void immutableOwnerConflictIsPermanentWhilePendingSourceChangeRemainsRetryable() {
+    var captured = mock(AccountHostedTermsService.CapturedEnvironmentBoundary.class);
+    when(terms.captureCurrentEnvironmentBoundary()).thenReturn(captured);
+    when(owner.authorize(eq(CREDENTIAL), any(), same(captured)))
+        .thenThrow(new IllegalArgumentException(CREDENTIAL))
+        .thenThrow(new IllegalStateException(CREDENTIAL));
+    var conflict = authorized(() -> invoke(request()));
+    assertThat(conflict.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(conflict.error().toString()).doesNotContain(CREDENTIAL);
+    assertThat(conflict.error().getCause()).isNull();
+
+    var waiting = authorized(() -> invoke(request()));
+    assertThat(waiting.code()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(waiting.error().toString()).doesNotContain(CREDENTIAL);
+    assertThat(waiting.error().getCause()).isNull();
+  }
+
+  @Test
   void secretBearingOwnerStatusReturnsOnlyItsCodeAndSanitizedDescription() {
     var captured = mock(AccountHostedTermsService.CapturedEnvironmentBoundary.class);
     when(terms.captureCurrentEnvironmentBoundary()).thenReturn(captured);

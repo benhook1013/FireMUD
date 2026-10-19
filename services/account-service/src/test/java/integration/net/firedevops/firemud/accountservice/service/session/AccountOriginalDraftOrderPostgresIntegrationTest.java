@@ -91,7 +91,7 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
   @ValueSource(booleans = {true, false})
   void originalCreatorExpiryAtFinalOwnerLockDeniesCurrentCallback(
       boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
-    assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+    assertOriginalCreatorTimeAtFinalOwnerLock(
         signedCredential, proofDirectory, Duration.ofMinutes(10));
   }
 
@@ -99,7 +99,7 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
   @ValueSource(booleans = {true, false})
   void originalCreatorNotBeforeAtFinalOwnerLockDeniesCurrentCallback(
       boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
-    assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+    assertOriginalCreatorTimeAtFinalOwnerLock(
         signedCredential, proofDirectory, Duration.ofMinutes(-10));
   }
 
@@ -107,11 +107,10 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
   @ValueSource(booleans = {true, false})
   void originalCreatorIssuedAtEqualityAtFinalOwnerLockAllowsCurrentCallback(
       boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
-    assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
-        signedCredential, proofDirectory, Duration.ZERO);
+    assertOriginalCreatorTimeAtFinalOwnerLock(signedCredential, proofDirectory, Duration.ZERO);
   }
 
-  private void assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+  private void assertOriginalCreatorTimeAtFinalOwnerLock(
       boolean signedCredential, Path proofDirectory, Duration clockChange) throws Exception {
     var clock = new ActorClock();
     try (var fixture =
