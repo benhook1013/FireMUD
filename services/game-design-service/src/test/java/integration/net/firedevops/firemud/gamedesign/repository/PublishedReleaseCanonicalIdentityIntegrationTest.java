@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -24,6 +25,7 @@ import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultConfiguration;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -58,6 +60,11 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @BeforeAll
+  static void awaitPostgresJdbcReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
 
   @Test
   void normalSavePersistsExactVersionAndVerifiedGameIdentityAndReadsBackWithinTransaction() {

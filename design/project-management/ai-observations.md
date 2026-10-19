@@ -272,3 +272,8 @@ Entry format:
   - Context: On 2026-10-18 UTC / 2026-10-19 NZDT, Main prematurely resolved a routed #3269 H1 thread after the parent #3249 fix was published but before the child carry was published. The thread was immediately reopened and finally resolved after child commit `bc10` was published.
   - Observation: A routed parent fix alone did not prove that the child candidate carried the fix.
   - Expected pattern: Close a routed thread only against the relevant published candidate; verify the child carry publication before treating the thread as resolved.
+
+- `2026-10-20`: Preserve Testcontainers startup-failure limits
+  - Context: The focused canonical gate at `54e9ef35454f669a1f07cec73d13511febe12233` passed eight native cases across the two previously failing Account integration classes in 78.543 seconds, with zero failures, errors or skips; no Redis source or readiness change was made for this rerun.
+  - Observation: Testcontainers 2.0.5 `HostPortWaitStrategy` checks internal container and external mapped-port reachability concurrently, then reports a generic timeout without preserving the subcheck cause. Redis-ready logs alone do not isolate host forwarding. A child-command timeout or Future cancellation does not prove the Docker exec RPC ended.
+  - Expected pattern: Match exact container, fixture and mapped-port evidence before assigning a cause. Credit a focused rerun as its own proof; it neither erases the original failed aggregate nor proves a repair.
