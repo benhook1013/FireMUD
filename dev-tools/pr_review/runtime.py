@@ -931,9 +931,7 @@ class LiveEvidence:
                     unknown_review_evidence.append(label)
         # Keep the aggregate audit intact. Admission can omit only a positively
         # established peer source fix, never an unknown response or thread.
-        admission_finding_only = {
-            channel: list(finding_only_findings) for channel in ("hosted", "cli")
-        }
+        admission_finding_only = {channel: list(finding_only_findings) for channel in ("hosted", "cli")}
         for channel, history in channel_history.items():
             for item in history:
                 source_status = item.get("source_resolution_status")
@@ -1221,6 +1219,40 @@ class LiveEvidence:
             )
             if github.immutable_database_id(item) is not None
         }
+
+        def is_retired_preexisting_failure(record: Mapping[str, Any], response_ids: set[int]) -> bool:
+            """Recognize only the exact known terminal failure before retirement."""
+
+            if len(response_ids) != 1:
+                return False
+            retirement = record.get("retirement")
+            retired_at = hosted.strict_provider_timestamp(
+                retirement.get("retired_at") if isinstance(retirement, Mapping) else None
+            )
+            if retired_at is None:
+                return False
+            response_id = next(iter(response_ids))
+            response_entry = response_by_id.get(response_id)
+            if response_entry is None:
+                return False
+            response_item, timestamp_field = response_entry
+            body = response_item.get("body")
+            if (
+                timestamp_field != "createdAt"
+                or not isinstance(body, str)
+                or hosted.ACTION_NOT_COMPLETED_FAILURE_PATTERN.fullmatch(body) is None
+                or self._public_response_state(response_item, timestamp_field, checkpoint_by_response) != "failed"
+            ):
+                return False
+            created_at = hosted.strict_provider_timestamp(response_item.get("createdAt"))
+            updated_at = hosted.strict_provider_timestamp(response_item.get("updatedAt"))
+            return (
+                created_at is not None
+                and updated_at is not None
+                and created_at < retired_at
+                and updated_at < retired_at
+            )
+
         for response_id, response_at in responses:
             previous = [item for item in commands if item[1] < response_at]
             if not previous:
@@ -1262,7 +1294,12 @@ class LiveEvidence:
                         ambiguous_responses.append("substantive comment response does not identify its captured head")
 
         for trigger_id, (record, state) in records_by_trigger.items():
-            if state.state == "retired" and responses_by_trigger.get(trigger_id):
+            trigger_response_ids = responses_by_trigger.get(trigger_id, set())
+            if (
+                state.state == "retired"
+                and trigger_response_ids
+                and not is_retired_preexisting_failure(record, trigger_response_ids)
+            ):
                 ambiguous_responses.append("a retired Hosted trigger has a later public response")
             if state.response_id is not None and state.response_id not in responses_by_trigger.get(trigger_id, set()):
                 ambiguous_responses.append("trigger response is absent from complete GitHub history")
@@ -1620,7 +1657,10 @@ class LiveEvidence:
                     and not github.is_coderabbit_login(checkpoint_author)
                 ):
                     proof["verified_completed_at"] = None
-                    if state.duration_seconds is not None and hosted.parse_timestamp(state.response_created_at) is not None:
+                    if (
+                        state.duration_seconds is not None
+                        and hosted.parse_timestamp(state.response_created_at) is not None
+                    ):
                         try:
                             proof["verified_completed_at"] = sqlite_hosted_capture._terminal_event(
                                 state, payload["data"]["repository"]["pullRequest"], observed_at=None
@@ -2426,8 +2466,12 @@ class LiveEvidence:
                 if (checkpoint.accepted > 0 or (channel == "cli" and completed)) and not checkpoint.correction
                 else None
             )
-            if (channel == "cli" and capture is not None and capture.checkpoint_decisions is not None
-                    and source_resolution_status is None):
+            if (
+                channel == "cli"
+                and capture is not None
+                and capture.checkpoint_decisions is not None
+                and source_resolution_status is None
+            ):
                 # Corrected native attribution cannot fall back to legacy ancestry
                 # when its durable effective-finding resolver is unavailable.
                 source_resolution_status = "unavailable"
@@ -2441,7 +2485,9 @@ class LiveEvidence:
                 "verified_completed_at": (
                     capture.verified_completed_at
                     if channel == "cli" and completed and capture is not None
-                    else proof.get("verified_completed_at") if channel == "hosted" and completed else None
+                    else proof.get("verified_completed_at")
+                    if channel == "hosted" and completed
+                    else None
                 ),
                 "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
                 "source_run_id": (
@@ -2693,7 +2739,8 @@ class HostedRunner:
                 "cause_type": type(cause).__name__ if cause is not None else None,
                 "cause_message": (
                     " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", cause_message).split())[:1000]
-                    if cause is not None else None
+                    if cause is not None
+                    else None
                 ),
             }
             retained = False
