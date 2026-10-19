@@ -19,6 +19,7 @@ from pr_review import (
     cli,
     evidence,
     hosted,
+    runtime,
     sqlite_hosted_capture,
     sqlite_provider_imports,
     sqlite_records_repair,
@@ -64,13 +65,15 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             counts += f" / {routed} routed"
         heading = f"{channel}: {counts} · {HEAD[:12]} · 1 files"
         comments, unparsed = evidence.parse_checkpoint_comments(
-            [{
-                "id": comment_id,
-                "body": heading + "\n" + marker,
-                "created_at": "2026-09-27T12:00:00Z",
-                "updated_at": updated_at,
-                "author_login": author_login,
-            }]
+            [
+                {
+                    "id": comment_id,
+                    "body": heading + "\n" + marker,
+                    "created_at": "2026-09-27T12:00:00Z",
+                    "updated_at": updated_at,
+                    "author_login": author_login,
+                }
+            ]
         )
         if unparsed or len(comments) != 1:
             raise AssertionError("fixture checkpoint did not parse canonically")
@@ -121,8 +124,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         capture_dir = self.common / "coderabbit-review-logs" / run_id
         capture_dir.mkdir(parents=True)
         legacy_metadata = (
-            f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
-            f"candidate_sha={HEAD}\ncandidate_files=1\n"
+            f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n"
         )
         metadata = {
             "run_id": run_id,
@@ -155,33 +157,322 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         payload["data"]["repository"]["pullRequest"]["number"] = fixtures.PR
         payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"] = []
         record["anchor"] = {
-            "child_head": fixtures.HEAD, "parent_identity": "develop",
-            "parent_head": fixtures.BASE, "merge_base": fixtures.BASE, "patch_id": "archived-patch",
+            "child_head": fixtures.HEAD,
+            "parent_identity": "develop",
+            "parent_head": fixtures.BASE,
+            "merge_base": fixtures.BASE,
+            "patch_id": "archived-patch",
         }
         record["sqlite_attempt_id"] = "late-reply"
         record_path.write_text(json.dumps(record), encoding="utf-8")
         self.records.start_attempt(
-            attempt_id="late-reply", source_pr=fixtures.PR, channel="hosted",
-            candidate_sha=candidate or fixtures.HEAD, started_at=record["trigger"]["created_at"],
+            attempt_id="late-reply",
+            source_pr=fixtures.PR,
+            channel="hosted",
+            candidate_sha=candidate or fixtures.HEAD,
+            started_at=record["trigger"]["created_at"],
             metadata={"repository": repository},
         )
         if state != "started":
             self.records.finish_attempt(
-                "late-reply", state=state, finished_at="2026-09-23T00:02:10Z",
-                trigger_id=trigger_id, provider_review_id="11",
+                "late-reply",
+                state=state,
+                finished_at="2026-09-23T00:02:10Z",
+                trigger_id=trigger_id,
+                provider_review_id="11",
                 diagnostic="initial reply has no completion proof",
                 artifacts={"metadata": '{"initial": "immutable observation"}'},
             )
-        body = (f"Hosted: 0 found / 0 accepted / 0 routed · {fixtures.HEAD} · 1 files\n"
-                "<!-- firemud-hosted-review: 11 -->")
+        body = (
+            f"Hosted: 0 found / 0 accepted / 0 routed · {fixtures.HEAD} · 1 files\n<!-- firemud-hosted-review: 11 -->"
+        )
         at = "2026-09-23T00:03:00Z"
         payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(
             fixtures.comment(40, "owner", body, at)
         )
-        checkpoint = evidence.parse_checkpoint_comments([{
-            "id": 40, "body": body, "created_at": at, "updated_at": at, "author_login": "owner",
-        }])[0][0]
+        checkpoint = evidence.parse_checkpoint_comments(
+            [
+                {
+                    "id": 40,
+                    "body": body,
+                    "created_at": at,
+                    "updated_at": at,
+                    "author_login": "owner",
+                }
+            ]
+        )[0][0]
         return payload, checkpoint
+
+    def ambiguous_reply_recovery_fixture(self, *, singular_footer=True):
+        import test_pr_review_evidence_hosted as fixtures
+
+        anchor = {
+            "child_head": fixtures.HEAD,
+            "parent_identity": "develop",
+            "parent_head": fixtures.BASE,
+            "merge_base": fixtures.BASE,
+            "patch_id": "a" * 64,
+            "pr": fixtures.PR,
+        }
+        payload, record, record_path = fixtures.archived_addressed_reply_fixture(
+            self.common,
+            singular_footer=singular_footer,
+            current_attempt_metadata={
+                "request_kind": "full",
+                "actual_base_ref": "develop",
+                "actual_base_sha": fixtures.BASE,
+                "anchor": anchor,
+                "reviewed_file_count": 1,
+            },
+        )
+        self.database = self.common / "firemud" / "pr-review-stack.sqlite3"
+        self.records = SqliteReviewRecords(self.database)
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull["number"] = fixtures.PR
+        trigger = next(item for item in pull["comments"]["nodes"] if item["databaseId"] == 10)
+        response = next(item for item in pull["comments"]["nodes"] if item["databaseId"] == 11)
+        record.update(
+            {
+                "repository": REPO,
+                "pr_number": PR,
+                "head_sha": fixtures.HEAD,
+                "anchor": anchor,
+                "sqlite_attempt_id": "current-hosted-attempt",
+            }
+        )
+        initial_response = dict(response)
+        initial_comments = {"comments": [trigger, initial_response], "review_threads": []}
+        capture = {
+            "state": "ambiguous",
+            "terminal": True,
+            "attributable": False,
+            "repository": REPO,
+            "pull_request": PR,
+            "head_sha": fixtures.HEAD,
+            "trigger_id": 10,
+            "response_id": 11,
+            "observed_at": "2026-09-23T00:02:08Z",
+            "trigger_record": record,
+        }
+        self.records.finish_attempt(
+            "current-hosted-attempt",
+            state="ambiguous",
+            finished_at="2026-09-23T00:02:08Z",
+            duration_seconds=18,
+            trigger_id="10",
+            provider_review_id="11",
+            diagnostic="terminal response was initially ambiguous",
+            artifacts={
+                "hosted_review": "[]",
+                "hosted_comments": json.dumps(initial_comments),
+                "metadata": json.dumps(capture),
+            },
+        )
+        return payload, record, record_path
+
+    def recover_ambiguous_reply(self, payload, *, dry_run=True):
+        return sqlite_records_repair.repair_ambiguous_hosted_reply(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            attempt_id="current-hosted-attempt",
+            response_id=11,
+            actor="operator",
+            scope="broad",
+            hosted_payload=payload,
+            dry_run=dry_run,
+        )
+
+    def test_ambiguous_reply_recovery_previews_then_replays_exact_zero_source_once(self):
+        payload, _, _ = self.ambiguous_reply_recovery_fixture()
+        before = self.records.history(PR)
+        original_attempt_artifacts = self.records.attempt_artifacts("current-hosted-attempt")
+        archived_h5 = self.records.attempt_artifacts("old-hosted-attempt")
+
+        preview = self.recover_ambiguous_reply(payload)
+
+        self.assertEqual(preview["status"], "preview")
+        self.assertEqual(
+            preview["items"][0]["stages"],
+            [
+                "completed_zero_run",
+                "archived_artifacts",
+                "provider_origin_last",
+            ],
+        )
+        self.assertEqual(self.records.history(PR), before)
+        result = self.recover_ambiguous_reply(payload, dry_run=False)
+        after = self.records.history(PR)
+        replay = self.recover_ambiguous_reply(payload, dry_run=False)
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(replay["items"][0]["action"], "already_recovered")
+        self.assertEqual(len(after["runs"]), 1)
+        self.assertEqual(after["runs"][0]["run_id"], preview["items"][0]["run_id"])
+        self.assertEqual(after["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(after["runs"][0]["finished_at"], "2026-09-23T00:02:20Z")
+        self.assertEqual(after["runs"][0]["duration_seconds"], preview["items"][0]["duration_seconds"])
+        self.assertEqual(after["runs"][0]["duration_seconds"], 20)
+        self.assertEqual(len(after["provider_origins"]), 1)
+        self.assertEqual(after["provider_origins"][0]["provider_id"], "trigger:10")
+        self.assertEqual(
+            {item["kind"] for item in after["imported_artifacts"]},
+            {
+                "hosted_comments",
+                "hosted_review",
+                "metadata",
+            },
+        )
+        attempt = next(item for item in after["attempts"] if item["attempt_id"] == "current-hosted-attempt")
+        self.assertEqual(attempt["state"], "ambiguous")
+        self.assertIsNone(attempt["run_id"])
+        self.assertEqual(self.records.attempt_artifacts("current-hosted-attempt"), original_attempt_artifacts)
+        self.assertEqual(self.records.attempt_artifacts("old-hosted-attempt"), archived_h5)
+
+    def test_ambiguous_reply_partial_stages_are_not_sync_visible_and_retry_finishes(self):
+        payload, _, _ = self.ambiguous_reply_recovery_fixture()
+        attempt = next(
+            item for item in self.records.history(PR)["attempts"] if item["attempt_id"] == "current-hosted-attempt"
+        )
+        with patch.object(self.records, "archive_imported_artifacts", side_effect=ReviewRecordsError("interrupted")):
+            partial = self.recover_ambiguous_reply(payload, dry_run=False)
+        self.assertEqual(partial["status"], "partial")
+        history = self.records.history(PR)
+        self.assertEqual(len(history["runs"]), 1)
+        self.assertEqual(history["provider_origins"], [])
+        self.assertEqual(history["imported_artifacts"], [])
+        self.assertIsNone(sqlite_hosted_capture._linked_ambiguous_reply_recovery(history, REPO, PR, attempt, "10"))
+        self.assertEqual(self.records.attempt("current-hosted-attempt")["state"], "ambiguous")
+
+        with patch.object(self.records, "link_provider_origin", side_effect=ReviewRecordsError("interrupted")):
+            partial = self.recover_ambiguous_reply(payload, dry_run=False)
+        self.assertEqual(partial["status"], "partial")
+        history = self.records.history(PR)
+        self.assertEqual(len(history["imported_artifacts"]), 3)
+        self.assertEqual(history["provider_origins"], [])
+        self.assertIsNone(sqlite_hosted_capture._linked_ambiguous_reply_recovery(history, REPO, PR, attempt, "10"))
+
+        recovered = self.recover_ambiguous_reply(payload, dry_run=False)
+        self.assertEqual(recovered["status"], "complete")
+        self.assertIsNotNone(
+            sqlite_hosted_capture._linked_ambiguous_reply_recovery(self.records.history(PR), REPO, PR, attempt, "10")
+        )
+
+    def test_ambiguous_reply_recovery_rejects_changed_unknown_or_conflicting_evidence(self):
+        cases = (
+            "unknown_reply_text",
+            "wrapper_with_substantive_suffix",
+            "wrong_footer_head",
+            "unknown_footer",
+            "missing_response_update",
+            "changed_response_creation",
+            "changed_response_update",
+            "new_substantive_thread",
+            "incomplete_history",
+            "changed_original_body",
+            "conflicting_response",
+        )
+        for mutation in cases:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                self.common = Path(directory)
+                self.database = self.common / "controller.sqlite3"
+                sqlite_store.SqliteStateStore(self.database).update(lambda state: state)
+                self.records = SqliteReviewRecords(self.database)
+                self.records.bootstrap()
+                payload, _, _ = self.ambiguous_reply_recovery_fixture()
+                pull = payload["data"]["repository"]["pullRequest"]
+                response = next(item for item in pull["comments"]["nodes"] if item["databaseId"] == 11)
+                if mutation == "unknown_reply_text":
+                    response["body"] += "\nAdditional review findings were identified."
+                elif mutation == "wrapper_with_substantive_suffix":
+                    response["body"] += "\nA critical finding remains unresolved."
+                elif mutation == "wrong_footer_head":
+                    inline = pull["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]
+                    inline["body"] = inline["body"].rsplit("Addressed in commit ", 1)[0] + "Addressed in commit 0123456"
+                elif mutation == "unknown_footer":
+                    inline = pull["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]
+                    inline["body"] = inline["body"].rsplit("Addressed in commit ", 1)[0] + "Resolved in commit abcdef0"
+                elif mutation == "missing_response_update":
+                    response["updatedAt"] = None
+                elif mutation == "changed_response_creation":
+                    response["createdAt"] = "2026-09-23T00:02:09Z"
+                elif mutation == "changed_response_update":
+                    response["updatedAt"] = "2026-09-23T00:02:19Z"
+                elif mutation == "new_substantive_thread":
+                    pull["reviewThreads"]["nodes"].append(
+                        {
+                            "comments": {
+                                "nodes": [
+                                    {
+                                        "databaseId": 99,
+                                        "author": {"login": "coderabbitai[bot]"},
+                                        "body": "A new actionable finding.",
+                                        "createdAt": "2026-09-23T00:02:16Z",
+                                        "updatedAt": "2026-09-23T00:02:16Z",
+                                    }
+                                ]
+                            }
+                        }
+                    )
+                elif mutation == "incomplete_history":
+                    pull["reviews"] = {"nodes": [], "pageInfo": {"hasNextPage": True}}
+                elif mutation == "changed_original_body":
+                    inline = pull["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]
+                    inline["body"] = inline["body"].replace("An archived CodeRabbit finding.", "Changed finding.")
+                elif mutation == "conflicting_response":
+                    pull["reviews"]["nodes"].append(
+                        {
+                            "databaseId": 11,
+                            "author": {"login": "coderabbitai[bot]"},
+                            "state": "COMMENTED",
+                            "submittedAt": "2026-09-23T00:02:20Z",
+                            "commit": {"oid": HEAD},
+                            "body": "<!-- walkthrough_start --> finding",
+                        }
+                    )
+                before = self.records.history(PR)
+                with self.assertRaises(SqliteRecordsRepairError):
+                    self.recover_ambiguous_reply(payload, dry_run=False)
+                self.assertEqual(self.records.history(PR), before)
+
+    def test_ambiguous_reply_recovery_does_not_relax_normal_held_observation(self):
+        _, _, _ = self.ambiguous_reply_recovery_fixture()
+        held = sqlite_hosted_capture._linked_ambiguous_reply_recovery(
+            self.records.history(PR),
+            REPO,
+            PR,
+            next(
+                item for item in self.records.history(PR)["attempts"] if item["attempt_id"] == "current-hosted-attempt"
+            ),
+            "10",
+        )
+        self.assertIsNone(held)
+        observation = runtime.LiveEvidence._uncheckpointed_hosted_observation(
+            PR,
+            hosted.TriggerState(
+                "completed",
+                True,
+                True,
+                REPO,
+                PR,
+                HEAD,
+                HEAD,
+                10,
+                "2026-09-23T00:02:00Z",
+                "https://example.test/comments/10",
+                "full",
+                11,
+                "2026-09-23T00:02:08Z",
+                "https://example.test/comments/11",
+                None,
+                "",
+                duration_seconds=18,
+            ),
+        )
+        self.assertTrue(observation["held"])
+        self.assertNotIn("completed", observation)
+        self.assertNotIn("attributable", observation)
+        self.assertEqual(self.records.history(PR)["runs"], [])
 
     def test_late_verified_reply_preserves_ambiguous_attempt_and_appends_exact_source(self):
         payload, checkpoint = self.late_reply_checkpoint()
@@ -189,19 +480,36 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         artifacts = self.records.attempt_artifacts("late-reply")
         with patch.object(hosted, "_git_common_dir", return_value=self.common):
             preview = repair_provider_checkpoints(
-                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
-                common=self.common, hosted_payload=payload,
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="operator",
+                common=self.common,
+                hosted_payload=payload,
             )
             self.assertEqual(preview["status"], "preview")
             self.assertEqual(self.records.history(PR), before)
             result = repair_provider_checkpoints(
-                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
-                common=self.common, hosted_payload=payload, dry_run=False,
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="operator",
+                common=self.common,
+                hosted_payload=payload,
+                dry_run=False,
             )
             after = self.records.history(PR)
             replay = repair_provider_checkpoints(
-                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
-                common=self.common, hosted_payload=payload, dry_run=False,
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="operator",
+                common=self.common,
+                hosted_payload=payload,
+                dry_run=False,
             )
         self.assertEqual(result["status"], "complete")
         self.assertEqual(replay["status"], "complete")
@@ -215,7 +523,8 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_late_reply_retains_hold_when_provider_reply_is_still_active(self):
         payload, checkpoint = self.late_reply_checkpoint()
         response = next(
-            item for item in payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+            item
+            for item in payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
             if item.get("databaseId") == 11
         )
         response["body"] = "Reviewing your changes, please wait."
@@ -225,8 +534,14 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             self.assertRaises(SqliteRecordsRepairError),
         ):
             repair_provider_checkpoints(
-                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
-                common=self.common, hosted_payload=payload, dry_run=False,
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoints=[checkpoint],
+                actor="operator",
+                common=self.common,
+                hosted_payload=payload,
+                dry_run=False,
             )
         self.assertEqual(self.records.history(PR), before)
 
@@ -245,8 +560,14 @@ class SqliteRecordsRepairTest(unittest.TestCase):
                     self.assertRaisesRegex(SqliteRecordsRepairError, "immutable ambiguous attempt"),
                 ):
                     repair_provider_checkpoints(
-                        self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint],
-                        actor="operator", common=self.common, hosted_payload=payload, dry_run=False,
+                        self.records,
+                        repo=REPO,
+                        pr_number=PR,
+                        checkpoints=[checkpoint],
+                        actor="operator",
+                        common=self.common,
+                        hosted_payload=payload,
+                        dry_run=False,
                     )
                 self.assertEqual(self.records.history(PR), before)
 
@@ -311,22 +632,37 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         # A real immutable comment author was omitted by the older as_json archive.
         checkpoint = dataclasses.replace(checkpoint, author_login="checkpoint-owner")
         report = repair_provider_checkpoints(
-            self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint],
-            actor="backfill-reviewer", common=self.common, dry_run=False,
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
         )
         return checkpoint, report["items"][0]["run_id"]
 
     def resolution_status(self, checkpoint: evidence.Checkpoint, run_id: str, channel: str) -> str | None:
         return self.records.source_resolution_status(
-            run_id, source_pr=PR, source_channel=channel, source_head=HEAD,
-            accepted_count=1, source_checkpoint=checkpoint, source_repository=REPO,
+            run_id,
+            source_pr=PR,
+            source_channel=channel,
+            source_head=HEAD,
+            accepted_count=1,
+            source_checkpoint=checkpoint,
+            source_repository=REPO,
         )
 
     def resolve_imported_finding(self, run_id: str) -> None:
         key = self.records.history(PR)["findings"][0]["source_finding_key"]
         self.records.record_source_resolution(
-            run_id, key, source_pr=PR, resolution_id="resolution.imported",
-            fix_sha="d" * 40, actor="fix-owner", proof_note="focused regression passed",
+            run_id,
+            key,
+            source_pr=PR,
+            resolution_id="resolution.imported",
+            fix_sha="d" * 40,
+            actor="fix-owner",
+            proof_note="focused regression passed",
         )
 
     def test_imported_cli_exact_origin_honors_unresolved_and_resolved_source(self) -> None:
@@ -341,9 +677,12 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.resolve_imported_finding(imported_id)
         self.assertEqual(self.resolution_status(checkpoint, checkpoint.run_id, "cli"), "resolved")
         from pr_review.runtime import LiveEvidence, LiveGitHub
+
         live = LiveEvidence(REPO, LiveGitHub(REPO), records=self.records)
         self.assertEqual(live._source_resolution_status(PR, "cli", checkpoint, HEAD), "resolved")
-        self.assertEqual(self.resolution_status(dataclasses.replace(checkpoint, comment_id=11), checkpoint.run_id, "cli"), "pending")
+        self.assertEqual(
+            self.resolution_status(dataclasses.replace(checkpoint, comment_id=11), checkpoint.run_id, "cli"), "pending"
+        )
 
     def test_older_import_archive_replays_without_changing_immutable_bytes(self) -> None:
         checkpoint, imported_id = self.imported_resolution_fixture("cli")
@@ -358,14 +697,26 @@ class SqliteRecordsRepairTest(unittest.TestCase):
                 "UPDATE imported_artifacts SET content = ?, source_sha256 = ? WHERE run_id = ? AND kind = 'metadata'",
                 (old_content, hashlib.sha256(old_content.encode()).hexdigest(), imported_id),
             )
-            before = connection.execute("SELECT * FROM imported_artifacts WHERE run_id = ? ORDER BY kind", (imported_id,)).fetchall()
+            before = connection.execute(
+                "SELECT * FROM imported_artifacts WHERE run_id = ? ORDER BY kind", (imported_id,)
+            ).fetchall()
         replay = repair_provider_checkpoints(
-            self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint],
-            actor="backfill-reviewer", common=self.common, dry_run=False,
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoints=[checkpoint],
+            actor="backfill-reviewer",
+            common=self.common,
+            dry_run=False,
         )
         self.assertEqual(replay["items"][0]["action"], "already_imported")
         with sqlite3.connect(self.database) as connection:
-            self.assertEqual(connection.execute("SELECT * FROM imported_artifacts WHERE run_id = ? ORDER BY kind", (imported_id,)).fetchall(), before)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT * FROM imported_artifacts WHERE run_id = ? ORDER BY kind", (imported_id,)
+                ).fetchall(),
+                before,
+            )
         supplied = {row[1]: row[2] for row in before}
         metadata["checkpoint_fields"] = dataclasses.asdict(dataclasses.replace(checkpoint, author_login="wrong-owner"))
         supplied["metadata"] = json.dumps(metadata)
@@ -377,47 +728,77 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.resolve_imported_finding(imported_id)
         self.assertEqual(self.resolution_status(checkpoint, imported_id, "hosted"), "resolved")
         edited = dataclasses.replace(checkpoint, updated_at="2026-09-28T12:00:00Z")
-        parsed, unparsed = evidence.parse_checkpoint_comments([{
-            "id": checkpoint.comment_id,
-            "created_at": checkpoint.created_at,
-            "updated_at": edited.updated_at,
-            "author": {"login": checkpoint.author_login},
-            "body": f"Hosted: 1 found / 1 accepted / 0 routed · {HEAD[:12]} · 1 files\n\n<!-- firemud-hosted-review: 700 -->\n",
-        }])
+        parsed, unparsed = evidence.parse_checkpoint_comments(
+            [
+                {
+                    "id": checkpoint.comment_id,
+                    "created_at": checkpoint.created_at,
+                    "updated_at": edited.updated_at,
+                    "author": {"login": checkpoint.author_login},
+                    "body": f"Hosted: 1 found / 1 accepted / 0 routed · {HEAD[:12]} · 1 files\n\n<!-- firemud-hosted-review: 700 -->\n",
+                }
+            ]
+        )
         self.assertEqual(unparsed, 0)
         self.assertEqual(self.resolution_status(parsed[0], imported_id, "hosted"), "resolved")
         for change in ({"raw_found": 2}, {"hosted_review_id": 701}, {"file_count": 2}, {"duration_seconds": 20}):
             with self.subTest(change=change):
-                self.assertEqual(self.resolution_status(dataclasses.replace(edited, **change), imported_id, "hosted"), "pending")
+                self.assertEqual(
+                    self.resolution_status(dataclasses.replace(edited, **change), imported_id, "hosted"), "pending"
+                )
         with sqlite3.connect(self.database) as connection:
-            row = connection.execute("SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (imported_id,)).fetchone()
+            row = connection.execute(
+                "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (imported_id,)
+            ).fetchone()
             metadata = json.loads(row[0])
             metadata.pop("checkpoint_fields")
             metadata["checkpoint"].pop("author_login", None)
             old_content = json.dumps(metadata)
-            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'", (old_content, imported_id))
+            connection.execute(
+                "UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'",
+                (old_content, imported_id),
+            )
         self.assertEqual(self.resolution_status(edited, imported_id, "hosted"), "resolved")
-        self.assertEqual(self.resolution_status(dataclasses.replace(edited, author_login="different-owner"), imported_id, "hosted"), "pending")
+        self.assertEqual(
+            self.resolution_status(dataclasses.replace(edited, author_login="different-owner"), imported_id, "hosted"),
+            "pending",
+        )
         metadata["checkpoint"]["raw_found"] = 2
         with sqlite3.connect(self.database) as connection:
-            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'", (json.dumps(metadata), imported_id))
+            connection.execute(
+                "UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'",
+                (json.dumps(metadata), imported_id),
+            )
         self.assertEqual(self.resolution_status(edited, imported_id, "hosted"), "pending")
         with sqlite3.connect(self.database) as connection:
-            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'", (old_content, imported_id))
-            connection.execute("UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?", ("0" * 64, imported_id))
+            connection.execute(
+                "UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'",
+                (old_content, imported_id),
+            )
+            connection.execute(
+                "UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?", ("0" * 64, imported_id)
+            )
         self.assertEqual(self.resolution_status(edited, imported_id, "hosted"), "pending")
 
     def test_missing_old_capture_is_archived_as_gap_without_review_credit(self) -> None:
         checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Lost -->")
         preview = archive_incomplete_checkpoint(
-            self.records, repo=REPO, pr_number=PR, checkpoint=checkpoint,
-            missing_reason="original capture is unavailable", common=self.common,
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            missing_reason="original capture is unavailable",
+            common=self.common,
         )
         self.assertEqual(preview["status"], "incomplete_preview")
         self.assertEqual(self.records.history(PR)["historical_gaps"], [])
         applied = archive_incomplete_checkpoint(
-            self.records, repo=REPO, pr_number=PR, checkpoint=checkpoint,
-            missing_reason="original capture is unavailable", common=self.common,
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            missing_reason="original capture is unavailable",
+            common=self.common,
             dry_run=False,
         )
         self.assertEqual(applied["status"], "incomplete_archived")
@@ -428,8 +809,12 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(history["historical_gaps"][0]["checkpoint_id"], checkpoint.comment_id)
         self.assertEqual(history["historical_gaps"][0]["missing_reason"], "original capture is unavailable")
         replay = archive_incomplete_checkpoint(
-            self.records, repo=REPO, pr_number=PR, checkpoint=checkpoint,
-            missing_reason="original capture is unavailable", common=self.common,
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            missing_reason="original capture is unavailable",
+            common=self.common,
             dry_run=False,
         )
         self.assertTrue(replay["idempotent_replay"])
@@ -454,9 +839,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_failed_capture_archives_loader_diagnostic_without_review_credit(self) -> None:
         run_id = "run.Malformed"
         self.cli_capture(run_id)
-        (self.common / "coderabbit-review-logs" / run_id / "stdout").write_text(
-            "not-json\n", encoding="utf-8"
-        )
+        (self.common / "coderabbit-review-logs" / run_id / "stdout").write_text("not-json\n", encoding="utf-8")
         checkpoint = self.checkpoint("CLI", f"<!-- firemud-cli-run: {run_id} -->")
 
         archived = archive_incomplete_checkpoint(
@@ -487,8 +870,12 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_historical_gap_rejects_a_changed_reason(self) -> None:
         checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Lost -->")
         archive_incomplete_checkpoint(
-            self.records, repo=REPO, pr_number=PR, checkpoint=checkpoint,
-            missing_reason="original capture is unavailable", common=self.common,
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            missing_reason="original capture is unavailable",
+            common=self.common,
             dry_run=False,
         )
         with self.assertRaisesRegex(
@@ -496,8 +883,12 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             "^historical gap conflicts with existing checkpoint evidence$",
         ):
             archive_incomplete_checkpoint(
-                self.records, repo=REPO, pr_number=PR, checkpoint=checkpoint,
-                missing_reason="different claim", common=self.common,
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=checkpoint,
+                missing_reason="different claim",
+                common=self.common,
                 dry_run=False,
             )
 
@@ -522,23 +913,17 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(report["status"], "preview")
         self.assertEqual([item["action"] for item in report["items"]], ["would_import", "would_import"])
         self.assertEqual(report["items"][0]["artifact_kinds"], ["hosted_comments", "hosted_review", "metadata"])
-        self.assertEqual(
-            report["items"][1]["artifact_kinds"], ["cli_diagnostic", "cli_events", "metadata"]
-        )
+        self.assertEqual(report["items"][1]["artifact_kinds"], ["cli_diagnostic", "cli_events", "metadata"])
         self.assertEqual(self.records.history(PR)["runs"], [])
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM imported_artifacts").fetchone()[0], 0)
         self.assertEqual((self.common / "firemud" / "hosted-review.700" / "snapshot.json").read_bytes(), hosted_bytes)
         for name, contents in cli_files.items():
-            self.assertEqual(
-                (self.common / "coderabbit-review-logs" / "run.Repair1" / name).read_bytes(), contents
-            )
+            self.assertEqual((self.common / "coderabbit-review-logs" / "run.Repair1" / name).read_bytes(), contents)
 
     def test_repair_requires_canonical_importer_archive_artifacts(self) -> None:
-        checkpoint = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.RepairNoArchive -->", comment_id=12
-        )
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.RepairNoArchive -->", comment_id=12)
 
         def import_without_archive(records: SqliteReviewRecords, **kwargs: object) -> dict[str, object]:
             checkpoint_arg = kwargs["checkpoint"]
@@ -599,8 +984,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(self.records.history(PR)["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
         with sqlite3.connect(self.database) as connection:
             origin = connection.execute(
-                "SELECT repository, source_pr, channel, provider_id, checkpoint_id, run_id "
-                "FROM provider_origins"
+                "SELECT repository, source_pr, channel, provider_id, checkpoint_id, run_id FROM provider_origins"
             ).fetchone()
             artifacts = connection.execute(
                 "SELECT kind, source_sha256 FROM imported_artifacts ORDER BY kind"
@@ -612,12 +996,8 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_apply_reports_partial_after_raw_database_failure_and_keeps_prior_item(self) -> None:
         self.cli_capture("run.Partial1")
         self.cli_capture("run.Partial2")
-        first = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Partial1 -->", comment_id=14, accepted=0, routed=1
-        )
-        second = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Partial2 -->", comment_id=15, accepted=0, routed=1
-        )
+        first = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Partial1 -->", comment_id=14, accepted=0, routed=1)
+        second = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Partial2 -->", comment_id=15, accepted=0, routed=1)
         original_import_one = sqlite_records_repair._import_one
         calls = 0
 
@@ -655,9 +1035,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
 
     def test_apply_reports_actual_drifted_item_without_false_origin_or_archive(self) -> None:
         self.cli_capture("run.Drift1")
-        checkpoint = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Drift1 -->", comment_id=16, accepted=0, routed=1
-        )
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Drift1 -->", comment_id=16, accepted=0, routed=1)
         original_import_one = sqlite_records_repair._import_one
         calls = 0
 
@@ -681,7 +1059,9 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             )
 
         self.assertEqual(report["status"], "partial")
-        self.assertEqual(report["error"], "source evidence changed after preflight; exact imported run is retained for audit")
+        self.assertEqual(
+            report["error"], "source evidence changed after preflight; exact imported run is retained for audit"
+        )
         self.assertEqual(len(report["items"]), 1)
         item = report["items"][0]
         self.assertEqual(item["action"], "drifted")
@@ -756,9 +1136,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_repair_links_exact_automatically_recorded_cli_attempt_without_duplicate(self) -> None:
         self.cli_capture()
         self.record_cli_attempt()
-        checkpoint = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1
-        )
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1)
 
         # The partial native archive cannot be used by ordinary SQL-first
         # reads, but explicit repair can recover it from the exact raw capture.
@@ -782,9 +1160,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual([run["run_id"] for run in self.records.history(PR)["runs"]], ["run.Repair1"])
         with sqlite3.connect(self.database) as connection:
             origin = connection.execute("SELECT provider_id, run_id FROM provider_origins").fetchone()
-            artifact_run_ids = connection.execute(
-                "SELECT DISTINCT run_id FROM imported_artifacts"
-            ).fetchall()
+            artifact_run_ids = connection.execute("SELECT DISTINCT run_id FROM imported_artifacts").fetchall()
         self.assertEqual(origin, ("run:run.Repair1", "run.Repair1"))
         self.assertEqual(artifact_run_ids, [("run.Repair1",)])
         replay = repair_provider_checkpoints(
@@ -962,8 +1338,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             started_at=started_at,
         )
         checkpoint_body = (
-            f"Hosted: 1 found / 1 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
-            "<!-- firemud-hosted-review: 700 -->"
+            f"Hosted: 1 found / 1 accepted / 0 routed · {HEAD[:12]} · 1 files\n<!-- firemud-hosted-review: 700 -->"
         )
         payload = {
             "data": {
@@ -979,10 +1354,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
                                     "body": hosted.FULL_COMMAND,
                                     "createdAt": "2026-09-27T11:58:00Z",
                                     "updatedAt": "2026-09-27T11:58:00Z",
-                                    "url": (
-                                        f"https://github.example/{REPO}/pull/{PR}"
-                                        f"#issuecomment-{trigger_id}"
-                                    ),
+                                    "url": (f"https://github.example/{REPO}/pull/{PR}#issuecomment-{trigger_id}"),
                                 },
                                 {
                                     "databaseId": 10,
@@ -1070,8 +1442,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         response_updated = "2026-09-27T11:55:00Z"
         checkpoint_at = "2026-09-27T12:00:00Z"
         checkpoint_body = (
-            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
-            "<!-- firemud-hosted-review: 702 -->"
+            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n<!-- firemud-hosted-review: 702 -->"
         )
         trigger_comment = {
             "databaseId": trigger_id,
@@ -1183,9 +1554,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(report["status"], "complete")
         self.assertEqual(report["items"][0]["action"], "already_imported")
         self.assertEqual(report["items"][0]["run_id"], attempt_id)
-        self.assertEqual(
-            [run["run_id"] for run in self.records.history(PR)["runs"]], [attempt_id]
-        )
+        self.assertEqual([run["run_id"] for run in self.records.history(PR)["runs"]], [attempt_id])
         with sqlite3.connect(self.database) as connection:
             origin = connection.execute("SELECT provider_id, run_id FROM provider_origins").fetchone()
         self.assertEqual(origin, ("review:700", attempt_id))
@@ -1448,8 +1817,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_repair_refuses_retained_synced_hosted_checkpoint_count_mismatch(self) -> None:
         attempt_id, _, payload = self._record_synced_hosted_attempt(capture_snapshot=False)
         checkpoint_body = (
-            f"Hosted: 2 found / 2 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
-            "<!-- firemud-hosted-review: 700 -->"
+            f"Hosted: 2 found / 2 accepted / 0 routed · {HEAD[:12]} · 1 files\n<!-- firemud-hosted-review: 700 -->"
         )
         comment = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][1]
         comment["body"] = checkpoint_body
@@ -1519,9 +1887,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_repair_refuses_mismatched_automatic_attempt_without_duplicate_or_origin(self) -> None:
         self.cli_capture()
         self.record_cli_attempt(disposition="accepted")
-        checkpoint = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1
-        )
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1)
 
         with self.assertRaisesRegex(
             SqliteRecordsRepairError,
@@ -1600,9 +1966,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM provider_origins").fetchone()[0], 0)
 
     def test_trigger_anchored_zero_result_uses_importer_proven_identity_without_review_object(self) -> None:
-        checkpoint = self.checkpoint(
-            "Hosted", "", comment_id=13, raw=0, accepted=0, routed=0
-        )
+        checkpoint = self.checkpoint("Hosted", "", comment_id=13, raw=0, accepted=0, routed=0)
         checkpoint = dataclasses.replace(checkpoint, reviewed_sha=HEAD)
         archive = {
             "hosted_comments": json.dumps([{"id": 999, "body": "Review complete: no findings"}]),
@@ -1641,9 +2005,7 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         self.assertEqual(report["items"][0]["provider_id"], "trigger:999")
         self.assertEqual(self.records.history(PR)["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
         with sqlite3.connect(self.database) as connection:
-            origin = connection.execute(
-                "SELECT provider_id, checkpoint_id FROM provider_origins"
-            ).fetchone()
+            origin = connection.execute("SELECT provider_id, checkpoint_id FROM provider_origins").fetchone()
             kinds = connection.execute("SELECT kind FROM imported_artifacts ORDER BY kind").fetchall()
         self.assertEqual(origin, ("trigger:999", 13))
         self.assertEqual([row[0] for row in kinds], ["hosted_comments", "metadata"])
@@ -1651,15 +2013,32 @@ class SqliteRecordsRepairTest(unittest.TestCase):
     def test_provider_import_rejects_empty_or_ambiguous_checkpoint_selection(self) -> None:
         records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
         arguments = [
-            "records", "import-provider", "--pr", str(PR), "--channel", "hosted",
-            "--checkpoint-id", "10", "--actor", "backfill-reviewer", "--scope", "broad",
-            "--repo", REPO, "--database", str(self.database),
+            "records",
+            "import-provider",
+            "--pr",
+            str(PR),
+            "--channel",
+            "hosted",
+            "--checkpoint-id",
+            "10",
+            "--actor",
+            "backfill-reviewer",
+            "--scope",
+            "broad",
+            "--repo",
+            REPO,
+            "--database",
+            str(self.database),
         ]
         with (
             patch.object(cli, "_records_store", return_value=records),
             patch.object(cli.github, "infer_repo", return_value=REPO),
             patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints") as importer,
-            patch.object(cli, "_provider_checkpoints", side_effect=[([], {"empty": True}), ([object(), object()], {"ambiguous": True})]),
+            patch.object(
+                cli,
+                "_provider_checkpoints",
+                side_effect=[([], {"empty": True}), ([object(), object()], {"ambiguous": True})],
+            ),
         ):
             for _ in range(2):
                 errors = io.StringIO()

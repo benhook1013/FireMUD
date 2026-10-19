@@ -131,6 +131,16 @@ Hosted findings and their associated source/incoming routes expose `display_seve
 
 Provider runs may include `duration_seconds` from an exact completed attempt or an identity-validated retained checkpoint/capture; evaluated missing, invalid or conflicting duration evidence returns `duration_seconds: null`, which is authoritative unknown. Consumers may use legacy fallback only when the field is absent, never when it is null. Import event timestamps are never treated as elapsed review time. Reads make no provider requests or historical corrections.
 
+For one retained ambiguous Hosted reply whose complete public history and immutable prior capture prove a finished zero-result response, `records repair-provider` supports an exact response selector paired with its original attempt:
+
+```sh
+dev-tools/pr-review records repair-provider --pr <number> --repo <owner/name> \
+  --response-id <reply comment ID> --attempt-id <exact ambiguous attempt ID> \
+  --actor <operator> --scope broad [--database <path>]
+```
+
+The default is a preview; repeat with `--apply` only after reviewing that preview. This recovery mode accepts only the captured reply, full immutable request anchor, complete current response window, and exact archived-thread updates already proved against the prior completed attempt. It refuses unknown or changed reply text, substantive findings, conflicting identities, incomplete history, and changed archive evidence. It appends one zero-count source run, its exact archived artifacts, and the provider origin last; exact retries reuse those same identities. The original ambiguous attempt and capture remain immutable. This is a records repair, not a new provider review, checkpoint publication, or readiness override. Normal source, channel, allocation, taper, and public-checkpoint requirements continue to apply; this command alone does not make a PR ready or publish a checkpoint.
+
 ```sh
 dev-tools/pr-review routes --target-pr <number>
 dev-tools/pr-review routes --unassigned
