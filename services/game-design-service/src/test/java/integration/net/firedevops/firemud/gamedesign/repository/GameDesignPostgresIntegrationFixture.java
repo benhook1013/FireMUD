@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.util.Properties;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.DockerClientFactory;
@@ -23,6 +24,7 @@ final class GameDesignPostgresIntegrationFixture {
         "Docker is unavailable; the PostgreSQL test fixture requires Testcontainers");
     container.start();
     started = true;
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(container);
   }
 
   void stop() {
