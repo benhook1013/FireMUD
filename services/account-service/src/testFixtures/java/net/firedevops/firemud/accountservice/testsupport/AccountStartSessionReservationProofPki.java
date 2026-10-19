@@ -32,22 +32,29 @@ public final class AccountStartSessionReservationProofPki {
     this.account = account;
   }
 
-  public static AccountStartSessionReservationProofPki create(Path directory, String namespace)
+  /** Creates one controlled CA using the caller's established fixture names and password. */
+  public static TestCertificateAuthority createCertificateAuthority(
+      Path directory,
+      String storeFileName,
+      String certificateFileName,
+      String alias,
+      String distinguishedName,
+      String password)
       throws Exception {
     Files.createDirectories(directory);
-    Path caStore = directory.resolve("reservation-test-ca.p12");
-    Path caFile = directory.resolve("reservation-test-ca.crt");
+    Path caStore = directory.resolve(storeFileName);
+    Path caFile = directory.resolve(certificateFileName);
     runKeytool(
         directory,
         "-genkeypair",
         "-alias",
-        "reservation-test-ca",
+        alias,
         "-keyalg",
         "RSA",
         "-keysize",
         "2048",
         "-dname",
-        "CN=Controlled Logging claim-read test CA",
+        distinguishedName,
         "-validity",
         "30",
         "-ext",
@@ -59,67 +66,209 @@ public final class AccountStartSessionReservationProofPki {
         "-keystore",
         caStore.toString(),
         "-storepass",
-        PASSWORD,
+        password,
         "-keypass",
-        PASSWORD);
+        password);
     runKeytool(
         directory,
         "-exportcert",
         "-alias",
-        "reservation-test-ca",
+        alias,
         "-keystore",
         caStore.toString(),
         "-storetype",
         "PKCS12",
         "-storepass",
-        PASSWORD,
+        password,
         "-file",
         caFile.toString(),
         "-rfc");
+    return new TestCertificateAuthority(alias, caStore, caFile, readCertificate(caFile), password);
+  }
+
+  /** Issues one controlled workload identity while retaining caller-specific SAN and store form. */
+  public static IssuedIdentity issueIdentity(
+      Path directory,
+      TestCertificateAuthority authority,
+      String alias,
+      String storeFileName,
+      String requestFileName,
+      String certificateFileName,
+      String workloadUri,
+      boolean server,
+      boolean addLoopbackSansForClients,
+      boolean importCertificateChainIntoStore)
+      throws Exception {
+    String password = authority.storePassword();
+    Path store = directory.resolve(storeFileName);
+    Path request = directory.resolve(requestFileName);
+    Path certificateFile = directory.resolve(certificateFileName);
+    String san =
+        "URI:"
+            + workloadUri
+            + (server || addLoopbackSansForClients ? ",DNS:localhost,IP:127.0.0.1" : "");
+    String usage = server ? "serverAuth" : "clientAuth";
+    runKeytool(
+        directory,
+        "-genkeypair",
+        "-alias",
+        alias,
+        "-keyalg",
+        "RSA",
+        "-keysize",
+        "2048",
+        "-dname",
+        "CN=" + alias,
+        "-validity",
+        "30",
+        "-ext",
+        "KU=digitalSignature,keyEncipherment",
+        "-ext",
+        "EKU=" + usage,
+        "-ext",
+        "SAN=" + san,
+        "-storetype",
+        "PKCS12",
+        "-keystore",
+        store.toString(),
+        "-storepass",
+        password,
+        "-keypass",
+        password);
+    runKeytool(
+        directory,
+        "-certreq",
+        "-alias",
+        alias,
+        "-keystore",
+        store.toString(),
+        "-storetype",
+        "PKCS12",
+        "-storepass",
+        password,
+        "-file",
+        request.toString(),
+        "-ext",
+        "SAN=" + san);
+    runKeytool(
+        directory,
+        "-gencert",
+        "-alias",
+        authority.alias(),
+        "-keystore",
+        authority.keyStore().toString(),
+        "-storetype",
+        "PKCS12",
+        "-storepass",
+        password,
+        "-infile",
+        request.toString(),
+        "-outfile",
+        certificateFile.toString(),
+        "-validity",
+        "30",
+        "-rfc",
+        "-ext",
+        "BC=ca:false",
+        "-ext",
+        "KU=digitalSignature,keyEncipherment",
+        "-ext",
+        "EKU=" + usage,
+        "-ext",
+        "SAN=" + san);
+    if (importCertificateChainIntoStore) {
+      runKeytool(
+          directory,
+          "-importcert",
+          "-alias",
+          authority.alias(),
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          password,
+          "-file",
+          authority.certificateFile().toString(),
+          "-noprompt");
+      runKeytool(
+          directory,
+          "-importcert",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          password,
+          "-file",
+          certificateFile.toString(),
+          "-noprompt");
+    }
+    KeyStore keyStore = KeyStore.getInstance("PKCS12");
+    try (var input = Files.newInputStream(store)) {
+      keyStore.load(input, password.toCharArray());
+    }
+    X509Certificate certificate =
+        importCertificateChainIntoStore
+            ? (X509Certificate) keyStore.getCertificate(alias)
+            : readCertificate(certificateFile);
+    Identity identity =
+        new Identity(
+            alias, (PrivateKey) keyStore.getKey(alias, password.toCharArray()), certificate);
+    return new IssuedIdentity(identity, certificateFile);
+  }
+
+  public static AccountStartSessionReservationProofPki create(Path directory, String namespace)
+      throws Exception {
+    TestCertificateAuthority authority =
+        createCertificateAuthority(
+            directory,
+            "reservation-test-ca.p12",
+            "reservation-test-ca.crt",
+            "reservation-test-ca",
+            "CN=Controlled Logging claim-read test CA",
+            PASSWORD);
     Map<String, Identity> servers =
         Map.of(
             "logging",
                 issue(
                     directory,
-                    caStore,
-                    caFile,
+                    authority,
                     "logging-server",
                     "spiffe://firemud/ns/" + namespace + "/sa/logging-admin-service",
                     true),
             "wrong-workload",
                 issue(
                     directory,
-                    caStore,
-                    caFile,
+                    authority,
                     "wrong-workload-server",
                     "spiffe://firemud/ns/" + namespace + "/sa/game-session-service",
                     true),
             "missing-identity",
                 issue(
                     directory,
-                    caStore,
-                    caFile,
+                    authority,
                     "missing-identity-server",
                     "https://localhost/controlled-test",
                     true),
             "wrong-namespace",
                 issue(
                     directory,
-                    caStore,
-                    caFile,
+                    authority,
                     "wrong-namespace-server",
                     "spiffe://firemud/ns/other-runtime/sa/logging-admin-service",
                     true));
     Identity account =
         issue(
             directory,
-            caStore,
-            caFile,
+            authority,
             "account-client",
             "spiffe://firemud/ns/" + namespace + "/sa/account-service",
             false);
     return new AccountStartSessionReservationProofPki(
-        directory, readCertificate(caFile), servers, account);
+        directory, authority.certificate(), servers, account);
   }
 
   public Identity accountIdentity() {
@@ -156,117 +305,20 @@ public final class AccountStartSessionReservationProofPki {
   }
 
   private static Identity issue(
-      Path directory, Path caStore, Path caFile, String alias, String uri, boolean server)
+      Path directory, TestCertificateAuthority authority, String alias, String uri, boolean server)
       throws Exception {
-    Path store = directory.resolve(alias + ".p12");
-    Path csr = directory.resolve(alias + ".csr");
-    Path cert = directory.resolve(alias + "-signed.crt");
-    String san = server ? "URI:" + uri + ",DNS:localhost,IP:127.0.0.1" : "URI:" + uri;
-    String usage = server ? "serverAuth" : "clientAuth";
-    runKeytool(
-        directory,
-        "-genkeypair",
-        "-alias",
-        alias,
-        "-keyalg",
-        "RSA",
-        "-keysize",
-        "2048",
-        "-dname",
-        "CN=" + alias,
-        "-validity",
-        "30",
-        "-ext",
-        "KU=digitalSignature,keyEncipherment",
-        "-ext",
-        "EKU=" + usage,
-        "-ext",
-        "SAN=" + san,
-        "-storetype",
-        "PKCS12",
-        "-keystore",
-        store.toString(),
-        "-storepass",
-        PASSWORD,
-        "-keypass",
-        PASSWORD);
-    runKeytool(
-        directory,
-        "-certreq",
-        "-alias",
-        alias,
-        "-keystore",
-        store.toString(),
-        "-storetype",
-        "PKCS12",
-        "-storepass",
-        PASSWORD,
-        "-file",
-        csr.toString(),
-        "-ext",
-        "SAN=" + san);
-    runKeytool(
-        directory,
-        "-gencert",
-        "-alias",
-        "reservation-test-ca",
-        "-keystore",
-        caStore.toString(),
-        "-storetype",
-        "PKCS12",
-        "-storepass",
-        PASSWORD,
-        "-infile",
-        csr.toString(),
-        "-outfile",
-        cert.toString(),
-        "-validity",
-        "30",
-        "-rfc",
-        "-ext",
-        "BC=ca:false",
-        "-ext",
-        "KU=digitalSignature,keyEncipherment",
-        "-ext",
-        "EKU=" + usage,
-        "-ext",
-        "SAN=" + san);
-    runKeytool(
-        directory,
-        "-importcert",
-        "-alias",
-        "reservation-test-ca",
-        "-keystore",
-        store.toString(),
-        "-storetype",
-        "PKCS12",
-        "-storepass",
-        PASSWORD,
-        "-file",
-        caFile.toString(),
-        "-noprompt");
-    runKeytool(
-        directory,
-        "-importcert",
-        "-alias",
-        alias,
-        "-keystore",
-        store.toString(),
-        "-storetype",
-        "PKCS12",
-        "-storepass",
-        PASSWORD,
-        "-file",
-        cert.toString(),
-        "-noprompt");
-    KeyStore keyStore = KeyStore.getInstance("PKCS12");
-    try (var input = Files.newInputStream(store)) {
-      keyStore.load(input, PASSWORD.toCharArray());
-    }
-    return new Identity(
-        alias,
-        (PrivateKey) keyStore.getKey(alias, PASSWORD.toCharArray()),
-        (X509Certificate) keyStore.getCertificate(alias));
+    return issueIdentity(
+            directory,
+            authority,
+            alias,
+            alias + ".p12",
+            alias + ".csr",
+            alias + "-signed.crt",
+            uri,
+            server,
+            false,
+            true)
+        .identity();
   }
 
   public static void runKeytool(Path directory, String... args) throws Exception {
@@ -344,4 +396,13 @@ public final class AccountStartSessionReservationProofPki {
   }
 
   public record Identity(String alias, PrivateKey privateKey, X509Certificate certificate) {}
+
+  public record TestCertificateAuthority(
+      String alias,
+      Path keyStore,
+      Path certificateFile,
+      X509Certificate certificate,
+      String storePassword) {}
+
+  public record IssuedIdentity(Identity identity, Path certificateFile) {}
 }

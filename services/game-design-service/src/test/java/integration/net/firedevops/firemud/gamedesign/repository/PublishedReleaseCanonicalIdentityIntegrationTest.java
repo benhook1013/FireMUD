@@ -524,7 +524,9 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     Version version = saveVersion(fixture, owner);
     var operation = selectedFullOperation(fixture, version);
     var start = new java.util.concurrent.CountDownLatch(1);
-    try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    Throwable testFailure = null;
+    try {
       java.util.concurrent.Callable<PublishedReleaseBundle> save =
           () -> {
             start.await();
@@ -556,6 +558,32 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
           .usingRecursiveComparison()
           .isEqualTo(one);
       assertThat(releaseBundleTuple(fixture.dsl(), one.getId())).isEqualTo(beforeRetry);
+    } catch (Exception | Error failure) {
+      testFailure = failure;
+      if (failure instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      throw failure;
+    } finally {
+      try {
+        executor.shutdownNow();
+        if (!executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+          throw new IllegalStateException("Executor did not terminate within 10 seconds");
+        }
+      } catch (InterruptedException cleanupFailure) {
+        Thread.currentThread().interrupt();
+        if (testFailure != null) {
+          testFailure.addSuppressed(cleanupFailure);
+        } else {
+          throw cleanupFailure;
+        }
+      } catch (RuntimeException cleanupFailure) {
+        if (testFailure != null) {
+          testFailure.addSuppressed(cleanupFailure);
+        } else {
+          throw cleanupFailure;
+        }
+      }
     }
   }
 

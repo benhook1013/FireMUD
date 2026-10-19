@@ -14,7 +14,6 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -894,162 +893,64 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
         otherWorldNamespace;
 
     TestPki(Path root) throws Exception {
-      Path caStore = root.resolve("ca.p12");
-      AccountStartSessionReservationProofPki.runKeytool(
-          root,
-          "-genkeypair",
-          "-alias",
-          "test-ca",
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=Account publication test CA",
-          "-validity",
-          "30",
-          "-ext",
-          "BC=ca:true",
-          "-ext",
-          "KU=keyCertSign,cRLSign",
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          caStore.toString(),
-          "-storepass",
-          PASSWORD,
-          "-keypass",
-          PASSWORD);
-      ca = root.resolve("ca.crt");
-      AccountStartSessionReservationProofPki.runKeytool(
-          root,
-          "-exportcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-file",
-          ca.toString(),
-          "-rfc");
-      server = issue(root, caStore, "account-server", NAMESPACE, "account-service", true);
-      accountClient = issue(root, caStore, "account-client", NAMESPACE, "account-service", false);
+      var authority =
+          AccountStartSessionReservationProofPki.createCertificateAuthority(
+              root, "ca.p12", "ca.crt", "test-ca", "CN=Account publication test CA", PASSWORD);
+      ca = authority.certificateFile();
+      server = issue(root, authority, "account-server", NAMESPACE, "account-service", true);
+      accountClient = issue(root, authority, "account-client", NAMESPACE, "account-service", false);
       gameDesignServer =
-          issue(root, caStore, "game-design-server", NAMESPACE, "game-design-service", true);
+          issue(root, authority, "game-design-server", NAMESPACE, "game-design-service", true);
       worldServer =
-          issue(root, caStore, "world-server", NAMESPACE, "world-management-service", true);
+          issue(root, authority, "world-server", NAMESPACE, "world-management-service", true);
       gameDesign =
-          issue(root, caStore, "game-design-client", NAMESPACE, "game-design-service", false);
+          issue(root, authority, "game-design-client", NAMESPACE, "game-design-service", false);
       worldManagement =
-          issue(root, caStore, "world-client", NAMESPACE, "world-management-service", false);
+          issue(root, authority, "world-client", NAMESPACE, "world-management-service", false);
       wrongWorkload =
-          issue(root, caStore, "game-session-client", NAMESPACE, "game-session-service", false);
+          issue(root, authority, "game-session-client", NAMESPACE, "game-session-service", false);
       otherNamespace =
           issue(
               root,
-              caStore,
+              authority,
               "other-game-design-client",
               "other-test",
               "game-design-service",
               false);
       otherWorldNamespace =
           issue(
-              root, caStore, "other-world-client", "other-test", "world-management-service", false);
+              root,
+              authority,
+              "other-world-client",
+              "other-test",
+              "world-management-service",
+              false);
     }
 
     private static TestIdentity issue(
-        Path root, Path caStore, String alias, String namespace, String workload, boolean server)
+        Path root,
+        AccountStartSessionReservationProofPki.TestCertificateAuthority authority,
+        String alias,
+        String namespace,
+        String workload,
+        boolean server)
         throws Exception {
-      Path store = root.resolve(alias + ".p12"),
-          request = root.resolve(alias + ".csr"),
-          certificate = root.resolve(alias + ".crt");
-      String san =
-          "URI:spiffe://firemud/ns/"
-              + namespace
-              + "/sa/"
-              + workload
-              + ",DNS:localhost,IP:127.0.0.1";
-      String eku = server ? "serverAuth" : "clientAuth";
-      AccountStartSessionReservationProofPki.runKeytool(
-          root,
-          "-genkeypair",
-          "-alias",
-          alias,
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=" + alias,
-          "-validity",
-          "30",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + eku,
-          "-ext",
-          "SAN=" + san,
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          PASSWORD,
-          "-keypass",
-          PASSWORD);
-      AccountStartSessionReservationProofPki.runKeytool(
-          root,
-          "-certreq",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-file",
-          request.toString(),
-          "-ext",
-          "SAN=" + san);
-      AccountStartSessionReservationProofPki.runKeytool(
-          root,
-          "-gencert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          PASSWORD,
-          "-infile",
-          request.toString(),
-          "-outfile",
-          certificate.toString(),
-          "-validity",
-          "30",
-          "-rfc",
-          "-ext",
-          "BC=ca:false",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + eku,
-          "-ext",
-          "SAN=" + san);
-      var keyStore = KeyStore.getInstance("PKCS12");
-      try (var input = Files.newInputStream(store)) {
-        keyStore.load(input, PASSWORD.toCharArray());
-      }
+      var issued =
+          AccountStartSessionReservationProofPki.issueIdentity(
+              root,
+              authority,
+              alias,
+              alias + ".p12",
+              alias + ".csr",
+              alias + ".crt",
+              "spiffe://firemud/ns/" + namespace + "/sa/" + workload,
+              server,
+              true,
+              false);
       byte[] privateKey =
           java.util.Objects.requireNonNull(
               java.util.Objects.requireNonNull(
-                      keyStore.getKey(alias, PASSWORD.toCharArray()),
-                      "Expected ephemeral test private key")
+                      issued.identity().privateKey(), "Expected ephemeral test private key")
                   .getEncoded(),
               "Expected encoded ephemeral test private key");
       Path key = root.resolve(alias + ".key");
@@ -1059,7 +960,7 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n",
           StandardCharsets.US_ASCII);
       java.util.Arrays.fill(privateKey, (byte) 0);
-      return new TestIdentity(certificate, key);
+      return new TestIdentity(issued.certificateFile(), key);
     }
   }
 }

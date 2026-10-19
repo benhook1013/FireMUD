@@ -24,9 +24,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
 import java.security.PrivateKey;
-import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.OffsetDateTime;
 import java.util.Base64;
@@ -386,65 +384,24 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
     private static final String STORE_PASSWORD = "test-only-store-password";
 
     private static TestPki create(Path directory) throws Exception {
-      Path caStore = directory.resolve("selected-publication-test-ca.p12");
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-genkeypair",
-          "-alias",
-          "test-ca",
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=FireMUD selected publication test CA",
-          "-validity",
-          "30",
-          "-ext",
-          "BC=ca:true",
-          "-ext",
-          "KU=keyCertSign,cRLSign",
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          caStore.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      Path caFile = directory.resolve("selected-publication-test-ca.crt");
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-exportcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-rfc");
-      var ca = readCertificate(caFile);
-      return new TestPki(
-          ca,
-          caFile,
-          issueIdentity(directory, caStore, caFile, "account-server", ACCOUNT_URI, true),
-          issueIdentity(directory, caStore, caFile, "wrong-service-server", WRONG_SERVER_URI, true),
-          issueIdentity(
-              directory, caStore, caFile, "other-namespace-server", WRONG_ACCOUNT_URI, true),
-          issueIdentity(directory, caStore, caFile, "game-design-client", GAME_DESIGN_URI, false),
-          issueIdentity(
-              directory, caStore, caFile, "wrong-service-client", WRONG_CLIENT_URI, false),
-          issueIdentity(
+      var authority =
+          AccountStartSessionReservationProofPki.createCertificateAuthority(
               directory,
-              caStore,
-              caFile,
-              "other-namespace-client",
-              OTHER_NAMESPACE_CLIENT_URI,
-              false));
+              "selected-publication-test-ca.p12",
+              "selected-publication-test-ca.crt",
+              "test-ca",
+              "CN=FireMUD selected publication test CA",
+              STORE_PASSWORD);
+      return new TestPki(
+          authority.certificate(),
+          authority.certificateFile(),
+          issueIdentity(directory, authority, "account-server", ACCOUNT_URI, true),
+          issueIdentity(directory, authority, "wrong-service-server", WRONG_SERVER_URI, true),
+          issueIdentity(directory, authority, "other-namespace-server", WRONG_ACCOUNT_URI, true),
+          issueIdentity(directory, authority, "game-design-client", GAME_DESIGN_URI, false),
+          issueIdentity(directory, authority, "wrong-service-client", WRONG_CLIENT_URI, false),
+          issueIdentity(
+              directory, authority, "other-namespace-client", OTHER_NAMESPACE_CLIENT_URI, false));
     }
 
     private CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
@@ -468,122 +425,26 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
     }
 
     private static TestIdentity issueIdentity(
-        Path directory, Path caStore, Path caFile, String alias, String workloadUri, boolean server)
+        Path directory,
+        AccountStartSessionReservationProofPki.TestCertificateAuthority authority,
+        String alias,
+        String workloadUri,
+        boolean server)
         throws Exception {
-      Path store = directory.resolve(alias + ".p12");
-      Path request = directory.resolve(alias + ".csr");
-      Path certificate = directory.resolve(alias + ".crt");
-      String san = "URI:" + workloadUri + ",DNS:localhost,IP:127.0.0.1";
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-genkeypair",
-          "-alias",
-          alias,
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=" + alias,
-          "-validity",
-          "30",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san,
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-certreq",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          request.toString(),
-          "-ext",
-          "SAN=" + san);
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-gencert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-infile",
-          request.toString(),
-          "-outfile",
-          certificate.toString(),
-          "-validity",
-          "30",
-          "-rfc",
-          "-ext",
-          "BC=ca:false",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + (server ? "serverAuth" : "clientAuth"),
-          "-ext",
-          "SAN=" + san);
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-importcert",
-          "-alias",
-          "test-ca",
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-noprompt");
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-importcert",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          certificate.toString(),
-          "-noprompt");
-      KeyStore keyStore = KeyStore.getInstance("PKCS12");
-      try (var input = Files.newInputStream(store)) {
-        keyStore.load(input, STORE_PASSWORD.toCharArray());
-      }
-      return new TestIdentity(
-          alias,
-          (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
-          (X509Certificate) keyStore.getCertificate(alias));
-    }
-
-    private static X509Certificate readCertificate(Path path) throws Exception {
-      try (var input = Files.newInputStream(path)) {
-        return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
-      }
+      var identity =
+          AccountStartSessionReservationProofPki.issueIdentity(
+                  directory,
+                  authority,
+                  alias,
+                  alias + ".p12",
+                  alias + ".csr",
+                  alias + ".crt",
+                  workloadUri,
+                  server,
+                  true,
+                  true)
+              .identity();
+      return new TestIdentity(identity.alias(), identity.privateKey(), identity.certificate());
     }
 
     private static Path writePem(Path path, String label, byte[] bytes) throws IOException {

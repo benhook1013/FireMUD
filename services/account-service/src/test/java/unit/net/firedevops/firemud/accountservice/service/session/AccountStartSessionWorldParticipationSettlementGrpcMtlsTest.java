@@ -25,9 +25,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
 import java.security.PrivateKey;
-import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.List;
@@ -292,69 +290,32 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
         "spiffe://firemud/ns/world-runtime/sa/world-management-service";
 
     private static TestPki create(Path directory) throws Exception {
-      Path caStore = directory.resolve("world-participation-settlement-test-ca.p12");
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-genkeypair",
-          "-alias",
-          "world-participation-settlement-ca",
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=FireMUD controlled World participation settlement test CA",
-          "-validity",
-          "30",
-          "-ext",
-          "BC=ca:true",
-          "-ext",
-          "KU=keyCertSign,cRLSign",
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          caStore.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      Path caFile = directory.resolve("world-participation-settlement-test-ca.crt");
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-exportcert",
-          "-alias",
-          "world-participation-settlement-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-rfc");
-      X509Certificate ca = readCertificate(caFile);
+      var authority =
+          AccountStartSessionReservationProofPki.createCertificateAuthority(
+              directory,
+              "world-participation-settlement-test-ca.p12",
+              "world-participation-settlement-test-ca.crt",
+              "world-participation-settlement-ca",
+              "CN=FireMUD controlled World participation settlement test CA",
+              STORE_PASSWORD);
       return new TestPki(
-          ca,
+          authority.certificate(),
           issueIdentity(
               directory,
-              caStore,
-              caFile,
+              authority,
               "account-server",
               "spiffe://firemud/ns/world-runtime/sa/account-service",
               true),
-          issueIdentity(directory, caStore, caFile, "world-client", WORLD_URI, false),
+          issueIdentity(directory, authority, "world-client", WORLD_URI, false),
           issueIdentity(
               directory,
-              caStore,
-              caFile,
+              authority,
               "wrong-service-client",
               "spiffe://firemud/ns/world-runtime/sa/game-session-service",
               false),
           issueIdentity(
               directory,
-              caStore,
-              caFile,
+              authority,
               "other-namespace-client",
               "spiffe://firemud/ns/other-runtime/sa/world-management-service",
               false));
@@ -388,123 +349,26 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
     }
 
     private static TestIdentity issueIdentity(
-        Path directory, Path caStore, Path caFile, String alias, String workloadUri, boolean server)
+        Path directory,
+        AccountStartSessionReservationProofPki.TestCertificateAuthority authority,
+        String alias,
+        String workloadUri,
+        boolean server)
         throws Exception {
-      Path store = directory.resolve(alias + ".p12");
-      Path request = directory.resolve(alias + ".csr");
-      Path certificate = directory.resolve(alias + "-signed.crt");
-      String san = "URI:" + workloadUri + (server ? ",DNS:localhost,IP:127.0.0.1" : "");
-      String usage = server ? "serverAuth" : "clientAuth";
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-genkeypair",
-          "-alias",
-          alias,
-          "-keyalg",
-          "RSA",
-          "-keysize",
-          "2048",
-          "-dname",
-          "CN=" + alias,
-          "-validity",
-          "30",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + usage,
-          "-ext",
-          "SAN=" + san,
-          "-storetype",
-          "PKCS12",
-          "-keystore",
-          store.toString(),
-          "-storepass",
-          STORE_PASSWORD,
-          "-keypass",
-          STORE_PASSWORD);
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-certreq",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          request.toString(),
-          "-ext",
-          "SAN=" + san);
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-gencert",
-          "-alias",
-          "world-participation-settlement-ca",
-          "-keystore",
-          caStore.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-infile",
-          request.toString(),
-          "-outfile",
-          certificate.toString(),
-          "-validity",
-          "30",
-          "-rfc",
-          "-ext",
-          "BC=ca:false",
-          "-ext",
-          "KU=digitalSignature,keyEncipherment",
-          "-ext",
-          "EKU=" + usage,
-          "-ext",
-          "SAN=" + san);
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-importcert",
-          "-alias",
-          "world-participation-settlement-ca",
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          caFile.toString(),
-          "-noprompt");
-      AccountStartSessionReservationProofPki.runKeytool(
-          directory,
-          "-importcert",
-          "-alias",
-          alias,
-          "-keystore",
-          store.toString(),
-          "-storetype",
-          "PKCS12",
-          "-storepass",
-          STORE_PASSWORD,
-          "-file",
-          certificate.toString(),
-          "-noprompt");
-      KeyStore keyStore = KeyStore.getInstance("PKCS12");
-      try (var input = Files.newInputStream(store)) {
-        keyStore.load(input, STORE_PASSWORD.toCharArray());
-      }
-      return new TestIdentity(
-          alias,
-          (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
-          (X509Certificate) keyStore.getCertificate(alias));
-    }
-
-    private static X509Certificate readCertificate(Path path) throws Exception {
-      try (var input = Files.newInputStream(path)) {
-        return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
-      }
+      var identity =
+          AccountStartSessionReservationProofPki.issueIdentity(
+                  directory,
+                  authority,
+                  alias,
+                  alias + ".p12",
+                  alias + ".csr",
+                  alias + "-signed.crt",
+                  workloadUri,
+                  server,
+                  false,
+                  true)
+              .identity();
+      return new TestIdentity(identity.alias(), identity.privateKey(), identity.certificate());
     }
 
     private static Path writePem(Path path, String label, byte[] bytes) throws IOException {
