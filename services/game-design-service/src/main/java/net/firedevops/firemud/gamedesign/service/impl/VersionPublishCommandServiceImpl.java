@@ -659,7 +659,8 @@ public class VersionPublishCommandServiceImpl {
     VersionDto versionDto = versionMapper.toDto(readback.version());
     PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
     assertSelectedCommit(request, readback.bundle().participantDigests());
-    if (isSelectedReleaseBundle(readback.bundle())) {
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(
+        readback.bundle().attestationSchemaVersion())) {
       publishGateService.assertSelectedGatePassed(
           versionDto, readback.bundle().participantDigests());
     } else {
@@ -951,7 +952,7 @@ public class VersionPublishCommandServiceImpl {
     if (!Objects.equals(version.getTenantId(), bundle.tenantId())
         || version.getVersionNumber() != bundle.versionNumber()
         || version.isScriptOnly()
-        || (isSelectedReleaseBundle(bundle)
+        || (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())
             && (!Objects.equals(version.getCanonicalTenantId(), bundle.canonicalTenantId())
                 || !Objects.equals(
                     version.getCanonicalVersionId(), bundle.canonicalVersionId())))) {
@@ -969,17 +970,10 @@ public class VersionPublishCommandServiceImpl {
         || bundle.scriptPatchVersion() != null) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
     }
-    if (isSelectedReleaseBundle(bundle)) {
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())) {
       PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       requireExactSelectedWorldEvidence(request, bundle);
     }
-  }
-
-  private boolean isSelectedReleaseBundle(PublishedReleaseBundleDto bundle) {
-    return PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
-            bundle.attestationSchemaVersion())
-        || PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(
-            bundle.attestationSchemaVersion());
   }
 
   private void requireExactSelectedWorldEvidence(
