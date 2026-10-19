@@ -43,6 +43,13 @@ FAILED_PATTERN = re.compile(
     r"(?:\breview\b.{0,80}\b(?:failed|failure)\b|\b(?:failed|unable)\b.{0,80}\breview\b|\bsomething went wrong\b)",
     re.IGNORECASE | re.DOTALL,
 )
+ACTION_NOT_COMPLETED_FAILURE_PATTERN = re.compile(
+    r"\A\s*<!-- This is an auto-generated reply by CodeRabbit -->\s*"
+    r"<!-- CodeRabbit review command invocation:[^\r\n<>]+ -->\s*"
+    r"<details>\s*<summary>\s*⚠️\s*Action not completed\s*</summary>\s*"
+    r"Pull request base or head changed\.\s*</details>\s*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
 PROVIDER_FILE_CEILING_SKIP_PATTERN = re.compile(
     r"\breview\s+skipped:\s*(\d+)\s+files?\s+exceed(?:s)?\s+the\s+limit\s+of\s*(\d+)\b",
     re.IGNORECASE,
@@ -770,6 +777,8 @@ def public_response_state(
     if is_rate_limit_reply_body(body):
         return "rate_limited"
     if provider_file_ceiling_skip(body):
+        return "failed"
+    if ACTION_NOT_COMPLETED_FAILURE_PATTERN.fullmatch(body):
         return "failed"
     if NOOP_MARKER in body:
         return "noop"
