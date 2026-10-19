@@ -59,6 +59,26 @@ public final class SelectedDraftPublicationDigestReadService {
   /** Returns exact local GD and retained World digests for one canonical full-version request. */
   public ReadResult read(
       String targetNamespace, PublicationDigestRequestBinding publicationRequest) {
+    return read(targetNamespace, publicationRequest, Optional.empty());
+  }
+
+  /** Returns the same digest snapshot only when the retained Game Logic source joins exactly. */
+  public ReadResult read(
+      String targetNamespace,
+      PublicationDigestRequestBinding publicationRequest,
+      SelectedDraftGameLogicReceipt receipt) {
+    if (receipt == null) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Retained selected Game Logic receipt required")
+          .asRuntimeException();
+    }
+    return read(targetNamespace, publicationRequest, Optional.of(receipt));
+  }
+
+  private ReadResult read(
+      String targetNamespace,
+      PublicationDigestRequestBinding publicationRequest,
+      Optional<SelectedDraftGameLogicReceipt> receipt) {
     if (!workloadNamespace.equals(targetNamespace)) {
       throw Status.PERMISSION_DENIED
           .withDescription("Selected publication namespace differs from configured owner")
@@ -73,7 +93,7 @@ public final class SelectedDraftPublicationDigestReadService {
     validateRequest(publicationRequest);
     try {
       return Objects.requireNonNull(
-          snapshot.execute(ignored -> readSnapshot(publicationRequest)),
+          snapshot.execute(ignored -> readSnapshot(publicationRequest, receipt)),
           "Selected publication digest snapshot returned no result");
     } catch (StatusRuntimeException failure) {
       throw failure;
@@ -94,7 +114,9 @@ public final class SelectedDraftPublicationDigestReadService {
     }
   }
 
-  private ReadResult readSnapshot(PublicationDigestRequestBinding publicationRequest) {
+  private ReadResult readSnapshot(
+      PublicationDigestRequestBinding publicationRequest,
+      Optional<SelectedDraftGameLogicReceipt> receipt) {
     GameDesignPublicationOperationRepository.Readback readback =
         owner
             .read(publicationRequest.derivedWorkflowIdentity())
@@ -128,6 +150,16 @@ public final class SelectedDraftPublicationDigestReadService {
                         .withDescription("Complete synchronized selected sources unavailable")
                         .asRuntimeException());
     requireFrozenSources(selected, frozen, synchronizedSources);
+    if (receipt.isPresent()
+        && !SelectedGameplayRuleSourceJoin.matches(
+            operation,
+            frozen.gameplay().orElseThrow(),
+            synchronizedSources.gameplayEvidence().orElseThrow(),
+            receipt.orElseThrow())) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Selected Gameplay source differs from retained Game Logic receipt")
+          .asRuntimeException();
+    }
 
     DesignControlPlaneDigestDto designDigest =
         SelectedDraftControlPlaneDigest.compute(selected, synchronizedSources).toDto();

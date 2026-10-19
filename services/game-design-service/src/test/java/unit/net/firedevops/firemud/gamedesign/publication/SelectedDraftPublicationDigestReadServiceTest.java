@@ -12,13 +12,21 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeSettlementEvidence;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
+import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
+import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -91,6 +99,66 @@ class SelectedDraftPublicationDigestReadServiceTest {
   }
 
   @Test
+  void receiptBoundReadRequiresExactCanonicalGameplaySourceBytes() throws Exception {
+    var fixture = fixture();
+    var request = request(fixture.operation());
+    when(transactions.getTransaction(any())).thenReturn(transactionStatus);
+    when(owner.read(request.derivedWorkflowIdentity()))
+        .thenReturn(
+            Optional.of(
+                new GameDesignPublicationOperationRepository.Readback(
+                    fixture.operation(), "PENDING", new byte[] {1})));
+    when(owner.readSourceCapture(fixture.operation())).thenReturn(Optional.of(fixture.capture()));
+    when(owner.readSynchronized(fixture.binding().target(), fixture.binding().commitId()))
+        .thenReturn(Optional.of(fixture.sources()));
+    var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
+    var gameplay = fixture.sources().gameplayEvidence().orElseThrow();
+    var exactReceipt = receipt(fixture.operation(), gameplay);
+
+    var result = service.read(NAMESPACE, request, exactReceipt);
+
+    assertThat(result.requestBinding()).isSameAs(request);
+    assertThat(result.gameDesignDigest().appliedCommitId())
+        .isEqualTo(fixture.binding().commitId().toString());
+    var definition = ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactions).getTransaction(definition.capture());
+    assertThat(definition.getValue().getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    assertThat(definition.getValue().getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    assertThat(definition.getValue().isReadOnly()).isTrue();
+
+    org.mockito.Mockito.reset(owner, transactions);
+    when(transactions.getTransaction(any())).thenReturn(transactionStatus);
+    when(owner.read(request.derivedWorkflowIdentity()))
+        .thenReturn(
+            Optional.of(
+                new GameDesignPublicationOperationRepository.Readback(
+                    fixture.operation(), "PENDING", new byte[] {1})));
+    when(owner.readSourceCapture(fixture.operation())).thenReturn(Optional.of(fixture.capture()));
+    when(owner.readSynchronized(fixture.binding().target(), fixture.binding().commitId()))
+        .thenReturn(Optional.of(fixture.sources()));
+    var changedGameplay =
+        new GameplayRuleSnapshot(
+            gameplay.binding(),
+            new java.math.BigInteger(gameplay.sourceEpoch())
+                .add(java.math.BigInteger.ONE)
+                .toString(),
+            gameplay.inheritedCommitId(),
+            gameplay.genesisReceiptId(),
+            gameplay.entries());
+    var sameBindingDifferentReceipt = receipt(fixture.operation(), changedGameplay);
+    assertThat(sameBindingDifferentReceipt.authorization().source().binding())
+        .isEqualTo(fixture.binding());
+    assertThat(sameBindingDifferentReceipt.authorization().source().canonicalBytes())
+        .isNotEqualTo(gameplay.canonicalBytes());
+
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        () -> service.read(NAMESPACE, request, sameBindingDifferentReceipt));
+  }
+
+  @Test
   void namespaceMalformedScopeAndAmbientSqlAreRejectedBeforeOwnerReads() throws Exception {
     var fixture = fixture();
     var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
@@ -111,6 +179,9 @@ class SelectedDraftPublicationDigestReadServiceTest {
             service.read(
                 NAMESPACE,
                 PublicationDigestRequestBinding.full("not-a-canonical-uuid", "19", "publish-id")));
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        () -> service.read(NAMESPACE, request(fixture.operation()), null));
 
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertCode(
@@ -435,6 +506,38 @@ class SelectedDraftPublicationDigestReadServiceTest {
         Optional.of(gameplay),
         Optional.of(branding),
         Optional.of(template));
+  }
+
+  private static SelectedDraftGameLogicReceipt receipt(
+      GameDesignPublicationOperation operation, GameplayRuleSnapshot snapshot) {
+    var selection = operation.account().input().selection();
+    var source = new GameplayRuleSelectedSource(snapshot.canonicalJson());
+    UUID actor = UUID.randomUUID();
+    var authorization =
+        new GameLogicIntakeAuthorizationBinding(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            actor,
+            source,
+            List.of(
+                new DraftAuthorizationFenceBinding.SourceEvidence(
+                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                    actor.toString(),
+                    "1",
+                    "1",
+                    null,
+                    null,
+                    new byte[] {1})));
+    var terminal =
+        GameLogicGameplayRuleIntakeTerminal.retained(
+            new GameLogicGameplayRuleIntakeOperation("test", authorization),
+            source.canonicalBytes(),
+            source.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
+    return new SelectedDraftGameLogicReceipt(
+        AuthoredDraftPublishSelection.fromStored(selection.canonicalJson(), selection.digest()),
+        authorization,
+        new AccountGameLogicIntakeSettlementEvidence(terminal));
   }
 
   private static void assertCode(Status.Code expected, Runnable action) {
