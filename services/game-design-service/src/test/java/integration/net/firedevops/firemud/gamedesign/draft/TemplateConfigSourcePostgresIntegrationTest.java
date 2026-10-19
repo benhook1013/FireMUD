@@ -41,12 +41,14 @@ import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceSnapsho
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -66,6 +68,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @BeforeAll
+  static void awaitPostgresJdbcReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+  }
 
   @Test
   void authoredAutomationInventoryHasExactRetryInheritanceAndFrozenOriginalProvenance() {

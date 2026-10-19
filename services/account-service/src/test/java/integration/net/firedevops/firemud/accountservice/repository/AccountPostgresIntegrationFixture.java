@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.util.Properties;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -56,13 +57,14 @@ public final class AccountPostgresIntegrationFixture {
         "Docker is unavailable; the PostgreSQL test fixture requires Testcontainers");
     container.start();
     started = true;
-    if (requireDurablePrimary) {
-      try {
+    try {
+      PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(container);
+      if (requireDurablePrimary) {
         verifyDurablePrimary();
-      } catch (RuntimeException unsuitable) {
-        stop();
-        throw unsuitable;
       }
+    } catch (RuntimeException startupFailure) {
+      stop();
+      throw startupFailure;
     }
   }
 
