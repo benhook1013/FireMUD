@@ -4,6 +4,7 @@ import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.NetworkSettings;
 import com.github.dockerjava.api.model.Ports;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -118,6 +119,7 @@ public final class PostgresBackedServiceTestSupport {
     InspectContainerResponse containerInfo = postgres.getCurrentContainerInfo();
     InspectContainerResponse.ContainerState state = containerInfo.getState();
     String logs = tailUtf8(postgres.getLogs(), MAX_DIAGNOSTIC_LOG_BYTES);
+    String internalSocketSelect1 = captureInternalSocketSelect1Diagnostics(postgres);
 
     return "PostgreSQL JDBC readiness timeout diagnostics:"
         + "\ncontainerId="
@@ -142,10 +144,43 @@ public final class PostgresBackedServiceTestSupport {
         + (state == null ? null : state.getError())
         + "\nmappedPortBindings[5432/tcp]="
         + postgresPortBindings(containerInfo)
+        + "\n"
+        + internalSocketSelect1
         + "\npostgresStartupLogTail(maxBytes="
         + MAX_DIAGNOSTIC_LOG_BYTES
         + "):\n"
         + logs;
+  }
+
+  private static String captureInternalSocketSelect1Diagnostics(PostgreSQLContainer<?> postgres) {
+    try {
+      var result =
+          postgres.execInContainer(
+              "timeout",
+              "--signal=TERM",
+              "--kill-after=1s",
+              "5s",
+              "psql",
+              "--no-psqlrc",
+              "--host=/var/run/postgresql",
+              "--port=5432",
+              "--username=" + postgres.getUsername(),
+              "--dbname=" + postgres.getDatabaseName(),
+              "--tuples-only",
+              "--no-align",
+              "--command=SELECT 1");
+      return "internalSocketSelect1.exitCode="
+          + result.getExitCode()
+          + "\ninternalSocketSelect1.stdoutTail(maxBytes=512):\n"
+          + tailUtf8(result.getStdout(), 512)
+          + "\ninternalSocketSelect1.stderrTail(maxBytes=512):\n"
+          + tailUtf8(result.getStderr(), 512);
+    } catch (IOException | RuntimeException failure) {
+      return "internalSocketSelect1.diagnosticError=" + failure.getClass().getSimpleName();
+    } catch (InterruptedException failure) {
+      Thread.currentThread().interrupt();
+      return "internalSocketSelect1.diagnosticError=" + failure.getClass().getSimpleName();
+    }
   }
 
   private static String resolvedHostAddresses(String host) {
