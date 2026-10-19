@@ -2391,6 +2391,114 @@ class RuntimeTest(unittest.TestCase):
             audit["active_reservations"],
         )
 
+    def test_retired_trigger_ignores_only_exact_failure_proven_before_retirement(self) -> None:
+        trigger_at = "2026-10-18T21:25:34Z"
+        retired_at = "2026-10-19T11:54:27Z"
+        failure_body = (
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- CodeRabbit review command invocation: v2:35e3c369515e612762875d99c9f3fb6e41a143f650665bc1683ea8b84670b55d -->\n"
+            "<details>\n"
+            "<summary>⚠️ Action not completed</summary>\n\n"
+            "Pull request base or head changed.\n\n"
+            "</details>"
+        )
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        old_reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": failure_body,
+            "createdAt": "2026-10-18T21:25:40Z",
+            "updatedAt": "2026-10-18T21:39:42Z",
+        }
+        self.assertEqual(hosted.public_response_state(old_reply, "createdAt", {}), "failed")
+        self.assertNotEqual(
+            hosted.public_response_state(
+                {**old_reply, "body": f"{failure_body}\nAdditional substantive review text."},
+                "createdAt",
+                {},
+            ),
+            "failed",
+        )
+
+        record = self._trigger_record(created=trigger_at)
+        record["status"] = "retired"
+        record["retirement"] = {"retired_at": retired_at}
+        retired_state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="retired",
+            terminal=True,
+            attributed=False,
+            response_id=None,
+            head_sha="9" * 40,
+        )
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+
+        def run_audit(replies):
+            payload = self._payload([trigger, *replies])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            observer._payloads.clear()
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+                patch.object(hosted, "load_trigger_record", return_value=record),
+                patch.object(hosted, "trigger_state", return_value=retired_state),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                    allow_historical_unmatched=True,
+                )
+
+        accepted = run_audit([old_reply])
+        self.assertEqual(accepted["ambiguous_responses"], [])
+        self.assertEqual(accepted["unmatched_responses"], [])
+        self.assertEqual(accepted["historical_unmatched_responses"], [])
+        self.assertEqual(accepted["active_reservations"], [])
+
+        cases = {
+            "created at retirement": [{**old_reply, "createdAt": retired_at}],
+            "edited at retirement": [{**old_reply, "updatedAt": retired_at}],
+            "malformed update time": [{**old_reply, "updatedAt": "unknown"}],
+            "missing update time": [{key: value for key, value in old_reply.items() if key != "updatedAt"}],
+            "malformed retirement time": [old_reply],
+            "substantive appended to failure": [
+                {**old_reply, "body": f"{failure_body}\nAdditional substantive review text."}
+            ],
+            "active reply": [{**old_reply, "body": "Full review triggered; still working."}],
+            "completed substantive reply": [{**old_reply, "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}"}],
+            "unknown reply": [{**old_reply, "body": "Provider returned an unrecognized result."}],
+            "multiple replies": [old_reply, {**old_reply, "databaseId": 12}],
+        }
+        for label, replies in cases.items():
+            with self.subTest(label=label):
+                if label == "malformed retirement time":
+                    record["retirement"] = {"retired_at": "unknown"}
+                else:
+                    record["retirement"] = {"retired_at": retired_at}
+                audit = run_audit(replies)
+                self.assertIn(
+                    "a retired Hosted trigger has a later public response",
+                    audit["ambiguous_responses"],
+                    msg=str(audit),
+                )
+        with self.assertRaisesRegex(ControllerError, "incomplete public identity"):
+            run_audit([{**old_reply, "createdAt": "unknown"}])
+        record["retirement"] = {"retired_at": retired_at}
+
     def test_legacy_checkpoint_is_attributed_only_to_unique_exact_terminal_response(self) -> None:
         trigger_at = "2026-09-24T00:00:00Z"
         response_at = "2026-09-24T00:01:00Z"
@@ -3802,7 +3910,9 @@ class RuntimeTest(unittest.TestCase):
             hosted.atomic_write_json(path, current)
             runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"), records=object())
             with patch.object(
-                sqlite_hosted_capture, "record_hosted_terminal_result", side_effect=ValueError("capture failed"),
+                sqlite_hosted_capture,
+                "record_hosted_terminal_result",
+                side_effect=ValueError("capture failed"),
             ):
                 warning = runner._capture_terminal_attempt(42, predecessor, self._payload(), path)
             self.assertEqual(hosted.load_trigger_record(path, "owner/repo", 42), current)
@@ -4399,7 +4509,11 @@ class RuntimeTest(unittest.TestCase):
         payload["data"]["repository"]["pullRequest"]["number"] = 99
         with (
             tempfile.TemporaryDirectory() as directory,
-            patch.object(github, "fetch_api_endpoint", return_value=[{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]),
+            patch.object(
+                github,
+                "fetch_api_endpoint",
+                return_value=[{"number": 42, "state": "open"}, {"number": 99, "state": "open"}],
+            ),
             patch.object(github, "fetch_issue_comments_batch", return_value={99: [manual]}),
             patch.object(github, "fetch_pull_request", return_value=payload),
         ):
@@ -6061,9 +6175,11 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(known_audit["finding_only_findings"], ["one unresolved current review thread"])
         self.assertEqual(known_audit["unknown_review_evidence"], [])
 
-        for status, accepted in ((status, accepted) for status in
-                                 ("finding_pending", "pending", "unavailable", "unfinalized", {}, "resolved")
-                                 for accepted in (0, 1)):
+        for status, accepted in (
+            (status, accepted)
+            for status in ("finding_pending", "pending", "unavailable", "unfinalized", {}, "resolved")
+            for accepted in (0, 1)
+        ):
             with self.subTest(source_status=status, original_accepted=accepted):
                 source = {
                     "pr": 42,
@@ -6087,9 +6203,15 @@ class RuntimeTest(unittest.TestCase):
             for changes, allowed in (({}, True), ({"anchored": False}, False), ({"held": True}, False)):
                 with self.subTest(source_channel=source_channel, changes=changes):
                     source = {
-                        "pr": 42, "head": HEAD, "checkpoint": "durable-source", "completed": True,
-                        "attributable": True, "anchored": True, "accepted": 1,
-                        "source_resolution_status": "finding_pending", **changes,
+                        "pr": 42,
+                        "head": HEAD,
+                        "checkpoint": "durable-source",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": True,
+                        "accepted": 1,
+                        "source_resolution_status": "finding_pending",
+                        **changes,
                     }
                     result = audit_for([source], source_channel)
                     self.assertTrue(result["unresolved_findings"])
@@ -7919,8 +8041,10 @@ class RuntimeTest(unittest.TestCase):
     def test_native_cli_corrected_publication_retains_review_and_effective_proof(self):
         from test_pr_review_sqlite_review_records import corrected_native_fixture
 
-        for initial, correction, expected in ((("accepted", "accepted"), (1, "rejected"), 2),
-                                              (("rejected",), (1, "accepted"), 0)):
+        for initial, correction, expected in (
+            (("accepted", "accepted"), (1, "rejected"), 2),
+            (("rejected",), (1, "accepted"), 0),
+        ):
             with self.subTest(initial=initial), tempfile.TemporaryDirectory() as directory:
                 common = Path(directory)
                 database = common / "records.sqlite3"
@@ -7928,21 +8052,36 @@ class RuntimeTest(unittest.TestCase):
                 records = sqlite_review_records.SqliteReviewRecords(database)
                 records.bootstrap()
                 run_id, checkpoint, comment = corrected_native_fixture(records, initial=initial, correction=correction)
-                nodes = [{"databaseId": comment["id"], "body": comment["body"],
-                          "createdAt": comment["created_at"], "updatedAt": comment["updated_at"],
-                          "author": {"login": "owner"}},
-                         {"databaseId": 790, "body": comment["body"].replace("CLI:", "Correction — CLI:", 1)
-                          .replace(f"<!-- firemud-cli-run: {run_id} -->", ""),
-                          "createdAt": "2026-10-01T00:00:15Z", "author": {"login": "owner"}}]
+                nodes = [
+                    {
+                        "databaseId": comment["id"],
+                        "body": comment["body"],
+                        "createdAt": comment["created_at"],
+                        "updatedAt": comment["updated_at"],
+                        "author": {"login": "owner"},
+                    },
+                    {
+                        "databaseId": 790,
+                        "body": comment["body"]
+                        .replace("CLI:", "Correction — CLI:", 1)
+                        .replace(f"<!-- firemud-cli-run: {run_id} -->", ""),
+                        "createdAt": "2026-10-01T00:00:15Z",
+                        "author": {"login": "owner"},
+                    },
+                ]
                 payload = self._payload(nodes, head="d" * 40)
                 payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
-                with patch.object(github, "fetch_pull_request", return_value=payload), patch.object(
-                        evidence, "resolve_cli_capture_context", return_value=(common, records)):
+                with (
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                    patch.object(evidence, "resolve_cli_capture_context", return_value=(common, records)),
+                ):
                     observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
                     history = observer.history(42, "cli")
                     unbound = LiveEvidence("owner/repo", LiveGitHub("owner/repo")).history(42, "cli")
-                    self.assertEqual(next(item for item in unbound if item["checkpoint"] == "789")
-                                     ["source_resolution_status"], "unavailable")
+                    self.assertEqual(
+                        next(item for item in unbound if item["checkpoint"] == "789")["source_resolution_status"],
+                        "unavailable",
+                    )
                 original = next(item for item in history if item["checkpoint"] == "789")
                 self.assertTrue(original["completed"])
                 self.assertTrue(original["attributable"])
@@ -7952,8 +8091,15 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(original["source_resolution_status"], "finding_pending")
                 self.assertEqual(sum(item["completed"] and not item["correction"] for item in history), 1)
                 accepted_index = 2 if expected else 1
-                records.record_source_resolution(run_id, f"cli-run:{run_id}:finding:{accepted_index}", source_pr=42,
-                    resolution_id="fixed-effective", fix_sha="e" * 40, actor="owner", proof_note="Verified effective fix")
+                records.record_source_resolution(
+                    run_id,
+                    f"cli-run:{run_id}:finding:{accepted_index}",
+                    source_pr=42,
+                    resolution_id="fixed-effective",
+                    fix_sha="e" * 40,
+                    actor="owner",
+                    proof_note="Verified effective fix",
+                )
                 self.assertEqual(observer._source_resolution_status(42, "cli", checkpoint, "b" * 40), "resolved")
 
     def test_duplicate_public_checkpoints_for_one_cli_capture_count_once(self) -> None:
