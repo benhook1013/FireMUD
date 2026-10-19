@@ -339,27 +339,7 @@ class PublishedReleaseBundleContractTest {
   private static WorldPublishedStartLocationEvidence selectorEvidence(int digestSchemaVersion)
       throws Exception {
     var base = selectorEvidence();
-    var original = base.request();
-    var request =
-        new WorldPublishedStartLocationEvidence.Request(
-            original.targetNamespace(),
-            original.canonicalTenantId(),
-            original.canonicalVersionId(),
-            original.intakeRequestId(),
-            original.publicationFence(),
-            original.publicationRequestId(),
-            original.requestDigest(),
-            original.versionStateEpoch(),
-            original.publishWorkflowId(),
-            original.appliedCommitId(),
-            original.contentDigest(),
-            digestSchemaVersion,
-            original.worldAffectedTuples());
-    return new WorldPublishedStartLocationEvidence(
-        request,
-        base.selectorReceiptBytes(),
-        base.originalAccountBindingBytes(),
-        base.appliedResultBytes());
+    return PublishedWorldSelectorFixtures.withDigestSchemaVersion(base, digestSchemaVersion);
   }
 
   private static List<PublishParticipantDigestDto> selectorParticipants(

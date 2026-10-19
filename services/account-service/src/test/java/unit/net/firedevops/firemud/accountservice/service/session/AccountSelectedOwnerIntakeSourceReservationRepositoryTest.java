@@ -67,13 +67,19 @@ class AccountSelectedOwnerIntakeSourceReservationRepositoryTest {
 
   @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
-  void expiredRecoverySkipsInvalidRowsAndStillDecodesLaterRows() {
+  void expiredRecoveryAttemptsInvalidRowsAndAdvancesCursorPastThem() {
     var dsl = mock(DSLContext.class);
     var first = mock(Record.class);
     var later = mock(Record.class);
     when(first.get("scope_bytes", byte[].class)).thenReturn(new byte[0]);
     when(later.get("scope_bytes", byte[].class))
         .thenThrow(new IllegalStateException("synthetic row failure"));
+    when(first.get("recovery_expires_at_epoch_second", Long.class)).thenReturn(10L);
+    when(later.get("recovery_expires_at_epoch_second", Long.class)).thenReturn(20L);
+    when(first.get("recovery_operation_id", java.util.UUID.class))
+        .thenReturn(java.util.UUID.fromString("11111111-1111-4111-8111-111111111111"));
+    when(later.get("recovery_operation_id", java.util.UUID.class))
+        .thenReturn(java.util.UUID.fromString("22222222-2222-4222-8222-222222222222"));
     Result<Record> rows = mock(Result.class);
     when(rows.size()).thenReturn(2);
     when(rows.iterator()).thenReturn(List.of(first, later).iterator());
@@ -82,7 +88,14 @@ class AccountSelectedOwnerIntakeSourceReservationRepositoryTest {
 
     var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(dsl);
 
-    assertThat(repository.findExpiredPreliminarySourceReadScopes(2, "test")).isEmpty();
+    var page = repository.findExpiredPreliminarySourceReadScopes(2, "test", null);
+
+    assertThat(page.scopes()).isEmpty();
+    assertThat(page.examinedCount()).isEqualTo(2);
+    assertThat(page.nextCursor())
+        .isEqualTo(
+            new AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor(
+                20L, java.util.UUID.fromString("22222222-2222-4222-8222-222222222222")));
 
     verify(first).get("scope_bytes", byte[].class);
     verify(later).get("scope_bytes", byte[].class);
@@ -100,7 +113,7 @@ class AccountSelectedOwnerIntakeSourceReservationRepositoryTest {
 
     var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(dsl);
 
-    assertThatThrownBy(() -> repository.findExpiredPreliminarySourceReadScopes(2, "test"))
+    assertThatThrownBy(() -> repository.findExpiredPreliminarySourceReadScopes(2, "test", null))
         .isInstanceOf(DataAccessException.class);
   }
 }

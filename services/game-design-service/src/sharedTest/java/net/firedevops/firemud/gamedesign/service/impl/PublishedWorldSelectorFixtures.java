@@ -39,6 +39,32 @@ public final class PublishedWorldSelectorFixtures {
     this.VERSION_ID = target.canonicalVersionId();
   }
 
+  /** Rebuilds only the schema field of stipulated test evidence for contract boundary checks. */
+  public static WorldPublishedStartLocationEvidence withDigestSchemaVersion(
+      WorldPublishedStartLocationEvidence base, int digestSchemaVersion) {
+    var original = base.request();
+    var request =
+        new WorldPublishedStartLocationEvidence.Request(
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.canonicalVersionId(),
+            original.intakeRequestId(),
+            original.publicationFence(),
+            original.publicationRequestId(),
+            original.requestDigest(),
+            original.versionStateEpoch(),
+            original.publishWorkflowId(),
+            original.appliedCommitId(),
+            original.contentDigest(),
+            digestSchemaVersion,
+            original.worldAffectedTuples());
+    return new WorldPublishedStartLocationEvidence(
+        request,
+        base.selectorReceiptBytes(),
+        base.originalAccountBindingBytes(),
+        base.appliedResultBytes());
+  }
+
   public static WorldPublishedStartLocationEvidence evidence(TargetProof target) throws Exception {
     return new PublishedWorldSelectorFixtures(target).build();
   }

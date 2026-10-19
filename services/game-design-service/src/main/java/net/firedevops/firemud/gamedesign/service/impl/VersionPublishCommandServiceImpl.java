@@ -283,12 +283,12 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
     try {
+      publishGateService.assertSelectedGatePassed(dto, participantDigests);
       assertSelectedCommit(request, participantDigests);
       PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
           dto.id(),
           requireSelectedIntent(request).selectedCommit().commitId().toString(),
           participantDigests);
-      publishGateService.assertSelectedGatePassed(dto, participantDigests);
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
@@ -510,12 +510,12 @@ public class VersionPublishCommandServiceImpl {
 
     VersionDto dto = versionMapper.toDto(version);
     requireSelectedDraftEpoch(request, version);
+    publishGateService.assertSelectedGatePassed(dto, participantDigests);
     assertSelectedCommit(request, participantDigests);
     PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
         dto.id(),
         requireSelectedIntent(request).selectedCommit().commitId().toString(),
         participantDigests);
-    publishGateService.assertSelectedGatePassed(dto, participantDigests);
     publishAttemptService.recordFullVersionParticipantDigests(
         request.publishWorkflowId(), participantDigests);
     VersionAssetArtifactStateDto exportedState =

@@ -31,6 +31,18 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
   private final String namespace;
   private final TransactionTemplate ownerTransaction;
 
+  /** Outcome of one bounded recovery page; zero aborts does not mean the sweep is complete. */
+  public record RecoveryPage(
+      int abortedCount,
+      int examinedCount,
+      AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor nextCursor) {
+    public RecoveryPage {
+      if (abortedCount < 0 || examinedCount < 0 || abortedCount > examinedCount) {
+        throw new IllegalArgumentException("Invalid expired preliminary recovery result");
+      }
+    }
+  }
+
   public AccountSelectedOwnerIntakeSourceReservationService(
       AccountControlUiActorService actors,
       DraftAuthorizationFenceRepository fences,
@@ -148,9 +160,11 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
    * candidate is rechecked and, if still eligible, durably aborted in its own independent
    * READ_COMMITTED owner transaction. Finalized and concurrently changed candidates are skipped.
    *
-   * @return abort rows committed by this page; this is not a global completion signal
+   * @return counts and caller-owned continuation; a zero abort count is not global completion
    */
-  public int recoverExpiredPreliminarySourceReads(int maximumCandidates) {
+  public RecoveryPage recoverExpiredPreliminarySourceReads(
+      int maximumCandidates,
+      AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor after) {
     if (maximumCandidates <= 0) {
       throw new IllegalArgumentException("Expired preliminary recovery batch must be positive");
     }
@@ -161,16 +175,16 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
             AccountSelectedOwnerIntakeSourceReservationRepository
                 .MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE);
 
-    var candidates =
+    var page =
         Objects.requireNonNull(
             ownerTransaction.execute(
                 ignored ->
                     repository.findExpiredPreliminarySourceReadScopes(
-                        boundedCandidates, namespace)),
+                        boundedCandidates, namespace, after)),
             "Expired source-read candidate lookup returned no result");
     int aborted = 0;
     int candidateNumber = 0;
-    for (SelectedOwnerIntakeSourceReadScope scope : candidates) {
+    for (SelectedOwnerIntakeSourceReadScope scope : page.scopes()) {
       candidateNumber++;
       try {
         if (Objects.requireNonNull(
@@ -183,11 +197,11 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
         LOGGER.warn(
             "Skipped failed expired preliminary source-read candidate {}/{} (failureType={})",
             candidateNumber,
-            candidates.size(),
+            page.scopes().size(),
             candidateFailure.getClass().getSimpleName());
       }
     }
-    return aborted;
+    return new RecoveryPage(aborted, page.examinedCount(), page.nextCursor());
   }
 
   private Optional<SelectedOwnerIntakeSourceReadScope> findScope(

@@ -253,6 +253,7 @@ public final class PublishGateServiceImpl implements PublishGateService {
     if (version.scriptOnly()) {
       throw new IllegalArgumentException("Selected publication requires a full version");
     }
+    assertParticipantSetAndSucceeded(version, participantDigests);
     List<PublishParticipantDigestDto> worldDigests =
         participantDigests == null
             ? List.of()
@@ -273,13 +274,19 @@ public final class PublishGateServiceImpl implements PublishGateService {
                   PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
                   "publish gate failed: unsupported selected World digest schema");
         };
-    assertGatePassed(version, participantDigests, selectedAttestationSchema);
+    assertParticipantEvidence(version, participantDigests, selectedAttestationSchema);
   }
 
   private void assertGatePassed(
       VersionDto version,
       List<PublishParticipantDigestDto> participantDigests,
       Integer selectedAttestationSchema) {
+    assertParticipantSetAndSucceeded(version, participantDigests);
+    assertParticipantEvidence(version, participantDigests, selectedAttestationSchema);
+  }
+
+  private void assertParticipantSetAndSucceeded(
+      VersionDto version, List<PublishParticipantDigestDto> participantDigests) {
     List<PublishParticipantKey> expectedParticipants =
         version.scriptOnly() ? SCRIPT_PATCH_PARTICIPANTS : FULL_VERSION_PARTICIPANTS;
     List<String> expectedParticipantKeyList =
@@ -316,6 +323,12 @@ public final class PublishGateServiceImpl implements PublishGateService {
               + (failed.errorMessage() == null ? failed.errorCode() : failed.errorMessage()),
           failed.errorCode());
     }
+  }
+
+  private void assertParticipantEvidence(
+      VersionDto version,
+      List<PublishParticipantDigestDto> participantDigests,
+      Integer selectedAttestationSchema) {
     String expectedScope =
         version.scriptOnly() ? version.scriptPatchVersion() : String.valueOf(version.id());
     Long expectedBaseVersionId = version.scriptOnly() ? version.baseVersionId() : null;
