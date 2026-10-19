@@ -33,7 +33,8 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireEntityManagementMtls(tlsProps),
+        EntityManagementSourceClientValidation.requireEntityManagementMtls(
+            tlsProps, "Gameplay roster owner reads"),
         channelFactory,
         GameSessionCanonicalGameplayRosterOwnerReadClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -105,33 +106,5 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
       throw new IllegalStateException(
           "Game Session canonical gameplay roster owner read response is invalid", exception);
     }
-  }
-
-  private static CommonGrpcClientProperties requireEntityManagementMtls(
-      CommonGrpcClientProperties tlsProps) {
-    if (tlsProps == null) {
-      throw new IllegalArgumentException("Entity Management gRPC TLS configuration is required");
-    }
-    if (tlsProps.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Gameplay roster owner reads require Entity Management workload mTLS");
-    }
-    if (!hasText(tlsProps.getCertChain())
-        || !hasText(tlsProps.getPrivateKey())
-        || !hasText(tlsProps.getCaCert())) {
-      throw new IllegalArgumentException(
-          "Gameplay roster owner reads require Entity Management certificate, key, and CA files");
-    }
-    if (tlsProps.getCertChain().trim().startsWith("classpath:")
-        || tlsProps.getPrivateKey().trim().startsWith("classpath:")
-        || tlsProps.getCaCert().trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Gameplay roster owner reads require file-backed Entity Management workload mTLS");
-    }
-    return tlsProps;
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
   }
 }

@@ -31,7 +31,8 @@ public final class AccountRuntimeIdentityClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireEntityManagementMtls(tlsProps),
+        EntityManagementSourceClientValidation.requireEntityManagementMtls(
+            tlsProps, "Runtime account identity reads"),
         channelFactory,
         AccountRuntimeIdentityClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -69,8 +70,11 @@ public final class AccountRuntimeIdentityClient
   /** Reads Account's exact persisted identity provenance without granting gameplay authority. */
   public RuntimeAccountIdentityEvidence resolveRuntimeAccountIdentity(
       String canonicalAccountId, String requestId) {
-    UUID accountUuid = parseCanonicalNonNilUuid(canonicalAccountId, "canonical account ID");
-    UUID requestUuid = parseCanonicalNonNilUuid(requestId, "request ID");
+    UUID accountUuid =
+        EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
+            canonicalAccountId, "canonical account ID");
+    UUID requestUuid =
+        EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(requestId, "request ID");
     RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub currentStub =
         stub();
     if (currentStub == null) {
@@ -99,8 +103,9 @@ public final class AccountRuntimeIdentityClient
           new RuntimeAccountIdentityEvidence(
               response.getSchemaVersion(),
               response.getTargetNamespace(),
-              parseCanonicalNonNilUuid(response.getRequestId(), "response request ID"),
-              parseCanonicalNonNilUuid(
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
+                  response.getRequestId(), "response request ID"),
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
                   response.getCanonicalAccountId(), "response canonical account ID"),
               response.getSourceAccountRowId(),
               response.getAccountUuidProvenance());
@@ -115,49 +120,5 @@ public final class AccountRuntimeIdentityClient
           "Account runtime identity response does not match the exact request");
     }
     return evidence;
-  }
-
-  private static UUID parseCanonicalNonNilUuid(String value, String label) {
-    if (value == null) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
-    }
-    UUID parsed;
-    try {
-      parsed = UUID.fromString(value);
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required", exception);
-    }
-    if (new UUID(0L, 0L).equals(parsed) || !parsed.toString().equals(value)) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
-    }
-    return parsed;
-  }
-
-  private static CommonGrpcClientProperties requireEntityManagementMtls(
-      CommonGrpcClientProperties tlsProps) {
-    if (tlsProps == null) {
-      throw new IllegalArgumentException("Entity Management gRPC TLS configuration is required");
-    }
-    if (tlsProps.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Runtime account identity reads require Entity Management workload mTLS");
-    }
-    if (!hasText(tlsProps.getCertChain())
-        || !hasText(tlsProps.getPrivateKey())
-        || !hasText(tlsProps.getCaCert())) {
-      throw new IllegalArgumentException(
-          "Runtime account identity reads require Entity Management certificate, key, and CA files");
-    }
-    if (tlsProps.getCertChain().trim().startsWith("classpath:")
-        || tlsProps.getPrivateKey().trim().startsWith("classpath:")
-        || tlsProps.getCaCert().trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Runtime account identity reads require file-backed Entity Management workload mTLS");
-    }
-    return tlsProps;
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
   }
 }

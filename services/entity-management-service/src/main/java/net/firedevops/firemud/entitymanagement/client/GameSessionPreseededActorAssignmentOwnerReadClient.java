@@ -33,7 +33,8 @@ public final class GameSessionPreseededActorAssignmentOwnerReadClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireEntityManagementMtls(tlsProps),
+        EntityManagementSourceClientValidation.requireEntityManagementMtls(
+            tlsProps, "Actor assignment owner reads"),
         channelFactory,
         GameSessionPreseededActorAssignmentOwnerReadClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -101,33 +102,5 @@ public final class GameSessionPreseededActorAssignmentOwnerReadClient
       throw new IllegalStateException(
           "Game Session actor assignment owner response is invalid", exception);
     }
-  }
-
-  private static CommonGrpcClientProperties requireEntityManagementMtls(
-      CommonGrpcClientProperties tlsProps) {
-    if (tlsProps == null) {
-      throw new IllegalArgumentException("Entity Management gRPC TLS configuration is required");
-    }
-    if (tlsProps.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Actor assignment owner reads require Entity Management workload mTLS");
-    }
-    if (!hasText(tlsProps.getCertChain())
-        || !hasText(tlsProps.getPrivateKey())
-        || !hasText(tlsProps.getCaCert())) {
-      throw new IllegalArgumentException(
-          "Actor assignment owner reads require Entity certificate, key, and CA files");
-    }
-    if (tlsProps.getCertChain().trim().startsWith("classpath:")
-        || tlsProps.getPrivateKey().trim().startsWith("classpath:")
-        || tlsProps.getCaCert().trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Actor assignment owner reads require file-backed Entity workload mTLS");
-    }
-    return tlsProps;
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
   }
 }

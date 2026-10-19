@@ -41,7 +41,8 @@ public final class AccountPreseededActorStagingEligibilityClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireEntityManagementMtls(tlsProps),
+        EntityManagementSourceClientValidation.requireEntityManagementMtls(
+            tlsProps, "Actor-staging eligibility reads"),
         channelFactory,
         AccountPreseededActorStagingEligibilityClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -81,9 +82,14 @@ public final class AccountPreseededActorStagingEligibilityClient
   @Override
   public AccountActorStagingEligibilityEvidence resolvePreseededActorStagingEligibility(
       String canonicalAccountId, String canonicalTenantId, String requestId) {
-    UUID accountUuid = parseCanonicalNonNilUuid(canonicalAccountId, "canonical account ID");
-    UUID tenantUuid = parseCanonicalNonNilUuid(canonicalTenantId, "canonical tenant ID");
-    UUID requestUuid = parseCanonicalNonNilUuid(requestId, "request ID");
+    UUID accountUuid =
+        EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
+            canonicalAccountId, "canonical account ID");
+    UUID tenantUuid =
+        EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
+            canonicalTenantId, "canonical tenant ID");
+    UUID requestUuid =
+        EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(requestId, "request ID");
     AccountActorStagingEligibilityServiceGrpc.AccountActorStagingEligibilityServiceBlockingStub
         currentStub = stub();
     if (currentStub == null) {
@@ -121,10 +127,11 @@ public final class AccountPreseededActorStagingEligibilityClient
           new AccountActorStagingEligibilityEvidence(
               response.getSchemaVersion(),
               response.getTargetNamespace(),
-              parseCanonicalNonNilUuid(response.getRequestId(), "response request ID"),
-              parseCanonicalNonNilUuid(
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
+                  response.getRequestId(), "response request ID"),
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
                   response.getCanonicalAccountId(), "response canonical account ID"),
-              parseCanonicalNonNilUuid(
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
                   response.getCanonicalTenantId(), "response canonical tenant ID"),
               decodePurpose(response.getPurpose()),
               decodeCurrentness(response.getCurrentness()),
@@ -138,11 +145,12 @@ public final class AccountPreseededActorStagingEligibilityClient
               response.getMembershipVersion(),
               response.getMembershipAuthorityGeneration(),
               response.getTenantProvenanceKind(),
-              parseCanonicalNonNilUuid(
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
                   response.getTenantSourceOperationId(), "tenant source operation ID"),
               response.getTenantProvenanceDigest(),
               response.getMembershipEventSequence(),
-              parseCanonicalNonNilUuid(response.getMembershipEventId(), "membership event ID"),
+              EntityManagementSourceClientValidation.parseCanonicalNonNilUuid(
+                  response.getMembershipEventId(), "membership event ID"),
               response.getMembershipEventDigest(),
               response.getLastTransitionInvalidated(),
               response.getEligibilityDecisionDigest(),
@@ -202,50 +210,5 @@ public final class AccountPreseededActorStagingEligibilityClient
       case STAGING_INELIGIBLE -> AccountActorStagingEligibilityEvidence.Decision.STAGING_INELIGIBLE;
       default -> throw new IllegalArgumentException("Unknown Account actor-staging decision");
     };
-  }
-
-  private static UUID parseCanonicalNonNilUuid(String value, String label) {
-    if (value == null) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
-    }
-    UUID parsed;
-    try {
-      parsed = UUID.fromString(value);
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required", exception);
-    }
-    if (new UUID(0L, 0L).equals(parsed) || !parsed.toString().equals(value)) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
-    }
-    return parsed;
-  }
-
-  private static CommonGrpcClientProperties requireEntityManagementMtls(
-      CommonGrpcClientProperties tlsProps) {
-    if (tlsProps == null) {
-      throw new IllegalArgumentException("Entity Management gRPC TLS configuration is required");
-    }
-    if (tlsProps.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Actor-staging eligibility reads require Entity Management workload mTLS");
-    }
-    if (!hasText(tlsProps.getCertChain())
-        || !hasText(tlsProps.getPrivateKey())
-        || !hasText(tlsProps.getCaCert())) {
-      throw new IllegalArgumentException(
-          "Actor-staging eligibility reads require Entity Management certificate, key, and CA "
-              + "files");
-    }
-    if (tlsProps.getCertChain().trim().startsWith("classpath:")
-        || tlsProps.getPrivateKey().trim().startsWith("classpath:")
-        || tlsProps.getCaCert().trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Actor-staging eligibility reads require file-backed Entity Management workload mTLS");
-    }
-    return tlsProps;
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
   }
 }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.UnknownFieldSet;
@@ -24,6 +25,7 @@ import java.time.Instant;
 import java.util.UUID;
 import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
@@ -363,6 +365,33 @@ class CanonicalGameplayRosterGrpcAdapterTest {
         unauthenticatedObserver = new RecordingObserver<>();
     unauthenticatedAdapter.listPreseededRoster(request(target()), unauthenticatedObserver);
     assertOnlyStatus(unauthenticatedObserver, Status.Code.UNAUTHENTICATED);
+  }
+
+  @Test
+  void isolatedScopeReturnsFailedPreconditionBeforeOwnerOrRepositoryRead() {
+    GameSessionCanonicalGameplayRosterOwnerReadClient ownerClient =
+        mock(GameSessionCanonicalGameplayRosterOwnerReadClient.class);
+    CharacterRepository repository = mock(CharacterRepository.class);
+    var ownerEvidenceAdapter =
+        new GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter(ownerClient, "gameplay");
+    var grpcAdapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            new CanonicalGameplayRosterService(ownerEvidenceAdapter, repository),
+            new CanonicalGameplayRosterSelectedAssignmentService(request -> null, repository),
+            new SimpleMeterRegistry());
+    CanonicalGameplayRosterTarget isolatedTarget =
+        target().toBuilder()
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+            .build();
+    RecordingObserver<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse>
+        observer = new RecordingObserver<>();
+
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
+        () -> grpcAdapter.listPreseededRoster(request(isolatedTarget), observer));
+
+    assertOnlyStatus(observer, Status.Code.FAILED_PRECONDITION);
+    verifyNoInteractions(ownerClient, repository);
   }
 
   private static void assertOnlyStatus(RecordingObserver<?> observer, Status.Code expectedCode) {
