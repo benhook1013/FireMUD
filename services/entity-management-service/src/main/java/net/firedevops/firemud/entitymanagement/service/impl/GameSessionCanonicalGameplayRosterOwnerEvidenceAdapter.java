@@ -49,7 +49,7 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
     CanonicalGameplayRosterTarget expected = request.expectedTarget();
     if (expected.playableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
         || expected.entryPolicy() != CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY) {
-      throw new IllegalArgumentException(
+      throw new UnsupportedOperationException(
           "Canonical gameplay roster owner read requires SHARED PRESEEDED_ONLY target");
     }
 
