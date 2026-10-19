@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderCredentials;
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -39,6 +40,7 @@ class AccountSelectedDraftPublicationOrderGrpcServiceTest {
 
   @AfterEach
   void clear() {
+    SessionContext.clear();
     TransactionSynchronizationManager.clear();
   }
 
@@ -78,6 +80,30 @@ class AccountSelectedDraftPublicationOrderGrpcServiceTest {
         .isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(peer("test", "game-design-service", () -> invoke(null)).code())
         .isEqualTo(Status.Code.UNAUTHENTICATED);
+    verifyNoInteractions(owner, terms);
+  }
+
+  @Test
+  void authenticatedCallerContextDeniesBoundCallBeforeReadingCredentialMetadata() {
+    SessionContext.setContext("test-user", List.of(), java.util.Map.of());
+    var headers = mock(io.grpc.Metadata.class);
+
+    assertThat(peer("test", "game-design-service", () -> boundCode(headers)))
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(headers, owner, terms);
+  }
+
+  @Test
+  void authenticatedCallerContextDeniesDirectCallBeforeMalformedPayloadDecode() {
+    SessionContext.setContext("test-user", List.of(), java.util.Map.of());
+
+    assertThat(
+            peer(
+                    "test",
+                    "game-design-service",
+                    () -> invoke(AuthorizeSelectedPublicationRequest.getDefaultInstance()))
+                .code())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(owner, terms);
   }
 

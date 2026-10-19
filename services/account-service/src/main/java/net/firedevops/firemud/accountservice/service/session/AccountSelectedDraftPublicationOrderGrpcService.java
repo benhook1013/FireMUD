@@ -20,6 +20,7 @@ import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsServi
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderCredentials;
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -149,6 +150,7 @@ public final class AccountSelectedDraftPublicationOrderGrpcService implements Bi
   private Status peerDenial() {
     var peer = GrpcPeerIdentity.current();
     if (peer == null) return Status.UNAUTHENTICATED;
+    if (SessionContext.hasAuthenticatedCallerContext()) return Status.PERMISSION_DENIED;
     return ("spiffe://firemud/ns/" + namespace + "/sa/game-design-service").equals(peer.uri())
         ? null
         : Status.PERMISSION_DENIED;
