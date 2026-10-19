@@ -5,9 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AuthorizeSelectedPublicationRequest;
+import net.firedevops.firemud.account.v1.AuthorizeSelectedPublicationResponse;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.VisibilityFence;
 import org.junit.jupiter.api.Test;
 
 class AccountSelectedPublicationOrderGrpcCodecTest {
@@ -91,6 +96,10 @@ class AccountSelectedPublicationOrderGrpcCodecTest {
             response.toBuilder().setTargetNamespace("other").build(),
             response.toBuilder().setRequestId(UUID.randomUUID().toString()).build(),
             response.toBuilder().clearOriginalSelection().build(),
+            response.toBuilder()
+                .setTargetNamespace(
+                    "x".repeat(AccountSelectedPublicationOrderGrpcCodec.MAX_RESPONSE_MESSAGE_BYTES))
+                .build(),
             response.toBuilder().setUnknownFields(unknown()).build(),
             response.toBuilder().clearPublicationAuthorizationBinding().build(),
             response.toBuilder()
@@ -102,6 +111,120 @@ class AccountSelectedPublicationOrderGrpcCodecTest {
           .hasMessageNotContaining(CREDENTIAL)
           .hasNoCause();
     }
+  }
+
+  @Test
+  void roundTripsMaximumCanonicalSelectionWithLargerBoundedBinding() {
+    var base = AccountPublicationAuthorizationReadGrpcCodecTest.binding();
+    var selectionWithoutNotes = withNotes(base.input().selection(), "");
+    int notesBytes =
+        AccountSelectedPublicationOrderGrpcCodec.MAX_SELECTION_BYTES
+            - selectionWithoutNotes.canonicalBytes().length;
+    var selection = withNotes(base.input().selection(), "n".repeat(notesBytes));
+    var request =
+        AccountSelectedPublicationOrderGrpcCodec.Request.create("test", selection, CREDENTIAL);
+    var binding =
+        new AccountPublicationAuthorizationBinding(
+            base.operationId(),
+            base.fenceId(),
+            new AccountPublicationAuthorizationBinding.PreallocationInput(
+                base.input().actorAccountId(), selection),
+            base.sources());
+
+    assertThat(request.originalSelection())
+        .hasSize(AccountSelectedPublicationOrderGrpcCodec.MAX_SELECTION_BYTES);
+    assertThat(binding.canonicalBytes())
+        .hasSizeGreaterThan(request.originalSelection().length)
+        .hasSizeLessThanOrEqualTo(AccountSelectedPublicationOrderGrpcCodec.MAX_BINDING_BYTES);
+    var response = AccountSelectedPublicationOrderGrpcCodec.toResponse(request, binding);
+    assertThat(response.getSerializedSize())
+        .isLessThanOrEqualTo(AccountSelectedPublicationOrderGrpcCodec.MAX_RESPONSE_MESSAGE_BYTES);
+    assertThat(
+            AccountSelectedPublicationOrderGrpcCodec.fromResponse(request, response)
+                .canonicalBytes())
+        .containsExactly(binding.canonicalBytes());
+
+    var oversizedSelection =
+        withNotes(
+            base.input().selection(),
+            "n".repeat(AccountSelectedPublicationOrderGrpcCodec.MAX_SELECTION_BYTES));
+    assertThat(oversizedSelection.canonicalBytes())
+        .hasSizeGreaterThan(AccountSelectedPublicationOrderGrpcCodec.MAX_SELECTION_BYTES);
+    assertThatThrownBy(
+            () ->
+                AccountSelectedPublicationOrderGrpcCodec.Request.create(
+                    "test", oversizedSelection, CREDENTIAL))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsOversizedBindingBeforeProducerAndConsumerDecode() {
+    var base = AccountPublicationAuthorizationReadGrpcCodecTest.binding();
+    var request =
+        AccountSelectedPublicationOrderGrpcCodec.Request.create(
+            "test", base.input().selection(), CREDENTIAL);
+    var source = base.sources().get(0);
+    var oversizedSource =
+        new SourceEvidence(
+            source.kind(),
+            source.scopeId(),
+            source.generation(),
+            source.sourceVersion(),
+            source.checkpointStream(),
+            source.checkpointSequence(),
+            new byte[AccountSelectedPublicationOrderGrpcCodec.MAX_BINDING_BYTES + 1]);
+    var oversizedBinding =
+        new AccountPublicationAuthorizationBinding(
+            base.operationId(), base.fenceId(), base.input(), List.of(oversizedSource));
+
+    assertThat(oversizedBinding.canonicalBytes())
+        .hasSizeGreaterThan(AccountSelectedPublicationOrderGrpcCodec.MAX_BINDING_BYTES);
+    assertThatThrownBy(
+            () -> AccountSelectedPublicationOrderGrpcCodec.toResponse(request, oversizedBinding))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid selected-publication order transport evidence")
+        .hasNoCause();
+
+    var wire =
+        AuthorizeSelectedPublicationResponse.newBuilder()
+            .setSchemaVersion(request.schemaVersion())
+            .setTargetNamespace(request.targetNamespace())
+            .setRequestId(request.requestId().toString())
+            .setOriginalSelection(ByteString.copyFrom(request.originalSelection()))
+            .setPublicationAuthorizationBinding(
+                ByteString.copyFrom(oversizedBinding.canonicalBytes()))
+            .build();
+    assertThat(wire.getSerializedSize())
+        .isLessThanOrEqualTo(AccountSelectedPublicationOrderGrpcCodec.MAX_RESPONSE_MESSAGE_BYTES);
+    assertThatThrownBy(() -> AccountSelectedPublicationOrderGrpcCodec.fromResponse(request, wire))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid selected-publication order transport evidence")
+        .hasNoCause();
+  }
+
+  private static AuthoredDraftPublishSelectionBinding withNotes(
+      AuthoredDraftPublishSelectionBinding selection, String notes) {
+    var intent = selection.intent();
+    return AuthoredDraftPublishSelectionBinding.capture(
+        new PublishIntent(
+            intent.canonicalTenantId(),
+            intent.canonicalVersionId(),
+            intent.publishRequestId(),
+            intent.expectedVersionStateEpoch(),
+            notes,
+            intent.selectedCommitRequestId(),
+            intent.selectedCommitId(),
+            intent.selectedCommitDigest()),
+        selection.target(),
+        selection.selectedCommit(),
+        new VisibilityFence(
+            selection.target(),
+            selection.fenceRequestId(),
+            selection.fenceCommitId(),
+            selection.fenceInputDigest(),
+            selection.fenceResultVectorJson(),
+            OffsetDateTime.parse(selection.fenceCreatedAt())));
   }
 
   private static UnknownFieldSet unknown() {

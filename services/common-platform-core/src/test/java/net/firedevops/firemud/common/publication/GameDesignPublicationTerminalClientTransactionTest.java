@@ -35,6 +35,32 @@ class GameDesignPublicationTerminalClientTransactionTest {
   }
 
   @Test
+  void requiresFileBackedMtlsWithGameDesignTerminalContext(@TempDir Path directory) {
+    var factory = mock(GrpcChannelFactory.class);
+    var endpoints = new ServiceEndpointsProperties();
+    var plaintext = new CommonGrpcClientProperties();
+    plaintext.setPlaintext(true);
+    assertThatThrownBy(
+            () -> new GameDesignPublicationTerminalClient(endpoints, plaintext, factory, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Game Design publication terminal read")
+        .hasNoCause();
+
+    var classpath = new CommonGrpcClientProperties();
+    classpath.setPlaintext(false);
+    classpath.setCertChain("classpath:client.crt");
+    classpath.setPrivateKey(directory.resolve("client.key").toString());
+    classpath.setCaCert(directory.resolve("ca.crt").toString());
+    assertThatThrownBy(
+            () -> new GameDesignPublicationTerminalClient(endpoints, classpath, factory, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Game Design publication terminal read")
+        .hasMessageNotContaining("classpath:client.crt")
+        .hasNoCause();
+    verifyNoInteractions(factory);
+  }
+
+  @Test
   void excludesActiveAndSynchronizationOnlyTransactionsBeforeAnyRpc(@TempDir Path directory)
       throws Exception {
     var factory = mock(GrpcChannelFactory.class);

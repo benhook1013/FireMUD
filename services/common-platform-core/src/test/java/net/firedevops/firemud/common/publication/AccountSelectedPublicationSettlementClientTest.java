@@ -1,6 +1,9 @@
 package net.firedevops.firemud.common.publication;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.grpc.Server;
 import io.grpc.Status;
@@ -43,6 +46,36 @@ class AccountSelectedPublicationSettlementClientTest {
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String GAME_DESIGN_URI = "spiffe://firemud/ns/test/sa/game-design-service";
   private static final String STORE_PASSWORD = "test-only-store-password";
+
+  @Test
+  void requiresFileBackedMtlsWithAccountSettlementContext(@TempDir Path directory) {
+    var endpoints = new ServiceEndpointsProperties();
+    var factory = mock(GrpcChannelFactory.class);
+    var plaintext = new CommonGrpcClientProperties();
+    plaintext.setPlaintext(true);
+    assertThatThrownBy(
+            () ->
+                new AccountSelectedPublicationSettlementClient(
+                    endpoints, plaintext, factory, NAMESPACE))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account publication settlement")
+        .hasNoCause();
+
+    var classpath = new CommonGrpcClientProperties();
+    classpath.setPlaintext(false);
+    classpath.setCertChain("classpath:client.crt");
+    classpath.setPrivateKey(directory.resolve("client.key").toString());
+    classpath.setCaCert(directory.resolve("ca.crt").toString());
+    assertThatThrownBy(
+            () ->
+                new AccountSelectedPublicationSettlementClient(
+                    endpoints, classpath, factory, NAMESPACE))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account publication settlement")
+        .hasMessageNotContaining("classpath:client.crt")
+        .hasNoCause();
+    verifyNoInteractions(factory);
+  }
 
   @Test
   void returnsCanonicalReceiptFromAuthenticatedAccountPeerAfterFormerFiveSecondWindow(

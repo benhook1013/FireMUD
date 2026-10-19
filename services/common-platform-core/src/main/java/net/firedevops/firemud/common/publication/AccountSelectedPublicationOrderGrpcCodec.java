@@ -15,6 +15,10 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 public final class AccountSelectedPublicationOrderGrpcCodec {
   public static final int MAX_CREDENTIAL_BYTES = 16384;
   public static final int MAX_SELECTION_BYTES = 1048576;
+  public static final int MAX_BINDING_BYTES =
+      AccountPublicationAuthorizationReadEvidence.MAX_BINDING_BYTES;
+  public static final int MAX_RESPONSE_MESSAGE_BYTES =
+      MAX_SELECTION_BYTES + MAX_BINDING_BYTES + 1024;
 
   private AccountSelectedPublicationOrderGrpcCodec() {}
 
@@ -95,13 +99,16 @@ public final class AccountSelectedPublicationOrderGrpcCodec {
 
   public static AuthorizeSelectedPublicationResponse toResponse(
       Request request, AccountPublicationAuthorizationBinding binding) {
+    if (binding == null) throw invalid();
+    byte[] bindingBytes = binding.canonicalBytes();
+    if (bindingBytes.length == 0 || bindingBytes.length > MAX_BINDING_BYTES) throw invalid();
     requireSelection(request, binding);
     return AuthorizeSelectedPublicationResponse.newBuilder()
         .setSchemaVersion(request.schemaVersion())
         .setTargetNamespace(request.targetNamespace())
         .setRequestId(request.requestId().toString())
         .setOriginalSelection(ByteString.copyFrom(request.originalSelection()))
-        .setPublicationAuthorizationBinding(ByteString.copyFrom(binding.canonicalBytes()))
+        .setPublicationAuthorizationBinding(ByteString.copyFrom(bindingBytes))
         .build();
   }
 
@@ -109,15 +116,15 @@ public final class AccountSelectedPublicationOrderGrpcCodec {
       Request request, AuthorizeSelectedPublicationResponse wire) {
     try {
       noUnknown(wire);
+      if (wire.getSerializedSize() > MAX_RESPONSE_MESSAGE_BYTES) throw invalid();
+      var bindingBytes = wire.getPublicationAuthorizationBinding();
+      if (bindingBytes.isEmpty() || bindingBytes.size() > MAX_BINDING_BYTES) throw invalid();
       if (wire.getSchemaVersion() != request.schemaVersion()
           || !wire.getTargetNamespace().equals(request.targetNamespace())
           || !wire.getRequestId().equals(request.requestId().toString())
-          || !Arrays.equals(wire.getOriginalSelection().toByteArray(), request.originalSelection())
-          || wire.getPublicationAuthorizationBinding().size() > MAX_SELECTION_BYTES)
+          || !Arrays.equals(wire.getOriginalSelection().toByteArray(), request.originalSelection()))
         throw invalid();
-      var binding =
-          AccountPublicationAuthorizationBinding.fromStored(
-              wire.getPublicationAuthorizationBinding().toByteArray());
+      var binding = AccountPublicationAuthorizationBinding.fromStored(bindingBytes.toByteArray());
       requireSelection(request, binding);
       return binding;
     } catch (RuntimeException malformed) {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.publication;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -34,13 +35,21 @@ class AccountSelectedPublicationOrderClientTest {
   @Test
   void requiresReadableFileBackedMutualTlsAndNamespace(@TempDir Path directory) throws Exception {
     var factory = mock(GrpcChannelFactory.class);
+    assertThatThrownBy(
+            () ->
+                new AccountSelectedPublicationOrderClient(
+                    new ServiceEndpointsProperties(), null, factory, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account selected-publication")
+        .hasNoCause();
     var tls = tls(directory);
     tls.setPlaintext(true);
     assertThatThrownBy(
             () ->
                 new AccountSelectedPublicationOrderClient(
                     new ServiceEndpointsProperties(), tls, factory, "test"))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account selected-publication");
     tls.setPlaintext(false);
     for (String bad :
         new String[] {
@@ -51,11 +60,18 @@ class AccountSelectedPublicationOrderClientTest {
           directory.resolve("missing.pem").toString()
         }) {
       tls.setCertChain(bad);
-      assertThatThrownBy(
+      Throwable failure =
+          catchThrowable(
               () ->
                   new AccountSelectedPublicationOrderClient(
-                      new ServiceEndpointsProperties(), tls, factory, "test"))
-          .isInstanceOf(IllegalArgumentException.class);
+                      new ServiceEndpointsProperties(), tls, factory, "test"));
+      assertThat(failure)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Account selected-publication")
+          .hasNoCause();
+      if (bad != null && !bad.isEmpty()) {
+        assertThat(failure).hasMessageNotContaining(bad);
+      }
     }
     var valid = tls(directory);
     assertThatThrownBy(
@@ -88,6 +104,8 @@ class AccountSelectedPublicationOrderClientTest {
       var field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
       field.setAccessible(true);
       var initialized = (io.grpc.stub.AbstractStub<?>) field.get(client);
+      assertThat(initialized.getCallOptions().getMaxInboundMessageSize())
+          .isEqualTo(AccountSelectedPublicationOrderGrpcCodec.MAX_RESPONSE_MESSAGE_BYTES);
       var credentials = initialized.getCallOptions().getCredentials();
       assertThat(credentials).isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
       var peerField =

@@ -5,8 +5,6 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
@@ -31,7 +29,11 @@ public final class AccountSelectedPublicationOrderClient
       CommonGrpcClientProperties tls,
       GrpcChannelFactory factory,
       String namespace) {
-    super(endpoints, requireMtls(tls), factory, AccountSelectedPublicationOrderClient.class);
+    super(
+        endpoints,
+        requireFileBackedMtls(tls, "Account selected-publication"),
+        factory,
+        AccountSelectedPublicationOrderClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(namespace))
       throw new IllegalArgumentException("Canonical Account namespace required");
     this.namespace = namespace;
@@ -92,28 +94,8 @@ public final class AccountSelectedPublicationOrderClient
     return AccountSelectedPublicationOrderServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer))
-        .withCompression("gzip");
-  }
-
-  private static CommonGrpcClientProperties requireMtls(CommonGrpcClientProperties tls) {
-    if (tls == null || tls.isPlaintext())
-      throw new IllegalArgumentException("Account selected-publication requires workload mTLS");
-    for (String configured :
-        new String[] {tls.getCertChain(), tls.getPrivateKey(), tls.getCaCert()}) {
-      if (configured == null || configured.isBlank() || configured.trim().startsWith("classpath:"))
-        throw new IllegalArgumentException(
-            "Account selected-publication requires readable file-backed TLS material");
-      Path file;
-      try {
-        file = Path.of(configured.trim());
-      } catch (RuntimeException malformed) {
-        throw new IllegalArgumentException(
-            "Account selected-publication requires file-backed TLS material");
-      }
-      if (!Files.isRegularFile(file) || !Files.isReadable(file))
-        throw new IllegalArgumentException(
-            "Account selected-publication requires readable file-backed TLS material");
-    }
-    return tls;
+        .withCompression("gzip")
+        .withMaxInboundMessageSize(
+            AccountSelectedPublicationOrderGrpcCodec.MAX_RESPONSE_MESSAGE_BYTES);
   }
 }

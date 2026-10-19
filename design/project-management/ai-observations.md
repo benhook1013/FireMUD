@@ -265,9 +265,16 @@ Entry format:
   - Expected pattern: Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof.
   - Outcome: No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
 
-- 2026-10-15: Separate selected-publication owner proofs missed an Account settlement profile gap. The actual GDS terminal → authenticated World completion → both real terminal reads composition reached Account V94 and failed with SQLSTATE 23514 because its inventory validator still admitted only inventory/1 + World/3, while the current canonical producer retains closure inventory/2 + World/4. Preserve that failed composition beside prior component passes; a forward validator correction needs exact profile/refusal and existing-settlement byte/row-version upgrade proof. Do not rewrite installed migrations or treat controlled terminal readbacks as actual producer composition. Correction and qualification are in progress.
+- `2026-10-15`: Separate selected-publication owner proofs missed an Account settlement profile gap.
+  - Context: The actual GDS terminal → authenticated World completion → both real terminal reads composition reached Account V94 and failed with SQLSTATE 23514 because its inventory validator still admitted only inventory/1 + World/3, while the current canonical producer retains closure inventory/2 + World/4.
+  - Observation: Correction and qualification are in progress.
+  - Expected pattern: Preserve that failed composition beside prior component passes; a forward validator correction needs exact profile/refusal and existing-settlement byte/row-version upgrade proof. Do not rewrite installed migrations or treat controlled terminal readbacks as actual producer composition.
 
-- 2026-10-15 follow-up: Account's forward V1011 now converges the exact inventory/1 + World/3 and closure inventory/2 + World/4 validation profiles while retaining the original framing, digest, source and artifact guards. R14 passes the actual six-store terminal-to-settlement composition and nine malformed-profile refusals; R16 passes original PUBLISHED and NO_PUBLICATION settlement upgrade/replay with unchanged stored bytes and row versions. A test-only V1010 predecessor allowlist omission was corrected separately. These controlled component proofs supply no genuine creator, issuer, environment or deployed authority.
+- `2026-10-15`: Selected-publication settlement profile follow-up.
+  - Context: Account's forward V1011 now converges the exact inventory/1 + World/3 and closure inventory/2 + World/4 validation profiles while retaining the original framing, digest, source and artifact guards.
+  - Observation: R14 passes the actual six-store terminal-to-settlement composition and nine malformed-profile refusals; R16 passes original PUBLISHED and NO_PUBLICATION settlement upgrade/replay with unchanged stored bytes and row versions.
+  - Outcome: A test-only V1010 predecessor allowlist omission was corrected separately.
+  - Expected pattern: These controlled component proofs supply no genuine creator, issuer, environment or deployed authority.
 
 - `2026-10-16`: Keep FireController briefs within the size limit
   - Context: FireController job briefs are capped at 200,000 characters.

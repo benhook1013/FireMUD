@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.stub.AbstractStub;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import javax.net.ssl.SSLException;
@@ -51,6 +52,46 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(message);
     }
+  }
+
+  protected static final CommonGrpcClientProperties requireFileBackedMtls(
+      CommonGrpcClientProperties tlsProperties, String errorContext) {
+    if (tlsProperties == null || tlsProperties.isPlaintext()) {
+      throw new IllegalArgumentException(errorContext + " requires workload mTLS");
+    }
+    for (String configuredPath :
+        new String[] {
+          tlsProperties.getCertChain(), tlsProperties.getPrivateKey(), tlsProperties.getCaCert()
+        }) {
+      if (configuredPath == null || configuredPath.isBlank()) {
+        throw new IllegalArgumentException(
+            errorContext + " requires readable file-backed TLS material");
+      }
+      String pathText = configuredPath.trim();
+      if (pathText.startsWith("classpath:")) {
+        throw new IllegalArgumentException(
+            errorContext + " requires readable file-backed TLS material");
+      }
+      Path path;
+      try {
+        path = Path.of(pathText);
+      } catch (RuntimeException malformed) {
+        throw new IllegalArgumentException(
+            errorContext + " requires readable file-backed TLS material");
+      }
+      boolean readable;
+      try {
+        readable = Files.isRegularFile(path) && Files.isReadable(path);
+      } catch (RuntimeException inaccessible) {
+        throw new IllegalArgumentException(
+            errorContext + " requires readable file-backed TLS material");
+      }
+      if (!readable) {
+        throw new IllegalArgumentException(
+            errorContext + " requires readable file-backed TLS material");
+      }
+    }
+    return tlsProperties;
   }
 
   protected final void initReloadingClient() throws SSLException, IOException {
