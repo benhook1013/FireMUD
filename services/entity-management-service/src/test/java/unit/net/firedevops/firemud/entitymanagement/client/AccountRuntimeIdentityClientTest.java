@@ -84,6 +84,13 @@ class AccountRuntimeIdentityClientTest {
       assertThatThrownBy(() -> client.resolveRuntimeAccountIdentity(invalid[0], invalid[1]))
           .isInstanceOf(IllegalArgumentException.class);
     }
+    assertThatThrownBy(
+            () ->
+                client.resolveRuntimeAccountIdentity(
+                    "AB426BB3-A733-43F0-9C8E-2E379CBDF7EC", REQUEST_ID.toString()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Canonical nonnil canonical account ID is required")
+        .hasCauseInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(channelFactory);
   }
 
@@ -239,6 +246,35 @@ class AccountRuntimeIdentityClientTest {
     }
   }
 
+  @Test
+  void refusesCallsAfterCloseWithoutUsingTheStaleStub(@TempDir Path directory) throws Exception {
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    ManagedChannel channel = mock(ManagedChannel.class);
+    when(channelFactory.buildChannel(
+            eq("account-service:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
+        .thenReturn(channel);
+    AccountRuntimeIdentityClient client =
+        new AccountRuntimeIdentityClient(
+            new ServiceEndpointsProperties(), mtlsProperties(directory), channelFactory, NAMESPACE);
+
+    client.init();
+    client.init();
+    RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub staleStub =
+        mockStub();
+    setStub(client, staleStub);
+    client.close();
+
+    assertThatThrownBy(
+            () ->
+                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+    verifyNoInteractions(staleStub);
+    verify(channelFactory, times(1))
+        .buildChannel(
+            eq("account-service:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true));
+  }
+
   private static void assertRejected(ResolveRuntimeAccountIdentityResponse response)
       throws Exception {
     RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub stub = mockStub();
@@ -258,7 +294,20 @@ class AccountRuntimeIdentityClientTest {
     Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     stubField.setAccessible(true);
     stubField.set(client, stub);
+    Field initializedField =
+        AbstractReloadingBlockingGrpcClient.class.getDeclaredField("explicitlyInitialized");
+    initializedField.setAccessible(true);
+    initializedField.setBoolean(client, true);
     return client;
+  }
+
+  private static void setStub(
+      AccountRuntimeIdentityClient client,
+      RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub stub)
+      throws Exception {
+    Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    stubField.setAccessible(true);
+    stubField.set(client, stub);
   }
 
   private static AccountRuntimeIdentityClient newClientWithoutStub(

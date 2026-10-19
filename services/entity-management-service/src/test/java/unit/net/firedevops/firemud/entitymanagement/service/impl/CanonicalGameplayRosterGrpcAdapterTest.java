@@ -83,6 +83,15 @@ class CanonicalGameplayRosterGrpcAdapterTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical_account_uuid");
 
+    CanonicalGameplayRosterRequest nilAccount =
+        request(target()).toBuilder()
+            .setCanonicalAccountUuid("00000000-0000-0000-0000-000000000000")
+            .build();
+    assertThatThrownBy(() -> CanonicalGameplayRosterGrpcAdapter.parseRequest(nilAccount))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("canonical_account_uuid must be a canonical non-nil UUID")
+        .hasCauseInstanceOf(IllegalArgumentException.class);
+
     CanonicalGameplayRosterRequest unknown =
         request(target()).toBuilder().setUnknownFields(unknownField()).build();
     assertThatThrownBy(() -> CanonicalGameplayRosterGrpcAdapter.parseRequest(unknown))

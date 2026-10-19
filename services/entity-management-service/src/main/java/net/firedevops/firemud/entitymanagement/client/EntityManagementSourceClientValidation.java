@@ -39,7 +39,8 @@ final class EntityManagementSourceClientValidation {
       return CanonicalEntitySourceValues.parseCanonicalNonNilUuid(value);
     } catch (IllegalArgumentException exception) {
       throw new IllegalArgumentException(
-          "Canonical nonnil " + label + " is required", exception.getCause());
+          "Canonical nonnil " + label + " is required",
+          exception.getCause() == null ? exception : exception.getCause());
     }
   }
 

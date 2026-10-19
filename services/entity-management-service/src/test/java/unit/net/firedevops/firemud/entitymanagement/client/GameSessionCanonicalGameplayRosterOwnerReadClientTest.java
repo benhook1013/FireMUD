@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -182,6 +183,38 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     }
   }
 
+  @Test
+  void refusesCallsAfterCloseWithoutUsingTheStaleStub(@TempDir Path directory) throws Exception {
+    var channelFactory = mock(GrpcChannelFactory.class);
+    var channel = mock(ManagedChannel.class);
+    when(channelFactory.buildChannel(
+            eq("game-session-service:6565"),
+            eq(6565),
+            any(CommonGrpcClientProperties.class),
+            eq(true)))
+        .thenReturn(channel);
+    var client =
+        new GameSessionCanonicalGameplayRosterOwnerReadClient(
+            new ServiceEndpointsProperties(), mtlsProperties(directory), channelFactory, NAMESPACE);
+
+    client.init();
+    client.init();
+    var staleStub = mockStub();
+    setStub(client, staleStub);
+    client.close();
+
+    assertThatThrownBy(() -> client.getCanonicalGameplayRosterOwnerRead(request(NAMESPACE)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+    verifyNoInteractions(staleStub);
+    verify(channelFactory, times(1))
+        .buildChannel(
+            eq("game-session-service:6565"),
+            eq(6565),
+            any(CommonGrpcClientProperties.class),
+            eq(true));
+  }
+
   private static GameSessionCanonicalGameplayRosterOwnerReadClient newClient(
       CanonicalGameplayRosterOwnerReadServiceGrpc
               .CanonicalGameplayRosterOwnerReadServiceBlockingStub
@@ -191,7 +224,22 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     field.setAccessible(true);
     field.set(client, stub);
+    Field initializedField =
+        AbstractReloadingBlockingGrpcClient.class.getDeclaredField("explicitlyInitialized");
+    initializedField.setAccessible(true);
+    initializedField.setBoolean(client, true);
     return client;
+  }
+
+  private static void setStub(
+      GameSessionCanonicalGameplayRosterOwnerReadClient client,
+      CanonicalGameplayRosterOwnerReadServiceGrpc
+              .CanonicalGameplayRosterOwnerReadServiceBlockingStub
+          stub)
+      throws Exception {
+    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    field.setAccessible(true);
+    field.set(client, stub);
   }
 
   private static GameSessionCanonicalGameplayRosterOwnerReadClient newClientWithoutStub(

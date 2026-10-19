@@ -366,6 +366,36 @@ class AccountPreseededActorStagingEligibilityClientTest {
     }
   }
 
+  @Test
+  void refusesCallsAfterCloseWithoutUsingTheStaleStub(@TempDir Path directory) throws Exception {
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    ManagedChannel channel = mock(ManagedChannel.class);
+    when(channelFactory.buildChannel(
+            eq("account-service:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
+        .thenReturn(channel);
+    AccountPreseededActorStagingEligibilityClient client =
+        new AccountPreseededActorStagingEligibilityClient(
+            new ServiceEndpointsProperties(), mtlsProperties(directory), channelFactory, NAMESPACE);
+
+    client.init();
+    client.init();
+    AccountActorStagingEligibilityServiceGrpc.AccountActorStagingEligibilityServiceBlockingStub
+        staleStub = mockStub();
+    setStub(client, staleStub);
+    client.close();
+
+    assertThatThrownBy(
+            () ->
+                client.resolvePreseededActorStagingEligibility(
+                    ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+    verifyNoInteractions(staleStub);
+    verify(channelFactory, times(1))
+        .buildChannel(
+            eq("account-service:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true));
+  }
+
   private static void assertRejected(ResolvePreseededActorStagingEligibilityResponse response)
       throws Exception {
     AccountActorStagingEligibilityServiceGrpc.AccountActorStagingEligibilityServiceBlockingStub
@@ -399,7 +429,21 @@ class AccountPreseededActorStagingEligibilityClientTest {
     Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     stubField.setAccessible(true);
     stubField.set(client, stub);
+    Field initializedField =
+        AbstractReloadingBlockingGrpcClient.class.getDeclaredField("explicitlyInitialized");
+    initializedField.setAccessible(true);
+    initializedField.setBoolean(client, true);
     return client;
+  }
+
+  private static void setStub(
+      AccountPreseededActorStagingEligibilityClient client,
+      AccountActorStagingEligibilityServiceGrpc.AccountActorStagingEligibilityServiceBlockingStub
+          stub)
+      throws Exception {
+    Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    stubField.setAccessible(true);
+    stubField.set(client, stub);
   }
 
   private static AccountPreseededActorStagingEligibilityClient newClientWithoutStub(

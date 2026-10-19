@@ -257,7 +257,8 @@ public final class CanonicalGameplayRosterGrpcAdapter
       return CanonicalEntitySourceValues.parseCanonicalNonNilUuid(value);
     } catch (IllegalArgumentException invalid) {
       throw new IllegalArgumentException(
-          fieldName + " must be a canonical non-nil UUID", invalid.getCause());
+          fieldName + " must be a canonical non-nil UUID",
+          invalid.getCause() == null ? invalid : invalid.getCause());
     }
   }
 

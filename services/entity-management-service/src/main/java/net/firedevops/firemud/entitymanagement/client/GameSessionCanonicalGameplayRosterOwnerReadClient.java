@@ -49,7 +49,9 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
 
   /** Initializes file-backed mTLS only when the explicit owner-read switch is enabled. */
   public void init() throws SSLException, IOException {
-    initReloadingClient();
+    initOnce(
+        "Game Session canonical gameplay roster owner read client is closed",
+        "Game Session canonical gameplay roster owner read client is not initialized");
   }
 
   @Override
@@ -84,11 +86,9 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
     }
 
     CanonicalGameplayRosterOwnerReadServiceGrpc.CanonicalGameplayRosterOwnerReadServiceBlockingStub
-        currentStub = stub();
-    if (currentStub == null) {
-      throw new IllegalStateException(
-          "Game Session canonical gameplay roster owner read client is not initialized");
-    }
+        currentStub =
+            requireInitializedStub(
+                "Game Session canonical gameplay roster owner read client is not initialized");
 
     GetCanonicalGameplayRosterOwnerReadResponse response =
         currentStub
