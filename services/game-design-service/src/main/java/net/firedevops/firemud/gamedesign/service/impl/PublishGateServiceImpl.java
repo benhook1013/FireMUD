@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -406,7 +407,7 @@ public final class PublishGateServiceImpl implements PublishGateService {
     Optional<SelectedDraftGameLogicReceipt> receipt;
     try {
       receipt = selectedGameLogicReceiptRepository.readForPublication(binding);
-    } catch (org.jooq.exception.DataAccessException unavailable) {
+    } catch (org.jooq.exception.DataAccessException | DataAccessException unavailable) {
       return failedObservation(
           PublishParticipantKey.GAME_LOGIC,
           binding.versionId(),
