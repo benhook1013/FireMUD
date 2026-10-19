@@ -2,6 +2,12 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Server;
@@ -463,6 +469,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       var replaySource =
           org.mockito.Mockito.mock(
               net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient.class);
+      Throwable bodyFailure = null;
       try {
         accountServer =
             ownerServer(
@@ -830,13 +837,118 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               diagnostics);
           assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
         }
+      } catch (Exception failure) {
+        bodyFailure = failure;
+        throw failure;
+      } catch (Error failure) {
+        bodyFailure = failure;
+        throw failure;
       } finally {
-        stop(accountServer);
-        stop(worldServer);
-        stop(entityServer);
-        stop(automationServer);
-        stop(gameLogicServer);
+        stopServers(
+            bodyFailure,
+            accountServer,
+            worldServer,
+            entityServer,
+            automationServer,
+            gameLogicServer);
       }
+    }
+  }
+
+  @Test
+  void ownerServerCleanupAttemptsEveryServerAndSuppressesFailuresOnBodyFailure()
+      throws InterruptedException {
+    Server firstServer = mock(Server.class);
+    Server secondServer = mock(Server.class);
+    Server thirdServer = mock(Server.class);
+    RuntimeException bodyFailure = new IllegalStateException("publication body failed");
+    RuntimeException shutdownFailure = new IllegalStateException("first shutdown failed");
+    RuntimeException waitFailure = new IllegalStateException("second wait failed");
+    doThrow(shutdownFailure).when(firstServer).shutdownNow();
+    when(firstServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
+    when(secondServer.awaitTermination(5, TimeUnit.SECONDS)).thenThrow(waitFailure);
+    when(thirdServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(false);
+
+    Throwable thrown =
+        catchThrowable(
+            () -> {
+              Throwable primaryFailure = null;
+              try {
+                throw bodyFailure;
+              } catch (RuntimeException failure) {
+                primaryFailure = failure;
+                throw failure;
+              } finally {
+                stopServers(primaryFailure, firstServer, secondServer, thirdServer);
+              }
+            });
+
+    assertThat(thrown).isSameAs(bodyFailure);
+    assertThat(bodyFailure.getSuppressed()).hasSize(3);
+    assertThat(bodyFailure.getSuppressed()[0].getCause()).isSameAs(shutdownFailure);
+    assertThat(bodyFailure.getSuppressed()[1].getCause()).isSameAs(waitFailure);
+    assertThat(bodyFailure.getSuppressed()[2].getMessage())
+        .contains("Owner server 3 did not terminate");
+    var order = inOrder(firstServer, secondServer, thirdServer);
+    order.verify(firstServer).shutdownNow();
+    order.verify(secondServer).shutdownNow();
+    order.verify(thirdServer).shutdownNow();
+    order.verify(firstServer).awaitTermination(5, TimeUnit.SECONDS);
+    order.verify(secondServer).awaitTermination(5, TimeUnit.SECONDS);
+    order.verify(thirdServer).awaitTermination(5, TimeUnit.SECONDS);
+  }
+
+  @Test
+  void ownerServerCleanupFailureFailsWhenPublicationBodySucceeded() throws InterruptedException {
+    Server firstServer = mock(Server.class);
+    Server secondServer = mock(Server.class);
+    Server thirdServer = mock(Server.class);
+    RuntimeException waitFailure = new IllegalStateException("first wait failed");
+    when(firstServer.awaitTermination(5, TimeUnit.SECONDS)).thenThrow(waitFailure);
+    when(secondServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
+    when(thirdServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
+
+    assertThatThrownBy(() -> stopServers(null, firstServer, secondServer, thirdServer))
+        .isInstanceOf(AssertionError.class)
+        .satisfies(
+            failure -> {
+              assertThat(failure.getSuppressed()).hasSize(1);
+              assertThat(failure.getSuppressed()[0].getCause()).isSameAs(waitFailure);
+            });
+
+    verify(firstServer).shutdownNow();
+    verify(secondServer).shutdownNow();
+    verify(thirdServer).shutdownNow();
+    verify(firstServer).awaitTermination(5, TimeUnit.SECONDS);
+    verify(secondServer).awaitTermination(5, TimeUnit.SECONDS);
+    verify(thirdServer).awaitTermination(5, TimeUnit.SECONDS);
+  }
+
+  @Test
+  void ownerServerCleanupRestoresInterruptAfterAttemptingAllTerminationWaits()
+      throws InterruptedException {
+    Server firstServer = mock(Server.class);
+    Server secondServer = mock(Server.class);
+    Server thirdServer = mock(Server.class);
+    InterruptedException interruption = new InterruptedException("first wait interrupted");
+    when(firstServer.awaitTermination(5, TimeUnit.SECONDS)).thenThrow(interruption);
+    when(secondServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
+    when(thirdServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(true);
+
+    try {
+      assertThatThrownBy(() -> stopServers(null, firstServer, secondServer, thirdServer))
+          .isInstanceOf(AssertionError.class)
+          .satisfies(
+              failure -> {
+                assertThat(failure.getSuppressed()).hasSize(1);
+                assertThat(failure.getSuppressed()[0].getCause()).isSameAs(interruption);
+              });
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+      verify(firstServer).awaitTermination(5, TimeUnit.SECONDS);
+      verify(secondServer).awaitTermination(5, TimeUnit.SECONDS);
+      verify(thirdServer).awaitTermination(5, TimeUnit.SECONDS);
+    } finally {
+      Thread.interrupted();
     }
   }
 
@@ -863,6 +975,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     endpoints.setGameDesignService(loopback(gdsServer));
     var channels = new GrpcChannelFactory();
     var sources = issued.sources();
+    Throwable bodyFailure = null;
     try (var selectionClient =
         new net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient(
             endpoints, pki.client("account-service"), channels, NAMESPACE)) {
@@ -913,9 +1026,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             .isEqualTo(1L);
         return created;
       }
+    } catch (Exception failure) {
+      bodyFailure = failure;
+      throw failure;
+    } catch (Error failure) {
+      bodyFailure = failure;
+      throw failure;
     } finally {
-      stop(accountServer);
-      stop(gdsServer);
+      stopServers(bodyFailure, accountServer, gdsServer);
     }
   }
 
@@ -980,6 +1098,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                 sources, NAMESPACE));
     Server accountServer = null;
     Server worldServer = null;
+    Throwable bodyFailure = null;
     try {
       accountServer =
           ownerServer(
@@ -1096,10 +1215,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           return retained;
         }
       }
+    } catch (Exception failure) {
+      bodyFailure = failure;
+      throw failure;
+    } catch (Error failure) {
+      bodyFailure = failure;
+      throw failure;
     } finally {
-      stop(worldServer);
-      stop(accountServer);
-      stop(gdsServer);
+      stopServers(bodyFailure, worldServer, accountServer, gdsServer);
     }
   }
 
@@ -1179,6 +1302,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setGameDesignService(loopback(gdsTerminalServer));
     var channels = new GrpcChannelFactory();
+    Throwable bodyFailure = null;
     try (var worldGdsRead =
         new net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient(
             endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
@@ -1345,10 +1469,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               .containsExactly(published.canonicalBytes());
         }
       }
+    } catch (Exception failure) {
+      bodyFailure = failure;
+      throw failure;
+    } catch (Error failure) {
+      bodyFailure = failure;
+      throw failure;
     } finally {
-      stop(accountSettlementServer);
-      stop(worldTerminalServer);
-      stop(gdsTerminalServer);
+      stopServers(bodyFailure, accountSettlementServer, worldTerminalServer, gdsTerminalServer);
     }
   }
 
@@ -2156,10 +2284,52 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     return builder.build().start();
   }
 
-  private static void stop(Server server) throws InterruptedException {
-    if (server == null) return;
-    server.shutdownNow();
-    assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+  private static void stopServers(Throwable bodyFailure, Server... servers) {
+    List<Throwable> cleanupFailures = new ArrayList<>();
+    boolean interrupted = bodyFailure instanceof InterruptedException;
+
+    for (int index = 0; index < servers.length; index++) {
+      Server server = servers[index];
+      if (server == null) continue;
+      try {
+        server.shutdownNow();
+      } catch (RuntimeException | Error failure) {
+        cleanupFailures.add(
+            new IllegalStateException(
+                "Failed to request shutdown for owner server " + (index + 1), failure));
+      }
+    }
+
+    for (int index = 0; index < servers.length; index++) {
+      Server server = servers[index];
+      if (server == null) continue;
+      try {
+        if (!server.awaitTermination(5, TimeUnit.SECONDS)) {
+          cleanupFailures.add(
+              new IllegalStateException(
+                  "Owner server " + (index + 1) + " did not terminate within 5 seconds"));
+        }
+      } catch (InterruptedException failure) {
+        interrupted = true;
+        cleanupFailures.add(
+            new IllegalStateException(
+                "Interrupted while awaiting owner server " + (index + 1) + " termination",
+                failure));
+      } catch (RuntimeException | Error failure) {
+        cleanupFailures.add(
+            new IllegalStateException(
+                "Failed while awaiting owner server " + (index + 1) + " termination", failure));
+      }
+    }
+
+    if (interrupted) Thread.currentThread().interrupt();
+    if (bodyFailure != null) {
+      cleanupFailures.forEach(bodyFailure::addSuppressed);
+    } else if (!cleanupFailures.isEmpty()) {
+      AssertionError aggregate = new AssertionError("Selected-full owner server cleanup failed");
+      cleanupFailures.forEach(aggregate::addSuppressed);
+      throw aggregate;
+    }
   }
 
   private static Store store(
