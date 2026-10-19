@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /** Synthetic handler tests only; they do not establish mTLS or PostgreSQL owner proof. */
 class AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest {
@@ -84,10 +85,13 @@ class AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest {
   void returnsExactEchoOnlyForMatchingEntityAndAutomationReader() {
     var owner = mock(AccountSelectedOwnerIntakeAuthorizationReadService.class);
     var service = new AccountSelectedOwnerIntakeAuthorizationReadGrpcService(owner, "test");
+    var expectedRequests =
+        new java.util.ArrayList<SelectedOwnerIntakeAuthorizationReadEvidence.Request>();
 
     for (Owner domain : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
       var binding = AccountSelectedOwnerIntakeAuthorizationReadServiceTest.binding(domain);
       var request = SelectedOwnerIntakeAuthorizationReadEvidence.Request.create("test", binding);
+      expectedRequests.add(request);
       var wire = SelectedOwnerIntakeAuthorizationReadGrpcCodec.toRequest(request);
       var result = new Collector();
       peerFromUri(binding.intendedReader())
@@ -98,7 +102,27 @@ class AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest {
       assertThat(result.response.getRequest()).isEqualTo(wire);
       assertThat(result.response.getHeld()).isTrue();
     }
-    verify(owner, times(2)).requireHeld(any());
+    ArgumentCaptor<SelectedOwnerIntakeAuthorizationReadEvidence.Request> captured =
+        ArgumentCaptor.forClass(SelectedOwnerIntakeAuthorizationReadEvidence.Request.class);
+    verify(owner, times(2)).requireHeld(captured.capture());
+    assertThat(captured.getAllValues()).hasSize(2);
+    assertThat(captured.getAllValues()).containsExactlyElementsOf(expectedRequests);
+    for (int index = 0; index < captured.getAllValues().size(); index++) {
+      var actual = captured.getAllValues().get(index);
+      var expectedBinding = expectedRequests.get(index).binding();
+      assertThat(actual.schemaVersion())
+          .isEqualTo(SelectedOwnerIntakeAuthorizationReadEvidence.SCHEMA_VERSION);
+      assertThat(actual.targetNamespace()).isEqualTo("test");
+      assertThat(actual.readRequestId())
+          .isNotIn(
+              actual.binding().operationId(),
+              actual.binding().fenceId(),
+              actual.binding().intakeRequestId());
+      assertThat(actual.intendedReader()).isEqualTo(expectedBinding.intendedReader());
+      assertThat(actual.retentionPurpose()).isEqualTo(expectedBinding.purpose());
+      assertThat(actual.binding().canonicalBytes())
+          .containsExactly(expectedBinding.canonicalBytes());
+    }
   }
 
   @Test
