@@ -141,6 +141,7 @@ class PublishGateServiceImplTest {
     assertEquals("b".repeat(64), digests.getFirst().contentDigest());
     assertEquals("c".repeat(64), digests.get(4).contentDigest());
     verify(selectedPublicationDigestReader).read("test", binding);
+    verify(selectedPublicationDigestReader).read("test", binding, receipt);
     org.mockito.Mockito.verifyNoInteractions(worldManagementClient, controlPlaneDigestService);
     assertBinding(captureVersionBinding(entityManagementClient), binding);
     ArgumentCaptor<PublicationDigestRequestBinding> gameLogicBinding =
@@ -151,8 +152,10 @@ class PublishGateServiceImplTest {
     assertBinding(captureVersionBinding(automationScriptingClient), binding);
 
     var publicationOrder =
-        org.mockito.Mockito.inOrder(selectedGameLogicReceiptRepository, gameLogicClient);
+        org.mockito.Mockito.inOrder(
+            selectedGameLogicReceiptRepository, selectedPublicationDigestReader, gameLogicClient);
     publicationOrder.verify(selectedGameLogicReceiptRepository).readForPublication(binding);
+    publicationOrder.verify(selectedPublicationDigestReader).read("test", binding, receipt);
     publicationOrder.verify(gameLogicClient).getDraftDesignDigestForVersion(binding, receipt);
     verify(gameLogicClient, org.mockito.Mockito.never())
         .getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class));
@@ -278,6 +281,89 @@ class PublishGateServiceImplTest {
             PublishGateFailureException.class,
             () -> service.assertSelectedGatePassed(version, digests));
     assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(thrown));
+  }
+
+  @Test
+  void selectedGameLogicSourceReadFailureRemainsRetryableAndPreventsClientCall() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    SelectedDraftGameLogicReceipt receipt =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+    when(selectedPublicationDigestReader.read("test", binding, receipt))
+        .thenThrow(io.grpc.Status.UNAVAILABLE.asRuntimeException());
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("UNAVAILABLE", digests.get(2).errorCode());
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class,
+            () -> service.assertSelectedGatePassed(version, digests));
+    assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(thrown));
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(binding, receipt);
+  }
+
+  @Test
+  void missingSelectedGameLogicSourceEvidencePreventsClientCall() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    SelectedDraftGameLogicReceipt receipt =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+    when(selectedPublicationDigestReader.read("test", binding, receipt))
+        .thenThrow(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("FAILED_PRECONDITION", digests.get(2).errorCode());
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(binding, receipt);
+  }
+
+  @Test
+  void nullSelectedGameLogicSourceReadPreventsClientCall() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    SelectedDraftGameLogicReceipt receipt =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+    when(selectedPublicationDigestReader.read("test", binding, receipt)).thenReturn(null);
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("FAILED_PRECONDITION", digests.get(2).errorCode());
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(binding, receipt);
+  }
+
+  @Test
+  void selectedGameLogicSourceReadForAnotherRequestPreventsClientCall() {
+    VersionDto version = selectedVersion();
+    PublicationDigestRequestBinding binding = selectedBinding(version);
+    SelectedDraftGameLogicReceipt receipt =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+    stubSelectedParticipantDigests(version, binding, receipt);
+    PublicationDigestRequestBinding other =
+        PublicationDigestRequestBinding.full(
+            binding.tenantId(), binding.versionId(), "other-request");
+    when(selectedPublicationDigestReader.read("test", binding, receipt))
+        .thenReturn(selectedSnapshot(other));
+
+    List<PublishParticipantDigestDto> digests =
+        service.collectSelectedFullVersionParticipantDigests(
+            version, binding, binding.derivedWorkflowIdentity());
+
+    assertEquals("FAILED_PRECONDITION", digests.get(2).errorCode());
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(binding, receipt);
   }
 
   @Test
@@ -662,6 +748,8 @@ class PublishGateServiceImplTest {
     stubSelectedParticipantDigests(version, binding, receipt);
     when(selectedPublicationDigestReader.read("test", binding))
         .thenThrow(io.grpc.Status.UNAVAILABLE.asRuntimeException());
+    when(selectedPublicationDigestReader.read("test", binding, receipt))
+        .thenThrow(io.grpc.Status.UNAVAILABLE.asRuntimeException());
 
     var digests =
         service.collectSelectedFullVersionParticipantDigests(
@@ -680,7 +768,8 @@ class PublishGateServiceImplTest {
     assertEquals("UNAVAILABLE", failure.participantFailureCode());
     assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(failure));
     org.mockito.Mockito.verifyNoInteractions(worldManagementClient, controlPlaneDigestService);
-    verify(gameLogicClient).getDraftDesignDigestForVersion(binding, receipt);
+    verify(gameLogicClient, org.mockito.Mockito.never())
+        .getDraftDesignDigestForVersion(binding, receipt);
   }
 
   @Test
@@ -838,6 +927,11 @@ class PublishGateServiceImplTest {
   private void stubNonGameLogicParticipants(
       VersionDto version, PublicationDigestRequestBinding binding) {
     when(selectedPublicationDigestReader.read("test", binding))
+        .thenReturn(selectedSnapshot(binding));
+    when(selectedPublicationDigestReader.read(
+            org.mockito.ArgumentMatchers.eq("test"),
+            org.mockito.ArgumentMatchers.eq(binding),
+            any(SelectedDraftGameLogicReceipt.class)))
         .thenReturn(selectedSnapshot(binding));
     when(entityManagementClient.getDraftDesignDigestForVersion(binding))
         .thenReturn(

@@ -267,7 +267,8 @@ class PublishedReleaseBundleServiceImplTest {
                       mixed,
                       evidence))
           .as("mixed profile for %s", participant.participantKey())
-          .isInstanceOf(IllegalArgumentException.class);
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Selected-full release requires the exact 4/3/1/6/2");
     }
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
   }
