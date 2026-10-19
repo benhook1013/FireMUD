@@ -1,5 +1,10 @@
 package net.firedevops.firemud.test;
 
+import com.github.dockerjava.api.command.InspectContainerResponse;
+import com.github.dockerjava.api.model.ExposedPort;
+import com.github.dockerjava.api.model.NetworkSettings;
+import com.github.dockerjava.api.model.Ports;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -19,6 +24,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 public final class PostgresBackedServiceTestSupport {
+  private static final int POSTGRES_PORT = 5432;
+  private static final int MAX_DIAGNOSTIC_LOG_BYTES = 16 * 1024;
   private static final Map<String, String> SERVICE_MODULE_DIRECTORY =
       Map.ofEntries(
           Map.entry("account_service", "account-service"),
@@ -76,14 +83,92 @@ public final class PostgresBackedServiceTestSupport {
     } catch (ConditionTimeoutException timeout) {
       SQLException failure = lastFailure.get();
       if (failure == null) {
+        attachPostgresReadinessDiagnostics(postgres, timeout);
         throw timeout;
       }
       IllegalStateException readinessFailure =
           new IllegalStateException(
               "Timed out waiting for PostgreSQL mapped JDBC readiness", failure);
       readinessFailure.addSuppressed(timeout);
+      attachPostgresReadinessDiagnostics(postgres, readinessFailure);
       throw readinessFailure;
     }
+  }
+
+  private static void attachPostgresReadinessDiagnostics(
+      PostgreSQLContainer<?> postgres, Throwable readinessFailure) {
+    try {
+      String diagnostics = capturePostgresReadinessDiagnostics(postgres);
+      readinessFailure.addSuppressed(new IllegalStateException(diagnostics));
+      System.err.println(diagnostics);
+    } catch (RuntimeException diagnosticsFailure) {
+      readinessFailure.addSuppressed(
+          new IllegalStateException(
+              "PostgreSQL readiness diagnostic collection failed", diagnosticsFailure));
+    }
+  }
+
+  private static String capturePostgresReadinessDiagnostics(PostgreSQLContainer<?> postgres) {
+    String containerId = postgres.getContainerId();
+    String host = postgres.getHost();
+    Integer mappedPort = postgres.getMappedPort(POSTGRES_PORT);
+    InspectContainerResponse containerInfo = postgres.getCurrentContainerInfo();
+    InspectContainerResponse.ContainerState state = containerInfo.getState();
+    String logs = tailUtf8(postgres.getLogs(), MAX_DIAGNOSTIC_LOG_BYTES);
+
+    return "PostgreSQL JDBC readiness timeout diagnostics:"
+        + "\ncontainerId="
+        + containerId
+        + "\nhost="
+        + host
+        + "\nmappedPort="
+        + mappedPort
+        + "\nstate.running="
+        + (state == null ? null : state.getRunning())
+        + "\nstate.oomKilled="
+        + (state == null ? null : state.getOOMKilled())
+        + "\nstate.exitCode="
+        + (state == null ? null : state.getExitCodeLong())
+        + "\nstate.error="
+        + (state == null ? null : state.getError())
+        + "\nmappedPortBindings[5432/tcp]="
+        + postgresPortBindings(containerInfo)
+        + "\npostgresStartupLogTail(maxBytes="
+        + MAX_DIAGNOSTIC_LOG_BYTES
+        + "):\n"
+        + logs;
+  }
+
+  private static String postgresPortBindings(InspectContainerResponse containerInfo) {
+    NetworkSettings networkSettings = containerInfo.getNetworkSettings();
+    Ports ports = networkSettings == null ? null : networkSettings.getPorts();
+    Ports.Binding[] bindings =
+        ports == null ? null : ports.getBindings().get(ExposedPort.tcp(POSTGRES_PORT));
+    if (bindings == null || bindings.length == 0) {
+      return "<none>";
+    }
+
+    StringBuilder result = new StringBuilder();
+    for (Ports.Binding binding : bindings) {
+      if (result.length() > 0) {
+        result.append(',');
+      }
+      result.append(binding.getHostIp()).append(':').append(binding.getHostPortSpec());
+    }
+    return result.toString();
+  }
+
+  private static String tailUtf8(String value, int maxBytes) {
+    byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+    if (bytes.length <= maxBytes) {
+      return value;
+    }
+
+    int start = bytes.length - maxBytes;
+    while (start < bytes.length && (bytes[start] & 0xc0) == 0x80) {
+      start++;
+    }
+    return new String(bytes, start, bytes.length - start, StandardCharsets.UTF_8);
   }
 
   public static void registerPostgresService(
