@@ -22,7 +22,12 @@ import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrder
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Standalone, unregistered producer; Account obtains environment authority internally. */
+/**
+ * Standalone, unregistered producer; Account obtains environment authority internally. Any future
+ * receiving server must allow at least {@link
+ * AccountSelectedPublicationOrderGrpcCodec#MAX_METADATA_BYTES} inbound metadata before registering
+ * this service; binding it does not configure that server limit.
+ */
 public final class AccountSelectedDraftPublicationOrderGrpcService implements BindableService {
   private final AccountSelectedDraftPublicationOrderService owner;
   private final AccountHostedTermsService terms;

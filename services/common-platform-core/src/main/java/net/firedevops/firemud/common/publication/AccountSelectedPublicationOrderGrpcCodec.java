@@ -14,6 +14,8 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 /** Closed producer transport. Credential data never appears in responses or diagnostics. */
 public final class AccountSelectedPublicationOrderGrpcCodec {
   public static final int MAX_CREDENTIAL_BYTES = 16384;
+  // Protected binary metadata uses base64 on the gRPC wire plus bounded metadata overhead.
+  public static final int MAX_METADATA_BYTES = ((MAX_CREDENTIAL_BYTES + 2) / 3) * 4 + 1024;
   public static final int MAX_SELECTION_BYTES = 1048576;
   public static final int MAX_BINDING_BYTES =
       AccountPublicationAuthorizationReadEvidence.MAX_BINDING_BYTES;

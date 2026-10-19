@@ -698,6 +698,7 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
       TestIdentity identity, Path ca, io.grpc.BindableService... endpoints) throws Exception {
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .maxInboundMetadataSize(AccountSelectedPublicationOrderGrpcCodec.MAX_METADATA_BYTES)
             .sslContext(
                 GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
                     .trustManager(ca.toFile())

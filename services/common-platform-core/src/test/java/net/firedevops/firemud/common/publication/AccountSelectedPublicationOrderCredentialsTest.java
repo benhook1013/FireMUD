@@ -66,6 +66,8 @@ class AccountSelectedPublicationOrderCredentialsTest {
   @Test
   void
       authenticatedReadRejectsMissingDuplicateOversizedAndMalformedHeadersWithoutSecretDiagnostics() {
+    String maxCredential =
+        "A".repeat(AccountSelectedPublicationOrderGrpcCodec.MAX_CREDENTIAL_BYTES);
     var missing = new Metadata();
     var duplicate = new Metadata();
     duplicate.put(RAW, SECRET.getBytes(StandardCharsets.US_ASCII));
@@ -77,7 +79,7 @@ class AccountSelectedPublicationOrderCredentialsTest {
             raw(new byte[0]),
             raw(new byte[] {(byte) 128}),
             raw((SECRET + "\n").getBytes(StandardCharsets.US_ASCII)),
-            raw(new byte[16385]))) {
+            raw(new byte[AccountSelectedPublicationOrderGrpcCodec.MAX_CREDENTIAL_BYTES + 1]))) {
       assertThatThrownBy(
               () -> AccountSelectedPublicationOrderCredentials.readAuthenticated(headers))
           .isInstanceOf(IllegalArgumentException.class)
@@ -89,6 +91,11 @@ class AccountSelectedPublicationOrderCredentialsTest {
             raw(SECRET.getBytes(StandardCharsets.US_ASCII)));
     assertThat(exact.value()).isEqualTo(SECRET);
     assertThat(exact.toString()).doesNotContain(SECRET);
+    assertThat(
+            AccountSelectedPublicationOrderCredentials.readAuthenticated(
+                    raw(maxCredential.getBytes(StandardCharsets.US_ASCII)))
+                .value())
+        .isEqualTo(maxCredential);
   }
 
   private static Metadata raw(byte[] bytes) {

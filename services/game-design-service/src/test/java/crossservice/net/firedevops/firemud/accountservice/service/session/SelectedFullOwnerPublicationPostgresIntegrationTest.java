@@ -61,6 +61,7 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.SelectedOwnerWorldInventoryReadEvidence;
@@ -2288,6 +2289,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     var identity = pki.server(service);
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .maxInboundMetadataSize(AccountSelectedPublicationOrderGrpcCodec.MAX_METADATA_BYTES)
             .sslContext(
                 GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
                     .trustManager(pki.ca().toFile())

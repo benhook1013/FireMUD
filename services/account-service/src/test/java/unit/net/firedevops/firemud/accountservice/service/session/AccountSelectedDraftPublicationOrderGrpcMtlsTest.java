@@ -103,6 +103,34 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
   }
 
   @Test
+  void maximumCreatorCredentialMetadataReachesAuthenticatedOwnerUnchanged() throws Exception {
+    String credential = "A".repeat(AccountSelectedPublicationOrderGrpcCodec.MAX_CREDENTIAL_BYTES);
+    var owner = mock(AccountSelectedDraftPublicationOrderService.class);
+    var terms = mock(AccountHostedTermsService.class);
+    var captured = mock(AccountHostedTermsService.CapturedEnvironmentBoundary.class);
+    when(terms.captureCurrentEnvironmentBoundary()).thenReturn(captured);
+    when(owner.authorize(eq(credential), any(), same(captured)))
+        .thenThrow(Status.FAILED_PRECONDITION.asRuntimeException());
+
+    try (TransportServer server = startServer(pki.accountServer(), owner, terms);
+        var client = newClient(server.port(), pki.gameDesignClient())) {
+      client.init();
+
+      assertThatThrownBy(() -> client.authorize(request(credential)))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+
+      assertThat(server.handlerCalls()).hasValue(1);
+      var calls = inOrder(terms, owner);
+      calls.verify(terms).captureCurrentEnvironmentBoundary();
+      calls.verify(owner).authorize(eq(credential), any(), same(captured));
+    }
+  }
+
+  @Test
   void trustedWrongServiceAndNamespaceGameDesignCallersAreDeniedBeforeCapture() throws Exception {
     for (TestIdentity identity : List.of(pki.wrongServiceClient(), pki.otherNamespaceClient())) {
       var owner = mock(AccountSelectedDraftPublicationOrderService.class);
@@ -209,6 +237,7 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
         };
     Server server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .maxInboundMetadataSize(AccountSelectedPublicationOrderGrpcCodec.MAX_METADATA_BYTES)
             .sslContext(
                 GrpcSslContexts.configure(
                         SslContextBuilder.forServer(
@@ -261,6 +290,10 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
   }
 
   private static AccountSelectedPublicationOrderGrpcCodec.Request request() {
+    return request(CREDENTIAL);
+  }
+
+  private static AccountSelectedPublicationOrderGrpcCodec.Request request(String credential) {
     UUID tenant = UUID.randomUUID(), version = UUID.randomUUID();
     var target =
         new DraftCommitBinding.TargetProof(
@@ -303,7 +336,7 @@ class AccountSelectedDraftPublicationOrderGrpcMtlsTest {
                 "[]",
                 OffsetDateTime.parse("2026-10-01T00:00:00Z")));
     return AccountSelectedPublicationOrderGrpcCodec.Request.create(
-        NAMESPACE, selection, CREDENTIAL);
+        NAMESPACE, selection, credential);
   }
 
   private static final String CREDENTIAL = "original.secret.credential";
