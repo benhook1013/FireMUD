@@ -1775,7 +1775,7 @@ def _is_finished_action_response(body: str, *, allow_action_wrapper: bool) -> bo
 
 
 _ADDRESSED_COMMIT_ANNOTATION = re.compile(
-    r"(?:\r?\n){2}✅ Addressed in commits ([0-9a-f]{7,40}) to ([0-9a-f]{7,40})\Z",
+    r"(?:\r?\n){2}✅ Addressed in commit(?:s ([0-9a-f]{7,40}) to)? ([0-9a-f]{7,40})\Z",
     re.IGNORECASE,
 )
 
@@ -1783,11 +1783,15 @@ _ADDRESSED_COMMIT_ANNOTATION = re.compile(
 def _archived_completed_thread_bodies(
     repo: str,
     pr_number: int,
+    payload: dict[str, Any],
     head: str,
     response_id: int,
     response_created_at: datetime,
     record: Mapping[str, Any] | None,
     current_record_path: str | Path | None,
+    *,
+    recovery_attempt_id: str | None = None,
+    records_reader: Any = None,
 ) -> dict[int, tuple[str, str]]:
     """Read immutable prior Hosted thread bodies for exact trigger attribution."""
 
@@ -1832,7 +1836,7 @@ def _archived_completed_thread_bodies(
         return {}
 
     try:
-        records = SqliteReviewRecords(database)
+        records = records_reader if records_reader is not None else SqliteReviewRecords(database)
         current_attempt = records.attempt(current_attempt_id)
         attempt_history = records.attempt_history(pr_number)
         current_history = [item for item in attempt_history if item.get("attempt_id") == current_attempt_id]
@@ -1906,6 +1910,85 @@ def _archived_completed_thread_bodies(
                 or str(current_metadata["response_id"]) != str(response_id)
                 or current_observed_at is None
                 or current_observed_at != current_finished_at
+            ):
+                return {}
+        elif current_state == "ambiguous" and recovery_attempt_id == current_attempt_id:
+            # The explicit records-repair path may verify one previously
+            # captured ambiguous response. Normal trigger readers never pass
+            # this selector and retain the terminal-ambiguity fence below.
+            if (
+                current_trigger_id != str(trigger_id)
+                or current_response_id != str(response_id)
+                or current_finished_at is None
+                or current_finished_at < response_created_at
+                or current_attempt.get("run_id") is not None
+            ):
+                return {}
+            try:
+                current_artifacts = records.attempt_artifacts(current_attempt_id)
+                if not {"hosted_review", "hosted_comments", "metadata"} <= current_artifacts.keys():
+                    return {}
+                current_metadata = json.loads(current_artifacts["metadata"])
+                current_reviews = json.loads(current_artifacts["hosted_review"])
+                current_comments = json.loads(current_artifacts["hosted_comments"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+            current_observed_at = (
+                parse_timestamp(current_metadata.get("observed_at")) if isinstance(current_metadata, dict) else None
+            )
+            captured_record = current_metadata.get("trigger_record") if isinstance(current_metadata, dict) else None
+            if (
+                not isinstance(current_metadata, dict)
+                or current_metadata.get("state") != "ambiguous"
+                or current_metadata.get("terminal") is not True
+                or current_metadata.get("attributable") is not False
+                or not isinstance(current_metadata.get("repository"), str)
+                or current_metadata["repository"].casefold() != repo.casefold()
+                or current_metadata.get("pull_request") != pr_number
+                or current_metadata.get("head_sha") != head
+                or current_metadata.get("trigger_id") != trigger_id
+                or current_metadata.get("response_id") != response_id
+                or current_observed_at != current_finished_at
+                or not isinstance(captured_record, dict)
+                or captured_record.get("sqlite_attempt_id") != current_attempt_id
+                or captured_record.get("head_sha") != head
+                or not isinstance(current_reviews, list)
+                or not isinstance(current_comments, dict)
+                or not isinstance(current_comments.get("comments"), list)
+                or not isinstance(current_comments.get("review_threads"), list)
+            ):
+                return {}
+            captured_triggers = [
+                item
+                for item in current_comments["comments"]
+                if isinstance(item, dict) and immutable_database_id(item) == trigger_id
+            ]
+            captured_responses = [
+                item
+                for item in current_comments["comments"]
+                if isinstance(item, dict) and immutable_database_id(item) == response_id
+            ]
+            try:
+                live_comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+                live_responses = [
+                    item
+                    for item in live_comments
+                    if isinstance(item, dict) and immutable_database_id(item) == response_id
+                ]
+            except (KeyError, TypeError):
+                return {}
+            if (
+                len(captured_triggers) != 1
+                or len(captured_responses) != 1
+                or len(live_responses) != 1
+                or len(current_reviews) != 0
+                or parse_timestamp(captured_responses[0].get("createdAt")) != response_created_at
+                or parse_timestamp(captured_responses[0].get("updatedAt")) is None
+                or parse_timestamp(captured_responses[0].get("updatedAt")) < response_created_at
+                or not isinstance(captured_responses[0].get("body"), str)
+                or not _is_finished_action_response(captured_responses[0]["body"], allow_action_wrapper=True)
+                or captured_responses[0].get("body") != live_responses[0].get("body")
+                or captured_responses[0].get("updatedAt") != live_responses[0].get("updatedAt")
             ):
                 return {}
         else:
@@ -2359,6 +2442,8 @@ def finished_reply_without_findings(
     current_record_path: str | Path | None = None,
     repo: str | None = None,
     pr_number: int | None = None,
+    recovery_attempt_id: str | None = None,
+    records_reader: Any = None,
 ) -> bool:
     """Accept CodeRabbit's terminal full-review reply when its complete window is empty.
 
@@ -2457,11 +2542,14 @@ def finished_reply_without_findings(
                             _archived_completed_thread_bodies(
                                 repo,
                                 pr_number,
+                                payload,
                                 head,
                                 response_id,
                                 created,
                                 record,
                                 current_record_path,
+                                recovery_attempt_id=recovery_attempt_id,
+                                records_reader=records_reader,
                             )
                             if isinstance(repo, str) and type(pr_number) is int and pr_number > 0
                             else {}
@@ -2515,6 +2603,46 @@ def operational_trigger_state(
     return _trigger_state(repo, pr_number, payload, record, current_record_path, now=now, operational=True)
 
 
+def recover_ambiguous_reply_state(
+    repo: str,
+    pr_number: int,
+    payload: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    attempt_id: str,
+    response_id: int,
+    records_reader: Any,
+    current_record_path: str | Path | None = None,
+) -> TriggerState:
+    """Verify one exact ambiguous reply for the explicit records-repair path.
+
+    This does not change the stored attempt or the behavior of ordinary Hosted
+    readers. The named response must remain bound to the captured attempt; the
+    regular trigger classifier still evaluates its complete public window.
+    """
+
+    if (
+        not isinstance(attempt_id, str)
+        or not attempt_id
+        or type(response_id) is not int
+        or response_id <= 0
+        or not isinstance(record, dict)
+        or record.get("sqlite_attempt_id") != attempt_id
+        or type((record.get("trigger") or {}).get("id")) is not int
+    ):
+        raise ValueError("ambiguous reply recovery requires exact attempt, trigger, and response identities")
+    return _trigger_state(
+        repo,
+        pr_number,
+        payload,
+        record,
+        current_record_path,
+        recovery_attempt_id=attempt_id,
+        recovery_response_id=response_id,
+        records_reader=records_reader,
+    )
+
+
 def _trigger_state(
     repo: str,
     pr_number: int,
@@ -2524,6 +2652,9 @@ def _trigger_state(
     *,
     now: datetime | None = None,
     operational: bool = False,
+    recovery_attempt_id: str | None = None,
+    recovery_response_id: int | None = None,
+    records_reader: Any = None,
 ) -> TriggerState:
     pr = payload["data"]["repository"]["pullRequest"]
     current_head = pr.get("headRefOid", "")
@@ -2747,6 +2878,10 @@ def _trigger_state(
                 current_record_path,
                 repo,
                 pr_number,
+                recovery_attempt_id=(
+                    recovery_attempt_id if immutable_database_id(item) == recovery_response_id else None
+                ),
+                records_reader=records_reader,
             ):
                 state = (
                     "ambiguous_retired_predecessor"

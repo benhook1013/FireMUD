@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import fcntl
 import hashlib
 import json
+import os
 import re
 import stat
 import sys
@@ -59,6 +61,21 @@ class _CliArgumentParser(argparse.ArgumentParser):
             )
         ):
             self.error("--exact-additional-completed cannot be combined with min or max additional-completed bounds")
+        if getattr(parsed, "records_command", None) == "repair-provider":
+            response_id = getattr(parsed, "response_id", None)
+            attempt_id = getattr(parsed, "attempt_id", None)
+            selected_checkpoint = getattr(parsed, "checkpoint_id", None)
+            selected_all = getattr(parsed, "all", False)
+            if response_id is None and attempt_id is not None:
+                self.error("--attempt-id requires --response-id")
+            if response_id is not None and (attempt_id is None or selected_checkpoint is not None or selected_all):
+                self.error(
+                    "--response-id requires exactly one --attempt-id and cannot be combined with checkpoint selectors"
+                )
+            if response_id is None and selected_checkpoint is None and not selected_all:
+                self.error("repair-provider requires --checkpoint-id, --all, or --response-id with --attempt-id")
+            if response_id is not None and getattr(parsed, "continue_on_error", False):
+                self.error("--continue-on-error is only valid with --all")
         return parsed
 
 
@@ -329,9 +346,15 @@ def _parser() -> argparse.ArgumentParser:
         help="preview or replay exact public provider checkpoints into SQLite",
     )
     provider_repair.add_argument("--pr", required=True, type=_positive_int)
-    repair_selection = provider_repair.add_mutually_exclusive_group(required=True)
+    repair_selection = provider_repair.add_mutually_exclusive_group()
     repair_selection.add_argument("--checkpoint-id", action="append", type=_positive_int)
     repair_selection.add_argument("--all", action="store_true")
+    repair_selection.add_argument(
+        "--response-id",
+        type=_positive_int,
+        help="recover one exact captured ambiguous Hosted reply; requires --attempt-id",
+    )
+    provider_repair.add_argument("--attempt-id", help="exact retained ambiguous Hosted attempt for --response-id")
     provider_repair.add_argument("--repo", help="owner/name; defaults to the current GitHub repository")
     provider_repair.add_argument("--actor", required=True)
     provider_repair.add_argument("--scope", required=True, choices=("broad", "narrow"))
@@ -1365,6 +1388,31 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "repair-provider":
         store.history(args.pr)
         repo = github.infer_repo(args.repo)
+        if args.response_id is not None:
+            if args.coverage_limit:
+                raise CliError("exact response recovery does not accept checkpoint coverage limits")
+            record_path = hosted.default_trigger_record_path(repo, args.pr, store.path.parent.parent)
+            descriptor = hosted._with_lock(record_path)
+            try:
+                try:
+                    payload = github.fetch_pull_request(repo, args.pr)
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    raise CliError("could not read complete Hosted response history") from exc
+                result = sqlite_records_repair.repair_ambiguous_hosted_reply(
+                    store,
+                    repo=repo,
+                    pr_number=args.pr,
+                    attempt_id=args.attempt_id,
+                    response_id=args.response_id,
+                    actor=args.actor,
+                    scope=args.scope,
+                    hosted_payload=payload,
+                    dry_run=not args.apply,
+                )
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+            return {"api_version": 1, "result": result}, 0 if result["status"] != "partial" else 2
         checkpoints, payload = _provider_checkpoints(args, repo)
         if args.continue_on_error:
             if not args.all:
