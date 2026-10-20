@@ -307,6 +307,13 @@ class SqliteRecordsRepairTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "complete")
         self.assertEqual(replay["items"][0]["action"], "already_recovered")
+        imported = self.records.imported_run_artifacts(preview["items"][0]["run_id"])
+        self.assertEqual(set(imported), {"hosted_comments", "hosted_review", "metadata"})
+        for artifact in imported.values():
+            self.assertEqual(artifact["redactions"], 0)
+            self.assertEqual(
+                artifact["source_sha256"], hashlib.sha256(artifact["content"].encode("utf-8")).hexdigest()
+            )
         self.assertEqual(len(after["runs"]), 1)
         self.assertEqual(after["runs"][0]["run_id"], preview["items"][0]["run_id"])
         self.assertEqual(after["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})

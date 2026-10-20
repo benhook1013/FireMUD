@@ -1481,6 +1481,289 @@ def _verify_ambiguous_reply_import(
     return {"run": run, "origin": origins[0], "artifacts": sorted(actual_artifacts)}
 
 
+def verify_ambiguous_reply_import_for_publication(
+    records: SqliteReviewRecords,
+    *,
+    repo: str,
+    pr_number: int,
+    run_id: str,
+) -> dict[str, Any]:
+    """Re-prove the exact stored zero-reply import without provider reads.
+
+    Publication may use only the deterministic import made by
+    ``repair_ambiguous_hosted_reply``. This checks its original unresolved
+    attempt, archived recovery proof, imported artifacts and immutable provider
+    origin every time publication state is read or changed.
+    """
+
+    if not isinstance(records, SqliteReviewRecords):
+        raise SqliteRecordsRepairError("reply publication requires a SqliteReviewRecords store")
+    if not isinstance(repo, str) or not _REPOSITORY.fullmatch(repo):
+        raise SqliteRecordsRepairError("reply publication requires an exact repository")
+    if type(pr_number) is not int or pr_number <= 0:
+        raise SqliteRecordsRepairError("reply publication requires an exact source PR")
+    history = records.history(pr_number)
+    runs = [item for item in history["runs"] if item.get("run_id") == run_id]
+    if len(runs) != 1:
+        raise SqliteRecordsRepairError("recovered Hosted source run is missing or duplicated")
+    run = runs[0]
+    if run.get("channel") != "hosted" or run.get("source_pr") != pr_number:
+        raise SqliteRecordsRepairError("source run is not a recovered Hosted reply")
+
+    imported = records.imported_run_artifacts(run_id)
+    if set(imported) != {"hosted_comments", "hosted_review", "metadata"}:
+        raise SqliteRecordsRepairError("recovered Hosted reply archive is incomplete")
+    contents: dict[str, str] = {}
+    for kind, item in imported.items():
+        content = item.get("content")
+        digest = item.get("source_sha256")
+        redactions = item.get("redactions")
+        if (
+            not isinstance(content, str)
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or type(redactions) is not int
+            or redactions < 0
+        ):
+            raise SqliteRecordsRepairError("recovered Hosted reply archive metadata is malformed")
+        try:
+            stored, stored_digest, stored_redactions = sqlite_review_records._archive_artifact(kind, content)
+        except ReviewRecordsError as exc:
+            raise SqliteRecordsRepairError("recovered Hosted reply archive is invalid") from exc
+        if stored != content or (redactions == 0 and (stored_digest != digest or stored_redactions != redactions)):
+            raise SqliteRecordsRepairError("recovered Hosted reply archive digest or redaction state conflicts")
+        contents[kind] = content
+    try:
+        metadata = json.loads(contents["metadata"])
+        archived_comments = json.loads(contents["hosted_comments"])
+        sqlite_provider_imports._validate_archive_artifacts(contents)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite_provider_imports.ProviderImportError) as exc:
+        raise SqliteRecordsRepairError("recovered Hosted reply archive is malformed") from exc
+    if not isinstance(metadata, dict) or metadata.get("capture_format") != "firemud-hosted-ambiguous-reply-recovery/v1":
+        raise SqliteRecordsRepairError("source run is not the canonical ambiguous-reply recovery import")
+
+    attempt_id = metadata.get("attempt_id")
+    response_id = metadata.get("response_id")
+    trigger_id = metadata.get("trigger_id")
+    head = metadata.get("head_sha")
+    anchor = metadata.get("anchor")
+    trigger_record = metadata.get("trigger_record")
+    if (
+        metadata.get("repository") != repo.casefold()
+        or metadata.get("pull_request") != pr_number
+        or metadata.get("state") != "completed"
+        or metadata.get("terminal") is not True
+        or metadata.get("attributable") is not True
+        or not isinstance(attempt_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,99}", attempt_id)
+        or type(response_id) is not int
+        or response_id <= 0
+        or type(trigger_id) is not int
+        or trigger_id <= 0
+        or not isinstance(head, str)
+        or hosted.EXACT_SHA.fullmatch(head) is None
+        or not isinstance(anchor, dict)
+        or not isinstance(trigger_record, dict)
+        or metadata.get("trigger_record", {}).get("sqlite_attempt_id") != attempt_id
+        or trigger_record.get("anchor") != anchor
+        or trigger_record.get("head_sha") != head
+        or trigger_record.get("repository", "").casefold() != repo.casefold()
+        or trigger_record.get("pr_number") != pr_number
+        or (trigger_record.get("trigger") or {}).get("id") != trigger_id
+    ):
+        raise SqliteRecordsRepairError("recovered Hosted reply identity conflicts with its archive")
+    expected_run_id = "hosted-reply-" + hashlib.sha256(
+        f"{repo.casefold()}\0{pr_number}\0{attempt_id}\0{response_id}".encode()
+    ).hexdigest()[:48]
+    if run_id != expected_run_id:
+        raise SqliteRecordsRepairError("source run ID is not the deterministic recovery identity")
+
+    attempt = records.attempt(attempt_id)
+    attempt_rows = [item for item in history["attempts"] if item.get("attempt_id") == attempt_id]
+    if (
+        len(attempt_rows) != 1
+        or attempt.get("source_pr") != pr_number
+        or attempt.get("channel") != "hosted"
+        or attempt.get("state") != "ambiguous"
+        or attempt.get("run_id") is not None
+        or attempt.get("candidate_sha") != head
+        or attempt_rows[0].get("state") != "ambiguous"
+        or attempt_rows[0].get("run_id") is not None
+        or attempt_rows[0].get("trigger_id") != str(trigger_id)
+        or attempt_rows[0].get("provider_review_id") != str(response_id)
+        or attempt_rows[0].get("candidate_sha") != head
+    ):
+        raise SqliteRecordsRepairError("original ambiguous attempt identity or terminal state changed")
+    attempt_metadata = attempt.get("metadata")
+    if (
+        not isinstance(attempt_metadata, dict)
+        or attempt_metadata.get("request_kind") != "full"
+        or attempt_metadata.get("repository", "").casefold() != repo.casefold()
+        or type(attempt_metadata.get("reviewed_file_count")) is not int
+        or attempt_metadata["reviewed_file_count"] <= 0
+        or attempt_metadata.get("anchor") != anchor
+    ):
+        raise SqliteRecordsRepairError("original Hosted request lacks its immutable scope metadata")
+    original_artifacts = records.attempt_artifacts(attempt_id)
+    if set(original_artifacts) != {"hosted_comments", "hosted_review", "metadata"}:
+        raise SqliteRecordsRepairError("original ambiguous Hosted capture is incomplete")
+    try:
+        original_capture = json.loads(original_artifacts["metadata"])
+        original_comments = json.loads(original_artifacts["hosted_comments"])
+        original_reviews = json.loads(original_artifacts["hosted_review"])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SqliteRecordsRepairError("original ambiguous Hosted capture is malformed") from exc
+    if (
+        not isinstance(original_capture, dict)
+        or original_capture.get("state") != "ambiguous"
+        or original_capture.get("terminal") is not True
+        or original_capture.get("attributable") is not False
+        or original_capture.get("repository", "").casefold() != repo.casefold()
+        or original_capture.get("pull_request") != pr_number
+        or original_capture.get("head_sha") != head
+        or original_capture.get("trigger_id") != trigger_id
+        or original_capture.get("response_id") != response_id
+        or original_capture.get("trigger_record") != trigger_record
+        or original_capture.get("observed_at") != attempt_rows[0].get("finished_at")
+        or not isinstance(original_comments, dict)
+        or not isinstance(original_comments.get("comments"), list)
+        or not isinstance(original_comments.get("review_threads"), list)
+        or original_reviews
+    ):
+        raise SqliteRecordsRepairError("original ambiguous Hosted capture conflicts with recovered identity")
+    try:
+        trigger_repository = trigger_record.get("repository")
+        if not isinstance(trigger_repository, str) or trigger_repository.casefold() != repo.casefold():
+            raise SqliteRecordsRepairError("recovered Hosted trigger repository conflicts with its origin")
+        trigger_record = sqlite_hosted_capture._validate_trigger_record(
+            trigger_repository, pr_number, trigger_record
+        )
+    except sqlite_hosted_capture.HostedCaptureError as exc:
+        raise SqliteRecordsRepairError("recovered Hosted trigger record is invalid") from exc
+    original_trigger = [
+        item for item in original_comments["comments"]
+        if isinstance(item, dict) and github.immutable_database_id(item) == trigger_id
+    ]
+    original_response = [
+        item for item in original_comments["comments"]
+        if isinstance(item, dict) and github.immutable_database_id(item) == response_id
+    ]
+    recovered_trigger = [
+        item for item in archived_comments.get("comments", [])
+        if isinstance(item, dict) and github.immutable_database_id(item) == trigger_id
+    ] if isinstance(archived_comments, dict) else []
+    recovered_response = [
+        item for item in archived_comments.get("comments", [])
+        if isinstance(item, dict) and github.immutable_database_id(item) == response_id
+    ] if isinstance(archived_comments, dict) else []
+    if (
+        len(original_trigger) != 1
+        or len(original_response) != 1
+        or len(recovered_trigger) != 1
+        or len(recovered_response) != 1
+        or original_trigger[0] != recovered_trigger[0]
+        or original_response[0] != recovered_response[0]
+        or not github.is_coderabbit_login((original_response[0].get("author") or {}).get("login"))
+        or original_response[0].get("createdAt") != (metadata.get("zero_reply_proof") or {}).get("response_created_at")
+        or original_response[0].get("updatedAt") != (metadata.get("zero_reply_proof") or {}).get("response_updated_at")
+    ):
+        raise SqliteRecordsRepairError("recovered Hosted response differs from its immutable captured comments")
+
+    trigger_state = metadata.get("trigger_state")
+    zero_proof = metadata.get("zero_reply_proof")
+    checkpoint_fields = metadata.get("checkpoint_fields")
+    try:
+        checkpoint = evidence.Checkpoint(**checkpoint_fields)
+        checkpoint_fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+    except (TypeError, ValueError, sqlite_provider_imports.ProviderImportError) as exc:
+        raise SqliteRecordsRepairError("recovered checkpoint fields are malformed") from exc
+    finished_at = metadata.get("observed_at")
+    started_at = (trigger_record.get("trigger") or {}).get("created_at")
+    if (
+        not isinstance(trigger_state, dict)
+        or trigger_state.get("state") != "completed"
+        or trigger_state.get("terminal") is not True
+        or trigger_state.get("attributed") is not True
+        or trigger_state.get("trigger_comment_id") != trigger_id
+        or trigger_state.get("response_id") != response_id
+        or trigger_state.get("head_sha") != head
+        or type(trigger_state.get("duration_seconds")) is not int
+        or trigger_state["duration_seconds"] < 0
+        or (metadata.get("zero_reply_proof") or {}).get("duration_seconds") != trigger_state.get("duration_seconds")
+        or not isinstance(zero_proof, dict)
+        or zero_proof.get("attempt_id") != attempt_id
+        or zero_proof.get("trigger_id") != trigger_id
+        or zero_proof.get("response_id") != response_id
+        or zero_proof.get("candidate_sha") != head
+        or zero_proof.get("anchor") != anchor
+        or zero_proof.get("counts") != {"found": 0, "accepted": 0, "routed": 0}
+        or type(attempt_metadata["reviewed_file_count"]) is not int
+        or checkpoint.comment_id != response_id
+        or checkpoint.type != "Hosted"
+        or checkpoint.raw_found != 0
+        or checkpoint.accepted != 0
+        or checkpoint.routed != 0
+        or checkpoint.reviewed_sha != head
+        or checkpoint.file_count != attempt_metadata["reviewed_file_count"]
+        or checkpoint.hosted_review_id != response_id
+        or checkpoint.duration_seconds != trigger_state["duration_seconds"]
+        or checkpoint.duration_invalid is not False
+        or checkpoint.created_at != metadata.get("checkpoint", {}).get("created_at")
+        or checkpoint.updated_at != finished_at
+        or checkpoint.created_at != original_response[0].get("createdAt")
+        or checkpoint.updated_at != original_response[0].get("updatedAt")
+        or metadata.get("checkpoint") != checkpoint.as_json()
+        or metadata.get("checkpoint_fingerprint") != checkpoint_fingerprint
+        or run.get("source_head") != head
+        or run.get("started_at") != started_at
+        or run.get("finished_at") != finished_at
+        or run.get("counts") != {"found": 0, "accepted": 0, "routed": 0}
+        or run.get("finalized") is not True
+        or run.get("attributable") is not True
+        or run.get("outcome") != "completed"
+    ):
+        raise SqliteRecordsRepairError("recovered Hosted zero-result proof or checkpoint does not match its source")
+    trigger_at = hosted.parse_timestamp(started_at)
+    finished_at_value = hosted.parse_timestamp(finished_at)
+    if (
+        trigger_at is None
+        or finished_at_value is None
+        or (finished_at_value - trigger_at).total_seconds() != trigger_state["duration_seconds"]
+    ):
+        raise SqliteRecordsRepairError("recovered Hosted duration does not match its immutable trigger window")
+    origins = [item for item in history["provider_origins"] if item.get("run_id") == run_id]
+    expected_origin = {
+        "repository": repo.casefold(),
+        "source_pr": pr_number,
+        "channel": "hosted",
+        "provider_id": f"trigger:{trigger_id}",
+        "checkpoint_id": response_id,
+        "checkpoint_fingerprint": checkpoint_fingerprint,
+        "run_id": run_id,
+    }
+    if len(origins) != 1 or origins[0] != expected_origin:
+        raise SqliteRecordsRepairError("recovered Hosted provider origin conflicts with immutable response")
+    linked = sqlite_hosted_capture._linked_ambiguous_reply_recovery(
+        history, repo, pr_number, attempt_rows[0], str(trigger_id)
+    )
+    if linked is None or linked.get("run_id") != run_id or linked.get("checkpoint_id") != response_id:
+        raise SqliteRecordsRepairError("recovered Hosted result is not linked by the canonical recovery reader")
+    if any(item.get("run_id") == run_id for item in history["findings"] + history["decisions"]):
+        raise SqliteRecordsRepairError("recovered zero-result source unexpectedly contains findings or decisions")
+    return {
+        "run": run,
+        "attempt": attempt,
+        "attempt_id": attempt_id,
+        "checkpoint": checkpoint,
+        "checkpoint_fingerprint": checkpoint_fingerprint,
+        "trigger_id": trigger_id,
+        "response_id": response_id,
+        "run_id": run_id,
+        "repository": repo.casefold(),
+        "source_pr": pr_number,
+    }
+
+
 def repair_ambiguous_hosted_reply(
     records: SqliteReviewRecords,
     *,
