@@ -1012,33 +1012,103 @@ class SqliteReviewRecords:
         intent = json.loads(content)
         if not isinstance(intent, dict):
             raise ReviewRecordsError("checkpoint publication intent must be an object")
+        if intent.get("run_id") != attempt_id:
+            raise ReviewRecordsError("checkpoint publication intent has a different source run")
+        target_attempt_id, recovered = self._checkpoint_publication_target(
+            attempt_id, repository=intent.get("repository"), source_pr=intent.get("source_pr")
+        )
         with self._write_connection() as connection:
             row = connection.execute(
-                "SELECT state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+                "SELECT state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
+                (target_attempt_id,),
             ).fetchone()
-            if row is None or row[:2] != ("completed", attempt_id):
-                raise ReviewRecordsError("checkpoint publication requires an exact completed attempt")
+            expected_identity = ("ambiguous", None) if recovered else ("completed", target_attempt_id)
+            if row is None or row[:2] != expected_identity:
+                raise ReviewRecordsError("checkpoint publication requires its exact immutable source attempt")
             metadata = json.loads(row[2])
             if not isinstance(metadata, dict):
                 raise ReviewRecordsError("checkpoint attempt metadata is malformed")
+            if recovered:
+                prior_run_id = metadata.get("checkpoint_publication_run_id")
+                if prior_run_id not in (None, attempt_id):
+                    raise ReviewRecordsError("original attempt already has a different recovered publication")
             if "checkpoint_publication_intent" in metadata:
                 if metadata["checkpoint_publication_intent"] != intent:
                     raise ReviewRecordsError("checkpoint publication intent conflicts with prior attribution")
                 return False
             metadata["checkpoint_publication_intent"] = intent
+            if recovered:
+                metadata["checkpoint_publication_run_id"] = attempt_id
             connection.execute(
                 "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
-                (json.dumps(metadata, sort_keys=True), attempt_id),
+                (json.dumps(metadata, sort_keys=True), target_attempt_id),
             )
             return True
 
     @_translate_database_errors
     def checkpoint_publication_state(self, attempt_id: str) -> dict[str, Any]:
         """Local read-only publication projection; missing old diagnostics remain unknown."""
-        attempt = self.attempt(attempt_id)
-        if attempt["state"] != "completed" or attempt["run_id"] != attempt_id:
+        attempt_id = _safe_identifier(attempt_id, "run ID", maximum=100)
+        target_attempt_id, recovered = self._checkpoint_publication_target(attempt_id)
+        attempt = self.attempt(target_attempt_id)
+        if recovered and attempt["metadata"].get("checkpoint_publication_run_id") != attempt_id:
+            raise ReviewRecordsError("recovered checkpoint publication has no exact durable run association")
+        if not recovered and (attempt["state"] != "completed" or attempt["run_id"] != attempt_id):
             raise ReviewRecordsError("checkpoint publication requires an exact completed attempt")
         return self._checkpoint_publication_state(attempt_id, attempt["metadata"])
+
+    def _checkpoint_publication_target(
+        self,
+        run_id: str,
+        *,
+        repository: str | None = None,
+        source_pr: int | None = None,
+    ) -> tuple[str, bool]:
+        """Resolve only a native attempt or the canonical zero-reply recovery."""
+
+        try:
+            attempt = self.attempt(run_id)
+        except AttemptNotFound:
+            attempt = None
+        if attempt is not None and attempt["state"] == "completed" and attempt["run_id"] == run_id:
+            if repository is not None and attempt["metadata"].get("repository") != repository:
+                raise ReviewRecordsError("checkpoint publication repository conflicts with native attempt")
+            if source_pr is not None and attempt["source_pr"] != source_pr:
+                raise ReviewRecordsError("checkpoint publication PR conflicts with native attempt")
+            return run_id, False
+
+        try:
+            source = self.run_source(run_id)
+            imported = self.imported_run_artifacts(run_id)
+            archive = json.loads(imported.get("metadata", {}).get("content", "{}"))
+        except (ReviewRecordsError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ReviewRecordsError("checkpoint publication requires completed native evidence") from exc
+        archived_repository = archive.get("repository") if isinstance(archive, dict) else None
+        exact_repository = repository or archived_repository
+        exact_pr = source_pr or source.get("source_pr")
+        if (
+            source.get("channel") != "hosted"
+            or source.get("outcome") != "completed"
+            or source.get("attributable") is not True
+            or not isinstance(exact_repository, str)
+            or not isinstance(exact_pr, int)
+        ):
+            raise ReviewRecordsError("checkpoint publication requires exact recovered Hosted evidence")
+        try:
+            from .sqlite_records_repair import verify_ambiguous_reply_import_for_publication
+
+            verified = verify_ambiguous_reply_import_for_publication(
+                self, repo=exact_repository, pr_number=exact_pr, run_id=run_id
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ReviewRecordsError("checkpoint publication recovery proof is invalid") from exc
+        if (
+            archived_repository != exact_repository.casefold()
+            or source.get("source_pr") != exact_pr
+            or verified.get("repository") != exact_repository.casefold()
+        ):
+            raise ReviewRecordsError("checkpoint publication recovery attribution conflicts")
+        return verified["attempt_id"], True
 
     @staticmethod
     def _checkpoint_publication_state(attempt_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -1078,7 +1148,8 @@ class SqliteReviewRecords:
         Original intent, provider archives and review records are never rewritten.
         The caller holds the publication lock through decision, consume and POST.
         """
-        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        attempt_id = _safe_identifier(attempt_id, "run ID", maximum=100)
+        target_attempt_id, recovered = self._checkpoint_publication_target(attempt_id)
         if not isinstance(expected_state_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_state_sha256):
             raise ReviewRecordsError("checkpoint publication state digest is invalid")
         event = dict(event)
@@ -1161,11 +1232,15 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("checkpoint reused comment identity is invalid")
         with self._write_connection() as connection:
             row = connection.execute(
-                "SELECT state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+                "SELECT state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
+                (target_attempt_id,),
             ).fetchone()
-            if row is None or row[:2] != ("completed", attempt_id):
-                raise ReviewRecordsError("checkpoint publication requires an exact completed attempt")
+            expected_identity = ("ambiguous", None) if recovered else ("completed", target_attempt_id)
+            if row is None or row[:2] != expected_identity:
+                raise ReviewRecordsError("checkpoint publication requires its exact immutable source attempt")
             metadata = json.loads(row[2])
+            if recovered and metadata.get("checkpoint_publication_run_id") != attempt_id:
+                raise ReviewRecordsError("recovered checkpoint publication has no exact durable run association")
             state = self._checkpoint_publication_state(attempt_id, metadata)
             if state["intent"] is None or state["state_sha256"] != expected_state_sha256:
                 raise ReviewRecordsError("checkpoint publication intent is missing or state digest is stale")
@@ -1191,7 +1266,7 @@ class SqliteReviewRecords:
             metadata["checkpoint_publication_events"] = [*events, event]
             connection.execute(
                 "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
-                (json.dumps(metadata, sort_keys=True), attempt_id),
+                (json.dumps(metadata, sort_keys=True), target_attempt_id),
             )
             return self._checkpoint_publication_state(attempt_id, metadata)
 
@@ -1235,6 +1310,24 @@ class SqliteReviewRecords:
             ).fetchall()
         self._check_deadline(deadline)
         return {kind: content for kind, content in rows}
+
+    @_translate_database_errors
+    def imported_run_artifacts(self, run_id: str) -> dict[str, dict[str, Any]]:
+        """Read retained imported artifacts and their immutable source digests."""
+
+        run_id = _safe_identifier(run_id, "run ID", maximum=100)
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            self._require_compatible(connection)
+            rows = connection.execute(
+                "SELECT kind, content, source_sha256, redactions FROM imported_artifacts "
+                "WHERE run_id = ? ORDER BY kind",
+                (run_id,),
+            ).fetchall()
+        return {
+            kind: {"content": content, "source_sha256": source_sha256, "redactions": redactions}
+            for kind, content, source_sha256, redactions in rows
+        }
 
     @_translate_database_errors
     def link_attempt_run(self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None) -> None:
