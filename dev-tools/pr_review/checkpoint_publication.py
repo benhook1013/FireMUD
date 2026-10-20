@@ -68,22 +68,47 @@ def checkpoint_body(store, *, repo, source_pr, run_id):
     history = store.history(source_pr, include_display=False)
     runs = [run for run in history["runs"] if run["run_id"] == run_id]
     attempts = [attempt for attempt in store.attempt_history(source_pr) if attempt["run_id"] == run_id]
-    if len(runs) != 1 or len(attempts) != 1:
+    if len(runs) != 1:
+        _refuse("checkpoint requires exactly one finalized source run")
+    run = runs[0]
+    recovered = False
+    attempt = None
+    if len(attempts) == 1 and attempts[0]["attempt_id"] == run_id:
+        attempt = attempts[0]
+        if (run["channel"] not in {"cli", "hosted"} or run["outcome"] != "completed"
+                or run["attributable"] is not True or run["finalized"] is not True
+                or attempt["channel"] != run["channel"] or attempt["state"] != "completed"
+                or attempt["candidate_sha"] != run["source_head"] or attempt["run_id"] != run_id):
+            _refuse("checkpoint requires completed attributable finalized native evidence")
+    elif not attempts and run.get("channel") == "hosted":
+        try:
+            from .sqlite_records_repair import verify_ambiguous_reply_import_for_publication
+
+            recovered = verify_ambiguous_reply_import_for_publication(
+                store, repo=repo, pr_number=source_pr, run_id=run_id
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ReviewRecordsError(f"checkpoint recovery proof is unavailable: {exc}") from exc
+        run = recovered["run"]
+        attempt = recovered["attempt"]
+    else:
         _refuse("checkpoint requires exactly one native source run and matching attempt")
-    run, attempt = runs[0], attempts[0]
     channel = run["channel"]
-    if (channel not in {"cli", "hosted"} or run["outcome"] != "completed"
-            or run["attributable"] is not True or run["finalized"] is not True
-            or attempt["attempt_id"] != run_id or attempt["channel"] != channel
-            or attempt["state"] != "completed" or attempt["candidate_sha"] != run["source_head"]):
-        _refuse("checkpoint requires completed attributable finalized native evidence")
-    head, duration, counts = run["source_head"], attempt["duration_seconds"], run["counts"]
+    head, duration, counts = run["source_head"], (
+        recovered["checkpoint"].duration_seconds if recovered else attempts[0]["duration_seconds"]
+    ), run["counts"]
     if (not isinstance(head, str) or not evidence.EXACT_SHA.fullmatch(head)
             or type(duration) is not int or duration < 0
             or any(type(counts.get(key)) is not int or counts[key] < 0 for key in ("found", "accepted", "routed"))
             or counts["accepted"] + counts["routed"] > counts["found"]):
         _refuse("checkpoint source head, counts or duration is invalid")
-    if channel == "cli":
+    if recovered:
+        checkpoint = recovered["checkpoint"]
+        if checkpoint.file_count is None or checkpoint.file_count <= 0:
+            _refuse("recovered Hosted checkpoint lacks its captured request file count")
+        files = checkpoint.file_count
+        marker = f"<!-- firemud-hosted-review: {checkpoint.hosted_review_id} -->"
+    elif channel == "cli":
         if not evidence.RUN_ID.fullmatch(run_id):
             _refuse("native CLI run has invalid marker identity")
         snapshot = store.cli_capture_snapshot(run_id, source_pr=source_pr)
@@ -240,6 +265,29 @@ def publish_checkpoint(store, *, repo, source_pr, run_id, adapter=github):
         comment = matching(adapter.fetch_api_endpoint(endpoint))
         fresh = store.reserve_checkpoint_publication(run_id, json.dumps(intent, sort_keys=True))
         if comment is not None:
+            _, recovered = store._checkpoint_publication_target(
+                run_id, repository=repo, source_pr=source_pr
+            )
+            if recovered:
+                state = store.checkpoint_publication_state(run_id)
+                bound = [
+                    event
+                    for event in state["events"]
+                    if event.get("type") in {"post_outcome", "reused"}
+                    and event.get("comment_id") == comment["id"]
+                ]
+                conflicts = [
+                    event
+                    for event in state["events"]
+                    if event.get("type") in {"post_outcome", "reused"}
+                    and event.get("comment_id") is not None
+                    and event.get("comment_id") != comment["id"]
+                ]
+                if conflicts:
+                    _refuse("recovered checkpoint publication audit conflicts with visible comment identity")
+                if not bound:
+                    _append(store, run_id, state, {"type": "reused", "decision_id": None,
+                                                   "comment_id": comment["id"]})
             return _result(intent, comment, "reused")
         if not fresh:
             _refuse("prior checkpoint POST may have occurred; no verified comment is visible; retry read recovery later")

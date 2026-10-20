@@ -945,6 +945,7 @@ class RuntimeTest(unittest.TestCase):
                     archived = hosted._archived_completed_thread_bodies(
                         "owner/repo",
                         42,
+                        self._payload(),
                         HEAD,
                         11,
                         response_at,

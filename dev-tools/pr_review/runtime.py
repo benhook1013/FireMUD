@@ -704,8 +704,9 @@ class LiveEvidence:
         """Refresh complete review evidence for a human-directed channel stop.
 
         Retained ambiguous responses remain explicitly non-counting. Each pin
-        must name one verified immutable terminal response; only those exact
-        response blockers are removed from the generic audit.
+        must name one verified immutable terminal response. An exact recovered
+        Hosted publication is attributable through its source audit instead of
+        being treated as an unretained ambiguity.
         """
 
         required_anchor = ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
@@ -819,6 +820,16 @@ class LiveEvidence:
         channel_history = {channel: list(self.history(pr, channel, now=audit_now)) for channel in ("hosted", "cli")}
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
+        verified_recovered_terminal_responses: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        public_comments = self._comments(payload)
+        public_checkpoints, unparsed_checkpoints = evidence.parse_checkpoint_comments(public_comments)
+        if unparsed_checkpoints:
+            raise ControllerError("GitHub history contains an unparsed review checkpoint")
+        checkpoints_by_response: dict[int, list[evidence.Checkpoint]] = {}
+        for checkpoint in public_checkpoints:
+            if checkpoint.type.casefold() == "hosted" and checkpoint.hosted_review_id is not None:
+                checkpoints_by_response.setdefault(checkpoint.hosted_review_id, []).append(checkpoint)
+        public_comments_by_id = {item["id"]: item for item in public_comments if type(item.get("id")) is int}
         terminal_rate_limits: list[dict[str, Any]] = []
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
@@ -828,7 +839,36 @@ class LiveEvidence:
                 raise ControllerError("a Hosted trigger record cannot be completely audited") from error
             observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
             if observation is not None:
-                ambiguous_terminal_responses.append(observation)
+                recovered_source = None
+                matching_checkpoints = checkpoints_by_response.get(observation["response_id"], ())
+                if len(matching_checkpoints) == 1:
+                    checkpoint = matching_checkpoints[0]
+                    public_comment = public_comments_by_id.get(checkpoint.comment_id)
+                    public_body = public_comment.get("body") if isinstance(public_comment, Mapping) else None
+                    if isinstance(public_body, str):
+                        recovered_source = self._recovered_hosted_publication(pr, checkpoint, public_body)
+                recovered_identity = (
+                    (
+                        str(recovered_source.get("attempt_id")),
+                        str(recovered_source.get("trigger_id")),
+                        str(recovered_source.get("response_id")),
+                        str(recovered_source.get("head")),
+                    )
+                    if isinstance(recovered_source, Mapping)
+                    else None
+                )
+                terminal_identity = (
+                    str(record.get("sqlite_attempt_id")),
+                    str(observation["trigger_id"]),
+                    str(observation["response_id"]),
+                    str(observation["captured_head"]),
+                )
+                if recovered_identity == terminal_identity:
+                    verified_recovered_terminal_responses.append(
+                        (observation, {**recovered_source, "checkpoint_id": matching_checkpoints[0].comment_id})
+                    )
+                else:
+                    ambiguous_terminal_responses.append(observation)
             cooldown_value = getattr(state, "cooldown_until", None)
             cooldown_until = hosted.parse_timestamp(cooldown_value)
             trigger_id = state.trigger_comment_id
@@ -860,6 +900,32 @@ class LiveEvidence:
                         "attributable": True,
                     }
                 )
+        active_reservations = list(audit["active_reservations"])
+        unmatched_responses = list(audit["unmatched_responses"])
+        ambiguous_responses = list(audit["ambiguous_responses"])
+        terminal_observation_count = len(ambiguous_terminal_responses) + len(verified_recovered_terminal_responses)
+        isolated_recovered_terminal_responses: list[dict[str, Any]] = []
+        if verified_recovered_terminal_responses:
+            if (
+                active_reservations.count("ambiguous") == terminal_observation_count
+                and ambiguous_responses.count("unattributed trigger response") == terminal_observation_count
+            ):
+                for _observation, recovered_source in verified_recovered_terminal_responses:
+                    active_reservations.remove("ambiguous")
+                    ambiguous_responses.remove("unattributed trigger response")
+                    isolated_recovered_terminal_responses.append(
+                        {
+                            "attempt_id": recovered_source["attempt_id"],
+                            "trigger_id": int(recovered_source["trigger_id"]),
+                            "response_id": int(recovered_source["response_id"]),
+                            "captured_head": recovered_source["head"],
+                            "run_id": recovered_source["run_id"],
+                            "checkpoint_id": recovered_source["checkpoint_id"],
+                            "finished_at": recovered_source["run"]["finished_at"],
+                        }
+                    )
+            else:
+                ambiguous_terminal_responses.extend(item for item, _source in verified_recovered_terminal_responses)
         fingerprints = [item["fingerprint"] for item in ambiguous_terminal_responses]
         if len(set(fingerprints)) != len(fingerprints):
             raise ControllerError("terminal ambiguous Hosted responses have duplicate immutable fingerprints")
@@ -870,9 +936,6 @@ class LiveEvidence:
                 raise ControllerError("retained Hosted ambiguity does not identify one current immutable response")
             retained_by_fingerprint[fingerprint] = matching[0]
 
-        active_reservations = list(audit["active_reservations"])
-        unmatched_responses = list(audit["unmatched_responses"])
-        ambiguous_responses = list(audit["ambiguous_responses"])
         # A proven terminal response has ended execution; its provider reset or
         # bounded local retry backoff remains a repository admission hold.
         active_terminal_rate_limits = [
@@ -993,6 +1056,7 @@ class LiveEvidence:
             "checkpoints": checkpoints,
             "channel_histories": channel_history,
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
+            "recovered_terminal_responses": isolated_recovered_terminal_responses,
             "terminal_rate_limits": terminal_rate_limits,
             "active_hosted_reservations": list(audit.get("active_hosted_reservations", ())),
             "active_cli_reviews": list(active_cli_reviews),
@@ -2010,6 +2074,7 @@ class LiveEvidence:
         payload: dict[str, Any],
         emitted_hosted_response_ids: set[int],
         *,
+        verified_recovered_responses: set[tuple[str, str, str, str]] | None = None,
         operational_only: bool = False,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -2080,6 +2145,20 @@ class LiveEvidence:
             ):
                 values.append(self._uncheckpointed_hosted_observation(pr, state))
             elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
+                recovered_identity = (
+                    str(record.get("sqlite_attempt_id")),
+                    str(state.trigger_comment_id),
+                    str(state.response_id),
+                    state.head_sha,
+                )
+                if (
+                    not operational_only
+                    and state.state == "ambiguous"
+                    and state.terminal is True
+                    and isinstance(verified_recovered_responses, set)
+                    and recovered_identity in verified_recovered_responses
+                ):
+                    continue
                 if (
                     operational_only
                     and state.state == "ambiguous"
@@ -2234,6 +2313,8 @@ class LiveEvidence:
         channel: str,
         checkpoint: evidence.Checkpoint,
         source_head: str,
+        *,
+        recovered_run_id: str | None = None,
     ) -> str | None:
         """Bind structured checkpoints to durable proof; leave legacy ones unbound."""
 
@@ -2249,6 +2330,22 @@ class LiveEvidence:
                 return None
             if self.records is None:
                 return None
+            if recovered_run_id is not None:
+                try:
+                    return self.records.source_resolution_status(
+                        recovered_run_id,
+                        source_pr=pr,
+                        source_channel=channel,
+                        source_head=source_head,
+                        accepted_count=checkpoint.accepted,
+                        classify_pending=True,
+                    )
+                except RecordsNotBootstrapped:
+                    return None
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
+                except (ReviewRecordsError, OSError):
+                    return "unavailable"
             if pr not in self._records_histories:
                 try:
                     self._records_histories[pr] = self.records.history(pr, include_display=False)
@@ -2365,6 +2462,131 @@ class LiveEvidence:
         except (ReviewRecordsError, OSError):
             return "unavailable"
 
+    def _recovered_hosted_publication(
+        self,
+        pr: int,
+        checkpoint: evidence.Checkpoint,
+        public_body: str,
+    ) -> dict[str, Any] | bool | None:
+        """Bind a public Hosted checkpoint to the exact recovered source run.
+
+        ``False`` means a matching unresolved ambiguous response exists but its
+        durable recovery/publication association is absent or conflicting, so
+        ordinary Hosted attribution must not take over.
+        """
+
+        if self.records is None or type(checkpoint.hosted_review_id) is not int:
+            return None
+        try:
+            history = self._records_histories.get(pr)
+            if history is None:
+                history = self.records.history(pr, include_display=False)
+                self._records_histories[pr] = history
+        except RecordsNotBootstrapped:
+            return None
+        except (ReviewRecordsError, OSError):
+            return False
+        attempts = history.get("attempts") if isinstance(history, Mapping) else None
+        if not isinstance(attempts, list):
+            return None
+        candidates = [
+            item
+            for item in attempts
+            if isinstance(item, Mapping)
+            and item.get("channel") == "hosted"
+            and item.get("state") == "ambiguous"
+            and item.get("run_id") is None
+            and item.get("provider_review_id") == str(checkpoint.hosted_review_id)
+        ]
+        if not candidates:
+            return None
+        if len(candidates) != 1:
+            return False
+        original = candidates[0]
+        attempt_id = original.get("attempt_id")
+        head = original.get("candidate_sha")
+        trigger_id = original.get("trigger_id")
+        if (
+            not isinstance(attempt_id, str)
+            or not isinstance(head, str)
+            or not isinstance(trigger_id, str)
+            or not trigger_id.isdecimal()
+            or checkpoint.reviewed_sha is None
+            or not head.casefold().startswith(checkpoint.reviewed_sha.casefold())
+        ):
+            return False
+        run_id = "hosted-reply-" + hashlib.sha256(
+            f"{self.repo.casefold()}\0{pr}\0{attempt_id}\0{checkpoint.hosted_review_id}".encode()
+        ).hexdigest()[:48]
+        try:
+            attempt = self.records.attempt(attempt_id)
+            metadata = attempt.get("metadata")
+            state = self.records.checkpoint_publication_state(run_id)
+        except (ReviewRecordsError, OSError, ValueError, TypeError):
+            return False
+        intent = state.get("intent")
+        if (
+            attempt.get("state") != "ambiguous"
+            or attempt.get("run_id") is not None
+            or attempt.get("source_pr") != pr
+            or attempt.get("candidate_sha") != head
+            or not isinstance(metadata, Mapping)
+            or not isinstance(metadata.get("repository"), str)
+            or metadata["repository"].casefold() != self.repo.casefold()
+            or not isinstance(intent, Mapping)
+            or intent.get("repository") != self.repo
+            or intent.get("source_pr") != pr
+            or intent.get("run_id") != run_id
+            or not isinstance(intent.get("actor_login"), str)
+            or not isinstance(public_body, str)
+            or not isinstance(checkpoint.author_login, str)
+            or intent["actor_login"].casefold() != checkpoint.author_login.casefold()
+        ):
+            return False
+        try:
+            from .checkpoint_publication import _same_checkpoint
+
+            comment = {
+                "id": checkpoint.comment_id,
+                "body": public_body,
+                "created_at": checkpoint.created_at,
+                "issue_url": f"https://api.github.com/repos/{self.repo}/issues/{pr}",
+                "user": {"id": intent.get("actor_id"), "login": checkpoint.author_login},
+            }
+            if not _same_checkpoint(comment, intent["body"], repo=self.repo, source_pr=pr):
+                return False
+        except (KeyError, TypeError, ValueError, evidence.EvidenceError):
+            return False
+        bindings = [
+            event
+            for event in state.get("events", [])
+            if isinstance(event, Mapping)
+            and event.get("type") in {"post_outcome", "reused"}
+            and type(event.get("comment_id")) is int
+        ]
+        if (
+            any(event["comment_id"] != checkpoint.comment_id for event in bindings)
+            or not any(
+                event["comment_id"] == checkpoint.comment_id
+                and (event.get("type") == "reused" or event.get("outcome") == "published")
+                for event in bindings
+            )
+        ):
+            return False
+        runs = [item for item in history.get("runs", []) if item.get("run_id") == run_id]
+        if len(runs) != 1 or runs[0].get("source_head") != head or runs[0].get("finished_at") is None:
+            return False
+        return {
+            "run_id": run_id,
+            "run": runs[0],
+            "attempt": attempt,
+            "attempt_id": attempt_id,
+            "trigger_id": trigger_id,
+            "response_id": checkpoint.hosted_review_id,
+            "head": head,
+            "metadata": metadata,
+        }
+
     def review_activity_identities(self, pr: int, channel: str) -> Mapping[str, Mapping[str, str]]:
         """Return cached display aliases without changing policy observations or fetching evidence."""
 
@@ -2408,6 +2630,7 @@ class LiveEvidence:
         emitted_cli_sources: set[tuple[str, str]] = set()
         emitted_hosted_review_ids: set[int] = set()
         emitted_hosted_response_ids: set[int] = set()
+        verified_recovered_responses: set[tuple[str, str, str, str]] = set()
         cli_common: Path | None = None
         cli_records: Any = None
         cli_context_error: evidence.EvidenceError | None = None
@@ -2429,6 +2652,7 @@ class LiveEvidence:
             attributable = False
             provisional = False
             anchor: dict[str, Any] = {}
+            recovered_source = None
             if channel == "cli":
                 if cli_context_error is None:
                     try:
@@ -2448,22 +2672,59 @@ class LiveEvidence:
                     provisional = capture.metadata.get("provisional", "false").casefold() == "true"
                     anchor = self._anchor(capture.metadata)
             else:
-                matched = self._hosted_trigger_for_checkpoint(pr, head, checkpoint, reviews, payload)
-                if matched is None:
+                public_body = next(
+                    (item["body"] for item in comments if item.get("id") == checkpoint.comment_id),
+                    "",
+                )
+                recovered_source = self._recovered_hosted_publication(pr, checkpoint, public_body)
+                if recovered_source is False:
                     continue
-                record, proof = matched
+                if isinstance(recovered_source, Mapping):
+                    source_run = recovered_source["run"]
+                    original_metadata = recovered_source["metadata"]
+                    verified_recovered_responses.add(
+                        (
+                            str(recovered_source["attempt_id"]),
+                            str(recovered_source["trigger_id"]),
+                            str(recovered_source["response_id"]),
+                            str(recovered_source["head"]),
+                        )
+                    )
+                    anchor = dict(original_metadata["anchor"])
+                    proof = {
+                        "review_id": checkpoint.hosted_review_id,
+                        "commit_id": source_run["source_head"],
+                        "verified_completed_at": source_run["finished_at"],
+                    }
+                    completed = attributable = True
+                    exact_head = source_run["source_head"]
+                else:
+                    matched = self._hosted_trigger_for_checkpoint(pr, head, checkpoint, reviews, payload)
+                    if matched is None:
+                        continue
+                    record, proof = matched
+                    anchor = dict(record["anchor"])
+                    completed = attributable = True
+                    exact_head = str(proof["commit_id"])
                 if checkpoint.hosted_review_id is not None and not checkpoint.correction:
                     if checkpoint.hosted_review_id in emitted_hosted_review_ids:
                         continue
                     emitted_hosted_review_ids.add(checkpoint.hosted_review_id)
                 if state_response_id := proof.get("review_id"):
                     emitted_hosted_response_ids.add(state_response_id)
-                completed = attributable = True
-                exact_head = str(proof["commit_id"])
-                anchor = dict(record["anchor"])
             source_resolution_status = (
-                self._source_resolution_status(pr, channel, checkpoint, exact_head)
-                if (checkpoint.accepted > 0 or (channel == "cli" and completed)) and not checkpoint.correction
+                self._source_resolution_status(
+                    pr,
+                    channel,
+                    checkpoint,
+                    exact_head,
+                    recovered_run_id=(recovered_source["run_id"] if isinstance(recovered_source, Mapping) else None),
+                )
+                if (
+                    checkpoint.accepted > 0
+                    or (channel == "cli" and completed)
+                    or isinstance(recovered_source, Mapping)
+                ) and not checkpoint.correction
                 else None
             )
             if (
@@ -2493,6 +2754,8 @@ class LiveEvidence:
                 "source_run_id": (
                     checkpoint.run_id
                     if channel == "cli"
+                    else recovered_source["run_id"]
+                    if channel == "hosted" and isinstance(recovered_source, Mapping)
                     else f"hosted-review:{checkpoint.hosted_review_id}"
                     if checkpoint.hosted_review_id is not None
                     else f"hosted-review:{proof.get('review_id')}"
@@ -2526,6 +2789,8 @@ class LiveEvidence:
                     display_identity["run_id"] = checkpoint.run_id
                 if channel == "hosted" and checkpoint.hosted_review_id is not None:
                     display_identity["provider_review_id"] = str(checkpoint.hosted_review_id)
+                if channel == "hosted" and isinstance(recovered_source, Mapping):
+                    display_identity["run_id"] = recovered_source["run_id"]
                 display_identities[value["checkpoint"]] = display_identity
             values.append(value)
         if channel == "cli" and cli_context_error is None:
@@ -2571,7 +2836,16 @@ class LiveEvidence:
                     }
                 )
         if channel == "hosted":
-            values.extend(self._current_hosted_history(pr, head, payload, emitted_hosted_response_ids, now=now))
+            values.extend(
+                self._current_hosted_history(
+                    pr,
+                    head,
+                    payload,
+                    emitted_hosted_response_ids,
+                    verified_recovered_responses=verified_recovered_responses,
+                    now=now,
+                )
+            )
         parsed_scope_changes = {
             (item.comment_id, item.created_at, item.description, item.updated_at) for item in scope_changes
         }

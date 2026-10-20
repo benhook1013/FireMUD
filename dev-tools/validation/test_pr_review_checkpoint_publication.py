@@ -2,20 +2,35 @@ from __future__ import annotations
 
 import concurrent.futures
 import copy
+import dataclasses
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
+import test_pr_review_evidence_hosted as evidence_hosted_fixtures
 import test_pr_review_sqlite_hosted_capture as hosted_fixtures
+import test_pr_review_sqlite_records_repair as repair_fixtures
 from pr_review import checkpoint_publication as publication
-from pr_review import cli, evidence, github, sqlite_hosted_capture, sqlite_provider_imports, sqlite_store
+from pr_review import (
+    cli,
+    controller,
+    evidence,
+    github,
+    policy,
+    runtime,
+    sqlite_hosted_capture,
+    sqlite_provider_imports,
+    sqlite_store,
+    state,
+)
 from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
@@ -31,9 +46,10 @@ class FakeGitHub:
         self.posts = 0
         self.uncertain = False
         self.hide = False
+        self.repo = REPO
 
     def _fetch_api_object(self, endpoint):
-        return {"id": 123, "full_name": REPO}
+        return {"id": 123, "full_name": self.repo}
 
     def fetch_authenticated_user(self):
         return {"id": 456, "login": "owner"}
@@ -95,6 +111,532 @@ class CheckpointPublicationTests(unittest.TestCase):
 
     def publish(self, run_id=RUN):
         return publication.publish_checkpoint(self.store, repo=REPO, source_pr=PR, run_id=run_id, adapter=self.github)
+
+    def recovered_run(self, repo=REPO, *, resolved_threads=False):
+        fixture = repair_fixtures.SqliteRecordsRepairTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        with (
+            patch.object(repair_fixtures, "REPO", repo),
+            patch.object(evidence_hosted_fixtures, "REPO", repo),
+        ):
+            payload, record, record_path = fixture.ambiguous_reply_recovery_fixture()
+            if resolved_threads:
+                for thread in payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]:
+                    thread["isResolved"] = True
+                    thread["isOutdated"] = True
+            fixture.recovery_record_path = record_path
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            recovered = fixture.recover_ambiguous_reply(payload, dry_run=False)
+        return fixture, payload, recovered["items"][0]["run_id"]
+
+    def finalize_recovered(self, fixture, run_id, repo=REPO):
+        finalize = publication.publish_checkpoint
+        args = SimpleNamespace(
+            acceptance_fixture=None,
+            state_path=None,
+            records_command="source",
+            source_command="finalize",
+            database=str(fixture.database),
+            run_id=run_id,
+            finalized_at=None,
+            repo=repo,
+        )
+        with (
+            patch.object(cli.github, "infer_repo", return_value=repo),
+            patch.object(
+                publication,
+                "publish_checkpoint",
+                side_effect=lambda store, **options: finalize(store, adapter=self.github, **options),
+            ),
+        ):
+            return cli._dispatch_records(args)
+
+    def recovered_stop_audit(self, fixture, payload):
+        pull = payload["data"]["repository"]["pullRequest"]
+        metadata = fixture.records.attempt("current-hosted-attempt")["metadata"]
+        base_sha = metadata.get("actual_base_sha", metadata["anchor"]["parent_head"])
+        base_ref = metadata.get("actual_base_ref", "develop")
+        pull.update({"number": PR, "baseRefName": base_ref, "baseRefOid": base_sha})
+        live = SimpleNamespace(
+            pull_request=lambda number: SimpleNamespace(
+                number=number,
+                head_sha=pull["headRefOid"],
+                base_sha=base_sha,
+                base_ref_name=base_ref,
+            ),
+            branch_head=lambda _ref: base_sha,
+        )
+        observer = runtime.LiveEvidence(REPO, live, records=fixture.records)
+        anchor = dict(metadata["anchor"])
+        anchor.update(
+            {
+                "pr_base_oid": base_sha,
+                "base_ref": base_ref,
+                "effective_parent_head": base_sha,
+                "enforce_parent_identity_ref": True,
+            }
+        )
+        with (
+            patch.object(observer, "_payload", return_value=payload),
+            patch.object(observer, "_complete_trigger_paths", return_value=[fixture.recovery_record_path]),
+            patch.object(
+                runtime.hosted,
+                "current_trigger_record_paths",
+                return_value=[fixture.recovery_record_path],
+            ),
+        ):
+            return observer.review_stop_audit(PR, anchor)
+
+    def test_recovered_reply_publication_preserves_mixed_case_provider_repository(self):
+        repo = "owner/FireMUD"
+        fixture, _, run_id = self.recovered_run(repo=repo)
+        self.github.repo = repo
+
+        response, status = self.finalize_recovered(fixture, run_id, repo=repo)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(response["result"]["publication"]["status"], "published")
+        self.assertIn("<!-- firemud-hosted-review: 11 -->", response["result"]["publication"]["body"])
+        self.assertEqual(fixture.records.attempt("current-hosted-attempt")["metadata"]["repository"], repo)
+        self.assertEqual(fixture.records.history(PR)["provider_origins"][0]["repository"], repo.casefold())
+
+    def test_exact_recovered_zero_run_publishes_through_source_finalize_and_resolves_once(self):
+        fixture, payload, run_id = self.recovered_run(resolved_threads=True)
+        store = fixture.records
+        original_attempt = store.attempt("current-hosted-attempt")
+        original_artifacts = store.attempt_artifacts("current-hosted-attempt")
+        original_history = store.history(PR)
+        recovered_head = original_history["runs"][0]["source_head"]
+
+        response, status = self.finalize_recovered(fixture, run_id)
+
+        publication_result = response["result"]["publication"]
+        self.assertEqual(status, 0)
+        self.assertEqual(publication_result["status"], "published")
+        self.assertEqual(
+            publication_result["body"],
+            f"Hosted: 0 Found / 0 Accepted / 0 Routed · {recovered_head} · 1 files · 20s\n"
+            "<!-- firemud-hosted-review: 11 -->\n<!-- firemud-review-duration-seconds: 20 -->",
+        )
+        self.assertEqual(store.history(PR)["runs"], original_history["runs"])
+        self.assertEqual(len(store.history(PR)["attempts"]), len(original_history["attempts"]))
+        current_attempt = store.attempt("current-hosted-attempt")
+        for field in (
+            "attempt_id",
+            "source_pr",
+            "channel",
+            "candidate_sha",
+            "started_at",
+            "finished_at",
+            "state",
+            "run_id",
+        ):
+            self.assertEqual(current_attempt[field], original_attempt[field], field)
+        original_attempt_row = next(
+            item for item in original_history["attempts"] if item["attempt_id"] == "current-hosted-attempt"
+        )
+        current_attempt_row = next(
+            item for item in store.history(PR)["attempts"] if item["attempt_id"] == "current-hosted-attempt"
+        )
+        for field in (
+            "started_at",
+            "finished_at",
+            "duration_seconds",
+            "state",
+            "run_id",
+            "trigger_id",
+            "provider_review_id",
+            "candidate_sha",
+        ):
+            self.assertEqual(current_attempt_row[field], original_attempt_row[field], field)
+        self.assertEqual(store.attempt_artifacts("current-hosted-attempt"), original_artifacts)
+        appended_metadata = copy.deepcopy(current_attempt["metadata"])
+        for key in (
+            "checkpoint_publication_run_id",
+            "checkpoint_publication_intent",
+            "checkpoint_publication_events",
+        ):
+            appended_metadata.pop(key, None)
+        self.assertEqual(appended_metadata, original_attempt["metadata"])
+        self.assertEqual(store.checkpoint_publication_state(run_id)["intent"]["run_id"], run_id)
+        self.assertEqual(
+            [event["type"] for event in store.checkpoint_publication_state(run_id)["events"]],
+            ["post_started", "post_outcome"],
+        )
+        repeated, repeated_status = self.finalize_recovered(fixture, run_id)
+        self.assertEqual(repeated_status, 0)
+        self.assertEqual(repeated["result"]["publication"]["status"], "reused")
+        self.assertEqual(self.github.posts, 1)
+
+        public_comment = self.github.comments[0]
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull["headRefOid"] = recovered_head
+        pull["changedFiles"] = 1
+        pull["comments"]["nodes"].append(
+            {
+                "databaseId": public_comment["id"],
+                "body": public_comment["body"],
+                "createdAt": public_comment["created_at"],
+                "updatedAt": public_comment["updated_at"],
+                "author": {"login": public_comment["user"]["login"]},
+            }
+        )
+        observer = runtime.LiveEvidence(REPO, None, records=store)
+        observer.prefetch_payload(PR, payload)
+        parsed, unparsed = evidence.parse_checkpoint_comments(observer._comments(payload))
+        self.assertEqual(unparsed, 0)
+        target = next(item for item in parsed if item.comment_id == public_comment["id"])
+        pubstate = store.checkpoint_publication_state(run_id)
+        self.assertEqual(pubstate["intent"]["repository"], REPO)
+        self.assertEqual(pubstate["intent"]["source_pr"], PR)
+        self.assertEqual(pubstate["intent"]["run_id"], run_id)
+        self.assertEqual(pubstate["intent"]["actor_login"], target.author_login)
+        self.assertTrue(
+            publication._same_checkpoint(
+                {
+                    "id": target.comment_id,
+                    "body": public_comment["body"],
+                    "created_at": target.created_at,
+                    "issue_url": f"https://api.github.com/repos/{REPO}/issues/{PR}",
+                    "user": {"id": pubstate["intent"]["actor_id"], "login": target.author_login},
+                },
+                pubstate["intent"]["body"],
+                repo=REPO,
+                source_pr=PR,
+            )
+        )
+        recovered_binding = observer._recovered_hosted_publication(PR, target, public_comment["body"])
+        self.assertIsInstance(recovered_binding, dict)
+        current_record = runtime.hosted.load_trigger_reservation(fixture.recovery_record_path, REPO, PR)
+        current_state = runtime.hosted.trigger_state(
+            REPO, PR, payload, current_record, fixture.recovery_record_path
+        )
+        ambiguous_current_state = dataclasses.replace(
+            current_state,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            trigger_comment_id=int(recovered_binding["trigger_id"]),
+            response_id=recovered_binding["response_id"],
+            head_sha=recovered_binding["head"],
+            reason="the retained current trigger remains terminally ambiguous",
+        )
+        with (
+            patch.object(
+                runtime.hosted, "current_trigger_record_paths", return_value=[fixture.recovery_record_path]
+            ),
+            patch.object(runtime.hosted, "trigger_state", return_value=ambiguous_current_state),
+        ):
+            history = observer.history(PR, "hosted")
+        self.assertFalse(any(item.get("checkpoint") == "trigger:10" for item in history))
+        published = [item for item in history if item.get("comment_id") == public_comment["id"]]
+        self.assertEqual(len(published), 1)
+        self.assertTrue(published[0]["completed"])
+        self.assertTrue(published[0]["attributable"])
+        self.assertEqual(published[0]["source_run_id"], run_id)
+        self.assertEqual(published[0]["head"], recovered_head)
+        self.assertEqual(published[0]["verified_completed_at"], "2026-09-23T00:02:20Z")
+        self.assertEqual(published[0]["source_resolution_status"], "resolved")
+        original_anchor = published[0]
+        allocation = state.ReviewAllocation(
+            pr=PR,
+            channel="hosted",
+            head=recovered_head,
+            parent_identity=original_anchor["parent_identity"],
+            parent_head=original_anchor["parent_head"],
+            merge_base=original_anchor["merge_base"],
+            patch_id=original_anchor["patch_id"],
+            baseline_checkpoints=(),
+            reason="recovered publication fixture",
+            min_additional_completed=1,
+            max_additional_completed=1,
+        )
+        allocation_snapshot = controller.ReviewController._bounded_allocation_evidence(allocation, history)
+        self.assertIsNone(allocation_snapshot["error"])
+        self.assertEqual(len(allocation_snapshot["results"]), 1)
+        self.assertEqual(allocation_snapshot["results"][0]["source_run_id"], run_id)
+        self.assertEqual(allocation_snapshot["in_flight"], 0)
+        self.assertEqual(len(allocation_snapshot["results"]), allocation.max_additional_completed)
+        minimum_remaining = max(
+            0,
+            (allocation.min_additional_completed or 0) - len(allocation_snapshot["results"]),
+        )
+        self.assertEqual(minimum_remaining, 0)
+        review_state = state.ReviewState(ordered_prs=(PR,))
+        self.assertFalse(
+            any(item.get("held") or item.get("unstable") for item in history),
+            repr([item for item in history if item.get("held") or item.get("unstable")]),
+        )
+        self.assertEqual(
+            policy.completion_status(review_state, policy.Channel.HOSTED, history),
+            policy.ReviewStatus.COMPLETE,
+        )
+        stop_audit = self.recovered_stop_audit(fixture, payload)
+        self.assertEqual(stop_audit["ambiguous_terminal_responses"], [])
+        self.assertEqual(stop_audit["active_reservations"], [])
+        self.assertEqual(
+            stop_audit["ambiguous_responses"], ["response has no preceding full-review trigger"]
+        )
+        self.assertIn(
+            "ambiguous Hosted response: response has no preceding full-review trigger",
+            stop_audit["blockers"],
+        )
+        self.assertEqual(
+            stop_audit["recovered_terminal_responses"],
+            [
+                {
+                    "attempt_id": "current-hosted-attempt",
+                    "trigger_id": 10,
+                    "response_id": 11,
+                    "captured_head": recovered_head,
+                    "run_id": run_id,
+                    "checkpoint_id": public_comment["id"],
+                    "finished_at": "2026-09-23T00:02:20Z",
+                }
+            ],
+        )
+        self.assertEqual(store.attempt("current-hosted-attempt"), current_attempt)
+        self.assertEqual(store.attempt_artifacts("current-hosted-attempt"), original_artifacts)
+        self.assertEqual(store.history(PR)["provider_origins"], original_history["provider_origins"])
+
+    def test_review_stop_audit_keeps_recovered_terminal_ambiguous_without_exact_public_association(self):
+        for association in ("missing", "conflicting"):
+            with self.subTest(association=association):
+                fixture, payload, run_id = self.recovered_run(resolved_threads=True)
+                _, status = self.finalize_recovered(fixture, run_id)
+                self.assertEqual(status, 0)
+                recovered_head = fixture.records.history(PR)["runs"][0]["source_head"]
+                pull = payload["data"]["repository"]["pullRequest"]
+                pull["headRefOid"] = recovered_head
+                pull["changedFiles"] = 1
+                if association == "conflicting":
+                    public_comment = self.github.comments[0]
+                    conflicting_body = public_comment["body"].replace(
+                        "<!-- firemud-hosted-review: 11 -->",
+                        "<!-- firemud-hosted-review: 12 -->",
+                    )
+                    pull["comments"]["nodes"].append(
+                        {
+                            "databaseId": public_comment["id"],
+                            "body": conflicting_body,
+                            "createdAt": public_comment["created_at"],
+                            "updatedAt": public_comment["updated_at"],
+                            "author": {"login": public_comment["user"]["login"]},
+                        }
+                    )
+
+                audit = self.recovered_stop_audit(fixture, payload)
+                self.assertEqual(audit["recovered_terminal_responses"], [])
+                self.assertEqual(len(audit["ambiguous_terminal_responses"]), 1)
+                self.assertEqual(audit["ambiguous_terminal_responses"][0]["trigger_id"], 10)
+                self.assertEqual(audit["ambiguous_terminal_responses"][0]["response_id"], 11)
+                self.assertEqual(audit["active_reservations"], ["ambiguous"])
+                self.assertIn("unattributed trigger response", audit["ambiguous_responses"])
+
+    def test_recovered_public_checkpoint_without_exact_durable_association_is_not_attributed(self):
+        fixture, payload, run_id = self.recovered_run()
+        _, status = self.finalize_recovered(fixture, run_id)
+        self.assertEqual(status, 0)
+        public_comment = self.github.comments[0]
+        pull = payload["data"]["repository"]["pullRequest"]
+        recovered_head = fixture.records.history(PR)["runs"][0]["source_head"]
+        pull["headRefOid"] = recovered_head
+        pull["changedFiles"] = 1
+        pull["comments"]["nodes"].append(
+            {
+                "databaseId": public_comment["id"],
+                "body": public_comment["body"],
+                "createdAt": public_comment["created_at"],
+                "updatedAt": public_comment["updated_at"],
+                "author": {"login": public_comment["user"]["login"]},
+            }
+        )
+        original_state = fixture.records.checkpoint_publication_state(run_id)
+        observer = runtime.LiveEvidence(REPO, None, records=fixture.records)
+        observer.prefetch_payload(PR, payload)
+        current_record = runtime.hosted.load_trigger_reservation(fixture.recovery_record_path, REPO, PR)
+        current_state = runtime.hosted.trigger_state(
+            REPO, PR, payload, current_record, fixture.recovery_record_path
+        )
+        ambiguous_current_state = dataclasses.replace(
+            current_state,
+            state="ambiguous",
+            terminal=True,
+            attributed=False,
+            response_id=11,
+            reason="the retained current trigger remains terminally ambiguous",
+        )
+        with (
+            patch.object(
+                fixture.records,
+                "checkpoint_publication_state",
+                return_value={**original_state, "events": []},
+            ),
+            patch.object(
+                runtime.hosted, "current_trigger_record_paths", return_value=[fixture.recovery_record_path]
+            ),
+            patch.object(runtime.hosted, "trigger_state", return_value=ambiguous_current_state),
+            patch.object(observer, "_hosted_trigger_for_checkpoint") as legacy_attribution,
+        ):
+            history = observer.history(PR, "hosted")
+        legacy_attribution.assert_not_called()
+        self.assertFalse(any(item.get("comment_id") == public_comment["id"] for item in history))
+        unresolved = next(item for item in history if item.get("checkpoint") == "trigger:10")
+        self.assertTrue(unresolved["terminal_ambiguous"])
+        self.assertTrue(unresolved["held"])
+
+        observer_wrong_head = runtime.LiveEvidence(REPO, None, records=fixture.records)
+        observer_wrong_head.prefetch_payload(PR, payload)
+        wrong_head_state = dataclasses.replace(ambiguous_current_state, head_sha="b" * 40)
+        with (
+            patch.object(
+                runtime.hosted, "current_trigger_record_paths", return_value=[fixture.recovery_record_path]
+            ),
+            patch.object(runtime.hosted, "trigger_state", return_value=wrong_head_state),
+        ):
+            conflicting_history = observer_wrong_head.history(PR, "hosted")
+        self.assertTrue(any(item.get("comment_id") == public_comment["id"] for item in conflicting_history))
+        conflicting_trigger = next(
+            item for item in conflicting_history if item.get("checkpoint") == "trigger:10"
+        )
+        self.assertTrue(conflicting_trigger["terminal_ambiguous"])
+
+    def test_recovered_matching_readback_and_uncertain_post_bind_without_reposting(self):
+        fixture, _, run_id = self.recovered_run()
+        body, _ = publication.checkpoint_body(fixture.records, repo=REPO, source_pr=PR, run_id=run_id)
+        self.github.uncertain = True
+        self.github.hide = True
+        with self.assertRaisesRegex(ReviewRecordsError, "retry read recovery later"):
+            publication.publish_checkpoint(
+                fixture.records, repo=REPO, source_pr=PR, run_id=run_id, adapter=self.github
+            )
+        self.assertEqual(self.github.posts, 1)
+        self.assertEqual(
+            [event["type"] for event in fixture.records.checkpoint_publication_state(run_id)["events"]],
+            ["post_started", "post_outcome"],
+        )
+        self.github.hide = False
+        self.github.uncertain = False
+        result = publication.publish_checkpoint(
+            fixture.records, repo=REPO, source_pr=PR, run_id=run_id, adapter=self.github
+        )
+        self.assertEqual(result["status"], "reused")
+        self.assertEqual(result["body"], body)
+        self.assertEqual(self.github.posts, 1)
+        events = fixture.records.checkpoint_publication_state(run_id)["events"]
+        self.assertEqual([event["type"] for event in events], ["post_started", "post_outcome", "reused"])
+        self.assertEqual(events[-1]["comment_id"], 789)
+
+    def test_recovered_existing_matching_comment_is_durably_associated_on_first_readback(self):
+        fixture, _, run_id = self.recovered_run()
+        body, _ = publication.checkpoint_body(fixture.records, repo=REPO, source_pr=PR, run_id=run_id)
+        self.github.comments.append(
+            {
+                "id": 790,
+                "body": body,
+                "user": self.github.fetch_authenticated_user(),
+                "created_at": "2026-09-29T02:00:00Z",
+                "updated_at": "2026-09-29T02:00:00Z",
+                "issue_url": f"https://api.github.com/repos/{REPO}/issues/{PR}",
+                "html_url": f"https://github.com/{REPO}/pull/{PR}#issuecomment-790",
+            }
+        )
+        result = publication.publish_checkpoint(
+            fixture.records, repo=REPO, source_pr=PR, run_id=run_id, adapter=self.github
+        )
+        self.assertEqual(result["status"], "reused")
+        self.assertEqual(self.github.posts, 0)
+        state = fixture.records.checkpoint_publication_state(run_id)
+        self.assertEqual([event["type"] for event in state["events"]], ["reused"])
+        self.assertEqual(state["events"][0]["comment_id"], 790)
+
+    def test_generic_import_and_changed_recovery_proofs_cannot_publish(self):
+        self.store.import_completed_run(
+            run_id="imported-hosted-zero",
+            source_pr=PR,
+            channel="hosted",
+            findings=(),
+            source_decisions=(),
+            source_head=HEAD,
+            started_at="2026-09-29T01:00:00Z",
+            finished_at="2026-09-29T01:01:00Z",
+            finalized_at="2026-09-29T01:01:00Z",
+        )
+        with self.assertRaises(ReviewRecordsError):
+            publication.checkpoint_body(self.store, repo=REPO, source_pr=PR, run_id="imported-hosted-zero")
+
+        mutations = ("origin", "head", "counts", "archive", "time", "files")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                fixture, _, run_id = self.recovered_run()
+                store = fixture.records
+                if mutation in {"origin", "head", "counts"}:
+                    original = store.history
+
+                    def changed_history(pr, _original=original, _run_id=run_id, _mutation=mutation, **kwargs):
+                        value = _original(pr, **kwargs)
+                        target = next(item for item in value["runs"] if item["run_id"] == _run_id)
+                        if _mutation == "origin":
+                            value["provider_origins"][0]["provider_id"] = "review:11"
+                        elif _mutation == "head":
+                            target["source_head"] = "b" * 40
+                        else:
+                            target["counts"] = {"found": 1, "accepted": 0, "routed": 0}
+                        return value
+
+                    with (
+                        patch.object(store, "history", side_effect=changed_history),
+                        self.assertRaises(ReviewRecordsError),
+                    ):
+                        publication.checkpoint_body(store, repo=REPO, source_pr=PR, run_id=run_id)
+                elif mutation == "archive":
+                    original = store.imported_run_artifacts
+
+                    def changed_archive(selected_run_id, _original=original):
+                        value = _original(selected_run_id)
+                        damaged = json.loads(value["metadata"]["content"])
+                        damaged["head_sha"] = "b" * 40
+                        value["metadata"]["content"] = json.dumps(damaged, sort_keys=True)
+                        return value
+
+                    with (
+                        patch.object(store, "imported_run_artifacts", side_effect=changed_archive),
+                        self.assertRaises(ReviewRecordsError),
+                    ):
+                        publication.checkpoint_body(store, repo=REPO, source_pr=PR, run_id=run_id)
+                elif mutation == "time":
+                    original = store.history
+
+                    def changed_time(pr, _original=original, **kwargs):
+                        value = _original(pr, **kwargs)
+                        target = next(
+                            item
+                            for item in value["attempts"]
+                            if item["attempt_id"] == "current-hosted-attempt"
+                        )
+                        target["finished_at"] = "2026-09-23T00:02:07Z"
+                        return value
+
+                    with (
+                        patch.object(store, "history", side_effect=changed_time),
+                        self.assertRaises(ReviewRecordsError),
+                    ):
+                        publication.checkpoint_body(store, repo=REPO, source_pr=PR, run_id=run_id)
+                else:
+                    original = store.attempt
+
+                    def changed_files(attempt_id, _original=original, **kwargs):
+                        value = _original(attempt_id, **kwargs)
+                        if attempt_id == "current-hosted-attempt":
+                            value["metadata"]["reviewed_file_count"] = 0
+                        return value
+
+                    with (
+                        patch.object(store, "attempt", side_effect=changed_files),
+                        self.assertRaises(ReviewRecordsError),
+                    ):
+                        publication.checkpoint_body(store, repo=REPO, source_pr=PR, run_id=run_id)
 
     def test_cli_canonical_counts_markers_and_retry_keep_older_head(self):
         self.cli_run()
