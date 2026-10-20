@@ -81,13 +81,22 @@ def trigger_record(head: str = HEAD):
     }
 
 
-def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = True):
+def archived_addressed_reply_fixture(
+    common: Path,
+    *,
+    include_baseline: bool = True,
+    singular_footer: bool = False,
+    current_attempt_metadata: dict | None = None,
+):
     trigger_at = "2026-09-23T00:02:00Z"
     old_trigger_at = "2026-09-23T00:00:50Z"
     old_started_at = "2026-09-23T00:00:40Z"
     old_finished_at = "2026-09-23T00:01:15Z"
     old_body = "An archived CodeRabbit finding.\n\n<!-- cr-comment:v1:0123456789abcdef01234567 -->"
-    addressed_body = f"{old_body}\n\n✅ Addressed in commits {'c' * 7} to {HEAD[:7]}"
+    footer = (
+        f"✅ Addressed in commit {HEAD[:7]}" if singular_footer else f"✅ Addressed in commits {'c' * 7} to {HEAD[:7]}"
+    )
+    addressed_body = f"{old_body}\n\n{footer}"
     inline = {
         "databaseId": 30,
         "author": {"login": "coderabbitai[bot]"},
@@ -169,7 +178,7 @@ def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = T
         channel="hosted",
         candidate_sha=HEAD,
         started_at="2026-09-23T00:01:50Z",
-        metadata={"repository": REPO},
+        metadata={"repository": REPO, **(current_attempt_metadata or {})},
     )
 
     trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
@@ -2611,6 +2620,16 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertTrue(state.attributed)
         self.assertEqual(state.response_id, 11)
 
+    def test_finished_reply_accepts_exact_singular_addressed_commit_footer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory), singular_footer=True)
+
+            state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+        self.assertEqual(state.state, "completed")
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.response_id, 11)
+
     def test_runtime_zero_reply_proof_uses_custom_trigger_record_database(self):
         with tempfile.TemporaryDirectory() as directory:
             payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
@@ -2687,6 +2706,8 @@ class HostedEvidenceTests(unittest.TestCase):
             ("unknown baseline", False, None),
             ("modified archived body", True, "modified_body"),
             ("addressed range ends on another head", True, "mismatched_range"),
+            ("unknown footer", True, "unknown_footer"),
+            ("created at trigger boundary", True, "created_at_trigger"),
             ("new inline comment", True, "new_comment"),
             ("positive finding count", True, "positive_count"),
             ("incomplete coverage", True, "incomplete_coverage"),
@@ -2706,6 +2727,12 @@ class HostedEvidenceTests(unittest.TestCase):
                     )
                 elif mutation == "mismatched_range":
                     thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(f"to {HEAD[:7]}", f"to {BASE[:7]}")
+                elif mutation == "unknown_footer":
+                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
+                        f"to {HEAD[:7]}", f"to {HEAD[:7]} with additional notes"
+                    )
+                elif mutation == "created_at_trigger":
+                    thread_nodes[0]["createdAt"] = "2026-09-23T00:02:00Z"
                 elif mutation == "new_comment":
                     thread_nodes.append(
                         {

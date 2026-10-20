@@ -21,6 +21,81 @@ from pr_review.state import ControllerStateStore, FindingRoute, ReviewState, Sta
 
 
 class ReviewRecordsCliTest(unittest.TestCase):
+    def test_repair_provider_response_selector_requires_exact_attempt_and_excludes_other_modes(self) -> None:
+        prefix = [
+            "records",
+            "repair-provider",
+            "--pr",
+            "3249",
+            "--repo",
+            "owner/repo",
+            "--actor",
+            "operator",
+            "--scope",
+            "broad",
+        ]
+        parsed = cli._parser().parse_args(
+            [*prefix, "--response-id", "6278948453", "--attempt-id", "81a9fc04c0c04e08a427a1bf8185128d"]
+        )
+        self.assertEqual(parsed.response_id, 6278948453)
+        self.assertEqual(parsed.attempt_id, "81a9fc04c0c04e08a427a1bf8185128d")
+        for invalid in (
+            [*prefix, "--response-id", "6278948453"],
+            [*prefix, "--attempt-id", "81a9fc04c0c04e08a427a1bf8185128d"],
+            [*prefix, "--response-id", "6278948453", "--attempt-id", "attempt", "--all"],
+            [*prefix, "--response-id", "6278948453", "--attempt-id", "attempt", "--continue-on-error"],
+        ):
+            with self.subTest(arguments=invalid), self.assertRaises(SystemExit):
+                cli._parser().parse_args(invalid)
+
+    def test_ambiguous_reply_recovery_fetches_and_repairs_under_hosted_request_lock(self) -> None:
+        database = self.temporary_directory.name
+        self.database = Path(database) / "firemud" / "pr-review-stack.sqlite3"
+        self.database.parent.mkdir(parents=True)
+        SqliteStateStore(self.database).update(lambda state: state)
+        SqliteReviewRecords(self.database).bootstrap()
+        lock_path = cli.hosted.default_trigger_record_path("owner/repo", 3249, self.database.parent.parent)
+        lock_path = lock_path.parent / "request.lock"
+
+        def assert_locked(*_args):
+            descriptor = os.open(lock_path, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+            return {"data": {"repository": {"pullRequest": {"number": 3249}}}}
+
+        with (
+            patch.object(cli.github, "fetch_pull_request", side_effect=assert_locked) as fetch,
+            patch.object(
+                cli.sqlite_records_repair,
+                "repair_ambiguous_hosted_reply",
+                side_effect=lambda *args, **kwargs: (assert_locked(), {"status": "preview"})[1],
+            ) as repair,
+        ):
+            code, result = self.invoke(
+                "repair-provider",
+                "--pr",
+                "3249",
+                "--repo",
+                "owner/repo",
+                "--response-id",
+                "6278948453",
+                "--attempt-id",
+                "81a9fc04c0c04e08a427a1bf8185128d",
+                "--actor",
+                "operator",
+                "--scope",
+                "broad",
+                "--database",
+                str(self.database),
+            )
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["result"]["status"], "preview")
+        fetch.assert_called_once_with("owner/repo", 3249)
+        repair.assert_called_once()
+
     def test_records_source_resolve_requires_a_full_commit_sha(self) -> None:
         prefix = [
             "records",
