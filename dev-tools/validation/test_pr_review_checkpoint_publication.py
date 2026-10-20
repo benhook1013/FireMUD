@@ -152,6 +152,42 @@ class CheckpointPublicationTests(unittest.TestCase):
         ):
             return cli._dispatch_records(args)
 
+    def recovered_stop_audit(self, fixture, payload):
+        pull = payload["data"]["repository"]["pullRequest"]
+        metadata = fixture.records.attempt("current-hosted-attempt")["metadata"]
+        base_sha = metadata.get("actual_base_sha", metadata["anchor"]["parent_head"])
+        base_ref = metadata.get("actual_base_ref", "develop")
+        pull.update({"number": PR, "baseRefName": base_ref, "baseRefOid": base_sha})
+        live = SimpleNamespace(
+            pull_request=lambda number: SimpleNamespace(
+                number=number,
+                head_sha=pull["headRefOid"],
+                base_sha=base_sha,
+                base_ref_name=base_ref,
+            ),
+            branch_head=lambda _ref: base_sha,
+        )
+        observer = runtime.LiveEvidence(REPO, live, records=fixture.records)
+        anchor = dict(metadata["anchor"])
+        anchor.update(
+            {
+                "pr_base_oid": base_sha,
+                "base_ref": base_ref,
+                "effective_parent_head": base_sha,
+                "enforce_parent_identity_ref": True,
+            }
+        )
+        with (
+            patch.object(observer, "_payload", return_value=payload),
+            patch.object(observer, "_complete_trigger_paths", return_value=[fixture.recovery_record_path]),
+            patch.object(
+                runtime.hosted,
+                "current_trigger_record_paths",
+                return_value=[fixture.recovery_record_path],
+            ),
+        ):
+            return observer.review_stop_audit(PR, anchor)
+
     def test_recovered_reply_publication_preserves_mixed_case_provider_repository(self):
         repo = "owner/FireMUD"
         fixture, _, run_id = self.recovered_run(repo=repo)
@@ -336,6 +372,67 @@ class CheckpointPublicationTests(unittest.TestCase):
             policy.completion_status(review_state, policy.Channel.HOSTED, history),
             policy.ReviewStatus.COMPLETE,
         )
+        stop_audit = self.recovered_stop_audit(fixture, payload)
+        self.assertEqual(stop_audit["ambiguous_terminal_responses"], [])
+        self.assertEqual(stop_audit["active_reservations"], [])
+        self.assertEqual(
+            stop_audit["ambiguous_responses"], ["response has no preceding full-review trigger"]
+        )
+        self.assertIn(
+            "ambiguous Hosted response: response has no preceding full-review trigger",
+            stop_audit["blockers"],
+        )
+        self.assertEqual(
+            stop_audit["recovered_terminal_responses"],
+            [
+                {
+                    "attempt_id": "current-hosted-attempt",
+                    "trigger_id": 10,
+                    "response_id": 11,
+                    "captured_head": recovered_head,
+                    "run_id": run_id,
+                    "checkpoint_id": public_comment["id"],
+                    "finished_at": "2026-09-23T00:02:20Z",
+                }
+            ],
+        )
+        self.assertEqual(store.attempt("current-hosted-attempt"), current_attempt)
+        self.assertEqual(store.attempt_artifacts("current-hosted-attempt"), original_artifacts)
+        self.assertEqual(store.history(PR)["provider_origins"], original_history["provider_origins"])
+
+    def test_review_stop_audit_keeps_recovered_terminal_ambiguous_without_exact_public_association(self):
+        for association in ("missing", "conflicting"):
+            with self.subTest(association=association):
+                fixture, payload, run_id = self.recovered_run(resolved_threads=True)
+                _, status = self.finalize_recovered(fixture, run_id)
+                self.assertEqual(status, 0)
+                recovered_head = fixture.records.history(PR)["runs"][0]["source_head"]
+                pull = payload["data"]["repository"]["pullRequest"]
+                pull["headRefOid"] = recovered_head
+                pull["changedFiles"] = 1
+                if association == "conflicting":
+                    public_comment = self.github.comments[0]
+                    conflicting_body = public_comment["body"].replace(
+                        "<!-- firemud-hosted-review: 11 -->",
+                        "<!-- firemud-hosted-review: 12 -->",
+                    )
+                    pull["comments"]["nodes"].append(
+                        {
+                            "databaseId": public_comment["id"],
+                            "body": conflicting_body,
+                            "createdAt": public_comment["created_at"],
+                            "updatedAt": public_comment["updated_at"],
+                            "author": {"login": public_comment["user"]["login"]},
+                        }
+                    )
+
+                audit = self.recovered_stop_audit(fixture, payload)
+                self.assertEqual(audit["recovered_terminal_responses"], [])
+                self.assertEqual(len(audit["ambiguous_terminal_responses"]), 1)
+                self.assertEqual(audit["ambiguous_terminal_responses"][0]["trigger_id"], 10)
+                self.assertEqual(audit["ambiguous_terminal_responses"][0]["response_id"], 11)
+                self.assertEqual(audit["active_reservations"], ["ambiguous"])
+                self.assertIn("unattributed trigger response", audit["ambiguous_responses"])
 
     def test_recovered_public_checkpoint_without_exact_durable_association_is_not_attributed(self):
         fixture, payload, run_id = self.recovered_run()

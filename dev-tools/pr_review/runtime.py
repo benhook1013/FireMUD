@@ -704,8 +704,9 @@ class LiveEvidence:
         """Refresh complete review evidence for a human-directed channel stop.
 
         Retained ambiguous responses remain explicitly non-counting. Each pin
-        must name one verified immutable terminal response; only those exact
-        response blockers are removed from the generic audit.
+        must name one verified immutable terminal response. An exact recovered
+        Hosted publication is attributable through its source audit instead of
+        being treated as an unretained ambiguity.
         """
 
         required_anchor = ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
@@ -819,6 +820,16 @@ class LiveEvidence:
         channel_history = {channel: list(self.history(pr, channel, now=audit_now)) for channel in ("hosted", "cli")}
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
+        verified_recovered_terminal_responses: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        public_comments = self._comments(payload)
+        public_checkpoints, unparsed_checkpoints = evidence.parse_checkpoint_comments(public_comments)
+        if unparsed_checkpoints:
+            raise ControllerError("GitHub history contains an unparsed review checkpoint")
+        checkpoints_by_response: dict[int, list[evidence.Checkpoint]] = {}
+        for checkpoint in public_checkpoints:
+            if checkpoint.type.casefold() == "hosted" and checkpoint.hosted_review_id is not None:
+                checkpoints_by_response.setdefault(checkpoint.hosted_review_id, []).append(checkpoint)
+        public_comments_by_id = {item["id"]: item for item in public_comments if type(item.get("id")) is int}
         terminal_rate_limits: list[dict[str, Any]] = []
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
@@ -828,7 +839,36 @@ class LiveEvidence:
                 raise ControllerError("a Hosted trigger record cannot be completely audited") from error
             observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
             if observation is not None:
-                ambiguous_terminal_responses.append(observation)
+                recovered_source = None
+                matching_checkpoints = checkpoints_by_response.get(observation["response_id"], ())
+                if len(matching_checkpoints) == 1:
+                    checkpoint = matching_checkpoints[0]
+                    public_comment = public_comments_by_id.get(checkpoint.comment_id)
+                    public_body = public_comment.get("body") if isinstance(public_comment, Mapping) else None
+                    if isinstance(public_body, str):
+                        recovered_source = self._recovered_hosted_publication(pr, checkpoint, public_body)
+                recovered_identity = (
+                    (
+                        str(recovered_source.get("attempt_id")),
+                        str(recovered_source.get("trigger_id")),
+                        str(recovered_source.get("response_id")),
+                        str(recovered_source.get("head")),
+                    )
+                    if isinstance(recovered_source, Mapping)
+                    else None
+                )
+                terminal_identity = (
+                    str(record.get("sqlite_attempt_id")),
+                    str(observation["trigger_id"]),
+                    str(observation["response_id"]),
+                    str(observation["captured_head"]),
+                )
+                if recovered_identity == terminal_identity:
+                    verified_recovered_terminal_responses.append(
+                        (observation, {**recovered_source, "checkpoint_id": matching_checkpoints[0].comment_id})
+                    )
+                else:
+                    ambiguous_terminal_responses.append(observation)
             cooldown_value = getattr(state, "cooldown_until", None)
             cooldown_until = hosted.parse_timestamp(cooldown_value)
             trigger_id = state.trigger_comment_id
@@ -860,6 +900,32 @@ class LiveEvidence:
                         "attributable": True,
                     }
                 )
+        active_reservations = list(audit["active_reservations"])
+        unmatched_responses = list(audit["unmatched_responses"])
+        ambiguous_responses = list(audit["ambiguous_responses"])
+        terminal_observation_count = len(ambiguous_terminal_responses) + len(verified_recovered_terminal_responses)
+        isolated_recovered_terminal_responses: list[dict[str, Any]] = []
+        if verified_recovered_terminal_responses:
+            if (
+                active_reservations.count("ambiguous") == terminal_observation_count
+                and ambiguous_responses.count("unattributed trigger response") == terminal_observation_count
+            ):
+                for _observation, recovered_source in verified_recovered_terminal_responses:
+                    active_reservations.remove("ambiguous")
+                    ambiguous_responses.remove("unattributed trigger response")
+                    isolated_recovered_terminal_responses.append(
+                        {
+                            "attempt_id": recovered_source["attempt_id"],
+                            "trigger_id": int(recovered_source["trigger_id"]),
+                            "response_id": int(recovered_source["response_id"]),
+                            "captured_head": recovered_source["head"],
+                            "run_id": recovered_source["run_id"],
+                            "checkpoint_id": recovered_source["checkpoint_id"],
+                            "finished_at": recovered_source["run"]["finished_at"],
+                        }
+                    )
+            else:
+                ambiguous_terminal_responses.extend(item for item, _source in verified_recovered_terminal_responses)
         fingerprints = [item["fingerprint"] for item in ambiguous_terminal_responses]
         if len(set(fingerprints)) != len(fingerprints):
             raise ControllerError("terminal ambiguous Hosted responses have duplicate immutable fingerprints")
@@ -870,9 +936,6 @@ class LiveEvidence:
                 raise ControllerError("retained Hosted ambiguity does not identify one current immutable response")
             retained_by_fingerprint[fingerprint] = matching[0]
 
-        active_reservations = list(audit["active_reservations"])
-        unmatched_responses = list(audit["unmatched_responses"])
-        ambiguous_responses = list(audit["ambiguous_responses"])
         # A proven terminal response has ended execution; its provider reset or
         # bounded local retry backoff remains a repository admission hold.
         active_terminal_rate_limits = [
@@ -993,6 +1056,7 @@ class LiveEvidence:
             "checkpoints": checkpoints,
             "channel_histories": channel_history,
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
+            "recovered_terminal_responses": isolated_recovered_terminal_responses,
             "terminal_rate_limits": terminal_rate_limits,
             "active_hosted_reservations": list(audit.get("active_hosted_reservations", ())),
             "active_cli_reviews": list(active_cli_reviews),
