@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+import "world-management/v1/world_selected_draft_publication_freeze_service.proto";
+
+// Standalone recipient-specific read of the retained World inventory for selected Entity or
+// Automation source intake. This is read-only and does not alter the Game Design publication read.
+service WorldSelectedOwnerInventoryReadService {
+  rpc ReadSelectedOwnerWorldInventory(ReadSelectedOwnerWorldInventoryRequest)
+      returns (ReadSelectedOwnerWorldInventoryResponse);
+}
+
+message ReadSelectedOwnerWorldInventoryRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical Account owner-intake authorization binding and its digest.
+  bytes original_intake_authorization_binding = 4;
+  string intake_authorization_digest = 5;
+  // Exact original selected-publication freeze request and committed acknowledgement.
+  BeginVersionPublicationFreezeRequest freeze_request = 6;
+  BeginVersionPublicationFreezeResponse freeze_acknowledgement = 7;
+  // Original Entity/Automation recipient and the distinct recipient-specific closure purpose.
+  string intended_reader = 8;
+  string closure_read_purpose = 9;
+}
+
+message ReadSelectedOwnerWorldInventoryResponse {
+  int32 schema_version = 1;
+  // Complete request echo; only the public World inventory projection follows.
+  ReadSelectedOwnerWorldInventoryRequest request = 2;
+  bytes canonical_public_inventory = 3;
+  string public_inventory_digest = 4;
+}

@@ -231,6 +231,17 @@ Entry format:
   - Expected pattern: Record commit and receiving evidence separately from background maintenance results. Investigate only under qualified shared-repository maintenance or when an actual delivery blocker requires it; `gc.log` or unreachable-object warnings do not authorize cleanup.
   - Status and reconsideration: The commit retained prospective tree `733ed58d9390a5ba00e24088435af7b847567527`, all 84 child-owned postimages and the deletion, and all 12 qualified incoming blobs. Evidence is in Controller current-gameplay update 2151, `private-parent-carry-via-09e-verification.json`, and `receive-qualified-private-cli1-parent.patch` under the private #3248 local current-parent-carry evidence. Revisit if a qualified maintenance pass identifies the cause or the failure blocks delivery.
 
+- `2026-10-18`: Validation allowance NONE recurred in #3249
+  - Context: A parent-carry helper again ran a scoped `git diff --cached --check` under an explicit validation allowance of NONE, repeating the [2026-10-17: A validation allowance of NONE includes whitespace checks](#ai-observations) finding.
+  - Observation: The check exited zero and grants no proof credit. Main corrected the contradictory no-validation claim and retained ownership of the named integration gate.
+  - Expected pattern: Honor NONE as excluding every check, including scoped Git whitespace checks. If a check runs anyway, report it accurately, give it no proof credit, and retain the orchestrator's ownership of the named integration gate.
+
+- `2026-10-19`: Preserve completed CLI evidence when review-record saving fails
+  - Context: #3248's CLI review `run.42bffcfb0b4c4402b50518add5f4ca48` completed with two findings after 212 seconds under the installed Controller runtime.
+  - Observation: The wrapper returned success but warned only that the SQLite review record was not saved. The durable capture contained the result while the canonical attempt remained started, so provider completion did not establish recorded review credit. The warning hid the underlying exception and referred to a recovery heading that was absent from the lifecycle guide; the existing migration command was broader than the required one-capture recovery.
+  - Expected pattern: Preserve the immutable capture and original attempt identity, report the recording gap, and use an explicitly bounded canonical recovery before adjudication and finalization. Do not rerun a completed review, invent credit, or use an unrelated schema migration to repair its record.
+  - Status and reconsideration: Overseer owns bounded recovery in #3271; no live recovery or migration is authorized yet. The exact persistence cause remains unconfirmed. Revisit after that maintenance change is qualified and promoted and the original capture is recovered through its exact native command.
+
 - `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
   - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
   - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.

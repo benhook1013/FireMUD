@@ -137,9 +137,10 @@ final class AccountControlUiOwnerSourcesFixture {
     if (migrationTarget != null
         && !"160.1".equals(migrationTarget)
         && !"1006".equals(migrationTarget)
-        && !"1007".equals(migrationTarget)) {
+        && !"1007".equals(migrationTarget)
+        && !"1009".equals(migrationTarget)) {
       throw new IllegalArgumentException(
-          "Only the preserved 160.1 source-retention, 1006 parent or 1007 source-disclosure frontier is supported");
+          "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, or 1009 selected-owner predecessor is supported");
     }
     this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");

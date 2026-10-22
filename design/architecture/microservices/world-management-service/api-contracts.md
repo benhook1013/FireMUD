@@ -2,6 +2,8 @@
 
 ## Implementation Status
 
+The prepared recipient-specific inventory read verifies the exact Entity or Automation workload and independently reads Account's held World-closure authorization before reading the original retained World inventory. It is separate from the ordinary Game Design publication read and adds no mutation or runtime registration. Qualification remains pending in the [recipient-intake tracker](../../../project-management/implementation-tracking/player-access-and-session.md#selected-recipient-source-intake-preparation).
+
 The standalone published-spawn requirements read is prepared as unregistered source. It consumes the exact authenticated Game Design release and frozen World selector, accepts only the exact same-namespace Entity workload, and returns immutable design requirements rather than runtime actor or placement authority. Qualification and producer limitations belong to [the World implementation tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#published-spawn-requirements-read-preparation).
 
 The complete published-spawn response has a 4 MiB serialized Protobuf limit, matching the existing gRPC inbound ceiling. Its owner encoder, client stub and response decoder enforce the same limit; the decoder checks size before recursively validating or constructing evidence. Oversized evidence is refused rather than truncated or partially accepted.
