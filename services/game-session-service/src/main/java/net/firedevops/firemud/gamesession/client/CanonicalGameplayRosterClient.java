@@ -463,7 +463,7 @@ public final class CanonicalGameplayRosterClient
     return value != null
         && !value.isBlank()
         && value.equals(value.trim())
-        && value.length() <= 100
+        && value.codePointCount(0, value.length()) <= 100
         && value.codePoints().noneMatch(Character::isISOControl);
   }
 
