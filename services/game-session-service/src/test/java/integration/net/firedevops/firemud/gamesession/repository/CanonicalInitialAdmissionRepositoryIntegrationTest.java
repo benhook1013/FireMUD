@@ -39,6 +39,7 @@ import net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPoin
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
@@ -204,7 +205,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
                     .class),
             routes,
-            admissions);
+            admissions,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+                    .class));
     // This is the actual guard hidden by the old whole-route mock.
     assertThatThrownBy(
             () ->
@@ -258,6 +262,270 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .isEqualTo(
             net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
                 .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED);
+  }
+
+  @Test
+  void recoveryUsesRealCommittedV2PointerWithSyntheticRetainedV1Originals() throws Exception {
+    // Controlled retained pre1006 CLOSED-v1 -> first-OPEN-v2 owner history. Original roster-v1
+    // selections below are synthetic retained evidence: no genuine OPEN-v1 -> OPEN-v2 writer or
+    // Human admission is activated by this proof. All current readers and row-lock guards are real.
+    Fixture fixture = fixture("1005");
+    var predecessor = preparePre1006Admission(fixture);
+    var prepared = predecessor.prepared();
+    var closeRequest =
+        new CreateCanonicalClosedAdmissionPointerRequest(
+            uuid(115),
+            NAMESPACE,
+            TENANT,
+            prepared.catalog().realmId(),
+            CATALOG_REQUEST,
+            prepared.catalog().catalogRevision(),
+            "canonical-roster-recovery-test",
+            "Controlled retained CLOSED origin");
+    // Current catalog mapping expects later fixture-policy columns absent at migration 1005.
+    // Only this historical catalog boundary is controlled; the real CLOSED writer, database
+    // catalog constraints, append-only event and original receipt readback remain in use.
+    var historicalCatalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
+    when(historicalCatalog.readByRequest(NAMESPACE, CATALOG_REQUEST))
+        .thenReturn(java.util.Optional.of(prepared.catalog()));
+    when(historicalCatalog.lockExactInitialPublicProduction(
+            NAMESPACE,
+            TENANT,
+            prepared.catalog().realmId(),
+            CATALOG_REQUEST,
+            prepared.catalog().catalogRevision()))
+        .thenReturn(prepared.catalog());
+    var historicalPointers =
+        new GameSessionCanonicalAdmissionPointerRepository(
+            fixture.dsl,
+            historicalCatalog,
+            new GameplayAdmissionPointerEventRepository(fixture.dsl));
+    var closed = historicalPointers.prepareInitialClosed(closeRequest);
+    fixture.transactions.executeWithoutResult(
+        status -> historicalPointers.createInitialClosed(closed));
+    var origin = historicalPointers.readOriginalClosedOrigin(NAMESPACE, uuid(115)).orElseThrow();
+    var admission =
+        initialAdmissionRequest(
+            prepared.catalog(),
+            prepared.binding(),
+            prepared.gameInstanceUuid(),
+            "controlled-recovery-open-v2",
+            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+            1L,
+            uuid(121),
+            uuid(122));
+    reservePre1006Attempt(fixture, predecessor.launch(), admission);
+    seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
+    migration(fixture, "1015").migrate();
+    var routes =
+        new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
+            NAMESPACE,
+            fixture.catalogRepository,
+            fixture.initialAdmissionRepository,
+            fixture.launchRepository);
+    var current = routes.readCurrentTarget(TENANT);
+    assertThat(current.pointerVersion()).isEqualTo(2L);
+    var currentSnapshot =
+        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+            NAMESPACE, TENANT, current.realmId());
+    assertThat(currentSnapshot.admissionPointerSnapshotDigest())
+        .isEqualTo(current.admissionPointerSnapshotDigest());
+    assertThatThrownBy(
+            () -> fixture.pointerRepository.lockOriginalClosedOrigin(NAMESPACE, origin.requestId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+    var readOnly = new TransactionTemplate(fixture.transactionManager);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(
+                    status ->
+                        fixture.pointerRepository.lockOriginalClosedOrigin(
+                            NAMESPACE, origin.requestId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("read-write transaction");
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.pointerRepository.readOriginalClosedOrigin(
+                            NAMESPACE, origin.requestId())))
+        .isInstanceOf(IllegalStateException.class);
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          var lockedOrigin =
+              fixture
+                  .pointerRepository
+                  .lockOriginalClosedOrigin(NAMESPACE, origin.requestId())
+                  .orElseThrow();
+          assertThat(lockedOrigin.requestId()).isEqualTo(origin.requestId());
+          assertThat(lockedOrigin.requestDigest()).isEqualTo(origin.requestDigest());
+          assertThat(lockedOrigin.receiptDigest()).isEqualTo(origin.receiptDigest());
+          assertThat(lockedOrigin.auditEventId()).isEqualTo(origin.auditEventId());
+          assertThat(
+                  fixture.pointerRepository.lockOriginalClosedOrigin(NAMESPACE, UUID.randomUUID()))
+              .isEmpty();
+          assertThat(
+                  fixture.pointerRepository.lockOriginalClosedOrigin(
+                      "substituted-namespace", origin.requestId()))
+              .isEmpty();
+        });
+    String originalOwnerRows = pointerAndAuditProjection(fixture);
+    var references =
+        new CanonicalGameplayRosterReferenceRepository(
+            fixture.dsl,
+            new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
+                java.time.Duration.ofMillis(500),
+                java.time.Duration.ofMillis(1),
+                java.time.Duration.ofMillis(1),
+                java.time.Duration.ofSeconds(1),
+                8));
+    var target =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
+            .setTenantUuid(TENANT.toString())
+            .setRealmUuid(current.realmId().toString())
+            .setWorldSlug(current.worldSlug())
+            .setRealmSlug(current.realmSlug())
+            .setGameInstanceUuid(current.canonicalGameInstanceId().toString())
+            .setCanonicalVersionUuid(current.canonicalVersionId().toString())
+            .setPlayableStateNamespaceUuid(current.playableStateNamespaceId().toString())
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setEntryPolicy(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                    .CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
+            .setCatalogRevision(current.catalogRevision())
+            .setPointerVersion(1L)
+            .setActiveWorldEpoch(current.activeWorldEpoch())
+            .setAdmissionPointerSnapshotDigest("c".repeat(64))
+            .setPublishedOwnerProofDigest("b".repeat(64))
+            .setPublishedPolicyDigest("a".repeat(64))
+            .setPublishedReleaseBundleRef("controlled:retained-original-v1")
+            .build();
+    var missingRoster =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NAMESPACE, target);
+    var missingAssignment =
+        missingRoster.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build();
+    var actor = UUID.randomUUID();
+    var roster =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse.newBuilder()
+            .setCanonicalAccountUuid(missingRoster.getCanonicalAccountUuid())
+            .setTarget(target)
+            .setSnapshotUuid(UUID.randomUUID().toString())
+            .setSnapshotDigest("d".repeat(64))
+            .addActors(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor.newBuilder()
+                    .setCharacterUuid(actor.toString())
+                    .setDisplayName("Selected")
+                    .setActorKind(
+                        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
+                            .CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
+            .build();
+    var input =
+        net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()
+            .setSchemaVersion(1)
+            .build();
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          references.begin(missingRoster);
+          references.reserveSelectionInput(missingRoster, input);
+          references.markRosterReadStarted(missingRoster);
+          references.begin(missingAssignment);
+          references.reserveSelectionInput(missingAssignment, input);
+          references.markRosterReadStarted(missingAssignment);
+          references.record(missingAssignment, roster);
+          references.selectOriginal(missingAssignment, actor);
+        });
+    Thread.sleep(5L);
+    var recoveryClient =
+        mock(net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient.class);
+    org.mockito.Mockito.when(recoveryClient.read(any()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+            });
+    var admissions = org.mockito.Mockito.spy(fixture.initialAdmissionRepository);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return call.callRealMethod();
+            })
+        .when(admissions)
+        .lockExactCurrentOpenSnapshot(any());
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            references,
+            fixture.transactions,
+            mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            recoveryClient);
+    assertThat(owner.retireTarget(missingRoster)).isFalse();
+    assertThat(references.read(missingRoster).getRecoveryUuid()).isNotEmpty();
+    assertThat(references.read(missingAssignment).getRecoveryUuid()).isNotEmpty();
+    assertThat(references.read(missingRoster).getTerminalOutcome()).isEmpty();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+                  recovery = call.getArgument(0);
+              var original = references.read(recovery.getOriginalSelection());
+              var response =
+                  net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
+                      .response(
+                          recovery,
+                          UUID.randomUUID(),
+                          original.getOwnerFence(),
+                          UUID.fromString(original.getTargetFenceUuid()),
+                          roster);
+              // Storage composition double only; actual peer-authenticated capability proof is
+              // separate.
+              var verified =
+                  mock(
+                      net.firedevops.firemud.gamesession.client
+                          .CanonicalGameplayRosterRecoveryClient.VerifiedRecovery.class);
+              org.mockito.Mockito.when(verified.request()).thenReturn(recovery);
+              org.mockito.Mockito.when(verified.response()).thenReturn(response);
+              return verified;
+            })
+        .when(recoveryClient)
+        .read(any());
+    assertThat(owner.retireTarget(missingRoster)).isFalse();
+    assertThat(references.read(missingRoster).getCanonicalRosterReceipt())
+        .isEqualTo(roster.toByteString());
+    assertThat(references.read(missingAssignment).getSelectedCharacterUuid())
+        .isEqualTo(actor.toString());
+    assertThat(references.read(missingAssignment).getCanonicalSelectedAssignmentReceipt())
+        .isEmpty();
+    assertThat(references.read(missingAssignment).getTerminalOutcome()).isEqualTo("DENIED");
+    Thread.sleep(550L);
+    assertThat(owner.retireTarget(missingRoster)).isTrue();
+    assertThat(
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                .requireRetirement(references.read(missingRoster)))
+        .isEqualTo(references.read(missingRoster));
+    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(6))
+        .lockExactCurrentOpenSnapshot(any());
+    assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);
+    // The existing same-current-pointer and actual-row-lock race proof remains separate above.
+    // Fresh Human allocation still refuses missing Account protection after the retained upgrade.
+    var fresh =
+        initialAdmissionRequest(
+            prepared.catalog(),
+            prepared.binding(),
+            prepared.gameInstanceUuid(),
+            "recovery-must-not-open-human",
+            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+            1L,
+            uuid(123),
+            uuid(124));
+    assertHumanProtectionUnavailable(() -> fixture.initialAdmissionRepository.reserve(fresh));
   }
 
   @Test
@@ -1385,6 +1653,88 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_template_association_pin source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_launch_descriptor_pin source))::TEXT AS projection")
         .get("projection", String.class);
+  }
+
+  private static void seedPre1006ExpectedClosedTerminal(
+      Fixture fixture,
+      PreparedAdmission prepared,
+      CanonicalInitialAdmissionLaunchTarget launch,
+      CanonicalInitialAdmissionRequest request,
+      net.firedevops.firemud.gamesession.dto.CanonicalClosedAdmissionPointerSnapshot origin) {
+    Instant terminalAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          long audit =
+              new GameplayAdmissionPointerEventRepository(fixture.dsl)
+                  .appendCanonicalInitialAdmissionOpen(
+                      request,
+                      prepared.catalog(),
+                      launch,
+                      2L,
+                      prepared.catalog().catalogRevision(),
+                      terminalAt);
+          long pointer =
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "UPDATE gameplay_admission_pointer SET (world_slug, realm_slug, world_display_name, realm_display_name, "
+                          + "tenant_id, game_instance_id, pointer_version, visible, requires_character_selection, state_scope, "
+                          + "character_creation_policy, last_updated_by, last_update_reason, updated_at, public_production_realm, "
+                          + "catalog_revision, realm_id, playable_state_namespace_id, representation_version, target_namespace, "
+                          + "canonical_tenant_id, admission_state, canonical_game_instance_id, canonical_version_id, runtime_version_id, "
+                          + "initial_admission_request_id, initial_admission_request_digest, initial_admission_origin_kind, "
+                          + "initial_admission_prior_pointer_version, initial_admission_active_epoch, initial_admission_hold_id, "
+                          + "initial_admission_hold_fence, initial_admission_hold_binding_digest) = "
+                          + "(SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, game_instance_id, "
+                          + "pointer_version, visible, requires_character_selection, state_scope, character_creation_policy, "
+                          + "actor_principal, reason, occurred_at, public_production_realm, catalog_revision, realm_id, "
+                          + "playable_state_namespace_id, representation_version, target_namespace, canonical_tenant_id, admission_state, "
+                          + "canonical_game_instance_id, canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                          + "initial_admission_request_digest, initial_admission_origin_kind, initial_admission_prior_pointer_version, "
+                          + "initial_admission_active_epoch, initial_admission_hold_id, initial_admission_hold_fence, initial_admission_hold_binding_digest "
+                          + "FROM gameplay_admission_pointer_event WHERE id = ?) WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? RETURNING id",
+                      audit,
+                      NAMESPACE,
+                      TENANT,
+                      request.realmId())
+                  .get("id", Long.class);
+          String proof =
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT 'sha256:' || encode(sha256(string_agg(int4send(octet_length(convert_to(field, 'UTF8'))) "
+                          + "|| convert_to(field, 'UTF8'), ''::BYTEA ORDER BY ordinal)), 'hex') AS proof "
+                          + "FROM game_session_canonical_initial_admission_attempt attempt CROSS JOIN LATERAL unnest(ARRAY["
+                          + "'gs-canonical-initial-admission-commit-proof/v1', request_digest, initial_admission_request_id, "
+                          + "target_namespace, canonical_tenant_id::TEXT, world_slug, realm_id::TEXT, playable_state_namespace_id::TEXT, "
+                          + "playable_state_scope, canonical_game_instance_id::TEXT, canonical_version_id::TEXT, runtime_version_id::TEXT, "
+                          + "active_lifecycle_epoch::TEXT, expected_catalog_revision::TEXT, origin_kind, expected_prior_pointer_version::TEXT, "
+                          + "hold_id::TEXT, hold_fence::TEXT, hold_binding_digest, '2', ?::TEXT, ?::TEXT, ?::TEXT, ?::TEXT, ?::TEXT]) "
+                          + "WITH ORDINALITY fields(field, ordinal) WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      Long.toString(audit),
+                      origin.requestId().toString(),
+                      origin.requestDigest(),
+                      Long.toString(origin.auditEventId()),
+                      terminalAt.toString(),
+                      NAMESPACE,
+                      request.initialAdmissionRequestId())
+                  .get("proof", String.class);
+          fixture.dsl.execute(
+              "UPDATE game_session_canonical_initial_admission_attempt SET status = 'COMMITTED', pointer_id = ?, "
+                  + "pointer_version = 2, audit_event_id = ?, prior_pointer_request_id = ?, prior_pointer_request_digest = ?, "
+                  + "prior_pointer_audit_event_id = ?, commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
+                  + "terminal_at = CAST(? AS TIMESTAMPTZ) WHERE target_namespace = ? AND initial_admission_request_id = ?",
+              pointer,
+              audit,
+              origin.requestId(),
+              origin.requestDigest(),
+              origin.auditEventId(),
+              proof,
+              terminalAt.atOffset(ZoneOffset.UTC),
+              terminalAt.atOffset(ZoneOffset.UTC),
+              NAMESPACE,
+              request.initialAdmissionRequestId());
+        });
   }
 
   private static void seedPre1006Terminal(

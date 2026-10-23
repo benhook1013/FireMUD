@@ -122,6 +122,8 @@ message GetCanonicalGameplayRosterReferenceResponse {
   int64 superseding_catalog_revision = 13;
   int64 superseding_world_epoch = 14;
   string retirement_proof_digest = 15;
+  // Owner-local recovery fence: normal reads/writes cannot restart this original operation.
+  string recovery_uuid = 16;
 }
 
 // Original selection input is frozen before any Entity roster read. A later ordinal choice is a

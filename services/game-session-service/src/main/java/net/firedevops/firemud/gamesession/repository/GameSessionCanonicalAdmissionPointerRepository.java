@@ -283,6 +283,42 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     }
   }
 
+  /** Verifies historical CLOSED origin evidence within an existing writable owner transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<CanonicalClosedAdmissionPointerSnapshot> lockOriginalClosedOrigin(
+      String targetNamespace, UUID originalRequestId) {
+    requireReadSelector(targetNamespace, originalRequestId);
+    requireWritableOwnerTransaction();
+    Record outcome =
+        dsl.fetchOne(
+            "SELECT * FROM game_session_canonical_closed_admission_pointer_request "
+                + "WHERE target_namespace = ? AND request_id = ? FOR SHARE",
+            targetNamespace,
+            originalRequestId);
+    if (outcome == null) {
+      return Optional.empty();
+    }
+    try {
+      CreateCanonicalClosedAdmissionPointerRequest request = requestFromOutcome(outcome);
+      CanonicalRealmCatalogSnapshot catalog =
+          catalogRepository.lockExactInitialPublicProduction(
+              targetNamespace,
+              request.canonicalTenantId(),
+              request.realmId(),
+              request.catalogCreationRequestId(),
+              request.catalogRevision());
+      return Optional.of(
+          verifyOrigin(targetNamespace, originalRequestId, outcome, catalog, null, false));
+    } catch (InvalidCanonicalClosedPointerEvidenceException
+        | GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException
+        | GameSessionCanonicalRealmCatalogRepository.CatalogConflictException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Persisted original canonical CLOSED evidence is invalid", exception);
+    }
+  }
+
   /**
    * Requires absence across every persisted pointer/audit representation that can name this
    * canonical realm or its exactly associated legacy runtime selector. The caller must hold the

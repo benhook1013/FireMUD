@@ -275,7 +275,7 @@ public class CanonicalInitialAdmissionRepository {
             expected.canonicalTenantId(),
             expected.realmId(),
             expected.expectedCatalogRevision());
-    verifyCommittedReadback(attempt, lockedCatalog);
+    verifyCommittedReadback(attempt, lockedCatalog, true);
     var proof = toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
     var actual = new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(pointer, proof));
     if (!pointer.matches(proof) || !actual.equals(qualified)) {
@@ -350,10 +350,11 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   private void verifyCommittedReadback(Attempt attempt) {
-    verifyCommittedReadback(attempt, readExactCatalog(attempt.asRequest()));
+    verifyCommittedReadback(attempt, readExactCatalog(attempt.asRequest()), false);
   }
 
-  private void verifyCommittedReadback(Attempt attempt, CanonicalRealmCatalogSnapshot catalog) {
+  private void verifyCommittedReadback(
+      Attempt attempt, CanonicalRealmCatalogSnapshot catalog, boolean ownerLocked) {
     CanonicalInitialAdmissionRequest request = attempt.asRequest();
     requireRequestMatchesCatalog(request, catalog);
     Record evidence =
@@ -526,7 +527,7 @@ public class CanonicalInitialAdmissionRepository {
           "Committed initial-admission pointer, audit, request and catalog readback disagree");
     }
     if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED) {
-      verifyOriginalClosedOrigin(attempt);
+      verifyOriginalClosedOrigin(attempt, ownerLocked);
     }
     String expectedProof =
         commitProofDigest(
@@ -578,6 +579,10 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   private void verifyOriginalClosedOrigin(Attempt attempt) {
+    verifyOriginalClosedOrigin(attempt, false);
+  }
+
+  private void verifyOriginalClosedOrigin(Attempt attempt, boolean ownerLocked) {
     if (attempt.priorPointerRequestId() == null
         || attempt.priorPointerRequestDigest() == null
         || attempt.priorPointerAuditEventId() == null
@@ -586,8 +591,11 @@ public class CanonicalInitialAdmissionRepository {
           "EXPECT_CLOSED terminal result has no exact original CLOSED origin identity");
     }
     CanonicalClosedAdmissionPointerSnapshot origin =
-        pointerRepository
-            .readOriginalClosedOrigin(attempt.targetNamespace(), attempt.priorPointerRequestId())
+        (ownerLocked
+                ? pointerRepository.lockOriginalClosedOrigin(
+                    attempt.targetNamespace(), attempt.priorPointerRequestId())
+                : pointerRepository.readOriginalClosedOrigin(
+                    attempt.targetNamespace(), attempt.priorPointerRequestId()))
             .orElseThrow(
                 () ->
                     new CanonicalInitialAdmissionReconciliationRequiredException(

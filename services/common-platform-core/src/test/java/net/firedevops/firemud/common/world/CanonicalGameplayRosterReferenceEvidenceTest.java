@@ -145,6 +145,93 @@ class CanonicalGameplayRosterReferenceEvidenceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void recoveryFenceStopsDereferenceAndRequiresExactIndependentOwnerIdentity() {
+    var original = request();
+    var recovery =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.response(original, 1L, UUID.randomUUID(), null)
+            .toBuilder()
+            .setRecoveryUuid(recovery.getRecoveryUuid())
+            .build();
+    assertThat(CanonicalGameplayRosterRecoveryEvidence.requireOwnerRecovery(recovery, owner))
+        .isEqualTo(owner);
+    assertThatThrownBy(() -> CanonicalGameplayRosterReferenceEvidence.requireDereference(owner))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterRecoveryEvidence.requireOwnerRecovery(
+                    recovery.toBuilder().setRecoveryUuid(UUID.randomUUID().toString()).build(),
+                    owner))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireDereference(
+                    owner.toBuilder().clearRecoveryUuid().setTerminalOutcome("DENIED").build()))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void closedRecoveryEchoAndOptionalOriginalReceiptNeverPermitSubstitution() {
+    var original = request();
+    var recovery =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var receipt =
+        CanonicalGameplayRosterResponse.newBuilder()
+            .setCanonicalAccountUuid(original.getCanonicalAccountUuid())
+            .setTarget(CanonicalGameplayRosterReferenceEvidence.target(original))
+            .setSnapshotUuid(UUID.randomUUID().toString())
+            .setSnapshotDigest("d".repeat(64))
+            .build();
+    var response =
+        CanonicalGameplayRosterRecoveryEvidence.response(
+            recovery, UUID.randomUUID(), 1L, UUID.randomUUID(), receipt);
+    assertThat(response.getCanonicalRosterReceipt()).isEqualTo(receipt.toByteString());
+    assertThat(CanonicalGameplayRosterRecoveryEvidence.requireResponse(recovery, response))
+        .isEqualTo(response);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+    for (var invalid :
+        java.util.List.of(
+            response.toBuilder().setOwnerFence(0L).build(),
+            response.toBuilder().setAdmissionUuid(new UUID(0L, 0L).toString()).build(),
+            response.toBuilder().setUnknownFields(unknown).build(),
+            response.toBuilder()
+                .setCanonicalRosterReceipt(
+                    receipt.toBuilder()
+                        .setCanonicalAccountUuid(UUID.randomUUID().toString())
+                        .build()
+                        .toByteString())
+                .build(),
+            response.toBuilder()
+                .setCanonicalRosterReceipt(
+                    receipt.toBuilder()
+                        .setTarget(receipt.getTarget().toBuilder().setPointerVersion(99L))
+                        .build()
+                        .toByteString())
+                .build(),
+            response.toBuilder()
+                .setRequest(recovery.toBuilder().setRecoveryUuid(UUID.randomUUID().toString()))
+                .build())) {
+      assertThatThrownBy(
+              () -> CanonicalGameplayRosterRecoveryEvidence.requireResponse(recovery, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   private static GetCanonicalGameplayRosterReferenceRequest request() {
     var target =
         CanonicalGameplayRosterTarget.newBuilder()

@@ -46,10 +46,8 @@ public final class CanonicalGameplayRosterReferenceRepository {
         dsl.fetchSingle(
             "SELECT * FROM game_session_canonical_roster_target_fences WHERE target_binding_digest = ? FOR UPDATE",
             digest);
-    if (!Arrays.equals(binding, fence.get("target_binding", byte[].class))
-        || policy.minimumRetention().toMillis() != fence.get("minimum_retention_millis", Long.class)
-        || policy.replayHorizonMillis() != fence.get("replay_horizon_millis", Long.class)) {
-      throw new IllegalStateException("CANONICAL_ROSTER_TARGET_POLICY_OR_BINDING_CONFLICT");
+    if (!Arrays.equals(binding, fence.get("target_binding", byte[].class))) {
+      throw new IllegalStateException("CANONICAL_ROSTER_TARGET_BINDING_CONFLICT");
     }
     if (!"ACTIVE".equals(fence.get("fence_state", String.class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_TARGET_FENCE_RETIRED");
@@ -64,7 +62,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
         dsl.fetchSingle(
             "SELECT terminal_at IS NOT NULL AND terminal_at + ? * interval '1 millisecond' <= clock_timestamp() AS closed "
                 + "FROM game_session_canonical_roster_selection s JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) WHERE operation_uuid = ?",
-            policy.replayHorizonMillis(),
+            fence.get("replay_horizon_millis", Long.class),
             CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()));
     if (Boolean.TRUE.equals(replay.get("closed", Boolean.class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REPLAY_WINDOW_CLOSED");
@@ -219,6 +217,9 @@ public final class CanonicalGameplayRosterReferenceRepository {
     if (lock && Boolean.TRUE.equals(row.get("replay_closed", Boolean.class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REPLAY_WINDOW_CLOSED");
     }
+    if (lock && row.get("recovery_uuid", java.util.UUID.class) != null) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECOVERY_FENCED");
+    }
     byte[] receipt = row.get("canonical_roster_receipt", byte[].class);
     try {
       var result =
@@ -242,6 +243,10 @@ public final class CanonicalGameplayRosterReferenceRepository {
       if (selectedReceipt != null) {
         result.setCanonicalSelectedAssignmentReceipt(
             com.google.protobuf.ByteString.copyFrom(selectedReceipt));
+      }
+      java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
+      if (recovery != null) {
+        result.setRecoveryUuid(recovery.toString());
       }
       String outcome = row.get("terminal_outcome", String.class);
       if (outcome != null) {
@@ -291,7 +296,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
     lockActiveTarget(request);
     dsl.execute(
         "UPDATE game_session_canonical_roster_selection SET terminal_outcome = 'DENIED', terminal_at = clock_timestamp() "
-            + "WHERE operation_uuid = ? AND original_request = ? AND NOT roster_read_started AND terminal_outcome IS NULL "
+            + "WHERE operation_uuid = ? AND original_request = ? AND NOT roster_read_started AND terminal_outcome IS NULL AND recovery_uuid IS NULL "
             + "AND canonical_roster_receipt IS NULL AND selected_character_uuid IS NULL",
         CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
         request.toByteArray());
@@ -347,6 +352,31 @@ public final class CanonicalGameplayRosterReferenceRepository {
       GetCanonicalGameplayRosterReferenceRequest request,
       net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget current) {
     lockActiveTarget(request);
+    if (!isSupersedingTarget(request, current)) {
+      return false;
+    }
+    int sealed =
+        dsl.execute(
+            "UPDATE game_session_canonical_roster_target_fences f SET fence_state = 'RETIRED', "
+                + "retirement_uuid = ?, retired_at = clock_timestamp(), superseding_pointer_digest = ?, superseding_pointer_version = ?, "
+                + "superseding_catalog_revision = ?, superseding_world_epoch = ? WHERE target_binding_digest = ? AND fence_state = 'ACTIVE' "
+                + "AND NOT EXISTS (SELECT 1 FROM game_session_canonical_roster_selection s WHERE s.target_fence_uuid = f.target_fence_uuid "
+                + "AND (s.terminal_at IS NULL OR s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
+                + "OR ((s.roster_read_started AND s.canonical_roster_receipt IS NULL "
+                + "OR s.selected_character_uuid IS NOT NULL AND s.canonical_selected_assignment_receipt IS NULL) "
+                + "AND NOT (s.recovery_uuid IS NOT NULL AND s.recovery_receipt IS NOT NULL AND s.terminal_outcome = 'DENIED'))))",
+            java.util.UUID.randomUUID(),
+            current.admissionPointerSnapshotDigest(),
+            current.pointerVersion(),
+            current.catalogRevision(),
+            current.activeWorldEpoch(),
+            digest(targetBinding(request)));
+    return sealed == 1;
+  }
+
+  private static boolean isSupersedingTarget(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget current) {
     var original = CanonicalGameplayRosterReferenceEvidence.target(request);
     if (!request.getTargetNamespace().equals(current.targetNamespace())
         || !original.getTenantUuid().equals(current.canonicalTenantId().toString())
@@ -362,22 +392,113 @@ public final class CanonicalGameplayRosterReferenceRepository {
         || current.activeWorldEpoch() < original.getActiveWorldEpoch()) {
       return false;
     }
-    int sealed =
-        dsl.execute(
-            "UPDATE game_session_canonical_roster_target_fences f SET fence_state = 'RETIRED', "
-                + "retirement_uuid = ?, retired_at = clock_timestamp(), superseding_pointer_digest = ?, superseding_pointer_version = ?, "
-                + "superseding_catalog_revision = ?, superseding_world_epoch = ? WHERE target_binding_digest = ? AND fence_state = 'ACTIVE' "
-                + "AND NOT EXISTS (SELECT 1 FROM game_session_canonical_roster_selection s WHERE s.target_fence_uuid = f.target_fence_uuid "
-                + "AND (s.terminal_at IS NULL OR s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
-                + "OR (s.roster_read_started AND s.canonical_roster_receipt IS NULL) "
-                + "OR (s.selected_character_uuid IS NOT NULL AND s.canonical_selected_assignment_receipt IS NULL)))",
-            java.util.UUID.randomUUID(),
-            current.admissionPointerSnapshotDigest(),
-            current.pointerVersion(),
-            current.catalogRevision(),
-            current.activeWorldEpoch(),
-            digest(targetBinding(request)));
-    return sealed == 1;
+    return true;
+  }
+
+  /** Durably fences a bounded page before any recovery RPC, including interrupted retries. */
+  public java.util.List<
+          net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest>
+      beginRecoveries(
+          GetCanonicalGameplayRosterReferenceRequest request,
+          net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget current) {
+    lockActiveTarget(request);
+    if (!isSupersedingTarget(request, current)) {
+      return java.util.List.of();
+    }
+    var candidates =
+        dsl.fetch(
+            "SELECT s.* FROM game_session_canonical_roster_selection s "
+                + "JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) "
+                + "WHERE f.target_binding_digest = ? AND s.terminal_outcome IS NULL "
+                + "AND (s.recovery_uuid IS NOT NULL OR s.recorded_at + f.replay_horizon_millis * interval '1 millisecond' <= clock_timestamp()) "
+                + "ORDER BY s.recovery_started_at NULLS LAST, s.operation_uuid LIMIT ? FOR UPDATE OF s",
+            digest(targetBinding(request)),
+            policy.batchSize());
+    return candidates.map(
+        row -> {
+          java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
+          if (recovery == null) {
+            recovery = java.util.UUID.randomUUID();
+            dsl.execute(
+                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp() "
+                    + "WHERE operation_uuid = ? AND recovery_uuid IS NULL AND terminal_outcome IS NULL",
+                recovery,
+                row.get("operation_uuid", java.util.UUID.class));
+          }
+          try {
+            return net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
+                .requireRequest(
+                    net.firedevops.firemud.entitymanagement.v1
+                        .CanonicalGameplayRosterRecoveryRequest.newBuilder()
+                        .setSchemaVersion(1)
+                        .setOriginalSelection(
+                            GetCanonicalGameplayRosterReferenceRequest.parseFrom(
+                                row.get("original_request", byte[].class)))
+                        .setRecoveryUuid(recovery.toString())
+                        .build());
+          } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+            throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_INVALID", invalid);
+          }
+        });
+  }
+
+  /** Only the authenticated Entity client can construct this positive nonce-closure capability. */
+  public void finishRecovery(
+      net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+              .VerifiedRecovery
+          verified) {
+    requireWritableTransaction();
+    var recovery =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence.requireRequest(
+            verified.request());
+    var response =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence.requireResponse(
+            recovery, verified.response());
+    var request = recovery.getOriginalSelection();
+    lockActiveTarget(request);
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM game_session_canonical_roster_selection WHERE operation_uuid = ? FOR UPDATE",
+            CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()));
+    if (row == null) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_UNAVAILABLE");
+    }
+    var original = readExact(request, false);
+    net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
+        .requireOwnerRecovery(recovery, original);
+    if (original.getOwnerFence() != response.getOwnerFence()
+        || !original.getTargetFenceUuid().equals(response.getTargetFenceUuid())) {
+      throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_FENCE_CONFLICT");
+    }
+    byte[] retainedRecovery = row.get("recovery_receipt", byte[].class);
+    if (retainedRecovery != null) {
+      if (!Arrays.equals(retainedRecovery, response.toByteArray())) {
+        throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_RECEIPT_CONFLICT");
+      }
+      return;
+    }
+    if (!original.getTerminalOutcome().isEmpty()) {
+      throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_OUTCOME_CONFLICT");
+    }
+    if (!original.getCanonicalRosterReceipt().isEmpty()
+        && !original.getCanonicalRosterReceipt().equals(response.getCanonicalRosterReceipt())) {
+      throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_ROSTER_CONFLICT");
+    }
+    byte[] receipt =
+        response.getCanonicalRosterReceipt().isEmpty()
+            ? null
+            : response.getCanonicalRosterReceipt().toByteArray();
+    dsl.execute(
+        "UPDATE game_session_canonical_roster_selection SET "
+            + "canonical_roster_receipt = COALESCE(canonical_roster_receipt, ?::bytea), "
+            + "receipt_recorded_at = CASE WHEN canonical_roster_receipt IS NULL AND ?::bytea IS NOT NULL THEN clock_timestamp() ELSE receipt_recorded_at END, "
+            + "recovery_receipt = ?, terminal_outcome = 'DENIED', terminal_at = clock_timestamp() "
+            + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
+        receipt,
+        receipt,
+        response.toByteArray(),
+        CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
+        CanonicalGameplayRosterReferenceEvidence.uuid(recovery.getRecoveryUuid()));
   }
 
   public record TargetCandidate(
