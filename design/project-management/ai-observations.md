@@ -267,3 +267,7 @@ Entry format:
   - Context: [#3269's dev-tool contract job](https://github.com/benhook1013/FireMUD/actions/runs/39914844923/job/120286735224) failed while generating its expired RSA CA fixture with `openssl x509 -days -1`, before the bootstrap denial assertion could run.
   - Expected pattern: Use an explicitly ordered past validity interval for an expired test certificate, retaining its CA/key-usage constraints and the assertion that expired authority cannot enable active mode. A fixture-generation failure is not evidence that the production expiry check failed; qualify the replacement fixture and the complete owning contract separately.
   - Status: The corrected fixture, complete owning contract and ShellCheck passed locally on OpenSSL 3.0.2. Current-head CI remains required, and the earlier failed job remains failed evidence.
+
+- `2026-10-23`: Isolate uv managed-Python launchers as well as installations
+  - Observation: A temporary docs-lock generator set `UV_PYTHON_INSTALL_DIR` inside its task directory, but uv 0.13.5 also created `~/.local/bin/python3.15`. The exact newly created task-owned symlink was verified and removed; no preexisting launcher was overwritten.
+  - Expected pattern: Set `UV_PYTHON_BIN_DIR` to a task-private path before temporary installation and confirm it with `uv python dir --bin`; this override was verified locally. Alternatively, `uv python install --no-bin` is supported by the installed help. Installation-directory isolation alone does not isolate launchers.

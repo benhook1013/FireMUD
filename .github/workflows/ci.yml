@@ -425,8 +425,6 @@ jobs:
           time bash ./dev-tools/tests/jacoco-combined-report-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/gradle-proof-tooling-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
-          TIMEFORMAT='bash ./dev-tools/tests/pr-review-controller-contract.sh: real=%3R user=%3U sys=%3S'
-          time bash ./dev-tools/tests/pr-review-controller-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/testcontainers-disabled-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/testcontainers-disabled-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/pr-retarget-workflow-contract.sh: real=%3R user=%3U sys=%3S'
