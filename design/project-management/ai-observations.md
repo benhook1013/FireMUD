@@ -308,3 +308,8 @@ Entry format:
 - `2026-10-24`: Preserve uncertain coordination delivery during controller response failures
   - Observation: Gameplay's own bound CLI inbox read and native inbox/job reads returned `invalid_response`; the native attempt to notify FireController Worker returned the same error. The message delivery outcome is unknown, so no successful report or handled inbox state is claimed.
   - Expected pattern: Retain the original notification key and request for supported recovery, avoid debugging or changing the service, and continue independent local work. Fresh instructions, review capture and official progress recording remain unavailable until the owning connection recovers.
+
+- `2026-10-24`: Carry the build environment and explicit package metadata into ORT containers
+  - Observation: The ORT analyzer container did not inherit `CI`, so this project's Node Gradle plugin enabled a download repository that ORT cannot analyze. ORT 97 also disables repository package curations by default, even when it discovers a valid `.ort.yml`.
+  - Expected pattern: Forward the existing CI environment contract explicitly and enable the documented repository-curation option while retaining global providers. Normalize only exact package/version metadata supported by upstream license text, and record a package-specific choice for an explicitly offered alternative. Custom licenses require their own policy decision; do not relabel them as SPDX aliases or waive unresolved policy errors.
+  - Proof limit: Workflow wiring, YAML, failure guards and upstream metadata are checked locally. Only actual analyzer/evaluator results can qualify the hosted correction; the earlier Maven Central 403 response origin remains unknown.
