@@ -70,6 +70,31 @@ public final class CanonicalGameplayRosterReferenceRepository {
     return readExact(request, true);
   }
 
+  /** Looks up an exact retained original without reserving any new row or fence. */
+  public java.util.Optional<GetCanonicalGameplayRosterReferenceResponse> find(
+      GetCanonicalGameplayRosterReferenceRequest request) {
+    CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
+    Record row =
+        dsl.fetchOne(
+            "SELECT original_request FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()));
+    if (row == null) {
+      return java.util.Optional.empty();
+    }
+    if (!Arrays.equals(request.toByteArray(), row.get("original_request", byte[].class))) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+    }
+    return java.util.Optional.of(readExact(request, false));
+  }
+
+  /** Replays only an existing original; a concurrent purge never turns this into a reservation. */
+  public GetCanonicalGameplayRosterReferenceResponse replay(
+      GetCanonicalGameplayRosterReferenceRequest request) {
+    requireWritableTransaction();
+    CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
+    return readExact(request, true);
+  }
+
   public GetCanonicalGameplayRosterReferenceResponse read(
       GetCanonicalGameplayRosterReferenceRequest request) {
     CanonicalGameplayRosterReferenceEvidence.requireRequest(request);

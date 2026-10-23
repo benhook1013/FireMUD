@@ -973,6 +973,416 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         .isEqualTo(8L);
   }
 
+  @Test
+  void purgedOriginalCannotReturnReservedWhenFreshSourceOrLockedCurrentProofFails()
+      throws Exception {
+    var published =
+        support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+            .canonicalPublishedRoute();
+    var request = publishedRequest(published);
+    var candidate = retireOriginal(request);
+    Thread.sleep(5L);
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+    var sources =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                .class);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var owner = referenceOwner(sources, admissions);
+    org.mockito.Mockito.when(
+            sources.readCurrent(
+                org.mockito.ArgumentMatchers.any(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .Request.class)))
+        .thenThrow(
+            new net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                .StorageUnavailableException("source unavailable"));
+    assertThatThrownBy(() -> owner.begin(request)).hasMessageContaining("source unavailable");
+    assertNoOriginalOrFence();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              var source = sourceEvidence(call.getArgument(0), published);
+              return new net.firedevops.firemud.common.world
+                  .CanonicalGameplayRosterOwnerReadEvidence(
+                  source.request(),
+                  "0".repeat(64),
+                  source.gameSessionOwnerProof(),
+                  source.publishedPolicySetEvidence());
+            })
+        .when(sources)
+        .readCurrent(
+            org.mockito.ArgumentMatchers.any(
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+                    .class));
+    assertThatThrownBy(() -> owner.begin(request)).hasMessageContaining("SOURCE_MISMATCH");
+    assertNoOriginalOrFence();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              return sourceEvidence(call.getArgument(0), published);
+            })
+        .when(sources)
+        .readCurrent(
+            org.mockito.ArgumentMatchers.any(
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+                    .class));
+    org.mockito.Mockito.when(
+            admissions.lockExactCurrentOpenSnapshot(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isTrue();
+              CanonicalInitialAdmissionRepository.CurrentOpenSnapshot qualified =
+                  call.getArgument(0);
+              assertThat(qualified.admissionPointerSnapshotDigest())
+                  .isEqualTo(published.route().admissionPointerSnapshotDigest());
+              assertThat(qualified.ownerProof().proofDigest())
+                  .isEqualTo(published.route().ownerProofDigest());
+              assertThat(qualified.ownerProof().holdId()).isEqualTo(published.route().holdId());
+              throw new CanonicalInitialAdmissionRepository
+                  .CanonicalInitialAdmissionReconciliationRequiredException(
+                  "current changed before reservation commit");
+            });
+    assertThatThrownBy(() -> owner.begin(request)).hasMessageContaining("current changed");
+    assertNoOriginalOrFence();
+  }
+
+  @Test
+  void freshReservationQualifiesOutsideSqlAndLocksThatExactSourceBeforeCommit() {
+    var published =
+        support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+            .canonicalPublishedRoute();
+    var request = publishedRequest(published);
+    var sources =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                .class);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var observed =
+        new java.util.concurrent.atomic.AtomicReference<
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence>();
+    org.mockito.Mockito.when(
+            sources.readCurrent(
+                org.mockito.ArgumentMatchers.any(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .Request.class)))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              assertNoOriginalOrFence();
+              var source = sourceEvidence(call.getArgument(0), published);
+              observed.set(source);
+              return source;
+            });
+    org.mockito.Mockito.when(
+            admissions.lockExactCurrentOpenSnapshot(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isTrue();
+              CanonicalInitialAdmissionRepository.CurrentOpenSnapshot qualified =
+                  call.getArgument(0);
+              assertThat(repository.find(request)).isPresent();
+              assertThat(qualified.ownerProof().holdBindingDigest())
+                  .isEqualTo(
+                      observed.get().gameSessionOwnerProof().holdIdentity().holdBindingDigest());
+              assertThat(qualified.ownerProof().initialAdmissionRequestId())
+                  .isEqualTo(
+                      observed
+                          .get()
+                          .gameSessionOwnerProof()
+                          .holdIdentity()
+                          .request()
+                          .initialAdmissionRequestId());
+              assertThat(qualified.admissionPointerSnapshotDigest())
+                  .isEqualTo(observed.get().admissionPointerSnapshotDigest());
+              return qualified;
+            });
+    var owner = referenceOwner(sources, admissions);
+    assertThat(owner.begin(request).getCanonicalRosterReceipt()).isEmpty();
+    assertThat(repository.find(request)).isPresent();
+    org.mockito.Mockito.verify(admissions)
+        .lockExactCurrentOpenSnapshot(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void purgeBetweenExactLookupAndLockedReplayNeverReservesReplacementRows() throws Exception {
+    var request = request();
+    var candidate = retireOriginal(request);
+    assertThat(repository.find(request)).isPresent();
+    Thread.sleep(5L);
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.replay(request)))
+        .hasMessageContaining("UNAVAILABLE_OR_RETIRED");
+    assertThat(repository.find(request)).isEmpty();
+    assertNoOriginalOrFence();
+  }
+
+  @Test
+  void historicalReceiptReplaySkipsFreshSourceButUnissuedOwnerReadsRequireIt() throws Exception {
+    var sources =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                .class);
+    var owner =
+        referenceOwner(
+            sources, org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class));
+    var request = request();
+    transaction.executeWithoutResult(ignored -> repository.begin(request));
+    org.mockito.Mockito.when(
+            sources.readCurrent(
+                org.mockito.ArgumentMatchers.any(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .Request.class)))
+        .thenThrow(
+            new net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                .StaleAuthorityException("target superseded"));
+    assertThatThrownBy(() -> owner.read(request)).hasMessageContaining("target superseded");
+    var roster = receipt(request);
+    transaction.executeWithoutResult(ignored -> repository.record(request, roster));
+    assertThat(owner.begin(request).getCanonicalRosterReceipt()).isEqualTo(roster.toByteString());
+    assertThat(owner.read(request).getCanonicalRosterReceipt()).isEqualTo(roster.toByteString());
+    org.mockito.Mockito.verify(sources, org.mockito.Mockito.times(1))
+        .readCurrent(
+            org.mockito.ArgumentMatchers.any(
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+                    .class));
+    var unissued = request.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build();
+    transaction.executeWithoutResult(ignored -> repository.begin(unissued));
+    Thread.sleep(5L);
+    transaction.execute(ignored -> repository.beginRecoveries(request, current(request)));
+    assertThat(owner.read(request).getRecoveryUuid()).isNotEmpty();
+    assertThat(owner.read(unissued).getRecoveryUuid()).isNotEmpty();
+    assertThat(owner.read(unissued).getCanonicalRosterReceipt()).isEmpty();
+    org.mockito.Mockito.verify(sources, org.mockito.Mockito.times(1))
+        .readCurrent(
+            org.mockito.ArgumentMatchers.any(
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+                    .class));
+  }
+
+  @Test
+  void deniedDispatchedReadsKeepTheirOriginalDenialAndActualRepositoryRecoveryProtection()
+      throws Exception {
+    for (boolean selectedRead : List.of(false, true)) {
+      var published =
+          support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+              .canonicalPublishedRoute();
+      var request = publishedRequest(published);
+      var actor = UUID.randomUUID();
+      var roster =
+          receipt(request).toBuilder()
+              .addActors(
+                  net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor
+                      .newBuilder()
+                      .setCharacterUuid(actor.toString())
+                      .setDisplayName("Selected")
+                      .setActorKind(
+                          net.firedevops.firemud.entitymanagement.v1
+                              .CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
+              .build();
+      transaction.executeWithoutResult(
+          ignored -> {
+            repository.begin(request);
+            repository.reserveSelectionInput(request, selectionInput());
+            repository.markRosterReadStarted(request);
+            if (selectedRead) {
+              repository.record(request, roster);
+              repository.selectOriginal(request, actor);
+            }
+          });
+      var routes =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class);
+      var publications =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                  .class);
+      var client =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.class);
+      org.mockito.Mockito.when(routes.readCurrentTarget(published.route().canonicalTenantId()))
+          .thenReturn(published.route());
+      org.mockito.Mockito.when(publications.readCurrent(published.route())).thenReturn(published);
+      if (selectedRead) {
+        org.mockito.Mockito.when(
+                client.listPreseededRoster(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(
+                new net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient
+                    .PreseededRosterSnapshot(
+                    UUID.fromString(request.getCanonicalAccountUuid()),
+                    UUID.fromString(roster.getSnapshotUuid()),
+                    roster.getSnapshotDigest(),
+                    roster.getTarget(),
+                    List.of(
+                        new net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient
+                            .RosterActor(actor, "Selected"))));
+        org.mockito.Mockito.when(
+                client.readSelectedPreseededAssignment(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenThrow(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
+      } else {
+        org.mockito.Mockito.when(
+                client.listPreseededRoster(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenThrow(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
+      }
+      // The terminal write below executes the real owner SQL and its missing-receipt gate.
+      org.mockito.Mockito.doAnswer(
+              call -> {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                transaction.executeWithoutResult(
+                    ignored -> repository.completeSelection(request, call.getArgument(2)));
+                return null;
+              })
+          .when(client)
+          .completeSelection(
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any());
+      var context =
+          net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+              .setAccountId(request.getCanonicalAccountUuid())
+              .setSessionId(request.getSessionUuid())
+              .setRequestId(request.getOperationUuid())
+              .setTenantId(published.route().canonicalTenantId().toString())
+              .setRealmId(published.route().realmId().toString())
+              .setPlayableStateNamespaceId(published.route().playableStateNamespaceId().toString())
+              .setPlayableStateScope("SHARED")
+              .setGameInstanceId(published.route().canonicalGameInstanceId().toString())
+              .build();
+      var service =
+          new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService(
+              routes, publications, client);
+      assertThat(service.select(context, null, null))
+          .isEqualTo(
+              new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService
+                  .Denied(
+                  net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService
+                      .Denial.ROUTE_CHANGED));
+      org.mockito.Mockito.verify(client)
+          .completeSelection(
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.eq(
+                  CanonicalGameplayRosterReferenceRepository.SelectionOutcome.DENIED));
+      assertThat(repository.read(request).getTerminalOutcome()).isEmpty();
+      assertThat(
+              transaction.<Boolean>execute(
+                  ignored -> repository.sealTargetRetirement(request, current(request))))
+          .isFalse();
+    }
+  }
+
+  private CanonicalGameplayRosterReferenceRepository.TargetCandidate retireOriginal(
+      GetCanonicalGameplayRosterReferenceRequest request) throws Exception {
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(request);
+          repository.completeUnissuedDenied(request);
+        });
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(request, current(request))))
+        .isTrue();
+    return new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+        UUID.fromString(repository.read(request).getTargetFenceUuid()), request, "RETIRED");
+  }
+
+  private void assertNoOriginalOrFence() {
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  private net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+      referenceOwner(
+          net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+              sources,
+          CanonicalInitialAdmissionRepository admissions) {
+    return new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+        repository,
+        transaction,
+        sources,
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class),
+        admissions,
+        org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class));
+  }
+
+  private static GetCanonicalGameplayRosterReferenceRequest publishedRequest(
+      net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute published) {
+    return CanonicalGameplayRosterReferenceEvidence.request(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        published.route().targetNamespace(),
+        net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.expectedTarget(
+            published));
+  }
+
+  private static net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+      sourceEvidence(
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+              selectors,
+          net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute published) {
+    var route = published.route();
+    var request =
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request(
+            route.targetNamespace(),
+            route.canonicalTenantId(),
+            route.worldSlug(),
+            route.realmId(),
+            route.playableStateNamespaceId(),
+            route.playableStateScope(),
+            route.canonicalGameInstanceId(),
+            route.canonicalVersionId(),
+            route.activeWorldEpoch(),
+            route.initialAdmissionRequestId(),
+            route.initialAdmissionRequestDigest(),
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                .InitialAdmissionOrigin.valueOf(route.initialAdmissionOriginKind().name()),
+            route.catalogRevision(),
+            route.expectedPriorPointerVersion());
+    var hold =
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
+            request, route.holdId(), route.holdFence());
+    var proof =
+        new net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof
+                .Outcome.COMMITTED,
+            route.pointerVersion(),
+            route.auditEventId(),
+            route.ownerProofDigest(),
+            false,
+            route.ownerProofTerminalAt());
+    return new net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence(
+        selectors, route.admissionPointerSnapshotDigest(), proof, published.policySetEvidence());
+  }
+
   private static net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
       selectionInput() {
     return net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()

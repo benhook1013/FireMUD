@@ -107,7 +107,7 @@ public final class CanonicalGameplayRosterSelectionService {
       try {
         rosterClient.completeSelection(current, authenticatedContext, outcome);
       } catch (RuntimeException unavailableOrRecoverable) {
-        return new Denied(Denial.ROSTER_UNAVAILABLE);
+        return result instanceof Denied ? result : new Denied(Denial.ROSTER_UNAVAILABLE);
       }
     }
     return result;

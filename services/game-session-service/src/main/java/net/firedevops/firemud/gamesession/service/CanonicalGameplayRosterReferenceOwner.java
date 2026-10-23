@@ -39,26 +39,48 @@ public final class CanonicalGameplayRosterReferenceOwner {
   public GetCanonicalGameplayRosterReferenceResponse begin(
       GetCanonicalGameplayRosterReferenceRequest request) {
     requireOutsideTransaction();
-    var original =
-        Objects.requireNonNull(transactions.execute(ignored -> repository.begin(request)));
-    if (original.getCanonicalRosterReceipt().isEmpty()) {
-      if (!original.getTerminalOutcome().isEmpty()) {
-        throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_TERMINAL_UNISSUED");
+    var retained =
+        Objects.requireNonNull(transactions.execute(ignored -> repository.find(request)));
+    if (retained.isPresent()) {
+      var original =
+          Objects.requireNonNull(transactions.execute(ignored -> repository.replay(request)));
+      if (original.getCanonicalRosterReceipt().isEmpty()) {
+        if (!original.getTerminalOutcome().isEmpty()) {
+          throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_TERMINAL_UNISSUED");
+        }
+        try {
+          requireCurrentTarget(request);
+        } catch (CanonicalPublishedPlayerRouteReadService.StaleAuthorityException stale) {
+          transactions.executeWithoutResult(ignored -> repository.completeUnissuedDenied(request));
+          throw stale;
+        }
       }
-      try {
-        requireCurrentTarget(request);
-      } catch (CanonicalPublishedPlayerRouteReadService.StaleAuthorityException stale) {
-        transactions.executeWithoutResult(ignored -> repository.completeUnissuedDenied(request));
-        throw stale;
-      }
+      return original;
     }
-    return original;
+    var source = requireCurrentTarget(request);
+    var qualified = qualifiedSnapshot(source);
+    return Objects.requireNonNull(
+        transactions.execute(
+            ignored -> {
+              var original = repository.begin(request);
+              admissionRepository.lockExactCurrentOpenSnapshot(qualified);
+              return original;
+            }));
   }
 
   public GetCanonicalGameplayRosterReferenceResponse read(
       GetCanonicalGameplayRosterReferenceRequest request) {
     requireOutsideTransaction();
-    return Objects.requireNonNull(transactions.execute(ignored -> repository.read(request)));
+    var original =
+        Objects.requireNonNull(transactions.execute(ignored -> repository.read(request)));
+    if (original.getState()
+            == net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED
+        && original.getRecoveryUuid().isEmpty()
+        && original.getTerminalOutcome().isEmpty()) {
+      requireCurrentTarget(request);
+    }
+    return original;
   }
 
   public GetCanonicalGameplayRosterReferenceResponse record(
@@ -185,7 +207,8 @@ public final class CanonicalGameplayRosterReferenceOwner {
     }
   }
 
-  private void requireCurrentTarget(GetCanonicalGameplayRosterReferenceRequest request) {
+  private net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+      requireCurrentTarget(GetCanonicalGameplayRosterReferenceRequest request) {
     var target =
         net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.target(
             request);
@@ -206,7 +229,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
             target.getPointerVersion(),
             target.getActiveWorldEpoch());
     // Owner readers independently reread catalog, OPEN pointer, launch binding, and sealed policy.
-    // This is deliberately outside the short transaction which has already frozen the request.
+    // This is deliberately outside every short owner SQL transaction.
     var evidence = sourceReader.readCurrent(selectors);
     if (evidence == null
         || !selectors.equals(evidence.request())
@@ -222,6 +245,43 @@ public final class CanonicalGameplayRosterReferenceOwner {
             .equals(evidence.publishedPolicySetEvidence().publishedReleaseBundleRef())) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH");
     }
+    return evidence;
+  }
+
+  private static CanonicalInitialAdmissionRepository.CurrentOpenSnapshot qualifiedSnapshot(
+      net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence source) {
+    var proof = source.gameSessionOwnerProof();
+    var hold = proof.holdIdentity();
+    var request = hold.request();
+    var local =
+        new net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof(
+            net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome
+                .COMMITTED,
+            request.initialAdmissionRequestId(),
+            request.initialAdmissionRequestDigest(),
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.realmId(),
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            request.activeLifecycleEpoch(),
+            request.expectedCatalogRevision(),
+            net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind
+                .valueOf(request.initialAdmissionOrigin().name()),
+            request.expectedPriorPointerVersion(),
+            hold.holdId(),
+            hold.holdFence(),
+            hold.holdBindingDigest(),
+            proof.committedPointerVersion(),
+            proof.auditEventId(),
+            proof.proofDigest(),
+            proof.positiveDurableAbort(),
+            proof.terminalAt());
+    return new CanonicalInitialAdmissionRepository.CurrentOpenSnapshot(
+        local, source.admissionPointerSnapshotDigest());
   }
 
   private static void requireOutsideTransaction() {

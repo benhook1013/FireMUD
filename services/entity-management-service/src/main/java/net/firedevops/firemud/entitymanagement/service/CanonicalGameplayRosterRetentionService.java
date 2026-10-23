@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -72,7 +73,16 @@ public final class CanonicalGameplayRosterRetentionService {
                   "firemud.canonical.roster.cleanup", "result", changed ? "disposed" : "protected")
               .increment();
         } else {
-          var proof = ownerClient.getCanonicalGameplayRosterReference(candidate.ownerRequest());
+          var proof =
+              CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                  candidate.ownerRequest(),
+                  ownerClient.getCanonicalGameplayRosterReference(candidate.ownerRequest()));
+          if (proof.getState()
+              != CanonicalGameplayRosterReferenceState
+                  .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED) {
+            metrics.counter("firemud.canonical.roster.cleanup", "result", "protected").increment();
+            continue;
+          }
           CanonicalGameplayRosterReferenceEvidence.requireRetirement(proof);
           changed =
               Boolean.TRUE.equals(
@@ -83,8 +93,8 @@ public final class CanonicalGameplayRosterRetentionService {
                   "firemud.canonical.roster.cleanup", "result", changed ? "retired" : "protected")
               .increment();
         }
-      } catch (RuntimeException protectedOrUnavailable) {
-        metrics.counter("firemud.canonical.roster.cleanup", "result", "protected").increment();
+      } catch (RuntimeException failure) {
+        metrics.counter("firemud.canonical.roster.cleanup", "result", "failure").increment();
       }
     }
     UUID closedAfter = closedAdmissionCursor;
@@ -108,8 +118,8 @@ public final class CanonicalGameplayRosterRetentionService {
                 "result",
                 removed ? "admission_purged" : "protected")
             .increment();
-      } catch (RuntimeException protectedOrUnavailable) {
-        metrics.counter("firemud.canonical.roster.cleanup", "result", "protected").increment();
+      } catch (RuntimeException failure) {
+        metrics.counter("firemud.canonical.roster.cleanup", "result", "failure").increment();
       }
     }
     transactions.executeWithoutResult(

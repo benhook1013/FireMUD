@@ -43,6 +43,13 @@ public final class CanonicalGameplayRosterSelectedAssignmentService {
     var original =
         CanonicalGameplayRosterOwnerEvidencePort.requireOriginalSelection(
             ownerRequest, ownerEvidencePort.readOriginalSelection(ownerRequest));
+    if (original.getSelectedCharacterUuid().isEmpty()
+        || !request
+            .selectedCharacterUuid()
+            .toString()
+            .equals(original.getSelectedCharacterUuid())) {
+      throw new IllegalStateException("SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+    }
     var originalReceipt =
         net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.receipt(
             original);

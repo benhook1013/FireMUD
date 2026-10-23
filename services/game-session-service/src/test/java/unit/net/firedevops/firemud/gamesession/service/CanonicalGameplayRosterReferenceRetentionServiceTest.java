@@ -106,7 +106,8 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
 
     service.sweep();
     verify(repository, never()).purgeRetiredTarget(any());
-    assertThat(outcomes("protected")).isEqualTo(2);
+    assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isEqualTo(1);
     assertThat(
             metrics
                 .get("firemud.canonical.roster.reference.oldest_blocking_seconds")
@@ -131,7 +132,8 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     verify(repository).purgeRetiredTarget(retired);
     assertThat(outcomes("retired")).isEqualTo(1);
     assertThat(outcomes("purged")).isEqualTo(1);
-    assertThat(outcomes("protected")).isEqualTo(2);
+    assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isEqualTo(1);
     assertThat(
             metrics
                 .get("firemud.canonical.roster.reference.oldest_blocking_seconds")
@@ -145,7 +147,7 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
   }
 
   @Test
-  void refusedOrFailedPurgeRemainsProtected() {
+  void refusedPurgeIsProtectedAndFailedPurgeHasAFailureOutcome() {
     var held = candidate(1, "RETIRED");
     var failed = candidate(2, "RETIRED");
     when(repository.targetCandidates(null, 2)).thenReturn(List.of(held, failed));
@@ -156,7 +158,8 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     service.sweep();
 
     verifyNoInteractions(owner);
-    assertThat(outcomes("protected")).isEqualTo(2);
+    assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isEqualTo(1);
     assertThat(
             metrics
                 .find("firemud.canonical.roster.reference.cleanup")

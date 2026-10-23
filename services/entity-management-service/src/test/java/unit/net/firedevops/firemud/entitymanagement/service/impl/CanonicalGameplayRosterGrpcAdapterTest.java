@@ -373,7 +373,14 @@ class CanonicalGameplayRosterGrpcAdapterTest {
                                       .CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
                       .build();
               return CanonicalGameplayRosterReferenceEvidence.response(
-                  original, 1L, UUID.randomUUID(), receipt);
+                      original, 1L, UUID.randomUUID(), receipt)
+                  .toBuilder()
+                  .setSelectionInput(
+                      net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                          .newBuilder()
+                          .setSchemaVersion(1))
+                  .setSelectedCharacterUuid(selectedRequest.getSelectedCharacterUuid())
+                  .build();
             });
     CanonicalGameplayRosterGrpcAdapter staleSnapshotAdapter =
         new CanonicalGameplayRosterGrpcAdapter(

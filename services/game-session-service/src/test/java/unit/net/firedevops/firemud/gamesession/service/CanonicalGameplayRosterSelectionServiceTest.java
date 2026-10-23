@@ -649,7 +649,31 @@ class CanonicalGameplayRosterSelectionServiceTest {
         harness.stub());
   }
 
+  @Test
+  void failedTerminalWritePreservesDenialButRefusesSuccessfulSelectionAndMenu() throws Exception {
+    var denied = harness(List.of(), true);
+    assertDenied(
+        denied.service().select(context(denied.route(), UUID.randomUUID().toString()), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.NO_PRESEEDED_ACTOR);
+    var selected = harness(oneActor(), true);
+    assertDenied(
+        selected
+            .service()
+            .select(context(selected.route(), UUID.randomUUID().toString()), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
+    var menu = harness(twoActors(), true);
+    assertDenied(
+        menu.service().select(context(menu.route(), UUID.randomUUID().toString()), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
+  }
+
   private static TestHarness harness(List<CanonicalGameplayRosterClient.RosterActor> actors)
+      throws Exception {
+    return harness(actors, false);
+  }
+
+  private static TestHarness harness(
+      List<CanonicalGameplayRosterClient.RosterActor> actors, boolean terminalWriteFails)
       throws Exception {
     CanonicalPublishedPlayerRoute published =
         PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute();
@@ -809,7 +833,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
         .thenAnswer(invocation -> rosterResponse(invocation.getArgument(0), ACCOUNT, actors));
     when(stub.readSelectedPreseededAssignment(any()))
         .thenAnswer(invocation -> assignmentResponse(invocation.getArgument(0), false));
-    CanonicalGameplayRosterClient rosterClient = rosterClient(stub);
+    CanonicalGameplayRosterClient rosterClient = rosterClient(stub, terminalWriteFails);
     var service =
         new CanonicalGameplayRosterSelectionService(
             routeReader, publishedRouteReader, rosterClient);
@@ -940,7 +964,8 @@ class CanonicalGameplayRosterSelectionServiceTest {
   }
 
   private static CanonicalGameplayRosterClient rosterClient(
-      CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub stub)
+      CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub stub,
+      boolean terminalWriteFails)
       throws Exception {
     var tls = new CommonGrpcClientProperties();
     tls.setCertChain("game-session-client.crt");
@@ -949,6 +974,11 @@ class CanonicalGameplayRosterSelectionServiceTest {
     var owner =
         mock(
             net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    if (terminalWriteFails) {
+      doThrow(new IllegalStateException("controlled missing terminal receipt"))
+          .when(owner)
+          .completeSelection(any(), any());
+    }
     java.util.Map<String, CanonicalGameplayRosterResponse> receipts = new java.util.HashMap<>();
     java.util.Map<
             String, net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput>

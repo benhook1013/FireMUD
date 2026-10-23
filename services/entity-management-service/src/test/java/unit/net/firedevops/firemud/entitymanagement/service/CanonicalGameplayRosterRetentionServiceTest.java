@@ -115,7 +115,8 @@ class CanonicalGameplayRosterRetentionServiceTest {
     service.sweep();
     verify(repository, never()).dispose(any());
     verify(repository, never()).observeRetirement(any(), any(), any());
-    assertThat(outcomes("protected")).isEqualTo(2);
+    assertThat(outcomes("failure")).isEqualTo(2);
+    assertThat(outcomes("protected")).isZero();
     assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
         .isEqualTo(91);
     assertThat(metrics.get("firemud.canonical.roster.cleanup_lag_seconds").gauge().value())
@@ -135,7 +136,8 @@ class CanonicalGameplayRosterRetentionServiceTest {
     verify(repository, never()).dispose(unavailable);
     verify(repository, never()).dispose(unknown);
     verify(ownerClient, times(2)).getCanonicalGameplayRosterReference(any());
-    assertThat(outcomes("protected")).isEqualTo(3);
+    assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isEqualTo(2);
     assertThat(outcomes("disposed")).isEqualTo(1);
     assertThat(metrics.find("firemud.canonical.roster.cleanup").tag("result", "retired").counter())
         .isNull();
@@ -226,6 +228,36 @@ class CanonicalGameplayRosterRetentionServiceTest {
     verify(repository, never()).observeRetirement(any(), any(), any());
     verify(repository, never()).dispose(any());
     assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isZero();
+  }
+
+  @Test
+  void failedClosedAdmissionOwnerReadHasAFailureOutcomeDistinctFromProtection() {
+    var original = candidate(1, "PROTECTED").ownerRequest();
+    var request =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(new UUID(4, 1).toString())
+            .build();
+    var response =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence.response(
+            request, new UUID(4, 2), 1, new UUID(3, 1), null);
+    var closure =
+        new CanonicalGameplayRosterRetentionRepository.ClosedAdmissionCandidate(
+            UUID.fromString(original.getOperationUuid()), new UUID(4, 2), response);
+    when(repository.candidates(null, 2)).thenReturn(List.of());
+    when(repository.closedAdmissionCandidates(null, 2)).thenReturn(List.of(closure));
+    when(ownerClient.getCanonicalGameplayRosterReference(original))
+        .thenThrow(new IllegalStateException("Owner unavailable"));
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+
+    verify(repository, never()).purgeClosedAdmission(any(), any());
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertThat(outcomes("protected")).isZero();
   }
 
   @Test
@@ -280,6 +312,7 @@ class CanonicalGameplayRosterRetentionServiceTest {
     verify(repository, never()).observeRetirement(any(), any(), any());
     verify(repository, never()).dispose(any());
     assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isZero();
   }
 
   @Test
@@ -301,7 +334,8 @@ class CanonicalGameplayRosterRetentionServiceTest {
   }
 
   private double outcomes(String result) {
-    return metrics.get("firemud.canonical.roster.cleanup").tag("result", result).counter().count();
+    var counter = metrics.find("firemud.canonical.roster.cleanup").tag("result", result).counter();
+    return counter == null ? 0 : counter.count();
   }
 
   private static Candidate candidate(long id, String state) {
