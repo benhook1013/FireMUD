@@ -1045,9 +1045,17 @@ class CanonicalGameplayRosterSelectionServiceTest {
                           .setSelectedCharacterUuid(selectedCharacter.toString())
                           .build());
             });
+    var ownerBeans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+    ownerBeans.addBean("controlledReferenceOwner", owner);
     var client =
         new CanonicalGameplayRosterClient(
-            new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), "test", owner);
+            new ServiceEndpointsProperties(),
+            tls,
+            mock(GrpcChannelFactory.class),
+            "test",
+            ownerBeans.getBeanProvider(
+                net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+                    .class));
     Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     stubField.setAccessible(true);
     stubField.set(client, stub);

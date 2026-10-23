@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.client;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import jakarta.annotation.PostConstruct;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -42,6 +43,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -64,14 +66,14 @@ public final class CanonicalGameplayRosterClient
       "firemud.entity.canonical-gameplay-roster.v3";
 
   private final String workloadNamespace;
-  private final CanonicalGameplayRosterReferenceOwner referenceOwner;
+  private final ObjectProvider<CanonicalGameplayRosterReferenceOwner> referenceOwnerProvider;
 
   public CanonicalGameplayRosterClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace,
-      CanonicalGameplayRosterReferenceOwner referenceOwner) {
+      ObjectProvider<CanonicalGameplayRosterReferenceOwner> referenceOwnerProvider) {
     super(
         endpoints,
         requireGameSessionMtls(tlsProperties),
@@ -81,7 +83,8 @@ public final class CanonicalGameplayRosterClient
       throw new IllegalArgumentException("Game Session workload namespace must be one DNS label");
     }
     this.workloadNamespace = workloadNamespace;
-    this.referenceOwner = Objects.requireNonNull(referenceOwner, "referenceOwner");
+    this.referenceOwnerProvider =
+        Objects.requireNonNull(referenceOwnerProvider, "referenceOwnerProvider");
   }
 
   @PostConstruct
@@ -136,8 +139,10 @@ public final class CanonicalGameplayRosterClient
               Objects.requireNonNull(menuSnapshotUuid, "menuSnapshotUuid").toString())
           .setMenuSnapshotDigest(Objects.requireNonNull(menuSnapshotDigest, "menuSnapshotDigest"));
     }
-    referenceOwner.reserveSelectionInput(
-        original, CanonicalGameplayRosterReferenceEvidence.requireSelectionInput(input.build()));
+    requireReferenceOwner()
+        .reserveSelectionInput(
+            original,
+            CanonicalGameplayRosterReferenceEvidence.requireSelectionInput(input.build()));
   }
 
   public void completeSelection(
@@ -156,7 +161,7 @@ public final class CanonicalGameplayRosterClient
             parseContextUuid(context.getSessionId(), "session_id"),
             workloadNamespace,
             target);
-    referenceOwner.completeSelection(original, outcome);
+    requireReferenceOwner().completeSelection(original, outcome);
   }
 
   /**
@@ -178,6 +183,7 @@ public final class CanonicalGameplayRosterClient
             parseContextUuid(playerExecutionContext.getSessionId(), "session_id"),
             workloadNamespace,
             expectedTarget);
+    var referenceOwner = requireReferenceOwner();
     var original =
         CanonicalGameplayRosterReferenceEvidence.requireResponse(
             originalRequest, referenceOwner.begin(originalRequest));
@@ -246,6 +252,7 @@ public final class CanonicalGameplayRosterClient
             parseContextUuid(playerExecutionContext.getSessionId(), "session_id"),
             workloadNamespace,
             expectedTarget);
+    var referenceOwner = requireReferenceOwner();
     var original =
         CanonicalGameplayRosterReferenceEvidence.requireResponse(
             originalRequest, referenceOwner.selectOriginal(originalRequest, selectedCharacterUuid));
@@ -287,6 +294,24 @@ public final class CanonicalGameplayRosterClient
         validateSelectedAssignmentResponse(requestUuid, roster, selectedCharacterUuid, response);
     referenceOwner.recordSelectedAssignment(originalRequest, response);
     return validated;
+  }
+
+  private CanonicalGameplayRosterReferenceOwner requireReferenceOwner() {
+    CanonicalGameplayRosterReferenceOwner owner;
+    try {
+      owner = referenceOwnerProvider.getIfAvailable();
+    } catch (RuntimeException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Canonical roster reference owner is unavailable")
+          .withCause(unavailable)
+          .asRuntimeException();
+    }
+    if (owner == null) {
+      throw Status.UNAVAILABLE
+          .withDescription("Canonical roster reference owner is unavailable")
+          .asRuntimeException();
+    }
+    return owner;
   }
 
   private static UUID validatePlayerExecutionContext(

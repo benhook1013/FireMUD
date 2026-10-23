@@ -170,10 +170,16 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             .formatJSON();
     String originalOwnerRows = pointerAndAuditProjection(fixture);
     var lockAttempted = new java.util.concurrent.CountDownLatch(1);
+    var recoveryStarted = new java.util.concurrent.CountDownLatch(1);
+    var retirementPid = new java.util.concurrent.atomic.AtomicInteger();
+    var recoveryPid = new java.util.concurrent.atomic.AtomicInteger();
     var admissions = org.mockito.Mockito.spy(fixture.initialAdmissionRepository);
     org.mockito.Mockito.doAnswer(
             call -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              retirementPid.set(
+                  Objects.requireNonNull(
+                      fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
               lockAttempted.countDown();
               return call.callRealMethod();
             })
@@ -212,14 +218,29 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 NAMESPACE,
                 TENANT,
                 current.realmId());
+            int pointerHolderPid =
+                Objects.requireNonNull(
+                    fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
             retirement.set(executor.submit(() -> owner.retireTarget(request)));
             try {
               assertThat(lockAttempted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+              awaitBackendBlockedBy(fixture.dsl, retirementPid.get(), pointerHolderPid);
               recovery.set(
                   executor.submit(
-                      () -> fixture.transactions.execute(ignored -> references.begin(request))));
-              assertThat(retirement.get().isDone()).isFalse();
-              assertThat(recovery.get().isDone()).isFalse();
+                      () ->
+                          fixture.transactions.execute(
+                              ignored -> {
+                                recoveryPid.set(
+                                    Objects.requireNonNull(
+                                        fixture
+                                            .dsl
+                                            .fetchSingle("SELECT pg_backend_pid()")
+                                            .get(0, Integer.class)));
+                                recoveryStarted.countDown();
+                                return references.begin(request);
+                              })));
+              assertThat(recoveryStarted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+              awaitBackendBlockedBy(fixture.dsl, recoveryPid.get(), retirementPid.get());
             } catch (InterruptedException interrupted) {
               Thread.currentThread().interrupt();
               throw new IllegalStateException(interrupted);
@@ -1904,6 +1925,26 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             request.targetNamespace(),
             request.initialAdmissionRequestId())
         .get("projection", String.class);
+  }
+
+  private static void awaitBackendBlockedBy(DSLContext observer, int waitingPid, int holderPid)
+      throws InterruptedException {
+    assertThat(waitingPid).isPositive().isNotEqualTo(holderPid);
+    assertThat(holderPid).isPositive();
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+    boolean blocked = false;
+    while (System.nanoTime() < deadline) {
+      blocked =
+          Boolean.TRUE.equals(
+              observer
+                  .fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", holderPid, waitingPid)
+                  .get(0, Boolean.class));
+      if (blocked) break;
+      java.util.concurrent.TimeUnit.MILLISECONDS.sleep(10L);
+    }
+    assertThat(blocked)
+        .as("PostgreSQL backend %s waits on exact holder %s", waitingPid, holderPid)
+        .isTrue();
   }
 
   private static String pointerAndAuditProjection(Fixture fixture) {

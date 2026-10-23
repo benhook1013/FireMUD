@@ -9,6 +9,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
@@ -412,16 +413,22 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     Thread.sleep(5L);
     CountDownLatch sealed = new CountDownLatch(1);
     CountDownLatch commit = new CountDownLatch(1);
+    CountDownLatch recoveryStarted = new CountDownLatch(1);
+    AtomicInteger retirementPid = new AtomicInteger();
+    AtomicInteger recoveryPid = new AtomicInteger();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var retirement =
           executor.submit(
               () ->
                   transaction.execute(
                       ignored -> {
+                        retirementPid.set(
+                            java.util.Objects.requireNonNull(
+                                dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
                         boolean result = repository.sealTargetRetirement(request, current(request));
                         sealed.countDown();
                         try {
-                          if (!commit.await(5L, TimeUnit.SECONDS)) {
+                          if (!commit.await(15L, TimeUnit.SECONDS)) {
                             throw new IllegalStateException("fixture timeout");
                           }
                         } catch (InterruptedException interrupted) {
@@ -435,11 +442,18 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           executor.submit(
               () ->
                   transaction.execute(
-                      ignored ->
-                          repository.begin(
-                              request.toBuilder()
-                                  .setOperationUuid(UUID.randomUUID().toString())
-                                  .build())));
+                      ignored -> {
+                        recoveryPid.set(
+                            java.util.Objects.requireNonNull(
+                                dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
+                        recoveryStarted.countDown();
+                        return repository.begin(
+                            request.toBuilder()
+                                .setOperationUuid(UUID.randomUUID().toString())
+                                .build());
+                      }));
+      assertThat(recoveryStarted.await(5L, TimeUnit.SECONDS)).isTrue();
+      awaitBackendBlockedBy(dsl, recoveryPid.get(), retirementPid.get());
       commit.countDown();
       assertThat(retirement.get(5L, TimeUnit.SECONDS)).isTrue();
       assertThatThrownBy(() -> recovery.get(5L, TimeUnit.SECONDS))
@@ -447,6 +461,26 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     } finally {
       commit.countDown();
     }
+  }
+
+  private static void awaitBackendBlockedBy(DSLContext observer, int waitingPid, int holderPid)
+      throws InterruptedException {
+    assertThat(waitingPid).isPositive().isNotEqualTo(holderPid);
+    assertThat(holderPid).isPositive();
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    boolean blocked = false;
+    while (System.nanoTime() < deadline) {
+      blocked =
+          Boolean.TRUE.equals(
+              observer
+                  .fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", holderPid, waitingPid)
+                  .get(0, Boolean.class));
+      if (blocked) break;
+      TimeUnit.MILLISECONDS.sleep(10L);
+    }
+    assertThat(blocked)
+        .as("PostgreSQL backend %s waits on exact holder %s", waitingPid, holderPid)
+        .isTrue();
   }
 
   private static CanonicalInitialAdmissionRepository.CurrentOpenSnapshot currentSnapshot(
@@ -545,16 +579,22 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     var request = request();
     CountDownLatch reserved = new CountDownLatch(1);
     CountDownLatch finish = new CountDownLatch(1);
+    CountDownLatch replayStarted = new CountDownLatch(1);
+    AtomicInteger firstPid = new AtomicInteger();
+    AtomicInteger replayPid = new AtomicInteger();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var first =
           executor.submit(
               () ->
                   transaction.execute(
                       ignored -> {
+                        firstPid.set(
+                            java.util.Objects.requireNonNull(
+                                dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
                         var value = repository.begin(request);
                         reserved.countDown();
                         try {
-                          if (!finish.await(5L, TimeUnit.SECONDS)) {
+                          if (!finish.await(15L, TimeUnit.SECONDS)) {
                             throw new IllegalStateException("fixture timeout");
                           }
                         } catch (InterruptedException interrupted) {
@@ -564,7 +604,19 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                         return value;
                       }));
       assertThat(reserved.await(5L, TimeUnit.SECONDS)).isTrue();
-      var replay = executor.submit(() -> transaction.execute(ignored -> repository.begin(request)));
+      var replay =
+          executor.submit(
+              () ->
+                  transaction.execute(
+                      ignored -> {
+                        replayPid.set(
+                            java.util.Objects.requireNonNull(
+                                dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
+                        replayStarted.countDown();
+                        return repository.begin(request);
+                      }));
+      assertThat(replayStarted.await(5L, TimeUnit.SECONDS)).isTrue();
+      awaitBackendBlockedBy(dsl, replayPid.get(), firstPid.get());
       finish.countDown();
       assertThat(replay.get(5L, TimeUnit.SECONDS)).isEqualTo(first.get(5L, TimeUnit.SECONDS));
       assertThat(
@@ -785,7 +837,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
 
   @Test
   void storedReplayHorizonAndExactSupersessionAreRequiredBeforeRecovery() throws Exception {
-    repository = repository(policy(300L, 200L, 200L));
+    repository = repository(policy(6000L, 5000L, 5000L));
     var request = request();
     transaction.executeWithoutResult(ignored -> repository.begin(request));
     // Later lowered configuration must not shorten the already retained target's horizon.
@@ -794,7 +846,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
             transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
                 ignored -> repository.beginRecoveries(request, current(request))))
         .isEmpty();
-    Thread.sleep(230L);
+    Thread.sleep(5500L);
     var oldTarget = CanonicalGameplayRosterReferenceEvidence.target(request);
     var samePointer =
         request.toBuilder()
@@ -847,7 +899,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   @Test
   void ownerRetriesUnknownEntityOutsideSqlAndRetainsPositiveClosureThroughLocalMinimum()
       throws Exception {
-    repository = repository(policy(500L, 1L, 1L));
+    repository = repository(policy(5000L, 1L, 1L));
     var request = request();
     transaction.executeWithoutResult(
         ignored -> {
@@ -940,7 +992,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThat(owner.retireTarget(request)).isFalse();
     assertThat(repository.read(request).getTerminalOutcome()).isEqualTo("DENIED");
     assertThat(repository.read(request).getRetirementUuid()).isEmpty();
-    Thread.sleep(550L);
+    Thread.sleep(5500L);
     assertThat(owner.retireTarget(request)).isTrue();
     org.mockito.Mockito.verify(client, org.mockito.Mockito.times(2))
         .read(org.mockito.ArgumentMatchers.any());
