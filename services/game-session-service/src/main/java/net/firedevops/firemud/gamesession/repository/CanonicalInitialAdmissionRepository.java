@@ -245,7 +245,7 @@ public class CanonicalInitialAdmissionRepository {
         dsl.fetch(
             "SELECT * FROM gameplay_admission_pointer WHERE target_namespace = ? "
                 + "AND canonical_tenant_id = ? AND realm_id = ? AND representation_version = 3 "
-                + "AND admission_state = 'OPEN' FOR UPDATE",
+                + "AND admission_state = 'OPEN' FOR SHARE",
             expected.targetNamespace(),
             expected.canonicalTenantId(),
             expected.realmId());
@@ -259,7 +259,7 @@ public class CanonicalInitialAdmissionRepository {
         dsl.fetchOne(
             "SELECT * FROM "
                 + OPERATION_TABLE
-                + " WHERE target_namespace = ? AND initial_admission_request_id = ? FOR UPDATE",
+                + " WHERE target_namespace = ? AND initial_admission_request_id = ? FOR SHARE",
             expected.targetNamespace(),
             expected.initialAdmissionRequestId());
     if (row == null)
@@ -270,7 +270,7 @@ public class CanonicalInitialAdmissionRepository {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Exact initial-admission attempt is no longer committed");
     CanonicalRealmCatalogSnapshot lockedCatalog =
-        catalogRepository.lockInitialAdmissionTarget(
+        catalogRepository.lockCurrentOpenAdmissionTargetForShare(
             expected.targetNamespace(),
             expected.canonicalTenantId(),
             expected.realmId(),

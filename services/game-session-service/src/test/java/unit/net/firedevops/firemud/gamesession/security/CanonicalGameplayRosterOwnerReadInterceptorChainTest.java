@@ -50,6 +50,9 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
   private static final String METHOD =
       CanonicalGameplayRosterOwnerReadServiceGrpc.getGetCanonicalGameplayRosterOwnerReadMethod()
           .getFullMethodName();
+  private static final String REFERENCE_METHOD =
+      CanonicalGameplayRosterOwnerReadServiceGrpc.getGetCanonicalGameplayRosterReferenceMethod()
+          .getFullMethodName();
   private static final UUID ACCOUNT = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID REALM = uuid("22222222-2222-4222-8222-222222222222");
@@ -100,6 +103,49 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
     verifyNoInteractions(provider);
   }
 
+  @Test
+  void exactEntityCertificateReachesReferenceProviderThroughConfiguredChain() {
+    var source = sourceReaderProvider();
+    var reference = referenceOwnerProvider();
+    var adapter = new CanonicalGameplayRosterOwnerReadGrpcAdapter(source, NAMESPACE, reference);
+    var response = new CapturingReferenceObserver();
+    invokeReferenceThroughConfiguredChain(entityIdentity(NAMESPACE), adapter, response, false);
+    assertThat(response.errorWasStatusRuntimeException).isTrue();
+    assertThat(response.errorCode).isEqualTo(Status.Code.UNAVAILABLE);
+    verify(reference).getIfAvailable();
+    verifyNoInteractions(source);
+  }
+
+  @Test
+  void referenceReadDeniesAbsentWrongServiceForeignNamespaceAndPlayerContextBeforeProvider() {
+    var source = sourceReaderProvider();
+    var reference = referenceOwnerProvider();
+    var adapter = new CanonicalGameplayRosterOwnerReadGrpcAdapter(source, NAMESPACE, reference);
+    for (String identity :
+        java.util.Arrays.asList(
+            null, peerIdentity(NAMESPACE, "game-session-service"), entityIdentity("other"))) {
+      var response = new CapturingReferenceObserver();
+      invokeReferenceThroughConfiguredChain(identity, adapter, response, false);
+      assertThat(response.errorWasStatusRuntimeException).isTrue();
+      assertThat(response.errorCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+    }
+    var callerContext = new CapturingReferenceObserver();
+    invokeReferenceThroughConfiguredChain(entityIdentity(NAMESPACE), adapter, callerContext, true);
+    assertThat(callerContext.errorWasStatusRuntimeException).isTrue();
+    assertThat(callerContext.errorCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(source, reference);
+  }
+
+  private static ObjectProvider<
+          net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+      referenceOwnerProvider() {
+    @SuppressWarnings("unchecked")
+    ObjectProvider<net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+        provider = mock(ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(null);
+    return provider;
+  }
+
   private static ObjectProvider<CanonicalPublishedPlayerRouteReadService> sourceReaderProvider() {
     @SuppressWarnings("unchecked")
     ObjectProvider<CanonicalPublishedPlayerRouteReadService> provider = mock(ObjectProvider.class);
@@ -119,7 +165,7 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
         .containsExactly(
             "game_session.v1.GameSessionService/Ping",
             "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation",
-            "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterReference",
+            REFERENCE_METHOD,
             METHOD,
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead",
             "game_session.v1.GameSessionService/AuthorizeStartSession")
@@ -166,14 +212,46 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
       GetCanonicalGameplayRosterOwnerReadRequest request,
       CapturingObserver response,
       boolean authenticatedCallerContext) {
-    ServerCall<Object, Object> call = new TestServerCall(METHOD, sslSession(peerUri));
-    Metadata headers = new Metadata();
-    ServerInterceptor peer = new GrpcPeerIdentityInterceptor();
     ServerCallHandler<Object, Object> handler =
         (nextCall, ignoredHeaders) -> {
           adapter.getCanonicalGameplayRosterOwnerRead(request, response);
           return new ServerCall.Listener<>() {};
         };
+    invokeThroughConfiguredChain(peerUri, METHOD, handler, authenticatedCallerContext);
+  }
+
+  private static void invokeReferenceThroughConfiguredChain(
+      String peerUri,
+      CanonicalGameplayRosterOwnerReadGrpcAdapter adapter,
+      CapturingReferenceObserver response,
+      boolean authenticatedCallerContext) {
+    var published =
+        support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+            .canonicalPublishedRoute();
+    var request =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            UUID.randomUUID(),
+            ACCOUNT,
+            UUID.randomUUID(),
+            NAMESPACE,
+            net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.expectedTarget(
+                published));
+    ServerCallHandler<Object, Object> handler =
+        (nextCall, ignoredHeaders) -> {
+          adapter.getCanonicalGameplayRosterReference(request, response);
+          return new ServerCall.Listener<>() {};
+        };
+    invokeThroughConfiguredChain(peerUri, REFERENCE_METHOD, handler, authenticatedCallerContext);
+  }
+
+  private static void invokeThroughConfiguredChain(
+      String peerUri,
+      String method,
+      ServerCallHandler<Object, Object> handler,
+      boolean authenticatedCallerContext) {
+    ServerCall<Object, Object> call = new TestServerCall(method, sslSession(peerUri));
+    Metadata headers = new Metadata();
+    ServerInterceptor peer = new GrpcPeerIdentityInterceptor();
     configuredAuthInterceptor()
         .interceptCall(
             call,
@@ -256,6 +334,27 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
 
     @Override
     public void onNext(GetCanonicalGameplayRosterOwnerReadResponse response) {}
+
+    @Override
+    public void onError(Throwable throwable) {
+      errorWasStatusRuntimeException = throwable instanceof StatusRuntimeException;
+      errorCode = Status.fromThrowable(throwable).getCode();
+    }
+
+    @Override
+    public void onCompleted() {}
+  }
+
+  private static final class CapturingReferenceObserver
+      implements StreamObserver<
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse> {
+    private boolean errorWasStatusRuntimeException;
+    private Status.Code errorCode;
+
+    @Override
+    public void onNext(
+        net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+            response) {}
 
     @Override
     public void onError(Throwable throwable) {

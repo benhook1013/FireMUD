@@ -301,7 +301,7 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     try {
       CreateCanonicalClosedAdmissionPointerRequest request = requestFromOutcome(outcome);
       CanonicalRealmCatalogSnapshot catalog =
-          catalogRepository.lockExactInitialPublicProduction(
+          catalogRepository.lockExactInitialPublicProductionForShare(
               targetNamespace,
               request.canonicalTenantId(),
               request.realmId(),
