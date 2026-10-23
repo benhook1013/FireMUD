@@ -53,6 +53,8 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture;
 
@@ -830,6 +832,77 @@ class CanonicalGameplayRosterClientTest {
         .hasMessageContaining("UNAUTHENTICATED");
   }
 
+  @Test
+  void missingOrFailedOwnerProviderRefusesEveryOwnerOperationBeforeEntityRpc() throws Exception {
+    var beans = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+    var provider =
+        beans.getBeanProvider(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    var client =
+        new CanonicalGameplayRosterClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            NAMESPACE,
+            provider);
+    var stub = mockStub();
+    Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    stubField.setAccessible(true);
+    stubField.set(client, stub);
+    var route = publishedRoute();
+    var target = CanonicalGameplayRosterClient.expectedTarget(route);
+    var roster =
+        new CanonicalGameplayRosterClient.PreseededRosterSnapshot(
+            ACCOUNT_UUID,
+            SNAPSHOT_UUID,
+            snapshotDigest(ACCOUNT_UUID, target, List.of(ACTOR_UUID.toString(), "Pilot One")),
+            target,
+            List.of(new CanonicalGameplayRosterClient.RosterActor(ACTOR_UUID, "Pilot One")));
+    for (Runnable operation :
+        List.<Runnable>of(
+            () -> client.reserveSelectionInput(route, listContext(), null, null, null),
+            () ->
+                client.completeSelection(
+                    route,
+                    listContext(),
+                    net.firedevops.firemud.gamesession.repository
+                        .CanonicalGameplayRosterReferenceRepository.SelectionOutcome.DENIED),
+            () -> client.listPreseededRoster(route, listContext()),
+            () -> client.readSelectedPreseededAssignment(roster, selectedContext()))) {
+      assertThatThrownBy(operation::run)
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+    }
+    verifyNoInteractions(stub);
+    // A provider failure is also unavailable, rather than permission to bypass owner custody.
+    beans.registerBeanDefinition(
+        "unavailableReferenceOwner",
+        org.springframework.beans.factory.support.BeanDefinitionBuilder.genericBeanDefinition(
+                net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+                    .class,
+                () -> {
+                  throw new org.springframework.beans.factory.BeanCreationException(
+                      "controlled unavailable owner");
+                })
+            .getBeanDefinition());
+    var unavailable =
+        new CanonicalGameplayRosterClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            NAMESPACE,
+            provider);
+    stubField.set(unavailable, stub);
+    assertThatThrownBy(() -> unavailable.listPreseededRoster(route, listContext()))
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+    verifyNoInteractions(stub);
+  }
+
   private static PlayerExecutionContext listContext() {
     return playerExecutionContext(LIST_REQUEST_UUID, "");
   }
@@ -1052,7 +1125,8 @@ class CanonicalGameplayRosterClientTest {
     return stub;
   }
 
-  private static net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+  private static ObjectProvider<
+          net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
       referenceOwner() {
     var owner =
         mock(
@@ -1104,7 +1178,10 @@ class CanonicalGameplayRosterClientTest {
                           .setSelectedCharacterUuid(selectedCharacter.toString())
                           .build());
             });
-    return owner;
+    var beans = new StaticListableBeanFactory();
+    beans.addBean("controlledReferenceOwner", owner);
+    return beans.getBeanProvider(
+        net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
   }
 
   private static CommonGrpcClientProperties mtlsProperties() {
