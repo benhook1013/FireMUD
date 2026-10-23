@@ -9,3 +9,15 @@ license_choices:
             Select the explicitly offered MIT alternative for this exact dependency.
             The retained package identifies this upstream revision and its dual-license text:
             https://github.com/Stuk/jszip/blob/020fa3384c994f923123141bbeebae0c3a44dd0d/LICENSE.markdown
+
+resolutions:
+  rule_violations:
+    - message: '^The license LicenseRef-Gatling-Highcharts-3\.16\.0 is currently not covered by policy rules\. The license was declared in package ''Maven:io\.gatling\.highcharts:gatling-charts-highcharts:3\.16\.0''\.$'
+      reason: NOT_MODIFIED_EXCEPTION
+      comment: >-
+        User-approved exception for the exact UNHANDLED_LICENSE message for
+        Gatling Highcharts 3.16.0. This covers internal use of the delivered,
+        unchanged report generator, without
+        distributing, copying, reusing, or modifying its code or generated
+        components. This resolution does not change the LicenseRef text or
+        generated notices.
