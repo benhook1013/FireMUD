@@ -80,15 +80,32 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
         gradle_inputs = step_by_id(self.jobs["ort-gradle"], "ort")["with"]
         docker_args = shlex.split(gradle_inputs["docker-cli-args"])
         self.assertIn(["-e", "CI=true"], [docker_args[i:i + 2] for i in range(len(docker_args))])
-        ort_args = shlex.split(gradle_inputs["ort-cli-args"])
+        for job_name in ("ort-gradle", "ort-npm"):
+            with self.subTest(job=job_name):
+                inputs = step_by_id(self.jobs[job_name], "ort")["with"]
+                args = shlex.split(inputs["docker-cli-args"].replace("${{ github.workspace }}", "/workspace/FireMUD"))
+                mounts = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "--mount"]
+                self.assertIn(
+                    "type=bind,source=/workspace/FireMUD/config/ort/curations,"
+                    "target=/home/ort/.ort/config/curations/firemud,readonly",
+                    mounts,
+                )
+        npm_inputs = step_by_id(self.jobs["ort-npm"], "ort")["with"]
+        self.assertEqual("${{ github.workspace }}/config/ort/npm.ort.yml", npm_inputs["ort-yml-path"])
         self.assertIn(
-            ["-P", "ort.enableRepositoryPackageCurations=true"],
-            [ort_args[i:i + 2] for i in range(len(ort_args))],
+            "--mount type=bind,source=${{ github.workspace }}/config/ort/npm.ort.yml,"
+            "target=${{ github.workspace }}/config/ort/npm.ort.yml,readonly",
+            npm_inputs["docker-cli-args"],
         )
+        self.assertNotIn("ort-yml-path", gradle_inputs)
+        self.assertFalse((ROOT / ".ort.yml").exists())
+        self.assertNotIn("curations", yaml.safe_load((ROOT / "config/ort/npm.ort.yml").read_text()))
         filters = yaml.safe_load(step_by_id(self.jobs["changes"], "filter")["with"]["filters"])
         for ecosystem in ("gradle", "npm"):
             with self.subTest(ecosystem=ecosystem):
-                self.assertIn(".ort.yml", filters[ecosystem])
+                self.assertIn("config/ort/curations/**", filters[ecosystem])
+        self.assertIn("config/ort/npm.ort.yml", filters["npm"])
+        self.assertNotIn("config/ort/npm.ort.yml", filters["gradle"])
 
     def test_guard_failures_retain_results_and_gradle_diagnostics(self) -> None:
         gradle = self.jobs["ort-gradle"]
