@@ -52,7 +52,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 - Every code or documentation change uses [validation and runtime proof](design/developer-workflows/validation-and-runtime-proof.md) to select and report the required formatting and checks; use its runtime sections when the change affects runtime or smoke behavior.
 - Subagent selection, delegation boundaries, and independent review use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md). That linked workflow is authoritative for complete delegation boundaries; keep this root file lean rather than duplicating its full list.
 - Human-requested repository maintenance checks use the [repository health check](design/developer-workflows/repository-health-check.md); it routes detailed PR, hosted-environment, validation, and Renovate mechanics to their existing owners.
-- For PR status and review handling, start with `dev-tools/pr-review status --pr <number>` and follow [PR Lifecycle: Review And Status](design/developer-workflows/pr-lifecycle.md#review-and-status). Start a review only through `dev-tools/pr-review run hosted|cli [--expect-pr <number>]` after current findings are resolved and the target is stable.
+- For FireController coordination and review operations, use the `firecontroller-use` skill with this worker’s supplied own role-bound connection and release-matched guide; use `firecontroller-onboard` only for setup or connection repair. [PR lifecycle](design/developer-workflows/pr-lifecycle.md) owns FireMUD review policy, authorization, and publication safety.
 
 ## Orchestration
 
