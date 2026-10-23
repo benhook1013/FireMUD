@@ -238,10 +238,6 @@ final class PublishedReleaseBundleContract {
    * Descriptor resolution only; descriptor/v1 remains separate from the complete release carrier.
    */
   static void requireSupportedSchemaForLaunchDescriptor(PublishedReleaseBundleDto bundle) {
-    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())) {
-      requireSupportedSchemaForLaunch(bundle);
-      return;
-    }
     requireSupportedSchemaForLaunch(bundle);
   }
 
