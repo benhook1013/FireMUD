@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 import unittest
 from pathlib import Path
@@ -74,6 +75,20 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
                         timeout=5,
                     )
                     self.assertEqual(expected_exit, result.returncode, result.stderr)
+
+    def test_repository_metadata_is_selected_and_applied_in_ci(self) -> None:
+        gradle_inputs = step_by_id(self.jobs["ort-gradle"], "ort")["with"]
+        docker_args = shlex.split(gradle_inputs["docker-cli-args"])
+        self.assertIn(["-e", "CI=true"], [docker_args[i:i + 2] for i in range(len(docker_args))])
+        ort_args = shlex.split(gradle_inputs["ort-cli-args"])
+        self.assertIn(
+            ["-P", "ort.enableRepositoryPackageCurations=true"],
+            [ort_args[i:i + 2] for i in range(len(ort_args))],
+        )
+        filters = yaml.safe_load(step_by_id(self.jobs["changes"], "filter")["with"]["filters"])
+        for ecosystem in ("gradle", "npm"):
+            with self.subTest(ecosystem=ecosystem):
+                self.assertIn(".ort.yml", filters[ecosystem])
 
     def test_guard_failures_retain_results_and_gradle_diagnostics(self) -> None:
         gradle = self.jobs["ort-gradle"]
