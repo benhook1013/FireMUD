@@ -1,5 +1,5 @@
 # Build from the fixed MinIO source commit supplied as the build context.
-FROM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
+FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS build
 
 ENV CGO_ENABLED=0 \
     GOSUMDB=sum.golang.org \
@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p /out && go build -mod=readonly -tags=kqueue -trimpath -o /out/minio .
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 LABEL org.opencontainers.image.source="https://github.com/benhook1013/FireMUD" \
       org.opencontainers.image.title="FireMUD smoke MinIO server"

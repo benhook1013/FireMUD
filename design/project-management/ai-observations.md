@@ -346,3 +346,11 @@ Entry format:
   - Observation: ORT exited with analyzer errors, emitted unknown-dependency rule warnings, and could not create the WebApp report within its 5120 MiB heap. CycloneDX reports were generated, but artifact upload did not run, so the scan supplies no qualified license proof.
   - Expected pattern: Keep the required gate fail-closed and establish the 403 response origin before selecting a correction; do not infer a fix from the secondary reporter OOM or unknown-dependency warnings.
   - Status: Root informed for recurrence and recovery tracking; no cause or repository correction established.
+
+- `2026-10-24`: Enforce ORT analyzer completion separately from report generation
+  - Observation: The pinned ORT CI action accepts `violations`, while both license jobs supplied the unrecognized `policy-violation` value. The action also intentionally tolerates analyzer exit code 2 so evaluation and reporting can continue; a successful report therefore does not establish complete dependency analysis or enforced policy.
+  - Correction and proof: Use the supported violation gate and explicitly require analyzer exit code 0 in both jobs, retaining partial results and Gradle failure diagnostics. Focused tests execute the actual workflow guards for successful, failed, missing and malformed statuses. This repairs enforcement independently of the earlier Maven Central 403 incident; its response origin remains unknown and local tests do not establish hosted scan success.
+
+- `2026-10-24`: Preserve uncertain coordination delivery during controller response failures
+  - Observation: Gameplay's own bound CLI inbox read and native inbox/job reads returned `invalid_response`; the native attempt to notify FireController Worker returned the same error. The message delivery outcome is unknown, so no successful report or handled inbox state is claimed.
+  - Expected pattern: Retain the original notification key and request for supported recovery, avoid debugging or changing the service, and continue independent local work. Fresh instructions, review capture and official progress recording remain unavailable until the owning connection recovers.
