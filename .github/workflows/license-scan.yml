@@ -43,6 +43,7 @@ jobs:
         with:
           filters: |
             gradle:
+              - '.ort.yml'
               - 'build.gradle.kts'
               - 'settings.gradle.kts'
               - 'gradle.properties'
@@ -58,6 +59,7 @@ jobs:
               - '.github/workflows/release-notes.yml'
               - '.github/workflows/ort-advisory.yml'
             npm:
+              - '.ort.yml'
               - 'package.json'
               - 'package-lock.json'
               - 'config/openapi/package.json'
@@ -135,7 +137,8 @@ jobs:
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
           image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
-          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
+          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle -P ort.enableRepositoryPackageCurations=true'
+          docker-cli-args: '-e CI=true'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: 'violations'
           report-formats: 'CycloneDx,WebApp'
