@@ -1,15 +1,14 @@
 # Ability & Action Design Tools
 
-This document outlines the editors for defining abilities, actions, and combat mechanics. The tooling is part of the Game Design Service and pushes finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing.
+This document outlines the Game Design editors for authored ability and action inputs. Game Design owns these authored inputs, their revision history, and the frozen source-bound rule inventory. Game Logic owns validation and immutable retention of the selected inventory through authenticated intake, then consumes the rules from the published, pinned release at runtime. The owner handoff and publication boundary are defined by [Game Design Version Control](version-control.md#selected-full-publication-profile) and [Game Logic Runtime and Data](../game-logic-service/runtime-and-data.md#selected-release-rule-inputs-and-intake).
 
 The publish workflow is part of the durable control-plane workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
 ## Implementation Status
 
-The current proven behavior is stable-reference validation against the exact published base version for the plugin publication path. `abilitySchemaDigest` is persisted in plugin metadata and exposed by the publication read, but dedicated Game Logic-owned release-attested ability-schema validation remains target-state and unproved. Current plugin publication and activation compare the plugin's `abilitySchemaDigest` with the published `AUTOMATION_SCRIPTING` aggregate participant digest; that aggregate comparison is not a dedicated ability-schema attestation. Script-patch publication does not currently enforce same-tenant published-base identity, and launch resolution does not currently prove same-base published patch identity or Automation `READY`; those are implementation gaps. Exact `scriptPinEpoch` propagation and same-version old-epoch rejection at runtime handoff are target-state and remain unproved; this design-time editor does not establish that runtime proof. See the [Automation and Scheduler Runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#script-transition-reconciliation) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+The selected gameplay-rule intake and receipt path remain standalone and unregistered, and public fresh/PENDING full-version publication denies before mutation; see the [gameplay-rule retention tracker](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#selected-gameplay-rule-retention-and-receipt-composition) and [Game Authoring tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#selected-full-owner-publication-preparation). The current proven behavior is stable-reference validation against the exact published base version for the plugin publication path. `abilitySchemaDigest` is persisted in plugin metadata and exposed by the publication read, but dedicated Game Logic-owned release-attested ability-schema validation remains target-state and unproved. Current plugin publication and activation compare the plugin's `abilitySchemaDigest` with the published `AUTOMATION_SCRIPTING` aggregate participant digest; that aggregate comparison is not a dedicated ability-schema attestation. Script-patch publication does not currently enforce same-tenant published-base identity, and launch resolution does not currently prove same-base published patch identity or Automation `READY`; those are implementation gaps. Exact `scriptPinEpoch` propagation and same-version old-epoch rejection at runtime handoff are target-state and remain unproved; this design-time editor does not establish that runtime proof. See the [Automation and Scheduler Runtime tracker](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#script-transition-reconciliation) and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
-Data entered in these editors is stored as revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
-Finalized versions are published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross-service publish workflow described in the [Game Design Service Architecture](README.md).
+Data entered in these editors is stored as Game Design revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto). `PublishVersion` coordinates validation and finalization of existing owner data; it does not copy or repair authored rules in Game Logic. The exact selected inventory is handed to Game Logic through its authenticated source-intake operation before the publication digest gate, as defined by the owner contracts linked above.
 
 Ability definitions use a structured schema delivered through the API.
 
@@ -121,7 +120,7 @@ Example: if an `onInterval` combat-support handler can branch into at most eight
 
 At runtime, a published game version ties together:
 
-- Ability/action definitions owned by the Game Logic Service.
+- Ability/action definitions authored by Game Design and consumed by Game Logic from the published, pinned release.
 - Script and plugin patch versions owned by the Automation & Scripting Service.
 
 Within a given published game version:
@@ -165,7 +164,7 @@ From an observability perspective, live script and plugin invocations (`isDryRun
 1. Abilities and actions are created in the web UI and saved via `SaveRevision`.
 2. Designers can group related abilities into categories for organization.
 3. Each revision becomes part of a published version through `PublishVersion`.
-4. When a version is published, abilities are copied to the Game Logic Service using the `version_id`.
+4. Game Logic validates and immutably retains the exact source-bound ability/action selection through authenticated intake before the publication digest gate; `PublishVersion` does not copy or repair these definitions.
 
 ## Related Documentation
 
