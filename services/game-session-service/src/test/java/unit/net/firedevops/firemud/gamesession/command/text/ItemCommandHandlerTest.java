@@ -8,6 +8,7 @@ import java.util.List;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -28,9 +29,7 @@ class ItemCommandHandlerTest {
           containerHandler,
           meterRegistry,
           scriptEventPublisher);
-  private final SessionContext context =
-      new SessionContext(
-          1L, 22L, "123", "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
+  private final SessionContext context = GameplayCommandTestFixtures.inventoryEmberline();
 
   @Test
   void recordsInvocationForSuccessfulItemCommand() {

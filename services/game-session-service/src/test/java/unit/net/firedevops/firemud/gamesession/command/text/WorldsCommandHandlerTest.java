@@ -10,8 +10,8 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
-import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -107,10 +107,7 @@ class WorldsCommandHandlerTest {
                 .build());
 
     WorldsCommandHandler.CharacterBrowseResult result =
-        handler.browseCharacters(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
+        handler.browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", null);
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
     CharacterBrowseViewOutput output =
@@ -158,10 +155,7 @@ class WorldsCommandHandlerTest {
                 .build());
 
     WorldsCommandHandler.CharacterBrowseResult result =
-        handler.browseCharacters(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
+        handler.browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", null);
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
     CharacterBrowseViewOutput output =
@@ -190,10 +184,7 @@ class WorldsCommandHandlerTest {
             entityManagementClient);
 
     WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
+        localHandler.browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", null);
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
   }

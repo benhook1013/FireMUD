@@ -8,7 +8,7 @@ import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
-import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -52,8 +52,7 @@ class EffectiveReconnectionSettingsResolverTest {
             authorityReader);
 
     FiremudReconnectionProperties effective =
-        resolver.reconnection(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+        resolver.reconnection(GameplayCommandTestFixtures.settingsEmber());
 
     assertThat(effective.policy().resumeWindowMs()).isEqualTo(45_000L);
     assertThat(effective.policy().staleResumeFallsThroughToFreshEntry()).isTrue();
@@ -113,8 +112,7 @@ class EffectiveReconnectionSettingsResolverTest {
             authorityReader);
 
     EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties> resolved =
-        resolver.resolvedReconnection(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+        resolver.resolvedReconnection(GameplayCommandTestFixtures.settingsEmber());
 
     assertThat(resolved.effective().buffer().softMaxBytes()).isEqualTo(16_384);
     assertThat(resolved.effective().buffer().hardMaxBytes()).isEqualTo(65_536);
@@ -158,8 +156,7 @@ class EffectiveReconnectionSettingsResolverTest {
             authorityReader);
 
     EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties> resolved =
-        resolver.resolvedReconnection(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+        resolver.resolvedReconnection(GameplayCommandTestFixtures.settingsEmber());
 
     assertThat(resolved.effective().buffer().softMaxBytes()).isEqualTo(16_384);
     assertThat(resolved.effective().buffer().hardMaxBytes()).isEqualTo(80_000);

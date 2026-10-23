@@ -10,8 +10,8 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
-import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.impl.FakeGameplayPresenceService;
+import net.firedevops.firemud.gamesession.test.GameplayPresenceTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -33,7 +33,7 @@ class WhoCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(TextCommandType.WHO, java.util.List.of(), "who"),
-            new SessionContext(2L, 22L, "2", "second@example.com", 102L, "Ben", 7L, "R-1", null));
+            GameplayPresenceTestFixtures.whoBen("second@example.com"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [0]: ");
@@ -65,7 +65,7 @@ class WhoCommandHandlerTest {
                 java.util.Map.of()));
 
     gameplayPresenceService.registerConnected(
-        new SessionContext(1L, 22L, "1", "god@example.com", 101L, "Aster", 7L, "R-1", godJwt));
+        GameplayPresenceTestFixtures.whoAster("god@example.com", godJwt));
     String moderatorJwt =
         jwtUtil.generateToken(
             "4",
@@ -74,18 +74,15 @@ class WhoCommandHandlerTest {
                 "4",
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("moderator"))));
+    gameplayPresenceService.registerConnected(GameplayPresenceTestFixtures.whoDara(moderatorJwt));
     gameplayPresenceService.registerConnected(
-        new SessionContext(
-            4L, 22L, "4", "moderator@example.com", 104L, "Dara", 7L, "R-1", moderatorJwt));
-    gameplayPresenceService.registerConnected(
-        new SessionContext(2L, 22L, "2", "second@example.com", 102L, "Ben", 7L, "R-1", null));
-    gameplayPresenceService.registerConnected(
-        new SessionContext(3L, 22L, "3", "third@example.com", 103L, "Cara", 7L, "R-1", null));
+        GameplayPresenceTestFixtures.whoBen("second@example.com"));
+    gameplayPresenceService.registerConnected(GameplayPresenceTestFixtures.whoCara());
 
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
-            new SessionContext(2L, 22L, "2", "second@example.com", 102L, "Ben", 7L, "R-1", null));
+            GameplayPresenceTestFixtures.whoBen("second@example.com"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(render(result)).isEqualTo("Gods [2]: Aster, Dara\nPlayers [2]: Ben, Cara");
@@ -98,15 +95,15 @@ class WhoCommandHandlerTest {
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
     gameplayPresenceService.registerConnected(
-        new SessionContext(1L, 22L, "1", "first@example.com", 101L, "Aster", 7L, "R-1", null));
+        GameplayPresenceTestFixtures.whoAster("first@example.com", null));
     gameplayPresenceService.registerConnected(
-        new SessionContext(2L, 22L, "2", "second@example.com", 102L, "Ben", 7L, "R-1", null));
+        GameplayPresenceTestFixtures.whoBen("second@example.com"));
     gameplayPresenceService.removeBySessionId(1L);
 
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
-            new SessionContext(2L, 22L, "2", "second@example.com", 102L, "Ben", 7L, "R-1", null));
+            GameplayPresenceTestFixtures.whoBen("second@example.com"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [1]: Ben");
@@ -121,9 +118,9 @@ class WhoCommandHandlerTest {
         new WhoCommandHandler(gameplayPresenceService, resolver, scriptEventPublisher);
 
     gameplayPresenceService.registerConnected(
-        new SessionContext(1L, 22L, "1", "active@example.com", 101L, "Aster", 7L, "R-1", null));
+        GameplayPresenceTestFixtures.whoAster("active@example.com", null));
     gameplayPresenceService.registerConnected(
-        new SessionContext(2L, 22L, "2", "idle@example.com", 102L, "Ben", 7L, "R-1", null));
+        GameplayPresenceTestFixtures.whoBen("idle@example.com"));
     when(resolver.resolve(gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow()))
         .thenReturn(GameplayPresenceActivityState.ACTIVE);
     when(resolver.resolve(gameplayPresenceService.findConnectedBySessionId(2L).orElseThrow()))
@@ -132,7 +129,7 @@ class WhoCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
-            new SessionContext(1L, 22L, "1", "active@example.com", 101L, "Aster", 7L, "R-1", null));
+            GameplayPresenceTestFixtures.whoAster("active@example.com", null));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())

@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
+import net.firedevops.firemud.gamesession.test.GameplayHistoryTestFixtures;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -214,12 +215,6 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
   }
 
   private PlayerCommandHistoryEntry historyEntry(String commandText, Instant acceptedAt) {
-    PlayerCommandHistoryEntry entry = new PlayerCommandHistoryEntry();
-    entry.setTenantId(22L);
-    entry.setGameInstanceId(7L);
-    entry.setCharacterId(13L);
-    entry.setCommandText(commandText);
-    entry.setAcceptedAt(acceptedAt);
-    return entry;
+    return GameplayHistoryTestFixtures.retainedCommand(commandText, acceptedAt);
   }
 }
