@@ -25,8 +25,15 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerReadRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerReadResponse;
 import org.junit.jupiter.api.Test;
@@ -34,6 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
   private static final String NAMESPACE = "test";
@@ -222,6 +230,148 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
             eq(6565),
             any(CommonGrpcClientProperties.class),
             eq(true));
+  }
+
+  @Test
+  void retirementCallsUseExactRequestDeadlineAndActualResponseBinding() throws Exception {
+    var request = retirementRequest(NAMESPACE);
+    var acknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(request, UUID.randomUUID(), 2000);
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(request, acknowledgement);
+    var confirmed = CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    var stub = mockStub();
+    when(stub.acknowledgeCanonicalGameplayRosterRetirement(request)).thenReturn(acknowledgement);
+    when(stub.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .thenReturn(confirmed);
+    var client = newClient(stub);
+
+    assertThat(client.acknowledgeCanonicalGameplayRosterRetirement(request))
+        .isEqualTo(acknowledgement);
+    assertThat(client.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .isEqualTo(confirmed);
+    verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub).acknowledgeCanonicalGameplayRosterRetirement(request);
+    verify(stub).confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation);
+    when(stub.acknowledgeCanonicalGameplayRosterRetirement(request))
+        .thenReturn(
+            acknowledgement.toBuilder().setObservationUuid(UUID.randomUUID().toString()).build());
+    assertThatThrownBy(() -> client.acknowledgeCanonicalGameplayRosterRetirement(request))
+        .isInstanceOf(IllegalArgumentException.class);
+    when(stub.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .thenReturn(confirmed.toBuilder().setRequestDigest("f".repeat(64)).build());
+    assertThatThrownBy(
+            () -> client.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void retirementRejectsNamespaceMalformedInputAndAmbientTransactionsBeforeTransport()
+      throws Exception {
+    var stub = mockStub();
+    var client = newClient(stub);
+    var foreign = retirementRequest("other");
+    var foreignConfirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            foreign,
+            CanonicalGameplayRosterRetirementEvidence.response(foreign, UUID.randomUUID(), 1000));
+    assertThatThrownBy(() -> client.acknowledgeCanonicalGameplayRosterRetirement(foreign))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("namespace");
+    assertThatThrownBy(
+            () ->
+                client.confirmCanonicalGameplayRosterRetirementAcknowledgement(foreignConfirmation))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("namespace");
+    var request = retirementRequest(NAMESPACE);
+    assertThatThrownBy(
+            () ->
+                client.acknowledgeCanonicalGameplayRosterRetirement(
+                    request.toBuilder().setSchemaVersion(0).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            request,
+            CanonicalGameplayRosterRetirementEvidence.response(request, UUID.randomUUID(), 1000));
+    try {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      assertThatThrownBy(() -> client.acknowledgeCanonicalGameplayRosterRetirement(request))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("no ambient transaction");
+      assertThatThrownBy(
+              () -> client.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("no ambient transaction");
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+      TransactionSynchronizationManager.initSynchronization();
+      assertThatThrownBy(() -> client.acknowledgeCanonicalGameplayRosterRetirement(request))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(
+              () -> client.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+          .isInstanceOf(IllegalStateException.class);
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+    verifyNoInteractions(stub);
+    var uninitialized = newClientWithoutStub(mock(GrpcChannelFactory.class));
+    assertThatThrownBy(() -> uninitialized.acknowledgeCanonicalGameplayRosterRetirement(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+    assertThatThrownBy(
+            () ->
+                uninitialized.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+  }
+
+  private static CanonicalGameplayRosterRetirementAcknowledgementRequest retirementRequest(
+      String namespace) {
+    var target =
+        CanonicalGameplayRosterTarget.newBuilder()
+            .setTenantUuid(TENANT_UUID.toString())
+            .setRealmUuid(REALM_UUID.toString())
+            .setGameInstanceUuid(INSTANCE_UUID.toString())
+            .setCanonicalVersionUuid(VERSION_UUID.toString())
+            .setPlayableStateNamespaceUuid(NAMESPACE_UUID.toString())
+            .setWorldSlug("earth")
+            .setRealmSlug("main")
+            .setCatalogRevision(71)
+            .setPointerVersion(73)
+            .setActiveWorldEpoch(82)
+            .setPublishedPolicyDigest("a".repeat(64))
+            .setPublishedOwnerProofDigest("b".repeat(64))
+            .setAdmissionPointerSnapshotDigest("c".repeat(64))
+            .setPublishedReleaseBundleRef("release:exact")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEntryPolicy(
+                CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
+            .build();
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.request(
+            REQUEST_UUID, ACCOUNT_UUID, UUID.randomUUID(), namespace, target);
+    var retired =
+        CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+            CanonicalGameplayRosterReferenceEvidence.response(original, 1, UUID.randomUUID(), null)
+                .toBuilder()
+                .setState(
+                    CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+                .setTerminalOutcome("DENIED")
+                .setRetirementUuid(UUID.randomUUID().toString())
+                .setSupersedingPointerDigest("d".repeat(64))
+                .setSupersedingPointerVersion(74)
+                .setSupersedingCatalogRevision(71)
+                .setSupersedingWorldEpoch(82)
+                .build());
+    return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+        CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setObservedRetirement(retired)
+            .setObservationUuid(UUID.randomUUID().toString())
+            .setAdmissionUuid(UUID.randomUUID().toString())
+            .setMinimumRetentionMillis(1000)
+            .build());
   }
 
   private static GameSessionCanonicalGameplayRosterOwnerReadClient newClient(

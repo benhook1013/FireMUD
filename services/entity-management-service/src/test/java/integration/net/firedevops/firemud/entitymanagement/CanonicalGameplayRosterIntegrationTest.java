@@ -396,8 +396,31 @@ class CanonicalGameplayRosterIntegrationTest {
         .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
     Thread.sleep(5L);
     transactions.executeWithoutResult(ignored -> repository.purgeDisposedTombstones(8));
-    UUID newAdmission = characterRepository.reserveOriginalRosterAdmission(request);
-    assertThat(newAdmission).isNotEqualTo(admission);
+    assertThatThrownBy(() -> characterRepository.reserveOriginalRosterAdmission(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+    var pendingTransfer =
+        jdbcTemplate.queryForMap(
+            "SELECT transfer_state, admission_uuid, original_request, snapshot_uuid, snapshot_digest FROM entity_canonical_roster_retirement_transfers WHERE operation_uuid = ?",
+            operation);
+    assertThat(pendingTransfer.get("transfer_state")).isEqualTo("PENDING_ACK");
+    assertThat(pendingTransfer.get("admission_uuid")).isEqualTo(admission);
+    assertThat((byte[]) pendingTransfer.get("original_request"))
+        .isEqualTo(ownerRequest.toByteArray());
+    assertThat(pendingTransfer.get("snapshot_uuid")).isEqualTo(snapshot.snapshotUuid());
+    assertThat(pendingTransfer.get("snapshot_digest")).isEqualTo(snapshot.snapshotDigest());
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                Long.class,
+                operation))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE canonical_account_uuid = ?",
+                Long.class,
+                accountUuid))
+        .isZero();
     assertThatThrownBy(
             () ->
                 characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(

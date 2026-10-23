@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
@@ -20,6 +21,9 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient.VerifiedRecovery;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -70,6 +74,12 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThat(history()).hasSize(before.size() + 1);
     assertThat(history().get(history().size() - 1))
         .contains("1015", "V1015__canonical_roster_reference_owner.sql");
+    var beforeObservation = history();
+    migrate("1017");
+    assertThat(history().subList(0, beforeObservation.size()))
+        .containsExactlyElementsOf(beforeObservation);
+    assertThat(history().get(history().size() - 1))
+        .contains("1017", "V1017__canonical_roster_retirement_observation.sql");
     transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     repository =
         new CanonicalGameplayRosterReferenceRepository(
@@ -1340,6 +1350,418 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                   ignored -> repository.sealTargetRetirement(request, current(request))))
           .isFalse();
     }
+  }
+
+  @Test
+  void allRequiredObservationsAndStoredHorizonProtectOriginalsAndLostReplyReplaysAfterPurge()
+      throws Exception {
+    var first = request();
+    var second =
+        first.toBuilder()
+            .setOperationUuid(UUID.randomUUID().toString())
+            .setSessionUuid(UUID.randomUUID().toString())
+            .build();
+    var roster = receipt(first);
+    for (var original : List.of(first, second)) {
+      transaction.executeWithoutResult(
+          ignored -> {
+            repository.begin(original);
+            repository.reserveSelectionInput(original, selectionInput());
+            repository.markRosterReadStarted(original);
+            repository.record(original, roster);
+            repository.completeSelection(
+                original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.MENU);
+          });
+    }
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(first, current(first))))
+        .isTrue();
+    var candidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(repository.read(first).getTargetFenceUuid()), first, "RETIRED");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers")
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    Thread.sleep(5L);
+    // Entity may be unavailable indefinitely: a passed target horizon alone releases nothing.
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isFalse();
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM game_session_canonical_roster_selection"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM game_session_canonical_roster_target_fences"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM game_session_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    var firstRequest = acknowledgement(first, repository.read(first), UUID.randomUUID(), 250L);
+    var secondRequest = acknowledgement(second, repository.read(first), UUID.randomUUID(), 250L);
+    var unrecordedConfirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            firstRequest,
+            CanonicalGameplayRosterRetirementEvidence.response(
+                firstRequest, UUID.randomUUID(), 250L));
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.confirmRetirementAcknowledgement(
+                            unrecordedConfirmation, entityPrincipal())))
+        .hasMessageContaining("ACKNOWLEDGEMENT_CONFLICT");
+    var firstAck =
+        transaction.execute(
+            ignored -> repository.acknowledgeRetirement(firstRequest, entityPrincipal()));
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isFalse();
+    var beforeReplay = transferRow(first);
+    assertThat(
+            transaction.<CanonicalGameplayRosterRetirementAcknowledgementResponse>execute(
+                ignored -> repository.acknowledgeRetirement(firstRequest, entityPrincipal())))
+        .isEqualTo(firstAck);
+    assertThat(transferRow(first)).isEqualTo(beforeReplay);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.acknowledgeRetirement(
+                            firstRequest.toBuilder()
+                                .setAdmissionUuid(UUID.randomUUID().toString())
+                                .build(),
+                            entityPrincipal())))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.acknowledgeRetirement(
+                            firstRequest,
+                            "spiffe://firemud/ns/other/sa/entity-management-service")))
+        .isInstanceOf(IllegalArgumentException.class);
+    var secondAck =
+        transaction.execute(
+            ignored -> repository.acknowledgeRetirement(secondRequest, entityPrincipal()));
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+    assertNoOriginalOrFence();
+    // Crash/lost reply: the original rows are gone, but the actual first response is unchanged.
+    assertThat(
+            transaction.<CanonicalGameplayRosterRetirementAcknowledgementResponse>execute(
+                ignored -> repository.acknowledgeRetirement(firstRequest, entityPrincipal())))
+        .isEqualTo(firstAck);
+    Thread.sleep(275L);
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementAcknowledgements(8)))
+        .isZero();
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM game_session_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(firstRequest, firstAck);
+    assertThat(
+            transaction.<CanonicalGameplayRosterRetirementConfirmationResponse>execute(
+                ignored ->
+                    repository.confirmRetirementAcknowledgement(confirmation, entityPrincipal())))
+        .isEqualTo(CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation));
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementAcknowledgements(8)))
+        .isZero();
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.confirmRetirementAcknowledgement(
+                            confirmation.toBuilder()
+                                .setAcknowledgement(
+                                    firstAck.toBuilder()
+                                        .setAcknowledgementUuid(UUID.randomUUID().toString()))
+                                .build(),
+                            entityPrincipal())))
+        .isInstanceOf(IllegalArgumentException.class);
+    Thread.sleep(275L);
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementAcknowledgements(1)))
+        .isEqualTo(1);
+    assertThat(
+            transaction.<CanonicalGameplayRosterRetirementConfirmationResponse>execute(
+                ignored ->
+                    repository.confirmRetirementAcknowledgement(confirmation, entityPrincipal())))
+        .isEqualTo(CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation));
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.acknowledgeRetirement(firstRequest, entityPrincipal())))
+        .isInstanceOf(
+            CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException.class);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.confirmRetirementAcknowledgement(
+                CanonicalGameplayRosterRetirementEvidence.confirmation(secondRequest, secondAck),
+                entityPrincipal()));
+  }
+
+  @Test
+  void confirmationWithoutInventoryIsOnlyANoopAndCannotCreateFirstAckOrReleaseTarget()
+      throws Exception {
+    var original = request();
+    var candidate = retireOriginal(original); // Proven never issued; no Entity transfer required.
+    var request = acknowledgement(original, repository.read(original), UUID.randomUUID(), 1L);
+    var unrecorded =
+        CanonicalGameplayRosterRetirementEvidence.response(request, UUID.randomUUID(), 1L);
+    var confirmation = CanonicalGameplayRosterRetirementEvidence.confirmation(request, unrecorded);
+    transaction.executeWithoutResult(
+        ignored -> repository.confirmRetirementAcknowledgement(confirmation, entityPrincipal()));
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(repository.read(original).getTargetFenceUuid())
+        .isEqualTo(candidate.fenceUuid().toString());
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.acknowledgeRetirement(request, entityPrincipal())))
+        .isInstanceOf(
+            CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException.class);
+  }
+
+  @Test
+  void storedMinimumStillGatesPurgeAndConfirmationBeforePurgeCannotShortenReceiptHorizon()
+      throws Exception {
+    repository = repository(policy(400L, 1L, 1L));
+    var original = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.record(original, receipt(original));
+          repository.completeSelection(
+              original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.MENU);
+        });
+    Thread.sleep(450L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(original, current(original))))
+        .isTrue();
+    repository = repository(policy(1L, 1L, 1L));
+    var request = acknowledgement(original, repository.read(original), UUID.randomUUID(), 1L);
+    var ack =
+        transaction.execute(
+            ignored -> repository.acknowledgeRetirement(request, entityPrincipal()));
+    assertThat(ack.getMinimumRetentionMillis()).isEqualTo(400L);
+    var confirmation = CanonicalGameplayRosterRetirementEvidence.confirmation(request, ack);
+    transaction.executeWithoutResult(
+        ignored -> repository.confirmRetirementAcknowledgement(confirmation, entityPrincipal()));
+    var candidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(repository.read(original).getTargetFenceUuid()), original, "RETIRED");
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isFalse();
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM game_session_canonical_roster_selection"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_retirement_transfers SET target_purged_at = clock_timestamp()"))
+        .isInstanceOf(DataAccessException.class);
+    Thread.sleep(450L);
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementAcknowledgements(8)))
+        .isZero();
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM game_session_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    Thread.sleep(450L);
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementAcknowledgements(8)))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void recoveryObservationChecksKnownNonceAndExactRetirementBeforeFirstAck() throws Exception {
+    var original = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.markRosterReadStarted(original);
+        });
+    Thread.sleep(5L);
+    var recovery =
+        transaction
+            .execute(ignored -> repository.beginRecoveries(original, current(original)))
+            .getFirst();
+    var closed = recoveryResponse(recovery, null);
+    transaction.executeWithoutResult(
+        ignored -> repository.finishRecovery(verifiedRecovery(recovery, closed)));
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(original, current(original))))
+        .isTrue();
+    var proof = repository.read(original);
+    var wrongNonce = acknowledgement(original, proof, UUID.randomUUID(), 1L);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.acknowledgeRetirement(wrongNonce, entityPrincipal())))
+        .hasMessageContaining("ADMISSION_CONFLICT");
+    var exact = wrongNonce.toBuilder().setAdmissionUuid(closed.getAdmissionUuid()).build();
+    var wrongFenceProof =
+        CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+            proof.toBuilder().setTargetFenceUuid(UUID.randomUUID().toString()).build());
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.acknowledgeRetirement(
+                            exact.toBuilder().setObservedRetirement(wrongFenceProof).build(),
+                            entityPrincipal())))
+        .hasMessageContaining("OBSERVATION_CONFLICT");
+    var absent = original.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build();
+    var absentProof =
+        CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+            proof.toBuilder().setRequest(absent).build());
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.acknowledgeRetirement(
+                            acknowledgement(absent, absentProof, UUID.randomUUID(), 1L),
+                            entityPrincipal())))
+        .isInstanceOf(
+            CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException.class);
+    var ack =
+        transaction.execute(ignored -> repository.acknowledgeRetirement(exact, entityPrincipal()));
+    assertThat(ack.getMinimumRetentionMillis()).isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_retirement_transfers SET admission_uuid = ?",
+                    UUID.randomUUID()))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void firstAckSerializesWithPurgeOnTheRetiredFence() throws Exception {
+    var original = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.record(original, receipt(original));
+          repository.completeSelection(
+              original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.MENU);
+        });
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(original, current(original))))
+        .isTrue();
+    Thread.sleep(5L);
+    var request = acknowledgement(original, repository.read(original), UUID.randomUUID(), 1L);
+    var candidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(repository.read(original).getTargetFenceUuid()), original, "RETIRED");
+    var locked = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var purgeStarted = new CountDownLatch(1);
+    var acknowledgementPid = new AtomicInteger();
+    var purgePid = new AtomicInteger();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var firstAck =
+          executor.submit(
+              () ->
+                  transaction.execute(
+                      ignored -> {
+                        acknowledgementPid.set(
+                            java.util.Objects.requireNonNull(
+                                dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
+                        var ack = repository.acknowledgeRetirement(request, entityPrincipal());
+                        locked.countDown();
+                        try {
+                          assertThat(release.await(15L, TimeUnit.SECONDS)).isTrue();
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        }
+                        return ack;
+                      }));
+      try {
+        assertThat(locked.await(5L, TimeUnit.SECONDS)).isTrue();
+        var purged =
+            executor.submit(
+                () ->
+                    transaction.execute(
+                        ignored -> {
+                          purgePid.set(
+                              java.util.Objects.requireNonNull(
+                                  dsl.fetchSingle("SELECT pg_backend_pid()")
+                                      .get(0, Integer.class)));
+                          purgeStarted.countDown();
+                          return repository.purgeRetiredTarget(candidate);
+                        }));
+        assertThat(purgeStarted.await(5L, TimeUnit.SECONDS)).isTrue();
+        awaitBackendBlockedBy(dsl, purgePid.get(), acknowledgementPid.get());
+        release.countDown();
+        var ack = firstAck.get(5L, TimeUnit.SECONDS);
+        assertThat(purged.get(5L, TimeUnit.SECONDS)).isTrue();
+        assertThat(
+                transaction.<CanonicalGameplayRosterRetirementAcknowledgementResponse>execute(
+                    ignored -> repository.acknowledgeRetirement(request, entityPrincipal())))
+            .isEqualTo(ack);
+      } finally {
+        release.countDown();
+      }
+    }
+  }
+
+  private String transferRow(GetCanonicalGameplayRosterReferenceRequest original) {
+    return dsl.fetchSingle(
+            "SELECT row_to_json(t)::text AS retained, xmin::text FROM game_session_canonical_roster_retirement_transfers t WHERE operation_uuid = ?",
+            UUID.fromString(original.getOperationUuid()))
+        .intoMap()
+        .toString();
+  }
+
+  private static String entityPrincipal() {
+    return "spiffe://firemud/ns/gameplay/sa/entity-management-service";
+  }
+
+  private static CanonicalGameplayRosterRetirementAcknowledgementRequest acknowledgement(
+      GetCanonicalGameplayRosterReferenceRequest original,
+      net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse observed,
+      UUID admission,
+      long minimum) {
+    var request =
+        CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setObservedRetirement(observed)
+            .setObservationUuid(UUID.randomUUID().toString())
+            .setAdmissionUuid(admission.toString())
+            .setMinimumRetentionMillis(minimum);
+    if (!observed.getCanonicalRosterReceipt().isEmpty()) {
+      var roster = CanonicalGameplayRosterReferenceEvidence.receipt(observed);
+      request
+          .setSnapshotUuid(roster.getSnapshotUuid())
+          .setSnapshotDigest(roster.getSnapshotDigest());
+    }
+    return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request.build());
   }
 
   private CanonicalGameplayRosterReferenceRepository.TargetCandidate retireOriginal(

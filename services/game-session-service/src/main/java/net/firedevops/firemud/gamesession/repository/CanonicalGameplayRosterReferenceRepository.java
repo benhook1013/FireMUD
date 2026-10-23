@@ -4,7 +4,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
 import org.jooq.DSLContext;
@@ -25,6 +30,15 @@ public final class CanonicalGameplayRosterReferenceRepository {
       net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy policy) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
     this.policy = Objects.requireNonNull(policy, "policy");
+  }
+
+  /**
+   * Exact original absence, distinct from malformed retained state or an owner invariant failure.
+   */
+  public static final class OriginalUnavailableException extends IllegalStateException {
+    public OriginalUnavailableException() {
+      super("CANONICAL_ROSTER_ORIGINAL_UNAVAILABLE");
+    }
   }
 
   public GetCanonicalGameplayRosterReferenceResponse begin(
@@ -234,7 +248,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
                 + (lock ? " FOR UPDATE OF s" : ""),
             CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()));
     if (row == null) {
-      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_UNAVAILABLE");
+      throw new OriginalUnavailableException();
     }
     if (!Arrays.equals(request.toByteArray(), row.get("original_request", byte[].class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
@@ -486,7 +500,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
             "SELECT * FROM game_session_canonical_roster_selection WHERE operation_uuid = ? FOR UPDATE",
             CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()));
     if (row == null) {
-      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_UNAVAILABLE");
+      throw new OriginalUnavailableException();
     }
     var original = readExact(request, false);
     net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
@@ -560,6 +574,209 @@ public final class CanonicalGameplayRosterReferenceRepository {
             });
   }
 
+  /**
+   * Records only an independently checked, authenticated Entity observation of a sealed original.
+   */
+  public CanonicalGameplayRosterRetirementAcknowledgementResponse acknowledgeRetirement(
+      CanonicalGameplayRosterRetirementAcknowledgementRequest request,
+      String authenticatedEntityUri) {
+    requireWritableTransaction();
+    CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request);
+    requireEntityPrincipal(request.getOriginalSelection(), authenticatedEntityUri);
+    var operation =
+        CanonicalGameplayRosterReferenceEvidence.uuid(
+            request.getOriginalSelection().getOperationUuid());
+    Record lookup =
+        dsl.fetchOne(
+            "SELECT target_fence_uuid FROM game_session_canonical_roster_retirement_transfers WHERE operation_uuid = ?",
+            operation);
+    if (lookup == null) {
+      throw new OriginalUnavailableException();
+    }
+    // Same fence-before-original/transfer order as retirement and deletion. A retained ACK may
+    // outlive that fence; only its exact immutable replay remains available then.
+    dsl.fetchOne(
+        "SELECT target_fence_uuid FROM game_session_canonical_roster_target_fences WHERE target_fence_uuid = ? FOR UPDATE",
+        lookup.get("target_fence_uuid", java.util.UUID.class));
+    Record transfer =
+        dsl.fetchOne(
+            "SELECT * FROM game_session_canonical_roster_retirement_transfers WHERE operation_uuid = ? FOR UPDATE",
+            operation);
+    if (transfer == null) {
+      throw new OriginalUnavailableException();
+    }
+    if (transfer.get("acknowledgement_uuid") != null) {
+      return exactAcknowledgement(request, authenticatedEntityUri, transfer);
+    }
+    if (!Arrays.equals(
+        request.getOriginalSelection().toByteArray(),
+        transfer.get("original_request", byte[].class))) {
+      throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_ORIGINAL_CONFLICT");
+    }
+    var anchorRequest = request.getObservedRetirement().getRequest();
+    Record anchorRow =
+        dsl.fetchOne(
+            "SELECT original_request FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            CanonicalGameplayRosterReferenceEvidence.uuid(anchorRequest.getOperationUuid()));
+    if (anchorRow == null) {
+      throw new OriginalUnavailableException();
+    }
+    if (!Arrays.equals(
+        anchorRequest.toByteArray(), anchorRow.get("original_request", byte[].class))) {
+      throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_ANCHOR_CONFLICT");
+    }
+    var original = readExact(request.getOriginalSelection(), false);
+    var anchor = readExact(request.getObservedRetirement().getRequest(), false);
+    CanonicalGameplayRosterReferenceEvidence.requireRetirement(original);
+    if (!anchor.equals(request.getObservedRetirement())
+        || !original.getTargetFenceUuid().equals(anchor.getTargetFenceUuid())
+        || original.getOwnerFence() != anchor.getOwnerFence()
+        || !original.getRetirementUuid().equals(anchor.getRetirementUuid())
+        || !original
+            .getTargetFenceUuid()
+            .equals(transfer.get("target_fence_uuid", java.util.UUID.class).toString())
+        || !original
+            .getRetirementUuid()
+            .equals(transfer.get("retirement_uuid", java.util.UUID.class).toString())
+        || !Arrays.equals(
+            request.getOriginalSelection().toByteArray(),
+            transfer.get("original_request", byte[].class))) {
+      throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_OBSERVATION_CONFLICT");
+    }
+    if (request.getSnapshotUuid().isEmpty()) {
+      if (!original.getCanonicalRosterReceipt().isEmpty()) {
+        throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_SNAPSHOT_REQUIRED");
+      }
+    } else {
+      var roster = CanonicalGameplayRosterReferenceEvidence.receipt(original);
+      if (!roster.getSnapshotUuid().equals(request.getSnapshotUuid())
+          || !roster.getSnapshotDigest().equals(request.getSnapshotDigest())) {
+        throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_SNAPSHOT_CONFLICT");
+      }
+    }
+    Record retained =
+        dsl.fetchSingle(
+            "SELECT recovery_receipt FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            operation);
+    byte[] recoveryBytes = retained.get("recovery_receipt", byte[].class);
+    if (recoveryBytes != null) {
+      try {
+        var recovery =
+            net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse
+                .parseFrom(recoveryBytes);
+        if (!recovery.getAdmissionUuid().equals(request.getAdmissionUuid())) {
+          throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_ADMISSION_CONFLICT");
+        }
+      } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+        throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_RECOVERY_INVALID", invalid);
+      }
+    }
+    var acknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            request,
+            java.util.UUID.randomUUID(),
+            Math.max(
+                request.getMinimumRetentionMillis(),
+                transfer.get("minimum_retention_millis", Long.class)));
+    dsl.execute(
+        "UPDATE game_session_canonical_roster_retirement_transfers SET acknowledgement_uuid = ?, request_digest = ?, "
+            + "observation_uuid = ?, admission_uuid = ?, snapshot_uuid = ?::uuid, snapshot_digest = ?, entity_principal = ?, "
+            + "effective_minimum_millis = ?, received_at = clock_timestamp() WHERE operation_uuid = ?",
+        java.util.UUID.fromString(acknowledgement.getAcknowledgementUuid()),
+        acknowledgement.getRequestDigest(),
+        java.util.UUID.fromString(request.getObservationUuid()),
+        java.util.UUID.fromString(request.getAdmissionUuid()),
+        request.getSnapshotUuid().isEmpty() ? null : request.getSnapshotUuid(),
+        request.getSnapshotDigest().isEmpty() ? null : request.getSnapshotDigest(),
+        authenticatedEntityUri,
+        acknowledgement.getMinimumRetentionMillis(),
+        operation);
+    return acknowledgement;
+  }
+
+  public CanonicalGameplayRosterRetirementConfirmationResponse confirmRetirementAcknowledgement(
+      CanonicalGameplayRosterRetirementConfirmationRequest confirmation,
+      String authenticatedEntityUri) {
+    requireWritableTransaction();
+    CanonicalGameplayRosterRetirementEvidence.requireConfirmation(confirmation);
+    var request = confirmation.getAcknowledgementRequest();
+    requireEntityPrincipal(request.getOriginalSelection(), authenticatedEntityUri);
+    var operation =
+        CanonicalGameplayRosterReferenceEvidence.uuid(
+            request.getOriginalSelection().getOperationUuid());
+    Record transfer =
+        dsl.fetchOne(
+            "SELECT * FROM game_session_canonical_roster_retirement_transfers WHERE operation_uuid = ? FOR UPDATE",
+            operation);
+    // Absence is a harmless confirmation response, never a first ACK or a release operation.
+    if (transfer != null) {
+      if (!exactAcknowledgement(request, authenticatedEntityUri, transfer)
+          .equals(confirmation.getAcknowledgement())) {
+        throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_CONFIRMATION_CONFLICT");
+      }
+      dsl.execute(
+          "UPDATE game_session_canonical_roster_retirement_transfers SET confirmed_at = COALESCE(confirmed_at, clock_timestamp()) WHERE operation_uuid = ?",
+          operation);
+    }
+    return CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+  }
+
+  private static CanonicalGameplayRosterRetirementAcknowledgementResponse exactAcknowledgement(
+      CanonicalGameplayRosterRetirementAcknowledgementRequest request,
+      String principal,
+      Record transfer) {
+    if (transfer.get("acknowledgement_uuid") == null
+        || !CanonicalGameplayRosterRetirementEvidence.requestDigest(request)
+            .equals(transfer.get("request_digest", String.class))
+        || !principal.equals(transfer.get("entity_principal", String.class))
+        || !Arrays.equals(
+            request.getOriginalSelection().toByteArray(),
+            transfer.get("original_request", byte[].class))) {
+      throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_ACKNOWLEDGEMENT_CONFLICT");
+    }
+    return CanonicalGameplayRosterRetirementEvidence.response(
+        request,
+        transfer.get("acknowledgement_uuid", java.util.UUID.class),
+        transfer.get("effective_minimum_millis", Long.class));
+  }
+
+  private static void requireEntityPrincipal(
+      GetCanonicalGameplayRosterReferenceRequest original, String principal) {
+    if (!("spiffe://firemud/ns/" + original.getTargetNamespace() + "/sa/entity-management-service")
+        .equals(principal)) {
+      throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_ENTITY_PRINCIPAL_REQUIRED");
+    }
+  }
+
+  public int purgeConfirmedRetirementAcknowledgements(int limit) {
+    requireWritableTransaction();
+    if (limit <= 0) {
+      throw new IllegalArgumentException("Bounded retirement receipt page required");
+    }
+    return dsl.execute(
+        "DELETE FROM game_session_canonical_roster_retirement_transfers WHERE operation_uuid IN ("
+            + "SELECT t.operation_uuid FROM game_session_canonical_roster_retirement_transfers t "
+            + "WHERE confirmed_at IS NOT NULL AND target_purged_at IS NOT NULL "
+            + "AND GREATEST(confirmed_at, target_purged_at) + effective_minimum_millis * interval '1 millisecond' <= clock_timestamp() "
+            + "AND NOT EXISTS (SELECT 1 FROM game_session_canonical_roster_target_fences f WHERE f.target_fence_uuid = t.target_fence_uuid) "
+            + "AND NOT EXISTS (SELECT 1 FROM game_session_canonical_roster_selection s WHERE s.target_fence_uuid = t.target_fence_uuid) "
+            + "ORDER BY operation_uuid LIMIT ? FOR UPDATE SKIP LOCKED)",
+        limit);
+  }
+
+  public record TransferHealth(long oldestPendingSeconds, long cleanupLagSeconds) {}
+
+  public TransferHealth transferHealth() {
+    requireWritableTransaction();
+    Record row =
+        dsl.fetchSingle(
+            "SELECT COALESCE(max(extract(epoch FROM clock_timestamp() - recorded_at)) FILTER (WHERE confirmed_at IS NULL), 0)::bigint AS pending, "
+                + "COALESCE(max(GREATEST(0, extract(epoch FROM clock_timestamp() - GREATEST(confirmed_at, target_purged_at) "
+                + "- effective_minimum_millis * interval '1 millisecond'))) FILTER (WHERE confirmed_at IS NOT NULL AND target_purged_at IS NOT NULL), 0)::bigint AS lag "
+                + "FROM game_session_canonical_roster_retirement_transfers");
+    return new TransferHealth(row.get("pending", Long.class), row.get("lag", Long.class));
+  }
+
   public boolean purgeRetiredTarget(TargetCandidate candidate) {
     requireWritableTransaction();
     Record fence =
@@ -570,6 +787,17 @@ public final class CanonicalGameplayRosterReferenceRepository {
     if (fence == null || !Boolean.TRUE.equals(fence.get("horizon_passed", Boolean.class))) {
       return false;
     }
+    // A first ACK may have committed while this fence lock was waiting. Read its inventory
+    // in a new statement after acquiring the lock, rather than using the earlier MVCC snapshot.
+    if (!Boolean.TRUE.equals(
+        dsl.fetchSingle(
+                "SELECT gs_roster_retirement_observations_complete(?)", candidate.fenceUuid())
+            .get(0, Boolean.class))) {
+      return false;
+    }
+    dsl.execute(
+        "UPDATE game_session_canonical_roster_retirement_transfers SET target_purged_at = COALESCE(target_purged_at, clock_timestamp()) WHERE target_fence_uuid = ?",
+        candidate.fenceUuid());
     dsl.execute(
         "DELETE FROM game_session_canonical_roster_selection WHERE target_fence_uuid = ?",
         candidate.fenceUuid());

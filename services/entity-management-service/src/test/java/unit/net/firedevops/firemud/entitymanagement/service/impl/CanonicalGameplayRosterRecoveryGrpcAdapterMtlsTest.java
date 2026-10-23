@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.RecoveryConflictException;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRecoveryService;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
@@ -125,7 +126,7 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
   @Test
   void localConflictReturnsBoundedFailureWithoutTransportSuccess() throws Exception {
     when(recovery.recover(any()))
-        .thenThrow(new IllegalStateException("CANONICAL_ROSTER_RECOVERY_CONFLICT"));
+        .thenThrow(new RecoveryConflictException("CANONICAL_ROSTER_RECOVERY_CONFLICT"));
     start();
     var channel = channel("gs");
     try {
@@ -139,6 +140,59 @@ class CanonicalGameplayRosterRecoveryGrpcAdapterMtlsTest {
               failure ->
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.FAILED_PRECONDITION));
+    } finally {
+      close(channel);
+    }
+  }
+
+  @Test
+  void invalidPersistedRecoveryStateReturnsUnavailableToAuthenticatedGameSession()
+      throws Exception {
+    when(recovery.recover(any()))
+        .thenThrow(
+            new IllegalStateException(
+                "CANONICAL_ROSTER_RECOVERY_RECEIPT_INVALID",
+                new IllegalArgumentException("Stored response shape is invalid")));
+    start();
+    var channel = channel("gs");
+    try {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                      .withDeadlineAfter(5, TimeUnit.SECONDS)
+                      .recoverOriginalSelection(request()))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure -> {
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAVAILABLE);
+                assertThat(Status.fromThrowable(failure).getDescription())
+                    .isEqualTo("Original selection recovery unavailable");
+              });
+    } finally {
+      close(channel);
+    }
+  }
+
+  @Test
+  void malformedCallerRequestStillReturnsInvalidArgumentOverAuthenticatedTransport()
+      throws Exception {
+    var malformed = request().toBuilder().setSchemaVersion(0).build();
+    when(recovery.recover(malformed))
+        .thenThrow(new IllegalArgumentException("Invalid request schema"));
+    start();
+    var channel = channel("gs");
+    try {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayRosterRecoveryServiceGrpc.newBlockingStub(channel)
+                      .withDeadlineAfter(5, TimeUnit.SECONDS)
+                      .recoverOriginalSelection(malformed))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.INVALID_ARGUMENT));
     } finally {
       close(channel);
     }

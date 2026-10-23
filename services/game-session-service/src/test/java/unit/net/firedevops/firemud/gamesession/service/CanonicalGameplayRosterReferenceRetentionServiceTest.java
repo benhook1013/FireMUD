@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterRefe
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository.Health;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository.TargetCandidate;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -43,6 +44,102 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
               Duration.ofMinutes(3),
               2),
           metrics);
+
+  @BeforeEach
+  void retainedTransferHealth() {
+    when(repository.transferHealth())
+        .thenReturn(new CanonicalGameplayRosterReferenceRepository.TransferHealth(0, 0));
+  }
+
+  @Test
+  void boundedConfirmedReceiptCleanupAndHealthContinueAfterTargetFailure() {
+    when(repository.targetCandidates(null, 2)).thenReturn(List.of(candidate(1, "RETIRED")));
+    when(repository.purgeRetiredTarget(any()))
+        .thenThrow(new IllegalStateException("Entity observation outstanding"));
+    when(repository.purgeConfirmedRetirementAcknowledgements(2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return 1;
+            });
+    when(repository.transferHealth())
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return new CanonicalGameplayRosterReferenceRepository.TransferHealth(19, 7);
+            });
+    when(repository.health()).thenReturn(new Health(0, 0));
+    service.sweep();
+    verify(repository).purgeConfirmedRetirementAcknowledgements(2);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup")
+                .tag("result", "purged")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.oldest_pending_transfer_seconds")
+                .gauge()
+                .value())
+        .isEqualTo(19);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds")
+                .gauge()
+                .value())
+        .isEqualTo(7);
+  }
+
+  @Test
+  void transferCleanupFailureKeepsOtherCleanupAndHealthAvailable() {
+    when(repository.targetCandidates(null, 2)).thenReturn(List.of());
+    when(repository.purgeConfirmedRetirementAcknowledgements(2))
+        .thenThrow(new IllegalStateException("storage unavailable"));
+    when(repository.health()).thenReturn(new Health(3, 2));
+    service.sweep();
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup")
+                .tag("result", "failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.oldest_blocking_seconds")
+                .gauge()
+                .value())
+        .isEqualTo(3);
+  }
+
+  @Test
+  void unavailableTransferHealthReportsUnknownInsteadOfAHealthyZero() {
+    when(repository.targetCandidates(null, 2)).thenReturn(List.of());
+    when(repository.health()).thenReturn(new Health(0, 0));
+    when(repository.transferHealth()).thenThrow(new IllegalStateException("health unavailable"));
+    service.sweep();
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.oldest_pending_transfer_seconds")
+                .gauge()
+                .value())
+        .isEqualTo(-1);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds")
+                .gauge()
+                .value())
+        .isEqualTo(-1);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup")
+                .tag("result", "health_failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
 
   @Test
   void boundedPagesPassProtectedAndUnavailableTargetsAndResetOnlyAfterAnEmptyPage() {

@@ -19,6 +19,8 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
   private final MeterRegistry metrics;
   private final AtomicLong oldestBlocking = new AtomicLong();
   private final AtomicLong cleanupLag = new AtomicLong();
+  private final AtomicLong oldestPendingTransfer = new AtomicLong();
+  private final AtomicLong transferCleanupLag = new AtomicLong();
   private UUID cursor;
 
   public CanonicalGameplayRosterReferenceRetentionService(
@@ -32,6 +34,16 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
     this.transactions = Objects.requireNonNull(transactions, "transactions");
     this.policy = Objects.requireNonNull(policy, "policy");
     this.metrics = Objects.requireNonNull(metrics, "metrics");
+    Gauge.builder(
+            "firemud.canonical.roster.reference.oldest_pending_transfer_seconds",
+            oldestPendingTransfer,
+            AtomicLong::doubleValue)
+        .register(metrics);
+    Gauge.builder(
+            "firemud.canonical.roster.reference.transfer_cleanup_lag_seconds",
+            transferCleanupLag,
+            AtomicLong::doubleValue)
+        .register(metrics);
     Gauge.builder(
             "firemud.canonical.roster.reference.oldest_blocking_seconds",
             oldestBlocking,
@@ -80,6 +92,36 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
             .counter("firemud.canonical.roster.reference.cleanup", "result", "failure")
             .increment();
       }
+    }
+    try {
+      int purged =
+          Objects.requireNonNull(
+              transactions.execute(
+                  ignored ->
+                      repository.purgeConfirmedRetirementAcknowledgements(policy.batchSize())));
+      metrics
+          .counter(
+              "firemud.canonical.roster.reference.transfer_cleanup",
+              "result",
+              purged > 0 ? "purged" : "protected")
+          .increment();
+    } catch (RuntimeException failure) {
+      metrics
+          .counter("firemud.canonical.roster.reference.transfer_cleanup", "result", "failure")
+          .increment();
+    }
+    try {
+      var transferHealth =
+          Objects.requireNonNull(transactions.execute(ignored -> repository.transferHealth()));
+      oldestPendingTransfer.set(transferHealth.oldestPendingSeconds());
+      transferCleanupLag.set(transferHealth.cleanupLagSeconds());
+    } catch (RuntimeException failure) {
+      oldestPendingTransfer.set(-1L);
+      transferCleanupLag.set(-1L);
+      metrics
+          .counter(
+              "firemud.canonical.roster.reference.transfer_cleanup", "result", "health_failure")
+          .increment();
     }
     var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));
     oldestBlocking.set(health.oldestBlockingSeconds());

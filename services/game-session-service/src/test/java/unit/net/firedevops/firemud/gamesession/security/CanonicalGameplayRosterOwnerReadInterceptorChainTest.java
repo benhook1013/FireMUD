@@ -53,6 +53,14 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
   private static final String REFERENCE_METHOD =
       CanonicalGameplayRosterOwnerReadServiceGrpc.getGetCanonicalGameplayRosterReferenceMethod()
           .getFullMethodName();
+  private static final String ACK_METHOD =
+      CanonicalGameplayRosterOwnerReadServiceGrpc
+          .getAcknowledgeCanonicalGameplayRosterRetirementMethod()
+          .getFullMethodName();
+  private static final String CONFIRM_METHOD =
+      CanonicalGameplayRosterOwnerReadServiceGrpc
+          .getConfirmCanonicalGameplayRosterRetirementAcknowledgementMethod()
+          .getFullMethodName();
   private static final UUID ACCOUNT = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID REALM = uuid("22222222-2222-4222-8222-222222222222");
@@ -136,6 +144,137 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
     verifyNoInteractions(source, reference);
   }
 
+  @Test
+  void retirementTransfersRequireExactEntityWithoutPlayerContextBeforeAnyProvider() {
+    var source = sourceReaderProvider();
+    var reference = referenceOwnerProvider();
+    var adapter = new CanonicalGameplayRosterOwnerReadGrpcAdapter(source, NAMESPACE, reference);
+    for (boolean confirmation : List.of(false, true)) {
+      for (String identity :
+          java.util.Arrays.asList(
+              null, peerIdentity(NAMESPACE, "world-management-service"), entityIdentity("other"))) {
+        var response = invokeTransferThroughConfiguredChain(identity, adapter, confirmation, false);
+        assertThat(response.errorCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+      }
+      var player =
+          invokeTransferThroughConfiguredChain(
+              entityIdentity(NAMESPACE), adapter, confirmation, true);
+      assertThat(player.errorCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+      SessionContext.clear();
+    }
+    verifyNoInteractions(source, reference);
+  }
+
+  @Test
+  void configuredJwtPeerAndProtectedLoginChainAllowsExactRetirementMethodsToAbsentOwner() {
+    var source = sourceReaderProvider();
+    var reference = referenceOwnerProvider();
+    var adapter = new CanonicalGameplayRosterOwnerReadGrpcAdapter(source, NAMESPACE, reference);
+    for (boolean confirmation : List.of(false, true)) {
+      var response =
+          invokeTransferThroughConfiguredChain(
+              entityIdentity(NAMESPACE), adapter, confirmation, false);
+      assertThat(response.errorCode).isEqualTo(Status.Code.UNAVAILABLE);
+    }
+    verify(reference, org.mockito.Mockito.times(2)).getIfAvailable();
+    verifyNoInteractions(source);
+  }
+
+  private static CapturingTransferObserver<?> invokeTransferThroughConfiguredChain(
+      String peer,
+      CanonicalGameplayRosterOwnerReadGrpcAdapter adapter,
+      boolean confirmation,
+      boolean player) {
+    var published =
+        support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+            .canonicalPublishedRoute();
+    var original =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            UUID.randomUUID(),
+            ACCOUNT,
+            UUID.randomUUID(),
+            NAMESPACE,
+            net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.expectedTarget(
+                published));
+    var target =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.target(
+            original);
+    var retired =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+                    original, 1L, UUID.randomUUID(), null)
+                .toBuilder()
+                .setState(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+                .setTerminalOutcome("DENIED")
+                .setRetirementUuid(UUID.randomUUID().toString())
+                .setSupersedingPointerDigest("e".repeat(64))
+                .setSupersedingPointerVersion(target.getPointerVersion() + 1)
+                .setSupersedingCatalogRevision(target.getCatalogRevision())
+                .setSupersedingWorldEpoch(target.getActiveWorldEpoch())
+                .build());
+    var request =
+        net.firedevops.firemud.gamesession.v1
+            .CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setObservedRetirement(retired)
+            .setObservationUuid(UUID.randomUUID().toString())
+            .setAdmissionUuid(UUID.randomUUID().toString())
+            .setMinimumRetentionMillis(1L)
+            .build();
+    if (confirmation) {
+      var response =
+          new CapturingTransferObserver<
+              net.firedevops.firemud.gamesession.v1
+                  .CanonicalGameplayRosterRetirementConfirmationResponse>();
+      var confirm =
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+              .confirmation(
+                  request,
+                  net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+                      .response(request, UUID.randomUUID(), 1L));
+      invokeThroughConfiguredChain(
+          peer,
+          CONFIRM_METHOD,
+          (call, headers) -> {
+            adapter.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirm, response);
+            return new ServerCall.Listener<>() {};
+          },
+          player);
+      return response;
+    }
+    var response =
+        new CapturingTransferObserver<
+            net.firedevops.firemud.gamesession.v1
+                .CanonicalGameplayRosterRetirementAcknowledgementResponse>();
+    invokeThroughConfiguredChain(
+        peer,
+        ACK_METHOD,
+        (call, headers) -> {
+          adapter.acknowledgeCanonicalGameplayRosterRetirement(request, response);
+          return new ServerCall.Listener<>() {};
+        },
+        player);
+    return response;
+  }
+
+  private static final class CapturingTransferObserver<T> implements StreamObserver<T> {
+    private Status.Code errorCode;
+
+    @Override
+    public void onNext(T response) {}
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {}
+  }
+
   private static ObjectProvider<
           net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
       referenceOwnerProvider() {
@@ -166,6 +305,8 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
             "game_session.v1.GameSessionService/Ping",
             "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation",
             REFERENCE_METHOD,
+            ACK_METHOD,
+            CONFIRM_METHOD,
             METHOD,
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead",
             "game_session.v1.GameSessionService/AuthorizeStartSession")
@@ -261,7 +402,13 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
                 SessionContext.setContext(
                     ACCOUNT.toString(), List.of("player"), java.util.Map.of());
               }
-              return peer.interceptCall(authCall, authHeaders, handler);
+              return peer.interceptCall(
+                  authCall,
+                  authHeaders,
+                  (peerCall, peerHeaders) ->
+                      new net.firedevops.firemud.gamesession.security
+                              .ProtectedGameSessionLoginGrpcInterceptor()
+                          .interceptCall(peerCall, peerHeaders, handler));
             });
   }
 

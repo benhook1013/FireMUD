@@ -17,10 +17,13 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.Candidate;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.ClosedAdmissionCandidate;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.Health;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.RetirementTransfer;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
@@ -316,6 +319,371 @@ class CanonicalGameplayRosterRetentionServiceTest {
   }
 
   @Test
+  void failedSnapshotPageStillProcessesClosedAdmissionsPurgesAndHealth() {
+    var closure = closure(1);
+    var owner = closureOwner(closure);
+    when(repository.candidates(null, 2))
+        .thenThrow(new org.jooq.exception.DataAccessException("snapshot mapping failed"));
+    when(repository.closedAdmissionCandidates(null, 2)).thenReturn(List.of(closure));
+    when(ownerClient.getCanonicalGameplayRosterReference(owner.getRequest()))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return owner;
+            });
+    when(repository.purgeClosedAdmission(closure, owner)).thenReturn(true);
+    when(repository.health()).thenReturn(new Health(11, 3));
+
+    service.sweep();
+
+    verify(repository).purgeClosedAdmission(closure, owner);
+    assertPurgeAndHealthStagesRan();
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertThat(outcomes("admission_purged")).isEqualTo(1);
+    assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
+        .isEqualTo(11);
+    assertThat(metrics.get("firemud.canonical.roster.cleanup_lag_seconds").gauge().value())
+        .isEqualTo(3);
+  }
+
+  @Test
+  void failedClosedAdmissionPageStillRunsPurgesAndHealthAndPreservesCandidateCounts() {
+    var snapshot = candidate(1, "RETIRED");
+    when(repository.candidates(null, 2)).thenReturn(List.of(snapshot));
+    when(repository.dispose(snapshot)).thenReturn(true);
+    when(repository.closedAdmissionCandidates(null, 2))
+        .thenThrow(new org.jooq.exception.DataAccessException("closure mapping failed"));
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+
+    verify(repository).dispose(snapshot);
+    assertPurgeAndHealthStagesRan();
+    assertThat(outcomes("disposed")).isEqualTo(1);
+    assertThat(outcomes("failure")).isEqualTo(1);
+  }
+
+  @Test
+  void failedOrphanPurgeStillRunsDisposedPurgeAndHealth() {
+    when(repository.purgeOrphanOpenAdmissions(policy, 2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              throw new org.jooq.exception.DataAccessException("orphan purge unavailable");
+            });
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+
+    assertPurgeAndHealthStagesRan();
+    assertThat(outcomes("failure")).isEqualTo(1);
+  }
+
+  @Test
+  void failedDisposedPurgeStillRefreshesHealth() {
+    when(repository.purgeDisposedTombstones(2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              throw new org.jooq.exception.DataAccessException("disposed purge unavailable");
+            });
+    when(repository.health()).thenReturn(new Health(4, 2));
+
+    service.sweep();
+
+    assertPurgeAndHealthStagesRan();
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
+        .isEqualTo(4);
+    assertThat(metrics.get("firemud.canonical.roster.cleanup_lag_seconds").gauge().value())
+        .isEqualTo(2);
+  }
+
+  @Test
+  void unavailableHealthPublishesUnknownInsteadOfStaleValuesThenRecoversActualValues() {
+    when(repository.health())
+        .thenReturn(new Health(91, 17))
+        .thenThrow(new org.jooq.exception.DataAccessException("health unavailable"))
+        .thenReturn(new Health(7, 2));
+
+    service.sweep();
+    assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
+        .isEqualTo(91);
+    assertThat(metrics.get("firemud.canonical.roster.cleanup_lag_seconds").gauge().value())
+        .isEqualTo(17);
+    service.sweep();
+    assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
+        .isNaN();
+    assertThat(metrics.get("firemud.canonical.roster.cleanup_lag_seconds").gauge().value()).isNaN();
+    service.sweep();
+
+    assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
+        .isEqualTo(7);
+    assertThat(metrics.get("firemud.canonical.roster.cleanup_lag_seconds").gauge().value())
+        .isEqualTo(2);
+    verify(repository, times(3)).purgeOrphanOpenAdmissions(policy, 2);
+    verify(repository, times(3)).purgeDisposedTombstones(2);
+    verify(repository, times(3)).health();
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertOutsideTransaction();
+  }
+
+  @Test
+  void failedSnapshotPageRetriesTheSameCursorUntilAValidEmptyPageResetsIt() {
+    var snapshot = candidate(1, "RETIRED");
+    UUID after = snapshot.binding().snapshot().snapshotUuid();
+    when(repository.candidates(null, 2)).thenReturn(List.of(snapshot)).thenReturn(List.of());
+    when(repository.candidates(after, 2))
+        .thenThrow(new org.jooq.exception.DataAccessException("snapshot page unavailable"))
+        .thenReturn(List.of());
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+    service.sweep();
+    service.sweep();
+    service.sweep();
+
+    var pages = inOrder(repository);
+    pages.verify(repository).candidates(null, 2);
+    pages.verify(repository).candidates(after, 2);
+    pages.verify(repository).candidates(after, 2);
+    pages.verify(repository).candidates(null, 2);
+    verify(repository, times(4)).closedAdmissionCandidates(null, 2);
+    verify(repository, times(4)).purgeOrphanOpenAdmissions(policy, 2);
+    verify(repository, times(4)).purgeDisposedTombstones(2);
+    verify(repository, times(4)).health();
+    assertThat(outcomes("failure")).isEqualTo(1);
+  }
+
+  @Test
+  void failedClosedAdmissionPageRetriesItsCursorUntilAValidEmptyPageResetsIt() {
+    var closure = closure(1);
+    var owner = closureOwner(closure);
+    when(repository.closedAdmissionCandidates(null, 2))
+        .thenReturn(List.of(closure))
+        .thenReturn(List.of());
+    when(repository.closedAdmissionCandidates(closure.operationUuid(), 2))
+        .thenThrow(new org.jooq.exception.DataAccessException("closure page unavailable"))
+        .thenReturn(List.of());
+    when(ownerClient.getCanonicalGameplayRosterReference(owner.getRequest())).thenReturn(owner);
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+    service.sweep();
+    service.sweep();
+    service.sweep();
+
+    var pages = inOrder(repository);
+    pages.verify(repository).closedAdmissionCandidates(null, 2);
+    pages.verify(repository).closedAdmissionCandidates(closure.operationUuid(), 2);
+    pages.verify(repository).closedAdmissionCandidates(closure.operationUuid(), 2);
+    pages.verify(repository).closedAdmissionCandidates(null, 2);
+    verify(repository, times(4)).candidates(null, 2);
+    verify(repository, times(4)).purgeOrphanOpenAdmissions(policy, 2);
+    verify(repository, times(4)).purgeDisposedTombstones(2);
+    verify(repository, times(4)).health();
+    verify(ownerClient).getCanonicalGameplayRosterReference(owner.getRequest());
+    assertThat(outcomes("failure")).isEqualTo(1);
+  }
+
+  @Test
+  void waitingTransferUsesIndependentPositiveOwnerReadOutsideSqlAndNeverAcknowledgesUnknown() {
+    var candidate = candidate(1, "PROTECTED");
+    var waiting =
+        new RetirementTransfer(
+            new UUID(8, 1), "WAITING_RETIREMENT", candidate.ownerRequest(), null, null);
+    when(repository.retirementTransfers(null, 2)).thenReturn(List.of(waiting));
+    when(repository.retirementTransfers(waiting.observationUuid(), 2)).thenReturn(List.of(waiting));
+    var nonterminal =
+        CanonicalGameplayRosterReferenceEvidence.response(
+            candidate.ownerRequest(), 1, new UUID(3, 1), null);
+    when(ownerClient.getCanonicalGameplayRosterReference(candidate.ownerRequest()))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return nonterminal;
+            })
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              throw new IllegalStateException("unavailable");
+            })
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return retirement(candidate);
+            });
+    when(repository.observeWaitingRetirement(waiting, retirement(candidate)))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return true;
+            });
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+    service.sweep();
+    verify(repository, never()).observeWaitingRetirement(any(), any());
+    service.sweep();
+
+    verify(repository).observeWaitingRetirement(waiting, retirement(candidate));
+    verify(ownerClient, never()).acknowledgeCanonicalGameplayRosterRetirement(any());
+    verify(ownerClient, never()).confirmCanonicalGameplayRosterRetirementAcknowledgement(any());
+    verify(repository, times(3)).purgeConfirmedRetirementTransfers(2);
+    assertThat(outcomes("protected")).isEqualTo(1);
+    assertThat(outcomes("failure")).isEqualTo(1);
+  }
+
+  @Test
+  void lostAcknowledgementRetriesStableRequestAndConfirmationUsesCommittedActualResponse() {
+    var pending = transfer(1);
+    var request = pending.acknowledgementRequest();
+    var acknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            request, new UUID(9, 1), request.getMinimumRetentionMillis() + 1);
+    var acknowledged =
+        new RetirementTransfer(
+            pending.observationUuid(),
+            "ACKNOWLEDGED",
+            pending.original(),
+            request,
+            acknowledgement);
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(request, acknowledgement);
+    var confirmationResponse =
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    var committed = new java.util.concurrent.atomic.AtomicBoolean();
+    when(repository.retirementTransfers(null, 2)).thenReturn(List.of(pending));
+    when(repository.retirementTransfers(pending.observationUuid(), 2))
+        .thenReturn(List.of(pending))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              assertThat(committed.get()).isTrue();
+              return List.of(acknowledged);
+            })
+        .thenReturn(List.of(acknowledged));
+    when(ownerClient.acknowledgeCanonicalGameplayRosterRetirement(request))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              throw new IllegalStateException("ACK reply lost");
+            })
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return acknowledgement;
+            });
+    when(repository.recordRetirementAcknowledgement(pending, acknowledgement))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              committed.set(true);
+              return true;
+            });
+    when(ownerClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              assertThat(committed.get()).isTrue();
+              throw new IllegalStateException("confirmation reply lost");
+            })
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return confirmationResponse;
+            });
+    when(repository.recordRetirementConfirmation(acknowledged, confirmationResponse))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return true;
+            });
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+    verify(repository, never()).recordRetirementAcknowledgement(any(), any());
+    service.sweep();
+    verify(ownerClient, never()).confirmCanonicalGameplayRosterRetirementAcknowledgement(any());
+    service.sweep();
+    verify(repository, never()).recordRetirementConfirmation(any(), any());
+    service.sweep();
+
+    verify(ownerClient, times(2)).acknowledgeCanonicalGameplayRosterRetirement(request);
+    verify(repository).recordRetirementAcknowledgement(pending, acknowledgement);
+    verify(ownerClient, times(2))
+        .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation);
+    verify(repository).recordRetirementConfirmation(acknowledged, confirmationResponse);
+    verify(repository, times(4)).purgeConfirmedRetirementTransfers(2);
+    assertThat(outcomes("failure")).isEqualTo(2);
+  }
+
+  @Test
+  void failedTransferPageKeepsCursorAndBothTransferStagesLeaveLaterCleanupAndHealthRunning() {
+    var pending = transfer(1);
+    when(repository.retirementTransfers(null, 2))
+        .thenReturn(List.of(pending))
+        .thenReturn(List.of());
+    when(repository.retirementTransfers(pending.observationUuid(), 2))
+        .thenThrow(new org.jooq.exception.DataAccessException("transfer page unavailable"))
+        .thenReturn(List.of());
+    when(ownerClient.acknowledgeCanonicalGameplayRosterRetirement(pending.acknowledgementRequest()))
+        .thenReturn(
+            CanonicalGameplayRosterRetirementEvidence.response(
+                pending.acknowledgementRequest(),
+                new UUID(9, 1),
+                pending.acknowledgementRequest().getMinimumRetentionMillis()));
+    when(repository.purgeConfirmedRetirementTransfers(2))
+        .thenThrow(new org.jooq.exception.DataAccessException("confirmed cleanup unavailable"))
+        .thenReturn(0);
+    when(repository.health()).thenReturn(new Health(3, 1));
+
+    service.sweep();
+    service.sweep();
+    service.sweep();
+    service.sweep();
+
+    var pages = inOrder(repository);
+    pages.verify(repository).retirementTransfers(null, 2);
+    pages.verify(repository).retirementTransfers(pending.observationUuid(), 2);
+    pages.verify(repository).retirementTransfers(pending.observationUuid(), 2);
+    pages.verify(repository).retirementTransfers(null, 2);
+    verify(repository, times(4)).purgeOrphanOpenAdmissions(policy, 2);
+    verify(repository, times(4)).purgeDisposedTombstones(2);
+    verify(repository, times(4)).purgeConfirmedRetirementTransfers(2);
+    verify(repository, times(4)).health();
+    assertThat(outcomes("failure")).isEqualTo(2);
+    assertThat(metrics.get("firemud.canonical.roster.oldest_blocking_seconds").gauge().value())
+        .isEqualTo(3);
+  }
+
+  private static RetirementTransfer transfer(long id) {
+    var candidate = candidate(id, "PROTECTED");
+    var request =
+        net.firedevops.firemud.gamesession.v1
+            .CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(candidate.ownerRequest())
+            .setObservedRetirement(retirement(candidate))
+            .setObservationUuid(new UUID(8, id).toString())
+            .setAdmissionUuid(new UUID(7, id).toString())
+            .setSnapshotUuid(candidate.binding().snapshot().snapshotUuid().toString())
+            .setSnapshotDigest(candidate.binding().snapshot().snapshotDigest())
+            .setMinimumRetentionMillis(1000)
+            .build();
+    CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request);
+    return new RetirementTransfer(
+        new UUID(8, id), "PENDING_ACK", candidate.ownerRequest(), request, null);
+  }
+
+  private void assertPurgeAndHealthStagesRan() {
+    verify(repository).purgeOrphanOpenAdmissions(policy, 2);
+    verify(repository).purgeDisposedTombstones(2);
+    verify(repository).health();
+    assertOutsideTransaction();
+  }
+
+  @Test
   void refusesBothActualAndSynchronizationOnlyAmbientTransactionsBeforeAnyWork() {
     try {
       TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -371,6 +739,33 @@ class CanonicalGameplayRosterRetentionServiceTest {
             target.toWire());
     return new Candidate(
         binding, request, 1, state, "RETIRED".equals(state) ? "e".repeat(64) : null);
+  }
+
+  private static ClosedAdmissionCandidate closure(long id) {
+    var original = candidate(id, "PROTECTED").ownerRequest();
+    var request =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(new UUID(4, id).toString())
+            .build();
+    UUID admission = new UUID(5, id);
+    var response =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence.response(
+            request, admission, 1, new UUID(3, 1), null);
+    return new ClosedAdmissionCandidate(
+        UUID.fromString(original.getOperationUuid()), admission, response);
+  }
+
+  private static GetCanonicalGameplayRosterReferenceResponse closureOwner(
+      ClosedAdmissionCandidate closure) {
+    var request = closure.response().getRequest();
+    return CanonicalGameplayRosterReferenceEvidence.response(
+            request.getOriginalSelection(), 1, new UUID(3, 1), null)
+        .toBuilder()
+        .setRecoveryUuid(request.getRecoveryUuid())
+        .build();
   }
 
   // Controlled owner evidence exercises wire qualification, not deployed producer authority.

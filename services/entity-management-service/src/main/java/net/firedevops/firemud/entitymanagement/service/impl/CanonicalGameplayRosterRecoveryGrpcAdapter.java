@@ -4,6 +4,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.RecoveryConflictException;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRecoveryService;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
@@ -42,7 +43,7 @@ public final class CanonicalGameplayRosterRecoveryGrpcAdapter
               .withDescription("Exact recovery evidence required")
               .asRuntimeException());
       return;
-    } catch (IllegalStateException conflict) {
+    } catch (RecoveryConflictException conflict) {
       observer.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Original selection recovery unavailable")
