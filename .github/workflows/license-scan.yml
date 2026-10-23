@@ -44,6 +44,7 @@ jobs:
           filters: |
             gradle:
               - 'config/ort/curations/**'
+              - 'config/ort/custom-license-texts/**'
               - 'build.gradle.kts'
               - 'settings.gradle.kts'
               - 'gradle.properties'
@@ -142,6 +143,7 @@ jobs:
           docker-cli-args: >-
             -e CI=true
             --mount type=bind,source=${{ github.workspace }}/config/ort/curations,target=/home/ort/.ort/config/curations/firemud,readonly
+            --mount type=bind,source=${{ github.workspace }}/config/ort/custom-license-texts/LicenseRef-Gatling-Highcharts-3.16.0,target=/home/ort/.ort/config/custom-license-texts/LicenseRef-Gatling-Highcharts-3.16.0,readonly
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: 'violations'
           report-formats: 'CycloneDx,WebApp'
