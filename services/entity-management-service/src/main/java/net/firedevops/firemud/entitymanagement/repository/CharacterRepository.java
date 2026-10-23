@@ -1100,6 +1100,15 @@ public class CharacterRepository {
       }
     }
 
+    if (insertedSnapshotUuid == null) {
+      // Capture can bind an original retention reference next, which requires this same row
+      // exclusively. Take that lock before readback instead of upgrading a shared lock later.
+      dsl.select(ROSTER_SNAPSHOT_UUID)
+          .from(ROSTER_SNAPSHOTS)
+          .where(ROSTER_SNAPSHOT_DIGEST.eq(digest))
+          .forUpdate()
+          .fetchOne();
+    }
     return readBackCanonicalGameplayRosterSnapshot(
         request.canonicalAccountUuid(), target, currentActors, digest, null);
   }

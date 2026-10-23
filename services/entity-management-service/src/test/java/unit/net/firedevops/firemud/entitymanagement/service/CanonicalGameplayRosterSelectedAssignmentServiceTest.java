@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -205,6 +206,64 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
         evidence(ownerRequest, withCatalogRevision(request.expectedTarget(), 4L)),
         IllegalStateException.class,
         "SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+  }
+
+  @Test
+  void missingOriginalChosenActorFailsBeforeAnyRepositoryLookup() {
+    assertOriginalChosenActorRejectedBeforeRepository(true);
+  }
+
+  @Test
+  void anotherOriginalChosenActorInTheSameSnapshotFailsBeforeAnyRepositoryLookup() {
+    assertOriginalChosenActorRejectedBeforeRepository(false);
+  }
+
+  private static void assertOriginalChosenActorRejectedBeforeRepository(
+      boolean missingChosenActor) {
+    var ownerPort = ownerPort();
+    var repository = mock(CharacterRepository.class);
+    var service = new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
+    var request = request(target());
+    var ownerRequest =
+        new CanonicalGameplayRosterReadRequest(
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
+    when(ownerPort.resolveCurrentTarget(ownerRequest))
+        .thenReturn(evidence(ownerRequest, request.expectedTarget()));
+    var original = ownerPort.readOriginalSelection(ownerRequest);
+    var changed = original.toBuilder();
+    if (missingChosenActor) {
+      changed.clearSelectedCharacterUuid();
+    } else {
+      UUID otherActor = UUID.randomUUID();
+      var roster =
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.receipt(
+                  original)
+              .toBuilder()
+              .addActors(
+                  net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor
+                      .newBuilder()
+                      .setCharacterUuid(otherActor.toString())
+                      .setDisplayName("Other Original Actor")
+                      .setActorKind(
+                          net.firedevops.firemud.entitymanagement.v1
+                              .CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
+              .build();
+      changed
+          .setCanonicalRosterReceipt(roster.toByteString())
+          .setSelectedCharacterUuid(otherActor.toString());
+    }
+    var changedOriginal =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+            .requireResponse(original.getRequest(), changed.build());
+    doReturn(changedOriginal).when(ownerPort).readOriginalSelection(ownerRequest);
+
+    assertThatThrownBy(() -> service.read(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+    verifyNoInteractions(repository);
   }
 
   @Test

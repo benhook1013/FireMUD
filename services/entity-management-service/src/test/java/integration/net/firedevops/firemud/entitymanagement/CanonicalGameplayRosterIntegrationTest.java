@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor;
@@ -611,6 +613,261 @@ class CanonicalGameplayRosterIntegrationTest {
                     first.snapshotUuid(),
                     actor))
         .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void concurrentDifferentOriginalOperationsBindTheSameExistingSealedSnapshotWithoutLockUpgrade()
+      throws Exception {
+    var target = target(namespaceUuid, UUID.randomUUID());
+    UUID actor = createPersistedActor(accountUuid, target, 62L, "Shared Existing Actor");
+    var existing = readRoster(accountUuid, target);
+    var requests = List.of(originalRosterRequest(target), originalRosterRequest(target));
+    var admissions =
+        requests.stream().map(characterRepository::reserveOriginalRosterAdmission).toList();
+    UUID targetFence = UUID.randomUUID();
+    var sources =
+        requests.stream()
+            .map(
+                request ->
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .response(
+                            net.firedevops.firemud.common.world
+                                .CanonicalGameplayRosterReferenceEvidence.request(
+                                request.requestUuid(),
+                                request.canonicalAccountUuid(),
+                                request.playerExecutionContext().sessionUuid(),
+                                "gameplay",
+                                target.toWire()),
+                            1L,
+                            targetFence,
+                            null))
+            .toList();
+    var retention =
+        new net.firedevops.firemud.entitymanagement.repository
+            .CanonicalGameplayRosterRetentionRepository(dsl);
+    CountDownLatch firstCaptured = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    AtomicInteger firstPid = new AtomicInteger();
+    AtomicInteger secondPid = new AtomicInteger();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<CanonicalGameplayRosterSnapshot> first =
+          executor.submit(
+              () ->
+                  new TransactionTemplate(transactionManager)
+                      .execute(
+                          ignored -> {
+                            firstPid.set(
+                                java.util.Objects.requireNonNull(
+                                    jdbcTemplate.queryForObject(
+                                        "SELECT pg_backend_pid()", Integer.class)));
+                            var request = requests.getFirst();
+                            retention.requireAdmission(request, admissions.getFirst());
+                            assertThat(retention.originalReceipt(sources.getFirst())).isEmpty();
+                            // Pause the actual capture/bind sequence after capture, while all its
+                            // locks remain held.
+                            var snapshot =
+                                characterRepository.captureCanonicalGameplayRosterSnapshot(
+                                    request,
+                                    new CanonicalGameplayRosterOwnerEvidence(
+                                        request.requestUuid(), accountUuid, target, Instant.now()));
+                            firstCaptured.countDown();
+                            try {
+                              if (!releaseFirst.await(10, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException(
+                                    "First existing snapshot capture was not released");
+                              }
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(interrupted);
+                            }
+                            retention.bindOriginal(sources.getFirst(), snapshot);
+                            retention.bindAdmission(
+                                request.requestUuid(),
+                                admissions.getFirst(),
+                                snapshot.snapshotUuid());
+                            return snapshot;
+                          }));
+      assertThat(firstCaptured.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<CanonicalGameplayRosterSnapshot> second =
+          executor.submit(
+              () ->
+                  new TransactionTemplate(transactionManager)
+                      .execute(
+                          ignored -> {
+                            secondPid.set(
+                                java.util.Objects.requireNonNull(
+                                    jdbcTemplate.queryForObject(
+                                        "SELECT pg_backend_pid()", Integer.class)));
+                            secondStarted.countDown();
+                            var request = requests.get(1);
+                            return characterRepository
+                                .captureAndBindCanonicalGameplayRosterSnapshot(
+                                    request,
+                                    new CanonicalGameplayRosterOwnerEvidence(
+                                        request.requestUuid(), accountUuid, target, Instant.now()),
+                                    sources.get(1),
+                                    admissions.get(1));
+                          }));
+      assertThat(secondStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      awaitBackendBlockedBy(secondPid.get(), firstPid.get());
+      assertActorWriterBlocked(actor);
+      releaseFirst.countDown();
+      assertThat(first.get(15, TimeUnit.SECONDS)).isEqualTo(existing);
+      assertThat(second.get(15, TimeUnit.SECONDS)).isEqualTo(existing);
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT count(*) FROM entity_canonical_roster_retention_references "
+                      + "WHERE snapshot_uuid = ? AND snapshot_digest = ? AND reference_kind = 'ORIGINAL_SELECTION' "
+                      + "AND reference_uuid IN (?, ?) AND acquire_operation_uuid = reference_uuid",
+                  Integer.class,
+                  existing.snapshotUuid(),
+                  existing.snapshotDigest(),
+                  requests.getFirst().requestUuid(),
+                  requests.get(1).requestUuid()))
+          .isEqualTo(2);
+      for (int index = 0; index < requests.size(); index++) {
+        UUID operation = requests.get(index).requestUuid();
+        assertThat(
+                jdbcTemplate.queryForObject(
+                    "SELECT owner_request FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                    byte[].class,
+                    operation))
+            .isEqualTo(sources.get(index).getRequest().toByteArray());
+        assertThat(
+                jdbcTemplate.queryForObject(
+                    "SELECT canonical_roster_receipt FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                    byte[].class,
+                    operation))
+            .isEqualTo(existing.toWire().toByteArray());
+        assertThat(
+                jdbcTemplate.queryForObject(
+                    "SELECT owner_target_fence_uuid FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                    UUID.class,
+                    operation))
+            .isEqualTo(targetFence);
+        assertThat(
+                jdbcTemplate.queryForObject(
+                    "SELECT snapshot_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ? AND admission_uuid = ? AND admission_state = 'OPEN'",
+                    UUID.class,
+                    operation,
+                    admissions.get(index)))
+            .isEqualTo(existing.snapshotUuid());
+      }
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_digest = ?",
+                  Integer.class,
+                  existing.snapshotDigest()))
+          .isEqualTo(1);
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT name FROM characters WHERE character_uuid = ?", String.class, actor))
+          .isEqualTo("Shared Existing Actor");
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void currentSnapshotReadersStillShareTheirRowsAndExcludeActorWriters() throws Exception {
+    var target = target(namespaceUuid, UUID.randomUUID());
+    UUID actor = createPersistedActor(accountUuid, target, 63L, "Shared Read Actor");
+    var snapshot = readRoster(accountUuid, target);
+    var reference =
+        new CanonicalGameplayRosterSnapshotReference(
+            snapshot.snapshotUuid(), snapshot.snapshotDigest());
+    CountDownLatch firstRead = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<CanonicalGameplayRosterSnapshot> first =
+          executor.submit(
+              () ->
+                  new TransactionTemplate(transactionManager)
+                      .execute(
+                          ignored -> {
+                            var result =
+                                characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
+                                    accountUuid, target, reference);
+                            firstRead.countDown();
+                            try {
+                              if (!releaseFirst.await(10, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException(
+                                    "First current snapshot reader was not released");
+                              }
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(interrupted);
+                            }
+                            return result;
+                          }));
+      assertThat(firstRead.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<CanonicalGameplayRosterSnapshot> second =
+          executor.submit(
+              () ->
+                  characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
+                      accountUuid, target, reference));
+      assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(snapshot);
+      assertActorWriterBlocked(actor);
+      releaseFirst.countDown();
+      assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(snapshot);
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private CanonicalGameplayRosterReadRequest originalRosterRequest(
+      CanonicalGameplayRosterTarget target) {
+    UUID operation = UUID.randomUUID();
+    return new CanonicalGameplayRosterReadRequest(
+        operation,
+        accountUuid,
+        target,
+        new CanonicalGameplayRosterExecutionContext(
+            accountUuid,
+            target.tenantUuid(),
+            target.playableStateNamespaceId(),
+            target.gameInstanceUuid(),
+            null,
+            UUID.randomUUID(),
+            target.realmUuid(),
+            operation,
+            target.playableStateScope()));
+  }
+
+  private void awaitBackendBlockedBy(int waitingPid, int holderPid) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    boolean blocked = false;
+    while (System.nanoTime() < deadline) {
+      blocked =
+          Boolean.TRUE.equals(
+              jdbcTemplate.queryForObject(
+                  "SELECT ? = ANY(pg_blocking_pids(?))", Boolean.class, holderPid, waitingPid));
+      if (blocked) break;
+      TimeUnit.MILLISECONDS.sleep(10);
+    }
+    assertThat(blocked)
+        .as("Second existing snapshot operation waits for the first transaction")
+        .isTrue();
+  }
+
+  private void assertActorWriterBlocked(UUID actor) {
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(transactionManager)
+                    .executeWithoutResult(
+                        ignored -> {
+                          jdbcTemplate.execute("SET LOCAL lock_timeout = '250ms'");
+                          jdbcTemplate.update(
+                              "UPDATE characters SET name = 'Blocked Actor Rename' WHERE character_uuid = ?",
+                              actor);
+                        }))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("lock timeout");
   }
 
   @Test

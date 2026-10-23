@@ -75,9 +75,9 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
                     ? ("RETIRED".equals(candidate.state()) ? "purged" : "retired")
                     : "protected")
             .increment();
-      } catch (RuntimeException protectedOrUnavailable) {
+      } catch (RuntimeException failure) {
         metrics
-            .counter("firemud.canonical.roster.reference.cleanup", "result", "protected")
+            .counter("firemud.canonical.roster.reference.cleanup", "result", "failure")
             .increment();
       }
     }
