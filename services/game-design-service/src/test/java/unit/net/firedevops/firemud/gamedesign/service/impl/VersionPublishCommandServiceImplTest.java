@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,6 +29,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
+import net.firedevops.firemud.gamedesign.client.GameLogicClient;
+import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelectionRepository;
@@ -48,6 +53,9 @@ import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptRepository;
+import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationDigestReadService;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -55,6 +63,7 @@ import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingExcept
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
@@ -66,6 +75,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -152,21 +162,25 @@ class VersionPublishCommandServiceImplTest {
         .when(publishAttemptService)
         .executeFullVersionTransaction(any());
     VersionMapper mapper = Mappers.getMapper(VersionMapper.class);
-    service =
-        new VersionPublishCommandServiceImpl(
-            versionRepository,
-            gameRepository,
-            publishAttemptRepository,
-            mapper,
-            assetExportService,
-            publishAttemptService,
-            publishGateService,
-            controlPlaneDigestService,
-            versionAssetArtifactService,
-            publishedReleaseBundleService,
-            recordedParticipantDigestService,
-            authoredSelections,
-            worldProducerProvider);
+    service = commandService(mapper, publishGateService);
+  }
+
+  private VersionPublishCommandServiceImpl commandService(
+      VersionMapper mapper, PublishGateService gateService) {
+    return new VersionPublishCommandServiceImpl(
+        versionRepository,
+        gameRepository,
+        publishAttemptRepository,
+        mapper,
+        assetExportService,
+        publishAttemptService,
+        gateService,
+        controlPlaneDigestService,
+        versionAssetArtifactService,
+        publishedReleaseBundleService,
+        recordedParticipantDigestService,
+        authoredSelections,
+        worldProducerProvider);
   }
 
   @Test
@@ -247,6 +261,9 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
     verify(authoredSelections, never()).reserve(any(PublishIntent.class));
+    verify(publishGateService, never())
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class));
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
@@ -411,6 +428,7 @@ class VersionPublishCommandServiceImplTest {
   void selectedSucceededReplayRevalidatesExactTerminalEvidenceWithoutWriting(
       VersionLifecycleState lifecycleState) throws Exception {
     SelectedSucceededReplayFixture fixture = selectedSucceededReplayFixture(lifecycleState);
+    delegateGateAssertionsToRealGate();
 
     PublishWorkflowSnapshot snapshot = service.reconcileFullVersionPublish(fixture.request());
 
@@ -425,7 +443,7 @@ class VersionPublishCommandServiceImplTest {
                 .PUBLISHED);
     verify(publishAttemptRepository).requirePublishedOperation(fixture.attempt());
     verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
     verify(recordedParticipantDigestService)
         .assertMatchesRecordedDigests(
@@ -545,7 +563,7 @@ class VersionPublishCommandServiceImplTest {
     org.mockito.Mockito.doThrow(
             new IllegalStateException("ISOLATED retained publication gate mismatch"))
         .when(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
 
     assertThrows(
@@ -553,7 +571,7 @@ class VersionPublishCommandServiceImplTest {
         () -> service.reconcileFullVersionPublish(fixture.request()));
 
     verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
     assertNoPublicationWrites();
   }
@@ -853,8 +871,8 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, request.publishWorkflowId()))
         .thenReturn(staged);
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "10", "version:10", "digest", 1));
@@ -897,8 +915,8 @@ class VersionPublishCommandServiceImplTest {
       names = {"UNAVAILABLE", "DEADLINE_EXCEEDED"})
   void transientParticipantReadLeavesSelectedFullAttemptPending(Status.Code statusCode) {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenThrow(new StatusRuntimeException(Status.fromCode(statusCode)));
 
     VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
@@ -917,6 +935,194 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
+  @ParameterizedTest
+  @EnumSource(TransientCollectorFailure.class)
+  void transientSelectedCollectorObservationsLeaveAttemptPending(
+      TransientCollectorFailure transientFailure) {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    var worldClient = org.mockito.Mockito.mock(WorldManagementClient.class);
+    var entityClient = org.mockito.Mockito.mock(EntityManagementClient.class);
+    var gameLogicClient = org.mockito.Mockito.mock(GameLogicClient.class);
+    var automationClient = org.mockito.Mockito.mock(AutomationScriptingClient.class);
+    var selectedReceiptRepository =
+        org.mockito.Mockito.mock(SelectedDraftGameLogicReceiptRepository.class);
+    var selectedDigestReader =
+        org.mockito.Mockito.mock(SelectedDraftPublicationDigestReadService.class);
+    var binding =
+        PublicationDigestRequestBinding.full(
+            fixture.request().intent().canonicalTenantId().toString(),
+            String.valueOf(fixture.version().getId()),
+            fixture.request().publishRequestId());
+    org.mockito.ArgumentMatcher<PublicationDigestRequestBinding> exactBinding =
+        candidate ->
+            candidate != null
+                && java.util.Arrays.equals(
+                    binding.canonicalPreimage(), candidate.canonicalPreimage());
+    var selectedCommit = fixture.reservation().selection().selectedCommit().commitId().toString();
+    if (transientFailure == TransientCollectorFailure.SELECTED_SNAPSHOT_UNAVAILABLE) {
+      when(selectedDigestReader.read(
+              org.mockito.ArgumentMatchers.eq("test"),
+              org.mockito.ArgumentMatchers.argThat(exactBinding)))
+          .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+      when(selectedDigestReader.read(
+              org.mockito.ArgumentMatchers.eq("test"),
+              org.mockito.ArgumentMatchers.argThat(exactBinding),
+              org.mockito.ArgumentMatchers.any(SelectedDraftGameLogicReceipt.class)))
+          .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+    } else {
+      when(selectedDigestReader.read(
+              org.mockito.ArgumentMatchers.eq("test"),
+              org.mockito.ArgumentMatchers.argThat(exactBinding)))
+          .thenReturn(
+              new SelectedDraftPublicationDigestReadService.ReadResult(
+                  binding,
+                  binding.requestDigest(),
+                  new DesignControlPlaneDigestDto(
+                      binding.tenantId(), "10", selectedCommit, "c".repeat(64), 2),
+                  new PublishParticipantDigestDto(
+                      "WORLD_MANAGEMENT",
+                      "10",
+                      null,
+                      selectedCommit,
+                      "d".repeat(64),
+                      4,
+                      null,
+                      null,
+                      null)));
+    }
+    when(entityClient.getDraftDesignDigestForVersion(
+            org.mockito.ArgumentMatchers.argThat(exactBinding)))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT",
+                "10",
+                null,
+                selectedCommit,
+                "a".repeat(64),
+                3,
+                null,
+                null,
+                null));
+    when(automationClient.getDraftDesignDigestForVersion(
+            org.mockito.ArgumentMatchers.argThat(exactBinding)))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                "10",
+                null,
+                selectedCommit,
+                "b".repeat(64),
+                6,
+                null,
+                null,
+                null));
+    if (transientFailure == TransientCollectorFailure.GAME_LOGIC_RECEIPT_MISSING) {
+      when(selectedReceiptRepository.readForPublication(
+              org.mockito.ArgumentMatchers.argThat(exactBinding)))
+          .thenReturn(Optional.empty());
+    } else if (transientFailure
+        == TransientCollectorFailure.GAME_LOGIC_RECEIPT_STORAGE_UNAVAILABLE) {
+      when(selectedReceiptRepository.readForPublication(
+              org.mockito.ArgumentMatchers.argThat(exactBinding)))
+          .thenThrow(new org.jooq.exception.DataAccessException("database unavailable"));
+    } else {
+      var selectedReceipt = org.mockito.Mockito.mock(SelectedDraftGameLogicReceipt.class);
+      when(selectedReceiptRepository.readForPublication(
+              org.mockito.ArgumentMatchers.argThat(exactBinding)))
+          .thenReturn(Optional.of(selectedReceipt));
+      when(gameLogicClient.getDraftDesignDigestForVersion(
+              org.mockito.ArgumentMatchers.argThat(exactBinding), same(selectedReceipt)))
+          .thenReturn(
+              new PublishParticipantDigestDto(
+                  "GAME_LOGIC",
+                  "10",
+                  null,
+                  selectedCommit,
+                  "e".repeat(64),
+                  1,
+                  "sha256:" + "f".repeat(64),
+                  null,
+                  null));
+    }
+    PublishGateServiceImpl realGateService =
+        new PublishGateServiceImpl(
+            controlPlaneDigestService,
+            worldClient,
+            entityClient,
+            gameLogicClient,
+            automationClient,
+            selectedReceiptRepository,
+            selectedDigestReader,
+            "test");
+    VersionMapper mapper = Mappers.getMapper(VersionMapper.class);
+    service = commandService(mapper, realGateService);
+
+    VersionDto versionDto = mapper.toDto(fixture.version());
+    List<PublishParticipantDigestDto> observed =
+        realGateService.collectSelectedFullVersionParticipantDigests(
+            versionDto, binding, fixture.request().publishWorkflowId());
+    if (transientFailure == TransientCollectorFailure.SELECTED_SNAPSHOT_UNAVAILABLE) {
+      assertEquals("UNAVAILABLE", observed.getFirst().errorCode());
+      assertNull(observed.getFirst().appliedCommitId());
+      assertNull(observed.getFirst().digestSchemaVersion());
+      assertEquals("UNAVAILABLE", observed.getLast().errorCode());
+      assertNull(observed.getLast().appliedCommitId());
+      assertNull(observed.getLast().digestSchemaVersion());
+      assertEquals("UNAVAILABLE", observed.get(2).errorCode());
+      assertNull(observed.get(2).appliedCommitId());
+      assertNull(observed.get(2).digestSchemaVersion());
+    } else {
+      assertTrue(observed.getFirst().succeeded());
+      assertEquals(selectedCommit, observed.getFirst().appliedCommitId());
+      assertEquals(4, observed.getFirst().digestSchemaVersion());
+      assertTrue(observed.getLast().succeeded());
+      assertEquals(selectedCommit, observed.getLast().appliedCommitId());
+      assertEquals(2, observed.getLast().digestSchemaVersion());
+      assertEquals(
+          transientFailure == TransientCollectorFailure.GAME_LOGIC_RECEIPT_MISSING
+              ? "PARTICIPANT_UNAVAILABLE"
+              : "UNAVAILABLE",
+          observed.get(2).errorCode());
+      assertNull(observed.get(2).appliedCommitId());
+      assertNull(observed.get(2).digestSchemaVersion());
+    }
+    PublishGateFailureException gateFailure =
+        assertThrows(
+            PublishGateFailureException.class,
+            () -> realGateService.assertSelectedGatePassed(versionDto, observed));
+    assertTrue(PublicationFailureClassifier.isRetryableParticipantDependencyFailure(gateFailure));
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request()));
+
+    assertTrue(thrown.getMessage().contains("temporarily unavailable"));
+    assertEquals(PublishAttemptStatus.PENDING, fixture.attempt().getStatus());
+    org.mockito.Mockito.verify(selectedDigestReader, org.mockito.Mockito.times(2))
+        .read(
+            org.mockito.ArgumentMatchers.eq("test"),
+            org.mockito.ArgumentMatchers.argThat(exactBinding));
+    if (transientFailure == TransientCollectorFailure.SELECTED_SNAPSHOT_UNAVAILABLE) {
+      org.mockito.Mockito.verify(selectedDigestReader, org.mockito.Mockito.times(2))
+          .read(
+              org.mockito.ArgumentMatchers.eq("test"),
+              org.mockito.ArgumentMatchers.argThat(exactBinding),
+              org.mockito.ArgumentMatchers.any(SelectedDraftGameLogicReceipt.class));
+      verify(gameLogicClient, never())
+          .getDraftDesignDigestForVersion(
+              org.mockito.ArgumentMatchers.argThat(exactBinding),
+              org.mockito.ArgumentMatchers.any(SelectedDraftGameLogicReceipt.class));
+    }
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(publishAttemptRepository, never())
+        .sealPublication(any(PublishAttempt.class), org.mockito.ArgumentMatchers.anyBoolean());
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+  }
+
   @Test
   void uncertainAssetExportRemainsPendingForExactRetry() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -926,8 +1132,8 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.empty(), Optional.of(staged));
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, request.publishWorkflowId()))
         .thenReturn(staged);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(assetExportService.exportAssets("tenant-1", 1))
         .thenThrow(new AssetExportOutcomePendingException("exact object readback is unavailable"));
@@ -950,8 +1156,8 @@ class VersionPublishCommandServiceImplTest {
   void uncertainAssetStagingRemainsPendingBeforeAnyExternalExportOrFinalization() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
     PublishWorkflowRequest request = fixture.request();
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, request.publishWorkflowId()))
         .thenThrow(new IllegalStateException("stage commit outcome is unknown"));
@@ -1128,8 +1334,8 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.findState("tenant-1", 10L))
         .thenReturn(Optional.of(stagedCandidate));
     when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(candidate);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(assetExportService.exportAssets("tenant-1", 1))
         .thenThrow(new AssetExportOutcomePendingException("exact export readback is unavailable"));
@@ -1232,8 +1438,8 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.of(stagedCandidate));
     when(versionAssetArtifactService.getExportCandidate("tenant-1", version.getId()))
         .thenReturn(candidate);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests);
     when(assetExportService.exportAssets("tenant-1", version.getVersionNumber()))
         .thenReturn(candidate);
@@ -1386,13 +1592,14 @@ class VersionPublishCommandServiceImplTest {
   @Test
   void pendingAttemptStillReconcilesCompleteReadbackThroughCurrentGates() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
+    delegateGateAssertionsToRealGate();
     PublishWorkflowRequest request = fixture.request();
     String workflowId = request.publishWorkflowId();
     PublishAttempt attempt = fixture.attempt();
     Version version = fixture.version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(2L);
-    List<PublishParticipantDigestDto> participantDigests = participantDigests();
+    List<PublishParticipantDigestDto> participantDigests = legacyParticipantDigests();
     PublishedReleaseBundleDto bundle =
         publishedReleaseBundleDto(
             1L,
@@ -1547,8 +1754,8 @@ class VersionPublishCommandServiceImplTest {
             Optional.empty(), Optional.of(staged), Optional.of(staged), Optional.of(exportedState));
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, workflowId))
         .thenReturn(staged);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests);
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
     when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
@@ -1620,8 +1827,8 @@ class VersionPublishCommandServiceImplTest {
     IllegalStateException operationFailure =
         new IllegalStateException("version finalization failed");
     IllegalStateException readFailure = new IllegalStateException("publication read failed");
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
@@ -1660,8 +1867,8 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, workflowId))
         .thenReturn(staged);
     ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
@@ -1695,8 +1902,8 @@ class VersionPublishCommandServiceImplTest {
     ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
     IllegalStateException ambiguousCommit = new IllegalStateException("commit outcome unknown");
     IllegalStateException readFailure = new IllegalStateException("publication read failed");
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
@@ -1727,15 +1934,15 @@ class VersionPublishCommandServiceImplTest {
   void preExportFailureMarkingCommitUncertaintyLeavesAttemptPendingAndDoesNotCleanAssets() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
     PublishWorkflowRequest request = fixture.request();
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     org.mockito.Mockito.doThrow(
             new PublishGateFailureException(
                 PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
                 "recorded digest mismatch"))
         .when(publishGateService)
-        .assertGatePassed(any(VersionDto.class), any(List.class));
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
     org.mockito.Mockito.doAnswer(
             invocation -> {
               ((java.util.function.Supplier<?>) invocation.getArgument(0)).get();
@@ -1769,15 +1976,15 @@ class VersionPublishCommandServiceImplTest {
     PublishWorkflowRequest request = fixture.request();
     IllegalStateException operationFailure = new IllegalStateException("failure mark uncertain");
     IllegalStateException readFailure = new IllegalStateException("publication read failed");
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     org.mockito.Mockito.doThrow(
             new PublishGateFailureException(
                 PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
                 "recorded digest mismatch"))
         .when(publishGateService)
-        .assertGatePassed(any(VersionDto.class), any(List.class));
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.empty())
         .thenThrow(readFailure);
@@ -1835,6 +2042,9 @@ class VersionPublishCommandServiceImplTest {
     verify(publishAttemptService, never())
         .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
     verify(publishGateService, never())
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class));
+    verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
     verify(versionAssetArtifactService, never())
@@ -1882,8 +2092,8 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 8, request.publishWorkflowId()))
         .thenReturn(staged);
     when(assetExportService.exportAssets("tenant-1", 8)).thenReturn(exportedManifest);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests);
     when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "10", "version:10", "digest-1", 1));
@@ -1952,6 +2162,28 @@ class VersionPublishCommandServiceImplTest {
         reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request);
 
     assertEquals("SUCCEEDED", snapshot.status());
+    var selectedBinding =
+        org.mockito.ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(publishGateService)
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class),
+            selectedBinding.capture(),
+            org.mockito.ArgumentMatchers.eq(request.publishWorkflowId()));
+    var expectedBinding =
+        PublicationDigestRequestBinding.full(
+            fixture.reservation().selection().intent().canonicalTenantId().toString(),
+            version.getId().toString(),
+            request.publishRequestId());
+    assertEquals(expectedBinding.tenantId(), selectedBinding.getValue().tenantId());
+    assertEquals(expectedBinding.versionId(), selectedBinding.getValue().versionId());
+    assertEquals(expectedBinding.scopeKind(), selectedBinding.getValue().scopeKind());
+    assertEquals(expectedBinding.requestDigest(), selectedBinding.getValue().requestDigest());
+    assertEquals(request.publishWorkflowId(), selectedBinding.getValue().derivedWorkflowIdentity());
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
+
     assertEquals(10L, snapshot.versionId());
     assertEquals(VersionLifecycleState.PUBLISHED, version.getVersionState());
     assertEquals(2L, version.getVersionStateEpoch());
@@ -2001,7 +2233,7 @@ class VersionPublishCommandServiceImplTest {
             publishAttemptRepository);
     publishOrder
         .verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(participantDigests));
     publishOrder
         .verify(recordedParticipantDigestService)
@@ -2033,8 +2265,8 @@ class VersionPublishCommandServiceImplTest {
   @Test
   void privateMechanicsRecordsTypedPublishGateFailures() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     org.mockito.Mockito.doThrow(
             new PublishGateFailureException(
@@ -2070,14 +2302,14 @@ class VersionPublishCommandServiceImplTest {
   void privateMechanicsGateRejectionDoesNotRecordDigestsOrExportAssets() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
     List<PublishParticipantDigestDto> participantDigests = participantDigests();
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests);
     org.mockito.Mockito.doThrow(
             new PublishGateFailureException(
                 PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, "gate rejected"))
         .when(publishGateService)
-        .assertGatePassed(any(VersionDto.class), any(List.class));
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
 
     PublishWorkflowSnapshot snapshot =
         reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request());
@@ -2097,6 +2329,88 @@ class VersionPublishCommandServiceImplTest {
             fixture.attempt().getRequestDigest(),
             net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
                 .NO_PUBLICATION);
+  }
+
+  @Test
+  void freshSelectedPublishRejectsLegacyOwnerVectorBeforeAssetEffects() throws Exception {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    var fullVector = participantDigests();
+    var legacySchemas = List.of(3, 2, 1, 5, 2);
+    List<PublishParticipantDigestDto> legacyVector =
+        java.util.stream.IntStream.range(0, fullVector.size())
+            .mapToObj(
+                index -> {
+                  var participant = fullVector.get(index);
+                  return new PublishParticipantDigestDto(
+                      participant.participantKey(),
+                      participant.scopeValue(),
+                      participant.baseVersionId(),
+                      participant.appliedCommitId(),
+                      participant.contentDigest(),
+                      legacySchemas.get(index),
+                      participant.abilitySchemaDigest(),
+                      participant.errorCode(),
+                      participant.errorMessage());
+                })
+            .toList();
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
+        .thenReturn(legacyVector);
+
+    PublishWorkflowSnapshot snapshot =
+        reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request());
+
+    assertEquals("FAILED", snapshot.status());
+    assertEquals("PUBLISH_FAILED", snapshot.failureCode());
+    assertEquals(
+        "Selected-full release requires the exact 4/3/1/6/2 successful participant vector",
+        snapshot.failureMessage());
+    verify(publishGateService)
+        .assertSelectedGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(legacyVector));
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {0, 1, 2, 3, 4})
+  void freshSelectedPublishRefusesEachNoncanonicalParticipantSchemaBeforeEffects(int index)
+      throws Exception {
+    // These controlled unit carriers increment each participant schema, but none is the canonical
+    // selected-full schema.
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    var vector = new java.util.ArrayList<>(participantDigests());
+    var original = vector.get(index);
+    vector.set(
+        index,
+        new PublishParticipantDigestDto(
+            original.participantKey(),
+            original.scopeValue(),
+            original.baseVersionId(),
+            original.appliedCommitId(),
+            original.contentDigest(),
+            original.digestSchemaVersion() + 1,
+            original.abilitySchemaDigest(),
+            original.errorCode(),
+            original.errorMessage()));
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
+        .thenReturn(vector);
+
+    var result = reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request());
+
+    assertEquals("FAILED", result.status());
+    assertEquals("PUBLISH_FAILED", result.failureCode());
+    assertEquals(
+        "Selected-full release requires the exact 4/3/1/6/2 successful participant vector",
+        result.failureMessage());
+    verify(publishGateService)
+        .assertSelectedGatePassed(any(VersionDto.class), org.mockito.ArgumentMatchers.eq(vector));
+    verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
   @Test
@@ -2129,8 +2443,8 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, request.publishWorkflowId()))
         .thenReturn(staged);
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     org.mockito.Mockito.doThrow(new IllegalStateException("attestation write outcome is unknown"))
         .when(versionAssetArtifactService)
@@ -2171,6 +2485,7 @@ class VersionPublishCommandServiceImplTest {
   @Test
   void privateMechanicsReconcilesPendingAttemptThroughCurrentGates() throws Exception {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
+    delegateGateAssertionsToRealGate();
     SelectionSnapshot seedReservation = fixture.reservation();
     AuthoredDraftPublishSelection seedSelection = seedReservation.selection();
     DraftCommitBinding seedCommit = seedSelection.selectedCommit();
@@ -2317,7 +2632,7 @@ class VersionPublishCommandServiceImplTest {
 
     assertEquals("SUCCEEDED", snapshot.status());
     verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(participantDigests));
     verify(recordedParticipantDigestService)
         .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
@@ -2373,8 +2688,8 @@ class VersionPublishCommandServiceImplTest {
     org.mockito.Mockito.doReturn(null, manifest)
         .when(versionAssetArtifactService)
         .getExportCandidate("tenant-1", 10L);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests());
     org.mockito.Mockito.doAnswer(
             ignored -> {
@@ -2458,8 +2773,8 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(null, manifest, manifest);
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, workflowId))
         .thenReturn(staged);
-    when(publishGateService.collectFullVersionParticipantDigests(
-            any(VersionDto.class), any(String.class), any(String.class)))
+    when(publishGateService.collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(participantDigests);
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
     when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
@@ -2891,15 +3206,105 @@ class VersionPublishCommandServiceImplTest {
   }
 
   private List<PublishParticipantDigestDto> participantDigests() {
+    String appliedCommitId = selectedIntent().selectedCommitId().toString();
     return List.of(
+        new PublishParticipantDigestDto(
+            "WORLD_MANAGEMENT", "10", null, appliedCommitId, "a".repeat(64), 4, null, null, null),
+        new PublishParticipantDigestDto(
+            "ENTITY_MANAGEMENT", "10", null, appliedCommitId, "b".repeat(64), 3, null, null, null),
+        new PublishParticipantDigestDto(
+            "GAME_LOGIC",
+            "10",
+            null,
+            appliedCommitId,
+            "c".repeat(64),
+            1,
+            "sha256:" + "d".repeat(64),
+            null,
+            null),
+        new PublishParticipantDigestDto(
+            "AUTOMATION_SCRIPTING",
+            "10",
+            null,
+            appliedCommitId,
+            "e".repeat(64),
+            6,
+            null,
+            null,
+            null),
         new PublishParticipantDigestDto(
             "GAME_DESIGN_CONTROL_PLANE",
             "10",
-            selectedIntent().selectedCommitId().toString(),
-            "digest",
-            1,
+            null,
+            appliedCommitId,
+            "f".repeat(64),
+            2,
+            null,
             null,
             null));
+  }
+
+  private List<PublishParticipantDigestDto> legacyParticipantDigests() {
+    String appliedCommitId = selectedIntent().selectedCommitId().toString();
+    return List.of(
+        new PublishParticipantDigestDto(
+            "WORLD_MANAGEMENT", "10", null, appliedCommitId, "a".repeat(64), 3, null, null, null),
+        new PublishParticipantDigestDto(
+            "ENTITY_MANAGEMENT", "10", null, appliedCommitId, "b".repeat(64), 1, null, null, null),
+        new PublishParticipantDigestDto(
+            "GAME_LOGIC", "10", null, appliedCommitId, "c".repeat(64), 1, null, null, null),
+        new PublishParticipantDigestDto(
+            "AUTOMATION_SCRIPTING",
+            "10",
+            null,
+            appliedCommitId,
+            "e".repeat(64),
+            5,
+            null,
+            null,
+            null),
+        new PublishParticipantDigestDto(
+            "GAME_DESIGN_CONTROL_PLANE",
+            "10",
+            null,
+            appliedCommitId,
+            "f".repeat(64),
+            1,
+            null,
+            null,
+            null));
+  }
+
+  private void delegateGateAssertionsToRealGate() {
+    PublishGateServiceImpl realGate =
+        new PublishGateServiceImpl(
+            controlPlaneDigestService,
+            org.mockito.Mockito.mock(WorldManagementClient.class),
+            org.mockito.Mockito.mock(EntityManagementClient.class),
+            org.mockito.Mockito.mock(GameLogicClient.class),
+            org.mockito.Mockito.mock(AutomationScriptingClient.class),
+            org.mockito.Mockito.mock(SelectedDraftGameLogicReceiptRepository.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              realGate.assertSelectedGatePassed(
+                  invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(publishGateService)
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              realGate.assertGatePassed(invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(publishGateService)
+        .assertGatePassed(any(VersionDto.class), any(List.class));
+  }
+
+  private enum TransientCollectorFailure {
+    SELECTED_SNAPSHOT_UNAVAILABLE,
+    GAME_LOGIC_RECEIPT_MISSING,
+    GAME_LOGIC_RECEIPT_STORAGE_UNAVAILABLE
   }
 
   private record SelectedPublishFixture(

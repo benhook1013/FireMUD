@@ -145,6 +145,12 @@ Entry format:
   - Observation: The global-ID update rewrote a retained row's tenant before returning it under the supplied tenant; tenant-filtered readback did not protect the original row. The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
   - Expected pattern: Test controlled pre-phase rows as well as later guarded owners. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
 
+- `2026-10-16`: Check existing successor repairs before reworking a failed fixture.
+  - Context: While fixing the three #3251 publication transaction failures, two focused local gates failed before the worker noticed that the already-reconciled #2967 tree contained the complete selected-full schema-4 fixture repair.
+  - Observation: The first attempts corrected stale collector stubs but missed the dependent fixture profile.
+  - Expected pattern: Compare the bounded failing test and its called helpers against known receiving successors before changing or rerunning it; reuse the complete canonical repair without removing assertions.
+  - Outcome: The exact four-path backport at `4265a81f008d0dbd343cd9adf6413bd3ac5c8904` then passed 66 unit and 10 native cases. The failed attempts retain their original outcomes; this lesson does not establish a general infrastructure cause.
+
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
   - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
   - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
@@ -195,6 +201,17 @@ Entry format:
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
 
+- `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
+  - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
+  - Observation: one focused five-store reproduction passed with zero failures, errors or skips and no endpoint refusal. All five exact containers were observed running with host-port bindings and absent after the Gradle child ended. Six inspect errors and 20 unparsed records arose only after the case completed during sequential teardown, so continuous ownership through cleanup is not established.
+  - Expected pattern: retain the original failed test evidence and capture only exact run-owned container states and ports before teardown when a new refusal justifies focused reproduction; keep a successful reproduction distinct from an explained cause.
+  - Outcome: the preceding Automation Flyway refusal remains failed evidence with unknown cause; the passing reproduction does not explain it. No speculative host or readiness change is selected.
+  - Reconsideration trigger: a later physical test-time endpoint refusal, or separately retained evidence that identifies the refused endpoint's failure mechanism.
+
+- `2026-10-18`: Verify LOC report identity after a PR fast-forward
+  - Context: `cloc-report.py pr 3248` ran immediately after the existing branch advanced from `6c3eed5d651b` to `eb40332cdb9f`.
+  - Observation: GitHub still returned the preceding PR head/base payload, so the canonical helper completed successfully with LOC metadata for the old candidate. The worker caught the mismatch before editing the body and regenerated after payload convergence; no stale report was published. The tool-level consistency guard remains an improvement reported to Overseer.
+  - Expected pattern: compare generated head/base metadata with verified current remote refs before publication; a mismatch must refresh or fail closed. A successful LOC command alone does not prove current candidate attribution.
 - 2026-10-18: In the CI maintenance PR #3264 Hosted retry, an ad hoc multiline shell read a snapshot file before its producer finished; the JSON check failed but the following provider POST still executed because that shell did not enable errexit. The prior and completed fresh snapshots both showed no active Hosted request, so no conflict was observed. Keep a dependent external mutation in a separate tool call after checking producer completion and validated output; use explicit `set -euo pipefail` for dependent shell batches.
 
 - 2026-10-18: CodeRabbit full review 5560170943 for PR #3264 emitted a complete 1/1 publication with one outside-diff Major but no bounded actionable-comment count. The existing manual adoption correctly refused automatic attribution with `Hosted publication has no unique bounded actionable-comment count`. Exact trigger 6241278398, reviewed head `187ab53426caf78cd6a01b61e092b800186aaec2`, provider result and accepted obligation were retained in the CI validation throughput controller job history without invented Hosted credit; no controller adapter change was made in this CI patch. Reconsider format support only in a separately scoped controller maintenance task.
@@ -242,6 +259,12 @@ Entry format:
   - Expected pattern: Preserve the immutable capture and original attempt identity, report the recording gap, and use an explicitly bounded canonical recovery before adjudication and finalization. Do not rerun a completed review, invent credit, or use an unrelated schema migration to repair its record.
   - Status and reconsideration: Overseer owns bounded recovery in #3271; no live recovery or migration is authorized yet. The exact persistence cause remains unconfirmed. Revisit after that maintenance change is qualified and promoted and the original capture is recovered through its exact native command.
 
+- `2026-10-15`: Normalize nested fixture payloads before computing a digest golden
+  - Context: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source.
+  - Observation: The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order.
+  - Expected pattern: Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof.
+  - Outcome: No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
+
 - `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
   - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
   - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.
@@ -271,3 +294,23 @@ Entry format:
 - `2026-10-23`: Isolate uv managed-Python launchers as well as installations
   - Observation: A temporary docs-lock generator set `UV_PYTHON_INSTALL_DIR` inside its task directory, but uv 0.13.5 also created `~/.local/bin/python3.15`. The exact newly created task-owned symlink was verified and removed; no preexisting launcher was overwritten.
   - Expected pattern: Set `UV_PYTHON_BIN_DIR` to a task-private path before temporary installation and confirm it with `uv python dir --bin`; this override was verified locally. Alternatively, `uv python install --no-bin` is supported by the installed help. Installation-directory isolation alone does not isolate launchers.
+
+- `2026-10-23`: Preserve incomplete ORT license-scan evidence after Maven Central 403s
+  - Context: PR #3251 License Gate run `39934774515`, job `120353147724`, recorded 403 responses for 392 distinct Maven Central URLs during Gradle analysis; the response origin remains unknown.
+  - Observation: ORT exited with analyzer errors, emitted unknown-dependency rule warnings, and could not create the WebApp report within its 5120 MiB heap. CycloneDX reports were generated, but artifact upload did not run, so the scan supplies no qualified license proof.
+  - Expected pattern: Keep the required gate fail-closed and establish the 403 response origin before selecting a correction; do not infer a fix from the secondary reporter OOM or unknown-dependency warnings.
+  - Status: Root informed for recurrence and recovery tracking; no cause or repository correction established.
+
+- `2026-10-24`: Enforce ORT analyzer completion separately from report generation
+  - Observation: The pinned ORT CI action accepts `violations`, while both license jobs supplied the unrecognized `policy-violation` value. The action also intentionally tolerates analyzer exit code 2 so evaluation and reporting can continue; a successful report therefore does not establish complete dependency analysis or enforced policy.
+  - Correction and proof: Use the supported violation gate and explicitly require analyzer exit code 0 in both jobs, retaining partial results and Gradle failure diagnostics. Focused tests execute the actual workflow guards for successful, failed, missing and malformed statuses. This repairs enforcement independently of the earlier Maven Central 403 incident; its response origin remains unknown and local tests do not establish hosted scan success.
+
+- `2026-10-24`: Preserve uncertain coordination delivery during controller response failures
+  - Observation: Gameplay's own bound CLI inbox read and native inbox/job reads returned `invalid_response`; the native attempt to notify FireController Worker returned the same error. The message delivery outcome is unknown, so no successful report or handled inbox state is claimed.
+  - Expected pattern: Retain the original notification key and request for supported recovery, avoid debugging or changing the service, and continue independent local work. Fresh instructions, review capture and official progress recording remain unavailable until the owning connection recovers.
+
+- `2026-10-24`: Carry the build environment and explicit package metadata into ORT containers
+  - Observation: The ORT analyzer container did not inherit `CI`, so this project's Node Gradle plugin enabled a download repository that ORT cannot analyze. ORT 97 also disables repository package curations by default, even when it discovers a valid `.ort.yml`.
+  - Expected pattern: Forward the existing CI environment contract explicitly and enable the documented repository-curation option while retaining global providers. Normalize only exact package/version metadata supported by upstream license text, and record a package-specific choice for an explicitly offered alternative. Custom licenses require their own policy decision; do not relabel them as SPDX aliases or waive unresolved policy errors.
+  - Proof limit: Workflow wiring, YAML, failure guards and upstream metadata are checked locally. Only actual analyzer/evaluator results can qualify the hosted correction; the earlier Maven Central 403 response origin remains unknown.
+  - Live-policy correction: The default evaluator rejects package curations inside `.ort.yml` even when the analyzer supports them. Keep exact package metadata in a read-only child mount under the existing global `DefaultDir` provider instead, preserving its other entries and rules; keep the valid OR-license choice in an NPM-scoped repository configuration so Gradle-only scans do not reject an absent package choice. Configuration-schema support alone did not establish policy acceptance, and actual hosted proof remains required.

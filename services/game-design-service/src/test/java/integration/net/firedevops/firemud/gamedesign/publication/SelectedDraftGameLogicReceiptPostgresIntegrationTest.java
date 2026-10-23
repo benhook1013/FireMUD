@@ -323,6 +323,25 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
             SelectedGameplayRuleSourceJoin.matches(
                 operationReadback.operation(), gameplayCapture, selectedSnapshot, readback))
         .isEqualTo(!changeReceiptSource);
+
+    var digestReader =
+        new SelectedDraftPublicationDigestReadService(
+            fixture.dsl(), fixture.transactionManager(), "test");
+    if (changeReceiptSource) {
+      assertThatThrownBy(() -> digestReader.read("test", publicationBinding(readback), readback))
+          .isInstanceOf(io.grpc.StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                      .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+    } else {
+      assertThat(
+              digestReader
+                  .read("test", publicationBinding(readback), readback)
+                  .gameDesignDigest()
+                  .appliedCommitId())
+          .isEqualTo(selectedCommit.commitId().toString());
+    }
   }
 
   private static SelectedDraftGameLogicReceipt retainCurrentFixtureReceipt(
@@ -383,7 +402,8 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
         .load()
         .migrate();
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    var tx = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    var transactionManager = new DataSourceTransactionManager(dataSource);
+    var tx = new TransactionTemplate(transactionManager);
     tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 
     DraftCommitBinding.TargetProof target =
@@ -424,7 +444,7 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
                     "Unable to retain controlled source capture", failure);
               }
             });
-    return new CurrentCaptureFixture(dsl, tx, target, sources, operation);
+    return new CurrentCaptureFixture(dsl, tx, transactionManager, target, sources, operation);
   }
 
   private static Fixture fixture(SelectedDraftGameLogicReceipt value) {
@@ -620,6 +640,7 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
   private record CurrentCaptureFixture(
       DSLContext dsl,
       TransactionTemplate tx,
+      DataSourceTransactionManager transactionManager,
       DraftCommitBinding.TargetProof target,
       GameDesignSourceRepository sources,
       GameDesignPublicationOperation operation) {}

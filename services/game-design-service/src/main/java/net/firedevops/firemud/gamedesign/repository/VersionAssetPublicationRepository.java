@@ -16,6 +16,7 @@ import java.util.UUID;
 import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 /** Owner-local persistence boundary for Draft asset mappings and durable export snapshots. */
@@ -51,11 +52,35 @@ public class VersionAssetPublicationRepository {
     if (versionNumber <= 0) {
       throw new IllegalArgumentException("Version number must be positive");
     }
+    return dsl.connectionResult(
+        connection -> {
+          if (connection.getAutoCommit()) {
+            throw new IllegalStateException(
+                "Version asset snapshot requires an enclosing owner transaction");
+          }
+          // Preserve caller configuration while keeping every query on the checked connection.
+          DSLContext ownerDsl = DSL.using(dsl.configuration().derive(connection));
+          return new VersionAssetPublicationRepository(ownerDsl)
+              .freezeOrReadSnapshotInTransaction(tenantId, versionNumber);
+        });
+  }
+
+  private ExportSnapshot freezeOrReadSnapshotInTransaction(String tenantId, int versionNumber) {
     VersionRow version =
-        lockVersionByTenantAndVersionNumber(tenantId, versionNumber)
+        readVersionByTenantAndVersionNumber(tenantId, versionNumber)
             .orElseThrow(() -> new IllegalStateException("Exact tenant Version was not found"));
     qualifyVersion(version);
 
+    // Retained snapshots are immutable; reading one does not need a writable row lock.
+    if (hasSnapshot(tenantId, version.id())) {
+      return readSnapshot(version);
+    }
+
+    version =
+        lockVersionByTenantAndVersionNumber(tenantId, versionNumber)
+            .orElseThrow(() -> new IllegalStateException("Exact tenant Version was not found"));
+    qualifyVersion(version);
+    // Another first freeze may have committed before this transaction obtained the lock.
     if (hasSnapshot(tenantId, version.id())) {
       return readSnapshot(version);
     }
