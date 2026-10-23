@@ -219,7 +219,9 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
           assertThat(clock.instant()).isEqualTo(Instant.ofEpochSecond(issuedAt));
           assertThat(failure).isNull();
         } else {
-          assertThat(failure).isInstanceOf(IllegalStateException.class);
+          assertThat(failure)
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("Exact current authenticated initial creator required");
         }
         assertThat(
                 f.tx(
@@ -417,8 +419,20 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
       assertThat(callback.get()).isEqualTo("RETAINED".equals(keyState));
       if ("RETAINED".equals(keyState)) {
         assertThat(failure).isNull();
+      } else if (List.of("ABSENT", "REPLACED").contains(keyState)) {
+        assertThat(failure)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Exact current authenticated initial creator required");
+      } else if ("SOURCE_FAILURE".equals(keyState) || "UNTRUSTED".equals(keyState)) {
+        assertThat(failure)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account trusted public JWKS source was rejected");
+      } else if ("SQL".equals(keyState) || "SYNCHRONIZATION".equals(keyState)) {
+        assertThat(failure)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Signature/registry/JWKS reads must precede owner SQL locks");
       } else {
-        assertThat(failure).isInstanceOf(RuntimeException.class);
+        throw new AssertionError("Unexpected key state " + keyState);
       }
       if ("SQL".equals(keyState) || "SYNCHRONIZATION".equals(keyState)) {
         assertThat(reads.get()).isZero();
@@ -498,7 +512,9 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
       var before = f.tx(() -> f.fences.read(original));
       clock.advance(Duration.ofMinutes(10));
       assertThatThrownBy(() -> issued.actors().verifySigned(issued.compact()))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(
+              net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier
+                  .VerificationException.class);
 
       asPeer("test", "game-design-service", () -> invoke(receiver, request));
       var owner = new AccountOriginalDraftOrderService(issued.actors(), "test");
@@ -537,7 +553,9 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                       "test",
                       "game-design-service",
                       () -> owner.claim(issued.compact(), changed, issued.environment())))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(io.grpc.StatusRuntimeException.class)
+          .extracting(failure -> io.grpc.Status.fromThrowable(failure).getCode())
+          .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION);
       var absent =
           new DraftAuthorizationFenceBinding(
                   UUID.randomUUID(),
@@ -560,7 +578,9 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                       "test",
                       "game-design-service",
                       () -> owner.claim(issued.compact(), absent, issued.environment())))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(
+              net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier
+                  .VerificationException.class);
       assertThat(f.tx(() -> f.fences.readOriginalBinding(absent.operationId()))).isEmpty();
       for (String[] peer :
           List.of(

@@ -604,30 +604,36 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     var versionBefore = sourceRow(fixture.dsl(), "version", version.getId());
     assertThat(json.readTree(original).path("request").path("versionStateEpoch").isTextual())
         .isTrue();
-    assertThatThrownBy(() -> insertRawSelectedFull(fixture, version, operation, null, participants))
-        .isInstanceOf(DataAccessException.class);
+    // The exact operation-byte guard rejects substituted evidence before its semantic checks.
+    assertSelectedFullMutationRejected(
+        fixture,
+        version,
+        operation,
+        null,
+        participants,
+        "selected publication is absent, sealed, or changed");
     for (String epoch : java.util.List.of("0", "01", "-1", "9223372036854775808")) {
       var changed = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
       ((tools.jackson.databind.node.ObjectNode) changed.get("request"))
           .put("versionStateEpoch", epoch);
-      assertThatThrownBy(
-              () ->
-                  insertRawSelectedFull(
-                      fixture, version, operation, json.writeValueAsString(changed), participants))
-          .isInstanceOf(DataAccessException.class);
+      assertSelectedFullMutationRejected(
+          fixture,
+          version,
+          operation,
+          json.writeValueAsString(changed),
+          participants,
+          "selected publication is absent, sealed, or changed");
     }
     var numericEpoch = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
     ((tools.jackson.databind.node.ObjectNode) numericEpoch.get("request"))
         .put("versionStateEpoch", 1L);
-    assertThatThrownBy(
-            () ->
-                insertRawSelectedFull(
-                    fixture,
-                    version,
-                    operation,
-                    json.writeValueAsString(numericEpoch),
-                    participants))
-        .isInstanceOf(DataAccessException.class);
+    assertSelectedFullMutationRejected(
+        fixture,
+        version,
+        operation,
+        json.writeValueAsString(numericEpoch),
+        participants,
+        "selected publication is absent, sealed, or changed");
     for (String field :
         java.util.List.of(
             "canonicalTenantId",
@@ -641,11 +647,13 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
       var request = (tools.jackson.databind.node.ObjectNode) changed.get("request");
       if (field.equals("digestSchemaVersion")) request.put(field, 3);
       else request.put(field, field.endsWith("Id") ? UUID.randomUUID().toString() : "changed");
-      assertThatThrownBy(
-              () ->
-                  insertRawSelectedFull(
-                      fixture, version, operation, json.writeValueAsString(changed), participants))
-          .isInstanceOf(DataAccessException.class);
+      assertSelectedFullMutationRejected(
+          fixture,
+          version,
+          operation,
+          json.writeValueAsString(changed),
+          participants,
+          "selected publication is absent, sealed, or changed");
     }
     for (String field :
         java.util.List.of(
@@ -654,26 +662,32 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
             "appliedResultBytesBase64")) {
       var changed = (tools.jackson.databind.node.ObjectNode) json.readTree(original);
       changed.remove(field);
-      assertThatThrownBy(
-              () ->
-                  insertRawSelectedFull(
-                      fixture, version, operation, json.writeValueAsString(changed), participants))
-          .isInstanceOf(DataAccessException.class);
+      assertSelectedFullMutationRejected(
+          fixture,
+          version,
+          operation,
+          json.writeValueAsString(changed),
+          participants,
+          "selected publication is absent, sealed, or changed");
     }
-    assertThatThrownBy(() -> insertRawSelectedFull(fixture, version, operation, original, "[]"))
-        .isInstanceOf(DataAccessException.class);
+    // Keep the original operation-bound evidence so participant-specific checks remain reachable.
+    assertSelectedFullMutationRejected(
+        fixture,
+        version,
+        operation,
+        original,
+        "[]",
+        "selected release requires all five participant owners");
     var changedParticipants = (tools.jackson.databind.node.ArrayNode) json.readTree(participants);
     ((tools.jackson.databind.node.ObjectNode) changedParticipants.get(0))
         .put("contentDigest", "c".repeat(64));
-    assertThatThrownBy(
-            () ->
-                insertRawSelectedFull(
-                    fixture,
-                    version,
-                    operation,
-                    original,
-                    json.writeValueAsString(changedParticipants)))
-        .isInstanceOf(DataAccessException.class);
+    assertSelectedFullMutationRejected(
+        fixture,
+        version,
+        operation,
+        original,
+        json.writeValueAsString(changedParticipants),
+        "selected participant differs from commit/digest/schema");
     assertThat(bundleCount(fixture.dsl())).isZero();
     assertThat(sourceRow(fixture.dsl(), "game", owner.getId())).isEqualTo(gameBefore);
     assertThat(sourceRow(fixture.dsl(), "version", version.getId())).isEqualTo(versionBefore);
@@ -699,6 +713,37 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
                 .getWorldPublishedStartLocationEvidenceJson())
         .isEqualTo(original);
     assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+  }
+
+  private void assertSelectedFullMutationRejected(
+      Fixture fixture,
+      Version version,
+      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation,
+      String evidence,
+      String participants,
+      String rejectionMessage) {
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transactionTemplate()
+                    .executeWithoutResult(
+                        status ->
+                            net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                                .commitStorage(
+                                    fixture.dsl(),
+                                    fixture.versionRepository(),
+                                    operation,
+                                    () -> {
+                                      insertRawSelectedFull(
+                                          fixture, version, operation, evidence, participants);
+                                      return fixture
+                                          .releaseBundleRepository()
+                                          .findByTenantIdAndVersionId(
+                                              operation.tenantKey(), operation.versionId())
+                                          .orElseThrow();
+                                    })))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining(rejectionMessage);
   }
 
   /** Actual GDS owner selection/captures with explicitly stipulated remote Account/World input. */

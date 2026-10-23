@@ -268,6 +268,7 @@ Entry format:
 - `2026-10-15`: Separate selected-publication owner proofs missed an Account settlement profile gap.
   - Context: The actual GDS terminal → authenticated World completion → both real terminal reads composition reached Account V94 and failed with SQLSTATE 23514 because its inventory validator still admitted only inventory/1 + World/3, while the current canonical producer retains closure inventory/2 + World/4.
   - Observation: Correction and qualification are in progress.
+  - Outcome: Forward V1011 converges both validation profiles; the following selected-publication settlement entry records the R14/R16 qualification and its controlled-proof limits.
   - Expected pattern: Preserve that failed composition beside prior component passes; a forward validator correction needs exact profile/refusal and existing-settlement byte/row-version upgrade proof. Do not rewrite installed migrations or treat controlled terminal readbacks as actual producer composition.
 
 - `2026-10-15`: Selected-publication settlement profile follow-up.
@@ -359,3 +360,9 @@ Entry format:
   - Observation: The ORT analyzer container did not inherit `CI`, so this project's Node Gradle plugin enabled a download repository that ORT cannot analyze. ORT 97 also disables repository package curations by default, even when it discovers a valid `.ort.yml`.
   - Expected pattern: Forward the existing CI environment contract explicitly and enable the documented repository-curation option while retaining global providers. Normalize only exact package/version metadata supported by upstream license text, and record a package-specific choice for an explicitly offered alternative. Custom licenses require their own policy decision; do not relabel them as SPDX aliases or waive unresolved policy errors.
   - Proof limit: Workflow wiring, YAML, failure guards and upstream metadata are checked locally. Only actual analyzer/evaluator results can qualify the hosted correction; the earlier Maven Central 403 response origin remains unknown.
+
+- `2026-10-24`: Distinguish PostgreSQL health from the Docker-published connection path
+  - Context: A forced Account integration run at `3534f58291439f7c059759cc57a7385106051e39` ran 333 cases with 13 mapped-localhost connection failures and no skips. One failed fixture recorded a running PostgreSQL container, successful internal Unix-socket `SELECT 1`, IPv4 localhost resolution and a Docker host-port binding while the test JVM's mapped JDBC connection was refused. The other twelve failures shared a different fixture without equivalent internal-health diagnostics.
+  - Observation: Those facts isolate the first failure to the test-to-published-port path without identifying a Docker Desktop, WSL, fixture or cleanup cause. Successful internal SQL or published binding metadata alone is insufficient host-path readiness proof.
+  - Outcome: A later focused run passed all seven source-evidence and twelve selected-owner cases without a Docker, host-setting or fixture change. This qualifies those nineteen cases separately; it neither turns the earlier failed aggregate green nor proves the connection problem repaired.
+  - Expected pattern: Retain exact fixture, host, mapped-port and internal SQL evidence beside the original failed run; qualify a focused retry independently and investigate recurrence without weakening readiness or cleaning unrelated containers.

@@ -25,6 +25,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadEvidence;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -44,6 +45,7 @@ class AccountPublicationAuthorizationReadServiceTest {
 
   @AfterEach
   void clear() {
+    SessionContext.clear();
     TransactionSynchronizationManager.clear();
   }
 
@@ -95,6 +97,13 @@ class AccountPublicationAuthorizationReadServiceTest {
     assertCode(
         Status.Code.PERMISSION_DENIED,
         () -> asPeer("other", "world-management-service", () -> service.requireHeld(request)));
+    SessionContext.setContext("authenticated-player", List.of(), java.util.Map.of());
+    for (String workload : List.of("game-design-service", "world-management-service")) {
+      assertCode(
+          Status.Code.PERMISSION_DENIED,
+          () -> asPeer("test", workload, () -> service.requireHeld(request)));
+    }
+    SessionContext.clear();
     assertCode(
         Status.Code.PERMISSION_DENIED,
         () -> asPeer("test", "game-design-service", () -> service.requireHeld(request("other"))));
@@ -166,6 +175,18 @@ class AccountPublicationAuthorizationReadServiceTest {
             endpoint.readHeldPublicationAuthorization(
                 ReadHeldPublicationAuthorizationRequest.getDefaultInstance(), observer));
     assertThat(Status.fromThrowable(error.get()).getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    SessionContext.setContext("authenticated-player", List.of(), java.util.Map.of());
+    for (String workload : List.of("game-design-service", "world-management-service")) {
+      asPeer(
+          "test",
+          workload,
+          () ->
+              endpoint.readHeldPublicationAuthorization(
+                  ReadHeldPublicationAuthorizationRequest.getDefaultInstance(), observer));
+      assertThat(Status.fromThrowable(error.get()).getCode())
+          .isEqualTo(Status.Code.PERMISSION_DENIED);
+    }
+    SessionContext.clear();
     verifyNoInteractions(repository, transactions);
   }
 

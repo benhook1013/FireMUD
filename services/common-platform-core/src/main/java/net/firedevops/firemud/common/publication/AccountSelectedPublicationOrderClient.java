@@ -22,6 +22,9 @@ public final class AccountSelectedPublicationOrderClient
     extends AbstractReloadingBlockingGrpcClient<
         AccountSelectedPublicationOrderServiceGrpc
             .AccountSelectedPublicationOrderServiceBlockingStub> {
+  // Covers the nested Game Design selection read plus Account authorization and persistence.
+  private static final long CALL_DEADLINE_SECONDS = 30L;
+
   private final String namespace;
 
   public AccountSelectedPublicationOrderClient(
@@ -61,7 +64,7 @@ public final class AccountSelectedPublicationOrderClient
                           "spiffe://firemud/ns/" + namespace + "/sa/account-service"),
                       AccountSelectedPublicationOrderCredentials.forCall(
                           request.originalCreatorCredential())))
-              .withDeadlineAfter(5, TimeUnit.SECONDS)
+              .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
               .authorizeSelectedPublication(
                   AccountSelectedPublicationOrderGrpcCodec.toRequest(request));
       return AccountSelectedPublicationOrderGrpcCodec.fromResponse(request, response);

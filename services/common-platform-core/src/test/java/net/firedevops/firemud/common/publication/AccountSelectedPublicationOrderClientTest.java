@@ -192,7 +192,7 @@ class AccountSelectedPublicationOrderClientTest {
           mock(
               AccountSelectedPublicationOrderServiceGrpc
                   .AccountSelectedPublicationOrderServiceBlockingStub.class);
-      when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
+      when(stub.withDeadlineAfter(30, TimeUnit.SECONDS)).thenReturn(stub);
       when(stub.withCallCredentials(any())).thenReturn(stub);
       field.set(client, stub);
       TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -210,7 +210,7 @@ class AccountSelectedPublicationOrderClientTest {
       var response = AccountSelectedPublicationOrderGrpcCodec.toResponse(request, binding);
       when(stub.authorizeSelectedPublication(any())).thenReturn(response);
       assertThat(client.authorize(request).canonicalBytes()).isEqualTo(binding.canonicalBytes());
-      verify(stub).withDeadlineAfter(5, TimeUnit.SECONDS);
+      verify(stub).withDeadlineAfter(30, TimeUnit.SECONDS);
       var wire =
           org.mockito.ArgumentCaptor.forClass(
               net.firedevops.firemud.account.v1.AuthorizeSelectedPublicationRequest.class);
