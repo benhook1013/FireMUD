@@ -52,6 +52,128 @@ public final class CanonicalGameplayRosterOwnerReadGrpcAdapter
   }
 
   @Override
+  public void acknowledgeCanonicalGameplayRosterRetirement(
+      net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest
+          request,
+      StreamObserver<
+              net.firedevops.firemud.gamesession.v1
+                  .CanonicalGameplayRosterRetirementAcknowledgementResponse>
+          observer) {
+    try {
+      workloadGuard.requireEntityRetirementAcknowledgementCaller();
+      net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+          .requireAcknowledgement(request);
+      workloadGuard.requireConfiguredTargetNamespace(
+          request.getOriginalSelection().getTargetNamespace());
+    } catch (AdminAuthorizationException denied) {
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Roster retirement transfer is not authorized")
+              .asRuntimeException());
+      return;
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Roster retirement transfer request is invalid")
+              .asRuntimeException());
+      return;
+    }
+    try {
+      var owner = referenceOwnerProvider == null ? null : referenceOwnerProvider.getIfAvailable();
+      if (owner == null) {
+        throw new SourceUnavailableException();
+      }
+      var result =
+          owner.acknowledgeRetirement(
+              request, net.firedevops.firemud.common.grpc.GrpcPeerIdentity.current().uri());
+      observer.onNext(
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+              .requireAcknowledgementResponse(request, result));
+      observer.onCompleted();
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Roster retirement transfer conflicts with retained authority")
+              .asRuntimeException());
+    } catch (net.firedevops.firemud.gamesession.repository
+            .CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException
+        | org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | SourceUnavailableException unavailable) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Roster retirement transfer owner is unavailable")
+              .asRuntimeException());
+    } catch (RuntimeException unexpected) {
+      observer.onError(
+          Status.INTERNAL
+              .withDescription("Roster retirement transfer failed")
+              .asRuntimeException());
+    }
+  }
+
+  @Override
+  public void confirmCanonicalGameplayRosterRetirementAcknowledgement(
+      net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest
+          request,
+      StreamObserver<
+              net.firedevops.firemud.gamesession.v1
+                  .CanonicalGameplayRosterRetirementConfirmationResponse>
+          observer) {
+    try {
+      workloadGuard.requireEntityRetirementConfirmationCaller();
+      net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+          .requireConfirmation(request);
+      workloadGuard.requireConfiguredTargetNamespace(
+          request.getAcknowledgementRequest().getOriginalSelection().getTargetNamespace());
+    } catch (AdminAuthorizationException denied) {
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Roster retirement transfer is not authorized")
+              .asRuntimeException());
+      return;
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Roster retirement transfer request is invalid")
+              .asRuntimeException());
+      return;
+    }
+    try {
+      var owner = referenceOwnerProvider == null ? null : referenceOwnerProvider.getIfAvailable();
+      if (owner == null) {
+        throw new SourceUnavailableException();
+      }
+      var result =
+          owner.confirmRetirementAcknowledgement(
+              request, net.firedevops.firemud.common.grpc.GrpcPeerIdentity.current().uri());
+      observer.onNext(
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence
+              .requireConfirmationResponse(request, result));
+      observer.onCompleted();
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Roster retirement transfer conflicts with retained authority")
+              .asRuntimeException());
+    } catch (net.firedevops.firemud.gamesession.repository
+            .CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException
+        | org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | SourceUnavailableException unavailable) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Roster retirement transfer owner is unavailable")
+              .asRuntimeException());
+    } catch (RuntimeException unexpected) {
+      observer.onError(
+          Status.INTERNAL
+              .withDescription("Roster retirement transfer failed")
+              .asRuntimeException());
+    }
+  }
+
+  @Override
   public void getCanonicalGameplayRosterReference(
       net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request,
       StreamObserver<
@@ -62,6 +184,20 @@ public final class CanonicalGameplayRosterOwnerReadGrpcAdapter
       net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
           request);
       workloadGuard.requireConfiguredTargetNamespace(request.getTargetNamespace());
+    } catch (AdminAuthorizationException denied) {
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Original roster selection owner read is not authorized")
+              .asRuntimeException());
+      return;
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Original roster selection request is invalid")
+              .asRuntimeException());
+      return;
+    }
+    try {
       var owner = referenceOwnerProvider == null ? null : referenceOwnerProvider.getIfAvailable();
       if (owner == null) {
         throw new SourceUnavailableException();
@@ -71,20 +207,29 @@ public final class CanonicalGameplayRosterOwnerReadGrpcAdapter
           net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
               .requireResponse(request, result));
       observer.onCompleted();
-    } catch (AdminAuthorizationException denied) {
+    } catch (CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException
+        | CanonicalPlayerRouteReadService.InvalidAuthorityException
+        | IllegalArgumentException invalidEvidence) {
       observer.onError(
-          Status.PERMISSION_DENIED
-              .withDescription("Original roster selection owner read is not authorized")
+          Status.FAILED_PRECONDITION
+              .withDescription("Original roster selection authority is stale or invalid")
               .asRuntimeException());
-    } catch (IllegalArgumentException invalid) {
-      observer.onError(
-          Status.INVALID_ARGUMENT
-              .withDescription("Original roster selection request is invalid")
-              .asRuntimeException());
-    } catch (RuntimeException unavailable) {
+    } catch (net.firedevops.firemud.gamesession.repository
+            .CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException
+        | CanonicalPublishedPlayerRouteReadService.StorageUnavailableException
+        | CanonicalPublishedPlayerRouteReadService.GameDesignUnavailableException
+        | CanonicalPlayerRouteReadService.ReadUnavailableException
+        | org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | SourceUnavailableException unavailable) {
       observer.onError(
           Status.UNAVAILABLE
               .withDescription("Original roster selection owner is unavailable")
+              .asRuntimeException());
+    } catch (RuntimeException unexpected) {
+      observer.onError(
+          Status.INTERNAL
+              .withDescription("Original roster selection owner read failed")
               .asRuntimeException());
     }
   }

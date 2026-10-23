@@ -13,6 +13,10 @@ public final class CanonicalGameplayRosterOwnerReadWorkloadGuard {
       "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead";
   private static final String REFERENCE_METHOD_NAME =
       "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterReference";
+  private static final String ACK_METHOD_NAME =
+      "game_session.v1.CanonicalGameplayRosterOwnerReadService/AcknowledgeCanonicalGameplayRosterRetirement";
+  private static final String CONFIRM_METHOD_NAME =
+      "game_session.v1.CanonicalGameplayRosterOwnerReadService/ConfirmCanonicalGameplayRosterRetirementAcknowledgement";
   private static final String ENTITY_MANAGEMENT_SERVICE = "entity-management-service";
 
   private final String trustedNamespace;
@@ -39,11 +43,27 @@ public final class CanonicalGameplayRosterOwnerReadWorkloadGuard {
             .getFullMethodName());
   }
 
+  public void requireEntityRetirementAcknowledgementCaller() {
+    requireEntityOwnerReadCaller(
+        CanonicalGameplayRosterOwnerReadServiceGrpc
+            .getAcknowledgeCanonicalGameplayRosterRetirementMethod()
+            .getFullMethodName());
+  }
+
+  public void requireEntityRetirementConfirmationCaller() {
+    requireEntityOwnerReadCaller(
+        CanonicalGameplayRosterOwnerReadServiceGrpc
+            .getConfirmCanonicalGameplayRosterRetirementAcknowledgementMethod()
+            .getFullMethodName());
+  }
+
   private void requireEntityOwnerReadCaller(String expectedMethod) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if ((!ROSTER_METHOD_NAME.equals(expectedMethod)
             && !ASSIGNMENT_METHOD_NAME.equals(expectedMethod)
-            && !REFERENCE_METHOD_NAME.equals(expectedMethod))
+            && !REFERENCE_METHOD_NAME.equals(expectedMethod)
+            && !ACK_METHOD_NAME.equals(expectedMethod)
+            && !CONFIRM_METHOD_NAME.equals(expectedMethod))
         || !GrpcPeerIdentity.isValidNamespace(trustedNamespace)
         || peer == null
         || !ENTITY_MANAGEMENT_SERVICE.equals(peer.service())

@@ -14,7 +14,12 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerReadResponse;
 
 /** Entity client for closed, non-admitting Game Session roster-owner source evidence. */
@@ -101,6 +106,50 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
             .getCanonicalGameplayRosterReference(request);
     return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
         .requireResponse(request, response);
+  }
+
+  public CanonicalGameplayRosterRetirementAcknowledgementResponse
+      acknowledgeCanonicalGameplayRosterRetirement(
+          CanonicalGameplayRosterRetirementAcknowledgementRequest request) {
+    requireRetirementTransport();
+    CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request);
+    requireRetirementNamespace(request);
+    var response =
+        requireInitializedStub("Game Session retirement owner client is not initialized")
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .acknowledgeCanonicalGameplayRosterRetirement(request);
+    return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
+        request, response);
+  }
+
+  public CanonicalGameplayRosterRetirementConfirmationResponse
+      confirmCanonicalGameplayRosterRetirementAcknowledgement(
+          CanonicalGameplayRosterRetirementConfirmationRequest request) {
+    requireRetirementTransport();
+    CanonicalGameplayRosterRetirementEvidence.requireConfirmation(request);
+    requireRetirementNamespace(request.getAcknowledgementRequest());
+    var response =
+        requireInitializedStub("Game Session retirement owner client is not initialized")
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .confirmCanonicalGameplayRosterRetirementAcknowledgement(request);
+    return CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(request, response);
+  }
+
+  private static void requireRetirementTransport() {
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || org.springframework.transaction.support.TransactionSynchronizationManager
+            .isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Roster retirement transport requires no ambient transaction");
+    }
+  }
+
+  private void requireRetirementNamespace(
+      CanonicalGameplayRosterRetirementAcknowledgementRequest request) {
+    if (!workloadNamespace.equals(request.getOriginalSelection().getTargetNamespace())) {
+      throw new IllegalArgumentException("Roster retirement belongs to another namespace");
+    }
   }
 
   /**

@@ -36,6 +36,31 @@ public final class CanonicalGameplayRosterReferenceOwner {
     this.recoveryClient = Objects.requireNonNull(recoveryClient, "recoveryClient");
   }
 
+  public net.firedevops.firemud.gamesession.v1
+          .CanonicalGameplayRosterRetirementAcknowledgementResponse
+      acknowledgeRetirement(
+          net.firedevops.firemud.gamesession.v1
+                  .CanonicalGameplayRosterRetirementAcknowledgementRequest
+              request,
+          String authenticatedEntityUri) {
+    requireOutsideTransaction();
+    return Objects.requireNonNull(
+        transactions.execute(
+            ignored -> repository.acknowledgeRetirement(request, authenticatedEntityUri)));
+  }
+
+  public net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse
+      confirmRetirementAcknowledgement(
+          net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest
+              request,
+          String authenticatedEntityUri) {
+    requireOutsideTransaction();
+    return Objects.requireNonNull(
+        transactions.execute(
+            ignored ->
+                repository.confirmRetirementAcknowledgement(request, authenticatedEntityUri)));
+  }
+
   public GetCanonicalGameplayRosterReferenceResponse begin(
       GetCanonicalGameplayRosterReferenceRequest request) {
     requireOutsideTransaction();

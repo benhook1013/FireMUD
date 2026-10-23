@@ -4,8 +4,9 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
@@ -22,10 +23,11 @@ public final class CanonicalGameplayRosterRetentionService {
   private final TransactionOperations transactions;
   private final CanonicalGameplayRosterRetentionPolicy policy;
   private final MeterRegistry metrics;
-  private final AtomicLong oldestBlocking = new AtomicLong();
-  private final AtomicLong cleanupLag = new AtomicLong();
+  private final AtomicReference<Double> oldestBlocking = new AtomicReference<>(0.0);
+  private final AtomicReference<Double> cleanupLag = new AtomicReference<>(0.0);
   private UUID cursor;
   private UUID closedAdmissionCursor;
+  private UUID retirementTransferCursor;
 
   public CanonicalGameplayRosterRetentionService(
       CanonicalGameplayRosterRetentionRepository repository,
@@ -41,10 +43,12 @@ public final class CanonicalGameplayRosterRetentionService {
     Gauge.builder(
             "firemud.canonical.roster.oldest_blocking_seconds",
             oldestBlocking,
-            AtomicLong::doubleValue)
+            value -> value.get().doubleValue())
         .register(metrics);
     Gauge.builder(
-            "firemud.canonical.roster.cleanup_lag_seconds", cleanupLag, AtomicLong::doubleValue)
+            "firemud.canonical.roster.cleanup_lag_seconds",
+            cleanupLag,
+            value -> value.get().doubleValue())
         .register(metrics);
   }
 
@@ -54,6 +58,33 @@ public final class CanonicalGameplayRosterRetentionService {
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("CANONICAL_ROSTER_SWEEP_REQUIRES_NO_AMBIENT_TRANSACTION");
     }
+    runCleanupStage(this::sweepSnapshots);
+    runCleanupStage(this::sweepClosedAdmissions);
+    runCleanupStage(this::sweepRetirementTransfers);
+    runCleanupStage(
+        () ->
+            transactions.executeWithoutResult(
+                ignored -> repository.purgeOrphanOpenAdmissions(policy, policy.batchSize())));
+    runCleanupStage(
+        () ->
+            transactions.executeWithoutResult(
+                ignored -> repository.purgeDisposedTombstones(policy.batchSize())));
+    runCleanupStage(
+        () ->
+            transactions.executeWithoutResult(
+                ignored -> repository.purgeConfirmedRetirementTransfers(policy.batchSize())));
+    refreshHealth();
+  }
+
+  private void runCleanupStage(Runnable stage) {
+    try {
+      stage.run();
+    } catch (RuntimeException failure) {
+      recordFailure();
+    }
+  }
+
+  private void sweepSnapshots() {
     UUID after = cursor;
     var candidates =
         Objects.requireNonNull(
@@ -94,9 +125,12 @@ public final class CanonicalGameplayRosterRetentionService {
               .increment();
         }
       } catch (RuntimeException failure) {
-        metrics.counter("firemud.canonical.roster.cleanup", "result", "failure").increment();
+        recordFailure();
       }
     }
+  }
+
+  private void sweepClosedAdmissions() {
     UUID closedAfter = closedAdmissionCursor;
     var closures =
         Objects.requireNonNull(
@@ -119,15 +153,83 @@ public final class CanonicalGameplayRosterRetentionService {
                 removed ? "admission_purged" : "protected")
             .increment();
       } catch (RuntimeException failure) {
-        metrics.counter("firemud.canonical.roster.cleanup", "result", "failure").increment();
+        recordFailure();
       }
     }
-    transactions.executeWithoutResult(
-        ignored -> repository.purgeOrphanOpenAdmissions(policy, policy.batchSize()));
-    transactions.executeWithoutResult(
-        ignored -> repository.purgeDisposedTombstones(policy.batchSize()));
-    var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));
-    oldestBlocking.set(health.oldestBlockingSeconds());
-    cleanupLag.set(health.cleanupLagSeconds());
+  }
+
+  private void sweepRetirementTransfers() {
+    UUID after = retirementTransferCursor;
+    var transfers =
+        Objects.requireNonNull(
+            transactions.execute(
+                ignored -> repository.retirementTransfers(after, policy.batchSize())));
+    if (transfers.isEmpty()) retirementTransferCursor = null;
+    for (var transfer : transfers) {
+      retirementTransferCursor = transfer.observationUuid();
+      try {
+        switch (transfer.state()) {
+          case "WAITING_RETIREMENT" -> {
+            var proof =
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    transfer.original(),
+                    ownerClient.getCanonicalGameplayRosterReference(transfer.original()));
+            if (proof.getState()
+                == CanonicalGameplayRosterReferenceState
+                    .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED) {
+              CanonicalGameplayRosterReferenceEvidence.requireRetirement(proof);
+              transactions.executeWithoutResult(
+                  ignored -> repository.observeWaitingRetirement(transfer, proof));
+            } else {
+              metrics
+                  .counter("firemud.canonical.roster.cleanup", "result", "protected")
+                  .increment();
+            }
+          }
+          case "PENDING_ACK" -> {
+            var acknowledgement =
+                CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
+                    transfer.acknowledgementRequest(),
+                    ownerClient.acknowledgeCanonicalGameplayRosterRetirement(
+                        transfer.acknowledgementRequest()));
+            transactions.executeWithoutResult(
+                ignored -> repository.recordRetirementAcknowledgement(transfer, acknowledgement));
+          }
+          case "ACKNOWLEDGED" -> {
+            // This page contains only actual ACK bytes committed in an earlier local transaction.
+            var confirmation =
+                CanonicalGameplayRosterRetirementEvidence.confirmation(
+                    transfer.acknowledgementRequest(), transfer.acknowledgement());
+            var response =
+                CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(
+                    confirmation,
+                    ownerClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(
+                        confirmation));
+            transactions.executeWithoutResult(
+                ignored -> repository.recordRetirementConfirmation(transfer, response));
+          }
+          default ->
+              throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_STATE_INVALID");
+        }
+      } catch (RuntimeException failure) {
+        recordFailure();
+      }
+    }
+  }
+
+  private void refreshHealth() {
+    try {
+      var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));
+      oldestBlocking.set((double) health.oldestBlockingSeconds());
+      cleanupLag.set((double) health.cleanupLagSeconds());
+    } catch (RuntimeException failure) {
+      oldestBlocking.set(Double.NaN);
+      cleanupLag.set(Double.NaN);
+      recordFailure();
+    }
+  }
+
+  private void recordFailure() {
+    metrics.counter("firemud.canonical.roster.cleanup", "result", "failure").increment();
   }
 }

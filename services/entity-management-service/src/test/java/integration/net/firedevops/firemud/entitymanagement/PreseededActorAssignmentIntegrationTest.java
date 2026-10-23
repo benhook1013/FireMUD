@@ -410,7 +410,7 @@ class PreseededActorAssignmentIntegrationTest {
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
     assertThat(successorHistory)
         .extracting(AppliedMigration::version)
-        .containsExactly("1006", "1007", "1008", "1009", "1010", "1011", "1012");
+        .containsExactly("1006", "1007", "1008", "1009", "1010", "1011", "1012", "1014");
     assertThat(successorHistory)
         .extracting(AppliedMigration::script)
         .containsExactly(
@@ -420,7 +420,8 @@ class PreseededActorAssignmentIntegrationTest {
             "V1009__canonical_publication_uuid_actor_evidence.sql",
             "V1010__canonical_roster_owner_counters.sql",
             "V1011__fresh_selected_empty_source_catalogue.sql",
-            "V1012__canonical_roster_retention.sql");
+            "V1012__canonical_roster_retention.sql",
+            "V1014__canonical_roster_retirement_observation.sql");
     assertThat(successorHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
 
     try (Connection connection = connectToSchema(schema)) {

@@ -113,7 +113,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
     reservePre1006Attempt(fixture, predecessor.launch(), admission);
     seedPre1006Terminal(fixture, prepared, predecessor.launch(), admission, true);
-    migration(fixture, "1015").migrate();
+    migration(fixture, "1017").migrate();
     var routes =
         new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
             NAMESPACE,
@@ -339,7 +339,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             uuid(122));
     reservePre1006Attempt(fixture, predecessor.launch(), admission);
     seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
-    migration(fixture, "1015").migrate();
+    migration(fixture, "1017").migrate();
     var routes =
         new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
             NAMESPACE,
@@ -533,6 +533,62 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
                 .requireRetirement(references.read(missingRoster)))
         .isEqualTo(references.read(missingRoster));
+    var retiredCandidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(references.read(missingRoster).getTargetFenceUuid()),
+            missingRoster,
+            "RETIRED");
+    Thread.sleep(550L);
+    assertThat(
+            fixture.transactions.<Boolean>execute(
+                ignored -> references.purgeRetiredTarget(retiredCandidate)))
+        .isFalse();
+    for (var original : List.of(missingRoster, missingAssignment)) {
+      var recoveryBytes =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "SELECT recovery_receipt FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                  UUID.fromString(original.getOperationUuid()))
+              .get(0, byte[].class);
+      var recovered =
+          net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse
+              .parseFrom(recoveryBytes);
+      var acknowledgement =
+          net.firedevops.firemud.gamesession.v1
+              .CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+              .setSchemaVersion(1)
+              .setOriginalSelection(original)
+              .setObservedRetirement(references.read(original))
+              .setObservationUuid(UUID.randomUUID().toString())
+              .setAdmissionUuid(recovered.getAdmissionUuid())
+              .setSnapshotUuid(roster.getSnapshotUuid())
+              .setSnapshotDigest(roster.getSnapshotDigest())
+              .setMinimumRetentionMillis(1L)
+              .build();
+      fixture.transactions.execute(
+          ignored ->
+              references.acknowledgeRetirement(
+                  acknowledgement,
+                  "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service"));
+    }
+    assertThat(
+            fixture.transactions.<Boolean>execute(
+                ignored -> references.purgeRetiredTarget(retiredCandidate)))
+        .isTrue();
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers WHERE target_purged_at IS NOT NULL")
+                .get(0, Long.class))
+        .isEqualTo(2L);
     org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(6))
         .lockExactCurrentOpenSnapshot(any());
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);

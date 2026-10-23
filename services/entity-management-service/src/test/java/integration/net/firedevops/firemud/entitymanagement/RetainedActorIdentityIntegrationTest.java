@@ -642,7 +642,7 @@ class RetainedActorIdentityIntegrationTest {
         .extracting(migration -> migration.getVersion().getVersion())
         .containsExactly(
             "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
-            "1010", "1011", "1012");
+            "1010", "1011", "1012", "1014");
     assertThat(flyway.info().applied())
         .filteredOn(migration -> migration.getVersion() != null)
         .extracting(migration -> migration.getScript())
@@ -660,9 +660,10 @@ class RetainedActorIdentityIntegrationTest {
             "V1009__canonical_publication_uuid_actor_evidence.sql",
             "V1010__canonical_roster_owner_counters.sql",
             "V1011__fresh_selected_empty_source_catalogue.sql",
-            "V1012__canonical_roster_retention.sql");
+            "V1012__canonical_roster_retention.sql",
+            "V1014__canonical_roster_retirement_observation.sql");
     assertThat(flyway.info().current().getVersion())
-        .isEqualTo(MigrationVersion.fromVersion("1012"));
+        .isEqualTo(MigrationVersion.fromVersion("1014"));
     assertThat(flyway.info().applied())
         .extracting(migration -> migration.getState())
         .doesNotContain(MigrationState.OUT_OF_ORDER);
@@ -735,7 +736,7 @@ class RetainedActorIdentityIntegrationTest {
         .extracting(MigrationHistoryEntry::version)
         .containsExactly(
             "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
-            "1010", "1011", "1012");
+            "1010", "1011", "1012", "1014");
     assertThat(upgradedHistory)
         .extracting(MigrationHistoryEntry::script)
         .containsExactly(
@@ -752,7 +753,8 @@ class RetainedActorIdentityIntegrationTest {
             "V1009__canonical_publication_uuid_actor_evidence.sql",
             "V1010__canonical_roster_owner_counters.sql",
             "V1011__fresh_selected_empty_source_catalogue.sql",
-            "V1012__canonical_roster_retention.sql");
+            "V1012__canonical_roster_retention.sql",
+            "V1014__canonical_roster_retirement_observation.sql");
     assertThat(upgradedHistory).allSatisfy(entry -> assertThat(entry.success()).isTrue());
 
     try (Connection connection = connectToMigrationSchema();
@@ -1015,7 +1017,7 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(upgradeFlyway.getConfiguration().isOutOfOrder()).isFalse();
     upgradeFlyway.migrate();
     assertThat(upgradeFlyway.info().current().getVersion())
-        .isEqualTo(MigrationVersion.fromVersion("1012"));
+        .isEqualTo(MigrationVersion.fromVersion("1014"));
     assertThat(upgradeFlyway.info().applied())
         .extracting(migration -> migration.getState())
         .doesNotContain(MigrationState.OUT_OF_ORDER);
