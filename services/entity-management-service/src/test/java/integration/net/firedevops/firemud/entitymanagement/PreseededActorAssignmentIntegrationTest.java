@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepo
 import net.firedevops.firemud.entitymanagement.repository.CharacterEquipmentRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.repository.EntityEmptySelectedSourceIntakePostgresFixture;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterExecutionContext;
@@ -44,6 +46,7 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentR
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -51,6 +54,9 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,6 +66,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -403,7 +410,7 @@ class PreseededActorAssignmentIntegrationTest {
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
     assertThat(successorHistory)
         .extracting(AppliedMigration::version)
-        .containsExactly("1006", "1007", "1008", "1009", "1010");
+        .containsExactly("1006", "1007", "1008", "1009", "1010", "1011");
     assertThat(successorHistory)
         .extracting(AppliedMigration::script)
         .containsExactly(
@@ -411,7 +418,8 @@ class PreseededActorAssignmentIntegrationTest {
             "V1007__preseeded_assignment_owner_snapshot.sql",
             "V1008__canonical_gameplay_roster_snapshots.sql",
             "V1009__canonical_publication_uuid_actor_evidence.sql",
-            "V1010__canonical_roster_owner_counters.sql");
+            "V1010__canonical_roster_owner_counters.sql",
+            "V1011__fresh_selected_empty_source_catalogue.sql");
     assertThat(successorHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
 
     try (Connection connection = connectToSchema(schema)) {
@@ -679,6 +687,99 @@ class PreseededActorAssignmentIntegrationTest {
   @Test
   void numericTenantCollisionKeepsQuarantinedCanonicalActorOutOfLegacyReadersAndWriters() {
     assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(true);
+  }
+
+  @Test
+  void reservedAuthoredTenantKeyDoesNotBlockOwnerResolvedCharacterAssignment() throws Exception {
+    for (boolean captureEmptyRosterBeforeSource : List.of(true, false)) {
+      String schema = "pc_" + UUID.randomUUID().toString().replace("-", "");
+      try {
+        migrationFlyway(schema).load().migrate();
+        DSLContext isolatedDsl = DSL.using(dataSource(schema), SQLDialect.POSTGRES);
+        EntityEmptySelectedSourceIntakeRepository sourceRepository =
+            new EntityEmptySelectedSourceIntakeRepository(isolatedDsl);
+        var sourceFixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
+        tenantUuid = sourceFixture.authorization().tenantId();
+        var owner =
+            evidence(
+                assignmentUuid,
+                accountUuid,
+                4L,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                sourceFixture.authorization().versionId());
+
+        if (captureEmptyRosterBeforeSource) {
+          assertEmptyCanonicalRosterCreatedTenantMapping(isolatedDsl, owner);
+        }
+
+        var sourceReceipt =
+            sourceRepository.retainFresh(
+                sourceFixture.inputs(),
+                EntityEmptySelectedSourceIntakeReceipt.requestDigest(
+                    sourceFixture.authorization().targetNamespace(),
+                    sourceFixture.authorization(),
+                    sourceFixture.freezeEvidence()));
+        assertThat(sourceReceipt.localTenantKey()).isEqualTo(1L);
+
+        if (!captureEmptyRosterBeforeSource) {
+          assertEmptyCanonicalRosterCreatedTenantMapping(isolatedDsl, owner);
+        }
+
+        Long entityTenantRowId =
+            isolatedDsl
+                .fetchSingle(
+                    "SELECT entity_tenant_row_id FROM entity_tenant_identities "
+                        + "WHERE canonical_tenant_uuid = ?",
+                    owner.canonicalTenantUuid())
+                .get(0, Long.class);
+        assertThat(entityTenantRowId).isEqualTo(sourceReceipt.localTenantKey());
+        byte[] receiptBytes = sourceReceipt.canonicalBytes();
+
+        PreseededActorAssignmentRequest request = assignmentRequest(owner, "Reserved-Key Actor");
+        PreseededActorAssignmentResult assigned =
+            isolatedDsl.transactionResult(
+                configuration ->
+                    new CharacterRepository(DSL.using(configuration))
+                        .assignPreseededActor(
+                            request,
+                            owner,
+                            accountIdentity(assignmentUuid, accountUuid),
+                            request.mutationIntentDigest()));
+        assertThat(assigned.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
+        assertThat(assigned.characterUuid()).isNotNull();
+
+        assertThatThrownBy(
+                () ->
+                    isolatedDsl.execute(
+                        "INSERT INTO characters (account_id, name, tenant_id) "
+                            + "VALUES (23, 'Legacy Reserved-Key Actor', ?)",
+                        sourceReceipt.localTenantKey()))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("reserved by an immutable empty-source receipt");
+        assertThatThrownBy(
+                () ->
+                    isolatedDsl.execute(
+                        "UPDATE characters SET account_uuid = NULL, tenant_uuid = NULL, "
+                            + "playable_state_namespace_id = NULL, playable_state_scope = NULL, "
+                            + "actor_identity_status = 'QUARANTINED', "
+                            + "actor_identity_quarantine_reason = 'OWNER_PROVENANCE_MISSING' "
+                            + "WHERE character_uuid = ?",
+                        assigned.characterUuid()))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("reserved by an immutable empty-source receipt");
+
+        var retainedSourceReceipt =
+            sourceRepository
+                .read(sourceReceipt.targetNamespace(), sourceReceipt.intakeRequestId())
+                .orElseThrow();
+        assertThat(retainedSourceReceipt.canonicalBytes()).containsExactly(receiptBytes);
+        assertThat(retainedSourceReceipt.receiptDigest()).isEqualTo(sourceReceipt.receiptDigest());
+      } finally {
+        String checkedSchema = schema.replaceAll("[^a-zA-Z0-9_]", "");
+        DSL.using(dataSource(null), SQLDialect.POSTGRES)
+            .execute("DROP SCHEMA IF EXISTS \"" + checkedSchema + "\" CASCADE");
+      }
+    }
   }
 
   private void assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(
@@ -1484,6 +1585,62 @@ class PreseededActorAssignmentIntegrationTest {
         request.mutationIntentDigest());
   }
 
+  private void assertEmptyCanonicalRosterCreatedTenantMapping(
+      DSLContext isolatedDsl, PreseededActorAssignmentOwnerEvidence owner) {
+    UUID gameInstanceUuid = UUID.randomUUID();
+    CanonicalGameplayRosterTarget target =
+        new CanonicalGameplayRosterTarget(
+            owner.canonicalTenantUuid(),
+            owner.realmUuid(),
+            owner.worldSlug(),
+            owner.realmSlug(),
+            gameInstanceUuid,
+            owner.catalogRevision(),
+            1L,
+            1L,
+            owner.canonicalVersionUuid(),
+            owner.frozenPolicyDigest(),
+            owner.publishedReleaseBundleRef(),
+            "5".repeat(64),
+            owner.publishedOwnerProofDigest(),
+            owner.playableStateNamespaceId(),
+            owner.playableStateScope(),
+            CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY);
+    UUID requestUuid = UUID.randomUUID();
+    CanonicalGameplayRosterReadRequest request =
+        new CanonicalGameplayRosterReadRequest(
+            requestUuid,
+            owner.canonicalAccountUuid(),
+            target,
+            new CanonicalGameplayRosterExecutionContext(
+                owner.canonicalAccountUuid(),
+                target.tenantUuid(),
+                target.playableStateNamespaceId(),
+                target.gameInstanceUuid(),
+                null,
+                UUID.randomUUID(),
+                target.realmUuid(),
+                requestUuid,
+                target.playableStateScope()));
+    var snapshot =
+        isolatedDsl.transactionResult(
+            configuration ->
+                new CharacterRepository(DSL.using(configuration))
+                    .captureCanonicalGameplayRosterSnapshot(
+                        request,
+                        new CanonicalGameplayRosterOwnerEvidence(
+                            requestUuid, owner.canonicalAccountUuid(), target, Instant.now())));
+    assertThat(snapshot.actors()).isEmpty();
+    Long mappedTenantRowId =
+        isolatedDsl
+            .fetchSingle(
+                "SELECT entity_tenant_row_id FROM entity_tenant_identities "
+                    + "WHERE canonical_tenant_uuid = ?",
+                owner.canonicalTenantUuid())
+            .get(0, Long.class);
+    assertThat(mappedTenantRowId).isEqualTo(1L);
+  }
+
   private PreseededActorAssignmentRequest assignmentRequest(
       PreseededActorAssignmentOwnerEvidence target) {
     return assignmentRequest(target, "Assigned Actor");
@@ -1538,6 +1695,20 @@ class PreseededActorAssignmentIntegrationTest {
 
   private PreseededActorAssignmentOwnerEvidence evidence(
       UUID operationUuid, UUID actorAccountUuid, long catalogRevision, PlayableStateScope scope) {
+    return evidence(
+        operationUuid,
+        actorAccountUuid,
+        catalogRevision,
+        scope,
+        UUID.fromString("17000000-0000-4000-8000-000000000017"));
+  }
+
+  private PreseededActorAssignmentOwnerEvidence evidence(
+      UUID operationUuid,
+      UUID actorAccountUuid,
+      long catalogRevision,
+      PlayableStateScope scope,
+      UUID canonicalVersionUuid) {
     return new PreseededActorAssignmentOwnerEvidence(
         operationUuid,
         actorAccountUuid,
@@ -1551,7 +1722,7 @@ class PreseededActorAssignmentIntegrationTest {
         "realm",
         "game-instance",
         catalogRevision,
-        UUID.fromString("17000000-0000-4000-8000-000000000017"),
+        canonicalVersionUuid,
         "2".repeat(64),
         namespaceUuid,
         scope,
@@ -1594,6 +1765,19 @@ class PreseededActorAssignmentIntegrationTest {
         .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
         .setTransactionalLock(false);
     return configuration;
+  }
+
+  private DriverManagerDataSource dataSource(String schemaName) {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    String baseUrl = postgres.getJdbcUrl();
+    dataSource.setUrl(
+        schemaName == null
+            ? baseUrl
+            : baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + schemaName);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    return dataSource;
   }
 
   private List<AppliedMigration> appliedMigrationHistory(String schema) throws SQLException {
