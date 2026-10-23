@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shlex
 import subprocess
 import unittest
@@ -102,15 +103,33 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
             "target=${{ github.workspace }}/config/ort/npm.ort.yml,readonly",
             npm_inputs["docker-cli-args"],
         )
-        self.assertNotIn("ort-yml-path", gradle_inputs)
+        self.assertEqual(
+            "${{ github.workspace }}/config/ort/gatling.ort.yml",
+            gradle_inputs["ort-yml-path"],
+        )
+        self.assertIn(
+            "--mount type=bind,source=${{ github.workspace }}/config/ort/gatling.ort.yml,"
+            "target=${{ github.workspace }}/config/ort/gatling.ort.yml,readonly",
+            gradle_inputs["docker-cli-args"],
+        )
         self.assertFalse((ROOT / ".ort.yml").exists())
         self.assertNotIn("curations", yaml.safe_load((ROOT / "config/ort/npm.ort.yml").read_text()))
+        gradle_config = yaml.safe_load(
+            (ROOT / "config/ort/gatling.ort.yml").read_text(encoding="utf-8")
+        )
+        npm_config = yaml.safe_load(
+            (ROOT / "config/ort/npm.ort.yml").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("license_choices", gradle_config)
+        self.assertIn("license_choices", npm_config)
         filters = yaml.safe_load(step_by_id(self.jobs["changes"], "filter")["with"]["filters"])
         for ecosystem in ("gradle", "npm"):
             with self.subTest(ecosystem=ecosystem):
                 self.assertIn("config/ort/curations/**", filters[ecosystem])
         self.assertIn("config/ort/npm.ort.yml", filters["npm"])
         self.assertNotIn("config/ort/npm.ort.yml", filters["gradle"])
+        self.assertIn("config/ort/gatling.ort.yml", filters["gradle"])
+        self.assertNotIn("config/ort/gatling.ort.yml", filters["npm"])
 
     def test_custom_license_text_is_routed_mounted_and_curated_exactly(self) -> None:
         custom_license_mount = (
@@ -167,6 +186,47 @@ class LicenseWorkflowEnforcementTest(unittest.TestCase):
             GATLING_LICENSE_SHA256,
             hashlib.sha256(GATLING_LICENSE_PATH.read_bytes()).hexdigest(),
         )
+
+    def test_gatling_resolution_matches_only_the_observed_violation(self) -> None:
+        observed_message = (
+            "The license LicenseRef-Gatling-Highcharts-3.16.0 is currently not "
+            "covered by policy rules. The license was declared in package "
+            "'Maven:io.gatling.highcharts:gatling-charts-highcharts:3.16.0'."
+        )
+        rejected_messages = {
+            "altered package": observed_message.replace(
+                "Maven:io.gatling.highcharts", "Maven:io.example.highcharts"
+            ),
+            "altered version": observed_message.replace(
+                "gatling-charts-highcharts:3.16.0",
+                "gatling-charts-highcharts:3.16.1",
+            ),
+            "altered license": observed_message.replace(
+                GATLING_LICENSE_REF, "LicenseRef-Gatling-Highcharts-3.16.1"
+            ),
+            "other error": observed_message.replace(
+                "currently not covered by policy rules",
+                "is prohibited by policy rules",
+            ),
+            "message suffix": observed_message + " Additional failure details.",
+        }
+        config_paths = (
+            ROOT / "config/ort/gatling.ort.yml",
+            ROOT / "config/ort/npm.ort.yml",
+        )
+
+        for config_path in config_paths:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            resolutions = config["resolutions"]["rule_violations"]
+            with self.subTest(config=config_path.name):
+                self.assertEqual(1, len(resolutions))
+                resolution = resolutions[0]
+                self.assertEqual("NOT_MODIFIED_EXCEPTION", resolution["reason"])
+                pattern = resolution["message"]
+                self.assertIsNotNone(re.fullmatch(pattern, observed_message, re.DOTALL))
+                for case, message in rejected_messages.items():
+                    with self.subTest(rejected=case):
+                        self.assertIsNone(re.fullmatch(pattern, message, re.DOTALL))
 
     def test_guard_failures_retain_results_and_gradle_diagnostics(self) -> None:
         gradle = self.jobs["ort-gradle"]

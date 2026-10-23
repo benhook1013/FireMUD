@@ -45,6 +45,7 @@ jobs:
             gradle:
               - 'config/ort/curations/**'
               - 'config/ort/custom-license-texts/**'
+              - 'config/ort/gatling.ort.yml'
               - 'build.gradle.kts'
               - 'settings.gradle.kts'
               - 'gradle.properties'
@@ -140,9 +141,11 @@ jobs:
         with:
           image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
+          ort-yml-path: ${{ github.workspace }}/config/ort/gatling.ort.yml
           docker-cli-args: >-
             -e CI=true
             --mount type=bind,source=${{ github.workspace }}/config/ort/curations,target=/home/ort/.ort/config/curations/firemud,readonly
+            --mount type=bind,source=${{ github.workspace }}/config/ort/gatling.ort.yml,target=${{ github.workspace }}/config/ort/gatling.ort.yml,readonly
             --mount type=bind,source=${{ github.workspace }}/config/ort/custom-license-texts/LicenseRef-Gatling-Highcharts-3.16.0,target=/home/ort/.ort/config/custom-license-texts/LicenseRef-Gatling-Highcharts-3.16.0,readonly
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: 'violations'
