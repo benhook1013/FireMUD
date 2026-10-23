@@ -262,3 +262,7 @@ Entry format:
   - Context: The focused canonical gate at `54e9ef35454f669a1f07cec73d13511febe12233` passed eight native cases across the two previously failing Account integration classes in 78.543 seconds, with zero failures, errors or skips; no Redis source or readiness change was made for this rerun.
   - Observation: Testcontainers 2.0.5 `HostPortWaitStrategy` checks internal container and external mapped-port reachability concurrently, then reports a generic timeout without preserving the subcheck cause. Redis-ready logs alone do not isolate host forwarding. A child-command timeout or Future cancellation does not prove the Docker exec RPC ended.
   - Expected pattern: Match exact container, fixture and mapped-port evidence before assigning a cause. Credit a focused rerun as its own proof; it neither erases the original failed aggregate nor proves a repair.
+
+- `2026-10-23`: Isolate uv managed-Python launchers as well as installations
+  - Observation: A temporary docs-lock generator set `UV_PYTHON_INSTALL_DIR` inside its task directory, but uv 0.13.5 also created `~/.local/bin/python3.15`. The exact newly created task-owned symlink was verified and removed; no preexisting launcher was overwritten.
+  - Expected pattern: Set `UV_PYTHON_BIN_DIR` to a task-private path before temporary installation and confirm it with `uv python dir --bin`; this override was verified locally. Alternatively, `uv python install --no-bin` is supported by the installed help. Installation-directory isolation alone does not isolate launchers.
