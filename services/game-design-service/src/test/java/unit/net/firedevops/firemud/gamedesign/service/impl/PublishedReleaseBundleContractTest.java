@@ -67,16 +67,20 @@ class PublishedReleaseBundleContractTest {
     assertSelectorRepairRejected(
         bundle("v4", selector, mixed),
         "Selected-full release requires all exact successful ordered release participants");
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
-                VERSION_ID,
-                selector.request().appliedCommitId(),
-                PublishedWorldSelectorFixtures.participants(
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
                     VERSION_ID,
-                    selector,
-                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)));
+                    selector.request().appliedCommitId(),
+                    PublishedWorldSelectorFixtures.participants(
+                        VERSION_ID,
+                        selector,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)));
+    assertEquals(
+        "Selected-full release requires the exact 4/3/1/6/2 successful participant vector",
+        denied.getMessage());
   }
 
   @Test
