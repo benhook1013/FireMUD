@@ -178,6 +178,64 @@ public class CanonicalInitialAdmissionRepository {
     return new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(before, proof));
   }
 
+  /**
+   * Revalidates an already committed outside-transaction snapshot under exact owner row locks. This
+   * grants no new admission authority and never calls a remote owner from SQL.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CurrentOpenSnapshot lockExactCurrentOpenSnapshot(CurrentOpenSnapshot qualified) {
+    Objects.requireNonNull(qualified, "qualified");
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !"read committed"
+            .equals(dsl.fetchSingle("SHOW transaction_isolation").get(0, String.class))) {
+      throw new IllegalStateException("Exact current OPEN lock requires writable READ COMMITTED");
+    }
+    var expected = qualified.ownerProof();
+    var rows =
+        dsl.fetch(
+            "SELECT * FROM gameplay_admission_pointer WHERE target_namespace = ? "
+                + "AND canonical_tenant_id = ? AND realm_id = ? AND representation_version = 3 "
+                + "AND admission_state = 'OPEN' FOR UPDATE",
+            expected.targetNamespace(),
+            expected.canonicalTenantId(),
+            expected.realmId());
+    if (rows.size() != 1)
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Exact current OPEN pointer is unavailable under owner lock");
+    CurrentOpenPointer pointer = CurrentOpenPointer.from(rows.getFirst());
+    pointer.requireCanonicalOpen(
+        expected.targetNamespace(), expected.canonicalTenantId(), expected.realmId());
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + OPERATION_TABLE
+                + " WHERE target_namespace = ? AND initial_admission_request_id = ? FOR UPDATE",
+            expected.targetNamespace(),
+            expected.initialAdmissionRequestId());
+    if (row == null)
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Exact committed initial-admission attempt is unavailable under owner lock");
+    Attempt attempt = toAttempt(row);
+    if (!COMMITTED.equals(attempt.status()))
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Exact initial-admission attempt is no longer committed");
+    CanonicalRealmCatalogSnapshot lockedCatalog =
+        catalogRepository.lockInitialAdmissionTarget(
+            expected.targetNamespace(),
+            expected.canonicalTenantId(),
+            expected.realmId(),
+            expected.expectedCatalogRevision());
+    verifyCommittedReadback(attempt, lockedCatalog);
+    var proof = toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+    var actual = new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(pointer, proof));
+    if (!pointer.matches(proof) || !actual.equals(qualified)) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Current OPEN target changed after committed qualification");
+    }
+    return actual;
+  }
+
   /** Package-private same-package test seam for malformed persisted projection evidence. */
   @SuppressFBWarnings(
       value = "DCN_NULLPOINTER_EXCEPTION",
@@ -243,8 +301,12 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   private void verifyCommittedReadback(Attempt attempt) {
+    verifyCommittedReadback(attempt, readExactCatalog(attempt.asRequest()));
+  }
+
+  private void verifyCommittedReadback(Attempt attempt, CanonicalRealmCatalogSnapshot catalog) {
     CanonicalInitialAdmissionRequest request = attempt.asRequest();
-    CanonicalRealmCatalogSnapshot catalog = readExactCatalog(request);
+    requireRequestMatchesCatalog(request, catalog);
     Record evidence =
         dsl.fetchOne(
             "SELECT pointer.*, pointer.updated_at AS pointer_updated_at, "

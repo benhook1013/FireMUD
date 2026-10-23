@@ -973,6 +973,51 @@ public class CharacterRepository {
     }
   }
 
+  @Transactional
+  public UUID reserveOriginalRosterAdmission(CanonicalGameplayRosterReadRequest request) {
+    return new CanonicalGameplayRosterRetentionRepository(dsl).reserveAdmission(request);
+  }
+
+  @Transactional
+  public java.util.Optional<CanonicalGameplayRosterSnapshot> readOriginalRosterReceipt(
+      CanonicalGameplayRosterReadRequest request,
+      net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse original,
+      UUID localAdmission) {
+    net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort
+        .requireOriginalSelection(request, original);
+    var retention = new CanonicalGameplayRosterRetentionRepository(dsl);
+    retention.requireAdmission(request, localAdmission);
+    return retention
+        .originalReceipt(original)
+        .map(
+            receipt -> CanonicalGameplayRosterSnapshot.fromWire(receipt, request.expectedTarget()));
+  }
+
+  /** Exact original-operation receipt and reference commit with the snapshot in one transaction. */
+  @Transactional
+  public CanonicalGameplayRosterSnapshot captureAndBindCanonicalGameplayRosterSnapshot(
+      CanonicalGameplayRosterReadRequest request,
+      CanonicalGameplayRosterOwnerEvidence ownerEvidence,
+      net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse original,
+      UUID localAdmission) {
+    net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort
+        .requireOriginalSelection(request, original);
+    var retention = new CanonicalGameplayRosterRetentionRepository(dsl);
+    retention.requireAdmission(request, localAdmission);
+    var retained = retention.originalReceipt(original);
+    if (retained.isPresent()) {
+      return CanonicalGameplayRosterSnapshot.fromWire(
+          retained.orElseThrow(), request.expectedTarget());
+    }
+    if (!original.getCanonicalRosterReceipt().isEmpty()) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+    }
+    var snapshot = captureCanonicalGameplayRosterSnapshot(request, ownerEvidence);
+    retention.bindOriginal(original, snapshot);
+    retention.bindAdmission(request.requestUuid(), localAdmission, snapshot.snapshotUuid());
+    return snapshot;
+  }
+
   /**
    * Captures an ordered roster only from fresh owner-resolved actor rows, then persists and reads
    * back its immutable target-bound snapshot. This lookup never uses legacy numeric actor fields.

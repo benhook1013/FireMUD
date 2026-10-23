@@ -17,6 +17,64 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class CanonicalGameplayRosterSelectedAssignmentServiceTest {
+  private static CanonicalGameplayRosterOwnerEvidencePort ownerPort() {
+    return mock(
+        CanonicalGameplayRosterOwnerEvidencePort.class,
+        call -> {
+          if (call.getMethod().getName().equals("readOriginalSelection")) {
+            CanonicalGameplayRosterReadRequest request = call.getArgument(0);
+            var binding =
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                    .request(
+                        request.requestUuid(),
+                        request.canonicalAccountUuid(),
+                        request.playerExecutionContext().sessionUuid(),
+                        "gameplay",
+                        request.expectedTarget().toWire());
+            // This unit source double uses the same exact snapshot fixture as the selected request.
+            var selected = request(request.expectedTarget());
+            var receipt =
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse
+                    .newBuilder()
+                    .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
+                    .setTarget(request.expectedTarget().toWire())
+                    .setSnapshotUuid(selected.expectedSnapshot().snapshotUuid().toString())
+                    .setSnapshotDigest(selected.expectedSnapshot().snapshotDigest())
+                    .addActors(
+                        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor
+                            .newBuilder()
+                            .setCharacterUuid(
+                                request.playerExecutionContext().characterUuid().toString())
+                            .setDisplayName("Fixture Actor")
+                            .setActorKind(
+                                net.firedevops.firemud.entitymanagement.v1
+                                    .CanonicalGameplayRosterActorKind
+                                    .CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
+                    .build();
+            return net
+                .firedevops
+                .firemud
+                .common
+                .world
+                .CanonicalGameplayRosterReferenceEvidence
+                .response(
+                    binding,
+                    1L,
+                    java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                    receipt)
+                .toBuilder()
+                .setSelectionInput(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                        .newBuilder()
+                        .setSchemaVersion(1))
+                .setSelectedCharacterUuid(
+                    request.playerExecutionContext().characterUuid().toString())
+                .build();
+          }
+          return org.mockito.Answers.RETURNS_DEFAULTS.answer(call);
+        });
+  }
+
   @Test
   void resolvesCurrentTargetThenReturnsOnlyTheExactHistoricalAssignmentReference() {
     assertResolvesCurrentTarget(target());
@@ -25,8 +83,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
   }
 
   private static void assertResolvesCurrentTarget(CanonicalGameplayRosterTarget target) {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
@@ -83,8 +140,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
             request.canonicalAccountUuid(),
             request.expectedTarget(),
             request.playerExecutionContext());
-    CanonicalGameplayRosterOwnerEvidencePort unavailableOwnerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort unavailableOwnerPort = ownerPort();
     CharacterRepository unavailableRepository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService unavailableService =
         new CanonicalGameplayRosterSelectedAssignmentService(
@@ -153,8 +209,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
 
   @Test
   void unsupportedCallerPolicyFailsBeforeOwnerResolution() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
@@ -170,8 +225,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
 
   @Test
   void ambientTransactionOrSynchronizationFailsBeforeOwnerAndRepositoryAccess() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
@@ -200,8 +254,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
 
   @Test
   void missingOrInvalidStoredAssignmentFailsClosed() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
@@ -231,8 +284,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
 
   @Test
   void isolatedSelectionRejectsSharedAssignmentReceipt() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
@@ -268,8 +320,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
 
   @Test
   void actorAbsentFromExpectedSnapshotFailsBeforeReceiptRead() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
@@ -313,7 +364,8 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
         accountUuid,
         selectedUuid,
         target,
-        new CanonicalGameplayRosterSnapshotReference(UUID.randomUUID(), "a".repeat(64)),
+        new CanonicalGameplayRosterSnapshotReference(
+            UUID.fromString("88888888-8888-4888-8888-888888888888"), "a".repeat(64)),
         executionContext(target, requestUuid, accountUuid, selectedUuid));
   }
 
@@ -350,8 +402,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
       CanonicalGameplayRosterOwnerEvidence evidence,
       Class<? extends Throwable> expectedType,
       String expectedMessage) {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);

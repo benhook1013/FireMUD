@@ -11,6 +11,8 @@ public final class CanonicalGameplayRosterOwnerReadWorkloadGuard {
       "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterOwnerRead";
   private static final String ASSIGNMENT_METHOD_NAME =
       "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead";
+  private static final String REFERENCE_METHOD_NAME =
+      "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterReference";
   private static final String ENTITY_MANAGEMENT_SERVICE = "entity-management-service";
 
   private final String trustedNamespace;
@@ -31,10 +33,17 @@ public final class CanonicalGameplayRosterOwnerReadWorkloadGuard {
             .getFullMethodName());
   }
 
+  public void requireEntityReferenceOwnerReadCaller() {
+    requireEntityOwnerReadCaller(
+        CanonicalGameplayRosterOwnerReadServiceGrpc.getGetCanonicalGameplayRosterReferenceMethod()
+            .getFullMethodName());
+  }
+
   private void requireEntityOwnerReadCaller(String expectedMethod) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if ((!ROSTER_METHOD_NAME.equals(expectedMethod)
-            && !ASSIGNMENT_METHOD_NAME.equals(expectedMethod))
+            && !ASSIGNMENT_METHOD_NAME.equals(expectedMethod)
+            && !REFERENCE_METHOD_NAME.equals(expectedMethod))
         || !GrpcPeerIdentity.isValidNamespace(trustedNamespace)
         || peer == null
         || !ENTITY_MANAGEMENT_SERVICE.equals(peer.service())

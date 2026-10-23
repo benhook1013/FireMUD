@@ -16,10 +16,34 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class CanonicalGameplayRosterServiceTest {
+  private static CanonicalGameplayRosterOwnerEvidencePort ownerPort() {
+    return mock(
+        CanonicalGameplayRosterOwnerEvidencePort.class,
+        call -> {
+          if (call.getMethod().getName().equals("readOriginalSelection")) {
+            CanonicalGameplayRosterReadRequest request = call.getArgument(0);
+            var binding =
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                    .request(
+                        request.requestUuid(),
+                        request.canonicalAccountUuid(),
+                        request.playerExecutionContext().sessionUuid(),
+                        "gameplay",
+                        request.expectedTarget().toWire());
+            return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                .response(
+                    binding,
+                    1L,
+                    java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                    null);
+          }
+          return org.mockito.Answers.RETURNS_DEFAULTS.answer(call);
+        });
+  }
+
   @Test
   void exactOwnerResolvedPreseededTargetReadsPersistedSnapshot() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);
@@ -33,18 +57,28 @@ class CanonicalGameplayRosterServiceTest {
             request.expectedTarget(),
             List.of(new CanonicalGameplayRosterActor(UUID.randomUUID(), "Persisted Actor")));
     when(ownerPort.resolveCurrentTarget(request)).thenReturn(evidence);
-    when(repository.captureCanonicalGameplayRosterSnapshot(request, evidence)).thenReturn(expected);
+    when(repository.captureAndBindCanonicalGameplayRosterSnapshot(
+            org.mockito.ArgumentMatchers.eq(request),
+            org.mockito.ArgumentMatchers.eq(evidence),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(expected);
 
     assertThat(service.read(request)).isEqualTo(expected);
 
     verify(ownerPort).resolveCurrentTarget(request);
-    verify(repository).captureCanonicalGameplayRosterSnapshot(request, evidence);
+    verify(ownerPort).readOriginalSelection(request);
+    verify(repository)
+        .captureAndBindCanonicalGameplayRosterSnapshot(
+            org.mockito.ArgumentMatchers.eq(request),
+            org.mockito.ArgumentMatchers.eq(evidence),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
   }
 
   @Test
   void unsupportedEntryPoliciesFailBeforeOwnerReadsOrRosterLookup() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);
@@ -73,8 +107,7 @@ class CanonicalGameplayRosterServiceTest {
 
   @Test
   void independentlyResolvedCrossNamespaceTargetIsRejectedBeforeRepositoryRead() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);
@@ -104,13 +137,18 @@ class CanonicalGameplayRosterServiceTest {
         .hasMessage("CANONICAL_GAMEPLAY_ROSTER_OWNER_TARGET_MISMATCH");
 
     verify(ownerPort).resolveCurrentTarget(request);
-    verifyNoInteractions(repository);
+    verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+        .readOriginalRosterReceipt(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verifyNoMoreInteractions(repository);
   }
 
   @Test
   void independentlyResolvedChangedOwnerCountersAreRejectedBeforeRepositoryRead() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);
@@ -127,13 +165,18 @@ class CanonicalGameplayRosterServiceTest {
         .hasMessage("CANONICAL_GAMEPLAY_ROSTER_OWNER_TARGET_MISMATCH");
 
     verify(ownerPort).resolveCurrentTarget(request);
-    verifyNoInteractions(repository);
+    verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+        .readOriginalRosterReceipt(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verifyNoMoreInteractions(repository);
   }
 
   @Test
   void independentlyResolvedChangedActiveWorldEpochIsRejectedBeforeRepositoryRead() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);
@@ -150,7 +193,13 @@ class CanonicalGameplayRosterServiceTest {
         .hasMessage("CANONICAL_GAMEPLAY_ROSTER_OWNER_TARGET_MISMATCH");
 
     verify(ownerPort).resolveCurrentTarget(request);
-    verifyNoInteractions(repository);
+    verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+        .readOriginalRosterReceipt(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verifyNoMoreInteractions(repository);
   }
 
   @Test
@@ -194,13 +243,18 @@ class CanonicalGameplayRosterServiceTest {
         .isInstanceOf(
             CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException.class);
 
-    verifyNoInteractions(repository);
+    verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+        .readOriginalRosterReceipt(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verifyNoMoreInteractions(repository);
   }
 
   @Test
   void ownerReadCannotRunInsideAmbientTransactionOrSynchronization() {
-    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
-        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort = ownerPort();
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);

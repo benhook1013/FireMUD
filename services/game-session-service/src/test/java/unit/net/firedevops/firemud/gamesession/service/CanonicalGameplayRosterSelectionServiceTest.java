@@ -109,7 +109,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
         org.mockito.ArgumentCaptor.forClass(CanonicalGameplayRosterSelectedAssignmentRequest.class);
     verify(harness.stub()).readSelectedPreseededAssignment(requestCaptor.capture());
     PlayerExecutionContext selectedContext = requestCaptor.getValue().getPlayerExecutionContext();
-    assertThat(selectedContext.getRequestId()).isNotEqualTo(input.getRequestId());
+    assertThat(selectedContext.getRequestId()).isEqualTo(input.getRequestId());
     assertThat(selectedContext.getAccountId()).isEqualTo(input.getAccountId());
     assertThat(selectedContext.getSessionId()).isEqualTo(input.getSessionId());
     assertThat(selectedContext.getTenantId()).isEqualTo(input.getTenantId());
@@ -946,9 +946,78 @@ class CanonicalGameplayRosterSelectionServiceTest {
     tls.setCertChain("game-session-client.crt");
     tls.setPrivateKey("game-session-client.key");
     tls.setCaCert("entity-management-ca.crt");
+    var owner =
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    java.util.Map<String, CanonicalGameplayRosterResponse> receipts = new java.util.HashMap<>();
+    java.util.Map<
+            String, net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput>
+        selectionInputs = new java.util.HashMap<>();
+    doAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              selectionInputs.put(
+                  request.getOperationUuid(),
+                  net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                      .requireSelectionInput(call.getArgument(1)));
+              return null;
+            })
+        .when(owner)
+        .reserveSelectionInput(any(), any());
+    when(owner.begin(any()))
+        .thenAnswer(
+            call ->
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                    .response(
+                        call.getArgument(0),
+                        1L,
+                        java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                        null));
+    when(owner.record(any(), any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              CanonicalGameplayRosterResponse receipt = call.getArgument(1);
+              receipts.put(request.getOperationUuid(), receipt);
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .response(
+                      request,
+                      1L,
+                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                      receipt);
+            });
+    when(owner.read(any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .response(
+                      request,
+                      1L,
+                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                      receipts.get(request.getOperationUuid()));
+            });
+    when(owner.selectOriginal(any(), any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              UUID selectedCharacter = call.getArgument(1);
+              var original = owner.read(request);
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .requireResponse(
+                      request,
+                      original.toBuilder()
+                          .setSelectionInput(selectionInputs.get(request.getOperationUuid()))
+                          .setSelectedCharacterUuid(selectedCharacter.toString())
+                          .build());
+            });
     var client =
         new CanonicalGameplayRosterClient(
-            new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), "test");
+            new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), "test", owner);
     Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     stubField.setAccessible(true);
     stubField.set(client, stub);

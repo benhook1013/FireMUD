@@ -13,6 +13,9 @@ service CanonicalGameplayRosterOwnerReadService {
   rpc GetCanonicalGameplayRosterOwnerRead(
       GetCanonicalGameplayRosterOwnerReadRequest)
       returns (GetCanonicalGameplayRosterOwnerReadResponse);
+  // Reads a pre-existing immutable GS selection. Entity cannot create or close it through this RPC.
+  rpc GetCanonicalGameplayRosterReference(GetCanonicalGameplayRosterReferenceRequest)
+      returns (GetCanonicalGameplayRosterReferenceResponse);
   rpc GetPreseededActorAssignmentOwnerRead(
       GetPreseededActorAssignmentOwnerReadRequest)
       returns (GetPreseededActorAssignmentOwnerReadResponse);
@@ -80,4 +83,52 @@ message GetPreseededActorAssignmentOwnerReadResponse {
   bytes game_session_owner_proof = 2;
   bytes published_policy_set_evidence = 3;
   string admission_pointer_snapshot_digest = 4;
+}
+
+// Purpose-bound original selection identity. canonical_target is the closed canonical wire bytes
+// of entity_management.v1.CanonicalGameplayRosterTarget, including all source digests/counters.
+message GetCanonicalGameplayRosterReferenceRequest {
+  uint32 schema_version = 1;
+  string operation_uuid = 2;
+  string canonical_account_uuid = 3;
+  string session_uuid = 4;
+  string target_namespace = 5;
+  bytes canonical_target = 6;
+}
+
+enum CanonicalGameplayRosterReferenceState {
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_STATE_UNSPECIFIED = 0;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED = 1;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED = 2;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED = 3;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED = 4;
+}
+
+message GetCanonicalGameplayRosterReferenceResponse {
+  GetCanonicalGameplayRosterReferenceRequest request = 1;
+  int64 owner_fence = 2;
+  CanonicalGameplayRosterReferenceState state = 3;
+  // Canonical Entity snapshot response bytes, present only after receipt binding. Recording a
+  // receipt does not release its retained selection/session/recovery/restore dependencies.
+  bytes canonical_roster_receipt = 4;
+  CanonicalGameplayRosterSelectionInput selection_input = 5;
+  string selected_character_uuid = 6;
+  bytes canonical_selected_assignment_receipt = 7;
+  string target_fence_uuid = 8;
+  string terminal_outcome = 9;
+  string retirement_uuid = 10;
+  string superseding_pointer_digest = 11;
+  int64 superseding_pointer_version = 12;
+  int64 superseding_catalog_revision = 13;
+  int64 superseding_world_epoch = 14;
+  string retirement_proof_digest = 15;
+}
+
+// Original selection input is frozen before any Entity roster read. A later ordinal choice is a
+// new authenticated request operation naming the exact menu snapshot it displayed.
+message CanonicalGameplayRosterSelectionInput {
+  uint32 schema_version = 1;
+  string selector = 2;
+  string menu_snapshot_uuid = 3;
+  string menu_snapshot_digest = 4;
 }

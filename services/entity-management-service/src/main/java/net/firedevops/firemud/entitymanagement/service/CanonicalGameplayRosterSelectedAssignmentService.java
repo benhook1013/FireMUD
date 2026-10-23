@@ -40,6 +40,23 @@ public final class CanonicalGameplayRosterSelectedAssignmentService {
       throw new IllegalStateException("SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
     }
 
+    var original =
+        CanonicalGameplayRosterOwnerEvidencePort.requireOriginalSelection(
+            ownerRequest, ownerEvidencePort.readOriginalSelection(ownerRequest));
+    var originalReceipt =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.receipt(
+            original);
+    if (!request
+            .expectedSnapshot()
+            .snapshotUuid()
+            .toString()
+            .equals(originalReceipt.getSnapshotUuid())
+        || !request
+            .expectedSnapshot()
+            .snapshotDigest()
+            .equals(originalReceipt.getSnapshotDigest())) {
+      throw new IllegalStateException("SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+    }
     var snapshot =
         characterRepository.readCurrentCanonicalGameplayRosterSnapshot(
             request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot());

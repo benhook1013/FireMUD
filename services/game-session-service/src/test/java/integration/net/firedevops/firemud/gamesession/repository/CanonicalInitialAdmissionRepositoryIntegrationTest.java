@@ -99,6 +99,150 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void rosterRetirementUsesRealCommittedAdmissionReaderAndLocksCurrentPointerUnderRosterFence()
+      throws Exception {
+    // Retained pre1006 source is deliberately controlled original owner history, not a fresh
+    // protected Human admission or genuine upstream producer. All current route/owner reads and
+    // row locks below are real, with every current SQL guard enabled.
+    Fixture fixture = fixture("1005");
+    var predecessor = preparePre1006Admission(fixture);
+    var prepared = predecessor.prepared();
+    var admission =
+        initialAdmissionRequest(
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    reservePre1006Attempt(fixture, predecessor.launch(), admission);
+    seedPre1006Terminal(fixture, prepared, predecessor.launch(), admission, true);
+    migration(fixture, "1015").migrate();
+    var routes =
+        new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
+            NAMESPACE,
+            fixture.catalogRepository,
+            fixture.initialAdmissionRepository,
+            fixture.launchRepository);
+    var current = routes.readCurrentTarget(TENANT);
+    var target =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
+            .setTenantUuid(TENANT.toString())
+            .setRealmUuid(current.realmId().toString())
+            .setWorldSlug(current.worldSlug())
+            .setRealmSlug(current.realmSlug())
+            .setGameInstanceUuid(current.canonicalGameInstanceId().toString())
+            .setCanonicalVersionUuid(current.canonicalVersionId().toString())
+            .setPlayableStateNamespaceUuid(current.playableStateNamespaceId().toString())
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setEntryPolicy(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                    .CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
+            .setCatalogRevision(current.catalogRevision())
+            .setPointerVersion(current.pointerVersion())
+            .setActiveWorldEpoch(current.activeWorldEpoch())
+            .setAdmissionPointerSnapshotDigest(current.admissionPointerSnapshotDigest())
+            .setPublishedOwnerProofDigest(current.ownerProofDigest().substring("sha256:".length()))
+            .setPublishedPolicyDigest("a".repeat(64))
+            .setPublishedReleaseBundleRef("controlled:retained-fixture")
+            .build();
+    var request =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NAMESPACE, target);
+    var references =
+        new net.firedevops.firemud.gamesession.repository
+            .CanonicalGameplayRosterReferenceRepository(
+            fixture.dsl,
+            new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
+                java.time.Duration.ofMillis(1),
+                java.time.Duration.ofMillis(1),
+                java.time.Duration.ofMillis(1),
+                java.time.Duration.ofSeconds(1),
+                8));
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          references.begin(request);
+          references.completeUnissuedDenied(request);
+        });
+    String retained =
+        fixture
+            .dsl
+            .fetchSingle(
+                "SELECT original_request, xmin::text FROM game_session_canonical_roster_selection")
+            .formatJSON();
+    String originalOwnerRows = pointerAndAuditProjection(fixture);
+    var lockAttempted = new java.util.concurrent.CountDownLatch(1);
+    var admissions = org.mockito.Mockito.spy(fixture.initialAdmissionRepository);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              lockAttempted.countDown();
+              return call.callRealMethod();
+            })
+        .when(admissions)
+        .lockExactCurrentOpenSnapshot(any());
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            references,
+            fixture.transactions,
+            mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions);
+    // This is the actual guard hidden by the old whole-route mock.
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+                            NAMESPACE, TENANT, current.realmId())))
+        .isInstanceOf(IllegalStateException.class);
+    try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+      var retirement =
+          new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<Boolean>>();
+      var recovery =
+          new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();
+      fixture.transactions.executeWithoutResult(
+          status -> {
+            fixture.dsl.fetchSingle(
+                "SELECT id FROM gameplay_admission_pointer WHERE target_namespace = ? "
+                    + "AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE",
+                NAMESPACE,
+                TENANT,
+                current.realmId());
+            retirement.set(executor.submit(() -> owner.retireTarget(request)));
+            try {
+              assertThat(lockAttempted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+              recovery.set(
+                  executor.submit(
+                      () -> fixture.transactions.execute(ignored -> references.begin(request))));
+              assertThat(retirement.get().isDone()).isFalse();
+              assertThat(recovery.get().isDone()).isFalse();
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(interrupted);
+            }
+          });
+      // The exact current pointer has not superseded this original target, so it cannot retire.
+      assertThat(retirement.get().get(5L, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+      assertThatThrownBy(() -> recovery.get().get(5L, java.util.concurrent.TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage("CANONICAL_ROSTER_ORIGINAL_REPLAY_WINDOW_CLOSED");
+    }
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT original_request, xmin::text FROM game_session_canonical_roster_selection")
+                .formatJSON())
+        .isEqualTo(retained);
+    assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);
+    assertThat(references.read(request).getState())
+        .isEqualTo(
+            net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED);
+  }
+
+  @Test
   void freshHumanReservationDeniesBeforeEffectsAndRetainedPendingCannotCommit() throws Exception {
     Fixture fixture = fixture("1005");
     PredecessorAdmission predecessor = preparePre1006Admission(fixture);

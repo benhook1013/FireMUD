@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
@@ -172,6 +173,14 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     verifyNoInteractions(channelFactory);
     try {
       client.init();
+      Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+      stubField.setAccessible(true);
+      var installed =
+          (CanonicalGameplayRosterOwnerReadServiceGrpc
+                  .CanonicalGameplayRosterOwnerReadServiceBlockingStub)
+              stubField.get(client);
+      assertThat(installed.getCallOptions().getCredentials())
+          .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
       verify(channelFactory)
           .buildChannel(
               eq("game-session-service:6565"),

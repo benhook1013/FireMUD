@@ -29,12 +29,64 @@ public final class CanonicalGameplayRosterOwnerReadGrpcAdapter
         .CanonicalGameplayRosterOwnerReadServiceImplBase {
   private final ObjectProvider<CanonicalPublishedPlayerRouteReadService> sourceReaderProvider;
   private final CanonicalGameplayRosterOwnerReadWorkloadGuard workloadGuard;
+  private final ObjectProvider<
+          net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+      referenceOwnerProvider;
 
   public CanonicalGameplayRosterOwnerReadGrpcAdapter(
       ObjectProvider<CanonicalPublishedPlayerRouteReadService> sourceReaderProvider,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(sourceReaderProvider, workloadNamespace, null);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public CanonicalGameplayRosterOwnerReadGrpcAdapter(
+      ObjectProvider<CanonicalPublishedPlayerRouteReadService> sourceReaderProvider,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace,
+      ObjectProvider<
+              net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+          referenceOwnerProvider) {
     this.sourceReaderProvider = sourceReaderProvider;
     this.workloadGuard = new CanonicalGameplayRosterOwnerReadWorkloadGuard(workloadNamespace);
+    this.referenceOwnerProvider = referenceOwnerProvider;
+  }
+
+  @Override
+  public void getCanonicalGameplayRosterReference(
+      net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request,
+      StreamObserver<
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse>
+          observer) {
+    try {
+      workloadGuard.requireEntityReferenceOwnerReadCaller();
+      net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
+          request);
+      workloadGuard.requireConfiguredTargetNamespace(request.getTargetNamespace());
+      var owner = referenceOwnerProvider == null ? null : referenceOwnerProvider.getIfAvailable();
+      if (owner == null) {
+        throw new SourceUnavailableException();
+      }
+      var result = owner.read(request);
+      observer.onNext(
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+              .requireResponse(request, result));
+      observer.onCompleted();
+    } catch (AdminAuthorizationException denied) {
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Original roster selection owner read is not authorized")
+              .asRuntimeException());
+    } catch (IllegalArgumentException invalid) {
+      observer.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Original roster selection request is invalid")
+              .asRuntimeException());
+    } catch (RuntimeException unavailable) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Original roster selection owner is unavailable")
+              .asRuntimeException());
+    }
   }
 
   @Override

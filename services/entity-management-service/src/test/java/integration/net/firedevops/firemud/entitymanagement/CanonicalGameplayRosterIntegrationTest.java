@@ -69,6 +69,7 @@ class CanonicalGameplayRosterIntegrationTest {
 
   @Autowired private CharacterRepository characterRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private org.jooq.DSLContext dsl;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -83,6 +84,352 @@ class CanonicalGameplayRosterIntegrationTest {
     tenantUuid = UUID.randomUUID();
     realmUuid = UUID.randomUUID();
     namespaceUuid = UUID.randomUUID();
+  }
+
+  @Test
+  void originalSelectionBindsAtomicallyAndReplaysItsExactHistoricalSnapshot() {
+    var target = target(namespaceUuid, UUID.randomUUID());
+    UUID actor = createPersistedActor(accountUuid, target, 49L, "Original Actor");
+    UUID operation = UUID.randomUUID();
+    UUID session = UUID.randomUUID();
+    var request =
+        new CanonicalGameplayRosterReadRequest(
+            operation,
+            accountUuid,
+            target,
+            new CanonicalGameplayRosterExecutionContext(
+                accountUuid,
+                target.tenantUuid(),
+                target.playableStateNamespaceId(),
+                target.gameInstanceUuid(),
+                null,
+                session,
+                target.realmUuid(),
+                operation,
+                target.playableStateScope()));
+    UUID localAdmission = characterRepository.reserveOriginalRosterAdmission(request);
+    var sourceRequest =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            operation, accountUuid, session, "gameplay", target.toWire());
+    var source =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            sourceRequest,
+            1L,
+            java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+            null);
+    var evidence =
+        new CanonicalGameplayRosterOwnerEvidence(operation, accountUuid, target, Instant.now());
+    var actorBefore =
+        jdbcTemplate.queryForMap(
+            "SELECT to_jsonb(c)::text AS bytes, xmin::text AS xmin FROM characters c WHERE character_uuid = ?",
+            actor);
+    var assignmentsBefore =
+        jdbcTemplate.queryForList(
+            "SELECT to_jsonb(a)::text AS bytes, xmin::text AS xmin FROM entity_preseeded_actor_assignment_operations a ORDER BY assignment_uuid");
+    var original =
+        characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+            request, evidence, source, localAdmission);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                Long.class,
+                operation))
+        .isEqualTo(1L);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT reference_kind FROM entity_canonical_roster_retention_references WHERE reference_uuid = ?",
+                String.class,
+                operation))
+        .isEqualTo("ORIGINAL_SELECTION");
+    assertThat(
+            jdbcTemplate.queryForMap(
+                "SELECT to_jsonb(c)::text AS bytes, xmin::text AS xmin FROM characters c WHERE character_uuid = ?",
+                actor))
+        .isEqualTo(actorBefore);
+    assertThat(
+            jdbcTemplate.queryForList(
+                "SELECT to_jsonb(a)::text AS bytes, xmin::text AS xmin FROM entity_preseeded_actor_assignment_operations a ORDER BY assignment_uuid"))
+        .isEqualTo(assignmentsBefore);
+    jdbcTemplate.update(
+        "UPDATE characters SET name = ? WHERE character_uuid = ?", "Later Name", actor);
+    var recorded =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            sourceRequest,
+            1L,
+            java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+            original.toWire());
+    assertThat(
+            characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+                request, evidence, recorded, localAdmission))
+        .isEqualTo(original);
+    assertThat(original.actors())
+        .containsExactly(new CanonicalGameplayRosterActor(actor, "Original Actor"));
+    var changedSource =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            sourceRequest.toBuilder().setSessionUuid(UUID.randomUUID().toString()).build(),
+            1L,
+            java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+            null);
+    assertThatThrownBy(
+            () ->
+                characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+                    request, evidence, changedSource, localAdmission))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void originalSelectionReferenceAndNewSnapshotRollBackTogether() {
+    var target = target(namespaceUuid, UUID.randomUUID());
+    createPersistedActor(accountUuid, target, 50L, "Rollback Actor");
+    UUID operation = UUID.randomUUID();
+    UUID session = UUID.randomUUID();
+    var request =
+        new CanonicalGameplayRosterReadRequest(
+            operation,
+            accountUuid,
+            target,
+            new CanonicalGameplayRosterExecutionContext(
+                accountUuid,
+                target.tenantUuid(),
+                target.playableStateNamespaceId(),
+                target.gameInstanceUuid(),
+                null,
+                session,
+                target.realmUuid(),
+                operation,
+                target.playableStateScope()));
+    UUID localAdmission = characterRepository.reserveOriginalRosterAdmission(request);
+    var sourceRequest =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            operation, accountUuid, session, "gameplay", target.toWire());
+    var source =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            sourceRequest,
+            1L,
+            java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+            null);
+    Long snapshotsBefore =
+        jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots", Long.class);
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(transactionManager)
+                    .executeWithoutResult(
+                        ignored -> {
+                          characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+                              request,
+                              new CanonicalGameplayRosterOwnerEvidence(
+                                  operation, accountUuid, target, Instant.now()),
+                              source,
+                              localAdmission);
+                          throw new IllegalStateException("controlled original bind rollback");
+                        }))
+        .hasMessage("controlled original bind rollback");
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots", Long.class))
+        .isEqualTo(snapshotsBefore);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                Long.class,
+                operation))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_roster_retention_references WHERE reference_uuid = ?",
+                Long.class,
+                operation))
+        .isZero();
+  }
+
+  @Test
+  void exactOwnerRetirementHoldsEpochDisposalRollbackAndDelayedDuplicateRemainCoupled()
+      throws Exception {
+    var target = target(namespaceUuid, UUID.randomUUID());
+    UUID actor = createPersistedActor(accountUuid, target, 59L, "Retained Actor");
+    UUID operation = UUID.randomUUID();
+    UUID session = UUID.randomUUID();
+    var request =
+        new CanonicalGameplayRosterReadRequest(
+            operation,
+            accountUuid,
+            target,
+            new CanonicalGameplayRosterExecutionContext(
+                accountUuid,
+                target.tenantUuid(),
+                target.playableStateNamespaceId(),
+                target.gameInstanceUuid(),
+                null,
+                session,
+                target.realmUuid(),
+                operation,
+                target.playableStateScope()));
+    UUID admission = characterRepository.reserveOriginalRosterAdmission(request);
+    var ownerRequest =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            operation, accountUuid, session, "gameplay", target.toWire());
+    UUID targetFence = UUID.randomUUID();
+    var reserved =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            ownerRequest, 1L, targetFence, null);
+    var evidence =
+        new CanonicalGameplayRosterOwnerEvidence(operation, accountUuid, target, Instant.now());
+    var snapshot =
+        characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+            request, evidence, reserved, admission);
+    var binding =
+        new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionBinding(
+            accountUuid,
+            new CanonicalGameplayRosterSnapshotReference(
+                snapshot.snapshotUuid(), snapshot.snapshotDigest()),
+            target);
+    var repository =
+        new net.firedevops.firemud.entitymanagement.repository
+            .CanonicalGameplayRosterRetentionRepository(dsl);
+    var transactions = new TransactionTemplate(transactionManager);
+    var policy =
+        new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionPolicy(
+            java.time.Duration.ofMillis(1),
+            java.time.Duration.ofMillis(1),
+            java.time.Duration.ofMillis(1),
+            java.time.Duration.ofSeconds(1),
+            8);
+    UUID recovery = UUID.randomUUID();
+    UUID hold = UUID.randomUUID();
+    transactions.executeWithoutResult(
+        ignored -> {
+          repository.acquire(
+              binding,
+              UUID.randomUUID(),
+              recovery,
+              net.firedevops.firemud.entitymanagement.repository
+                  .CanonicalGameplayRosterRetentionRepository.ReferenceKind.RECOVERY);
+          repository.acquire(
+              binding,
+              UUID.randomUUID(),
+              hold,
+              net.firedevops.firemud.entitymanagement.repository
+                  .CanonicalGameplayRosterRetentionRepository.ReferenceKind.HOLD);
+        });
+    var proof =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+                    ownerRequest, 1L, targetFence, snapshot.toWire())
+                .toBuilder()
+                .setSelectionInput(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                        .newBuilder()
+                        .setSchemaVersion(1)
+                        .setSelector("1"))
+                .setTerminalOutcome("DENIED")
+                .setState(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+                .setRetirementUuid(UUID.randomUUID().toString())
+                .setSupersedingPointerDigest("f".repeat(64))
+                .setSupersedingPointerVersion(target.pointerVersion() + 1L)
+                .setSupersedingCatalogRevision(target.catalogRevision() + 1L)
+                .setSupersedingWorldEpoch(target.activeWorldEpoch() + 1L)
+                .build());
+    var protectedCandidate = retentionCandidate(snapshot, ownerRequest);
+    assertThat(
+            transactions.<Boolean>execute(
+                ignored -> repository.observeRetirement(protectedCandidate, proof, policy)))
+        .isTrue();
+    var retired = retentionCandidate(snapshot, ownerRequest);
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(retired))).isFalse();
+    transactions.executeWithoutResult(
+        ignored -> {
+          assertThat(repository.protection(binding).liveReferences()).isEqualTo(1L);
+          assertThat(repository.protection(binding).holds()).isEqualTo(1L);
+          repository.release(binding, UUID.randomUUID(), recovery);
+          repository.release(binding, UUID.randomUUID(), hold);
+        });
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(retired))).isFalse();
+    Thread.sleep(5L);
+    var ready = retentionCandidate(snapshot, ownerRequest);
+    var actorBefore =
+        jdbcTemplate.queryForMap(
+            "SELECT to_jsonb(c)::text AS bytes, xmin::text AS xmin FROM characters c WHERE character_uuid = ?",
+            actor);
+    var assignmentsBefore =
+        jdbcTemplate.queryForList(
+            "SELECT to_jsonb(a)::text AS bytes, xmin::text AS xmin FROM entity_preseeded_actor_assignment_operations a ORDER BY assignment_uuid");
+    assertThatThrownBy(
+            () ->
+                transactions.executeWithoutResult(
+                    ignored -> {
+                      assertThat(repository.dispose(ready)).isTrue();
+                      throw new IllegalStateException("controlled disposal rollback");
+                    }))
+        .hasMessage("controlled disposal rollback");
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                Long.class,
+                snapshot.snapshotUuid()))
+        .isEqualTo(1L);
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(ready))).isTrue();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                Long.class,
+                snapshot.snapshotUuid()))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForMap(
+                "SELECT to_jsonb(c)::text AS bytes, xmin::text AS xmin FROM characters c WHERE character_uuid = ?",
+                actor))
+        .isEqualTo(actorBefore);
+    assertThat(
+            jdbcTemplate.queryForList(
+                "SELECT to_jsonb(a)::text AS bytes, xmin::text AS xmin FROM entity_preseeded_actor_assignment_operations a ORDER BY assignment_uuid"))
+        .isEqualTo(assignmentsBefore);
+    assertThatThrownBy(
+            () ->
+                characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+                    request, evidence, reserved, admission))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+    Thread.sleep(5L);
+    transactions.executeWithoutResult(ignored -> repository.purgeDisposedTombstones(8));
+    UUID newAdmission = characterRepository.reserveOriginalRosterAdmission(request);
+    assertThat(newAdmission).isNotEqualTo(admission);
+    assertThatThrownBy(
+            () ->
+                characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+                    request, evidence, reserved, admission))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                    .requireDereference(proof))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  private net.firedevops.firemud.entitymanagement.repository
+          .CanonicalGameplayRosterRetentionRepository.Candidate
+      retentionCandidate(
+          CanonicalGameplayRosterSnapshot snapshot,
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+              ownerRequest) {
+    var row =
+        jdbcTemplate.queryForMap(
+            "SELECT local_epoch, lifecycle_state, owner_retirement_proof_digest FROM entity_canonical_roster_retention_lifecycle WHERE snapshot_uuid = ?",
+            snapshot.snapshotUuid());
+    return new net.firedevops.firemud.entitymanagement.repository
+        .CanonicalGameplayRosterRetentionRepository.Candidate(
+        new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionBinding(
+            snapshot.canonicalAccountUuid(),
+            new CanonicalGameplayRosterSnapshotReference(
+                snapshot.snapshotUuid(), snapshot.snapshotDigest()),
+            snapshot.target()),
+        ownerRequest,
+        ((Number) row.get("local_epoch")).longValue(),
+        (String) row.get("lifecycle_state"),
+        (String) row.get("owner_retirement_proof_digest"));
   }
 
   @Test

@@ -775,13 +775,21 @@ class CanonicalGameplayRosterClientTest {
     assertThatThrownBy(
             () ->
                 new CanonicalGameplayRosterClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, NAMESPACE))
+                    new ServiceEndpointsProperties(),
+                    plaintext,
+                    factory,
+                    NAMESPACE,
+                    referenceOwner()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
     assertThatThrownBy(
             () ->
                 new CanonicalGameplayRosterClient(
-                    new ServiceEndpointsProperties(), mtlsProperties(), factory, "invalid.ns"))
+                    new ServiceEndpointsProperties(),
+                    mtlsProperties(),
+                    factory,
+                    "invalid.ns",
+                    referenceOwner()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(factory);
@@ -1033,7 +1041,7 @@ class CanonicalGameplayRosterClientTest {
 
   private static CanonicalGameplayRosterClient newClientWithoutStub(GrpcChannelFactory factory) {
     return new CanonicalGameplayRosterClient(
-        new ServiceEndpointsProperties(), mtlsProperties(), factory, NAMESPACE);
+        new ServiceEndpointsProperties(), mtlsProperties(), factory, NAMESPACE, referenceOwner());
   }
 
   private static CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub
@@ -1042,6 +1050,61 @@ class CanonicalGameplayRosterClientTest {
         mock(CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     return stub;
+  }
+
+  private static net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+      referenceOwner() {
+    var owner =
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    when(owner.begin(any()))
+        .thenAnswer(
+            call ->
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                    .response(
+                        call.getArgument(0),
+                        1L,
+                        java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                        null));
+    when(owner.read(any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              var receipt =
+                  rosterResponse(
+                      CanonicalGameplayRosterRequest.newBuilder()
+                          .setExpectedTarget(
+                              net.firedevops.firemud.common.world
+                                  .CanonicalGameplayRosterReferenceEvidence.target(request))
+                          .build(),
+                      "Pilot One");
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .response(
+                      request,
+                      1L,
+                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                      receipt);
+            });
+    when(owner.selectOriginal(any(), any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              UUID selectedCharacter = call.getArgument(1);
+              var original = owner.read(request);
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .requireResponse(
+                      request,
+                      original.toBuilder()
+                          .setSelectionInput(
+                              net.firedevops.firemud.gamesession.v1
+                                  .CanonicalGameplayRosterSelectionInput.newBuilder()
+                                  .setSchemaVersion(1))
+                          .setSelectedCharacterUuid(selectedCharacter.toString())
+                          .build());
+            });
+    return owner;
   }
 
   private static CommonGrpcClientProperties mtlsProperties() {

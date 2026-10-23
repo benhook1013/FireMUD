@@ -15,6 +15,35 @@ public interface CanonicalGameplayRosterOwnerEvidencePort {
   CanonicalGameplayRosterOwnerEvidence resolveCurrentTarget(
       CanonicalGameplayRosterReadRequest request);
 
+  /** Missing original operations are unavailable, never evidence that references were released. */
+  default net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+      readOriginalSelection(CanonicalGameplayRosterReadRequest request) {
+    throw new OwnerEvidenceUnavailableException();
+  }
+
+  static net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+      requireOriginalSelection(
+          CanonicalGameplayRosterReadRequest request,
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+              original) {
+    if (original == null || !original.hasRequest()) {
+      throw new OwnerEvidenceUnavailableException();
+    }
+    var expected =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.playerExecutionContext().sessionUuid(),
+            original.getRequest().getTargetNamespace(),
+            request.expectedTarget().toWire());
+    var verified =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+            .requireResponse(expected, original);
+    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireDereference(
+        verified);
+    return verified;
+  }
+
   final class OwnerEvidenceUnavailableException extends IllegalStateException {
     public OwnerEvidenceUnavailableException() {
       super("CANONICAL_GAMEPLAY_ROSTER_OWNER_EVIDENCE_UNAVAILABLE");

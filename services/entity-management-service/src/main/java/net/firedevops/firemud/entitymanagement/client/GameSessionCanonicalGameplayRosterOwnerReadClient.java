@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
@@ -69,8 +70,37 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
           .CanonicalGameplayRosterOwnerReadServiceBlockingStub
       buildStub(ManagedChannel channel) {
     return CanonicalGameplayRosterOwnerReadServiceGrpc.newBlockingStub(channel)
+        .withCallCredentials(
+            new GrpcServerPeerIdentityCallCredentials(
+                "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service"))
         .withInterceptors(serverPeerIdentityInterceptor)
         .withCompression("gzip");
+  }
+
+  public net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+      getCanonicalGameplayRosterReference(
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+              request) {
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || org.springframework.transaction.support.TransactionSynchronizationManager
+            .isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Original roster owner transport requires no ambient transaction");
+    }
+    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
+        request);
+    if (!workloadNamespace.equals(request.getTargetNamespace())) {
+      throw new IllegalArgumentException("Original roster selection belongs to another namespace");
+    }
+    var current =
+        requireInitializedStub("Game Session original roster owner client is not initialized");
+    var response =
+        current
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .getCanonicalGameplayRosterReference(request);
+    return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+        .requireResponse(request, response);
   }
 
   /**
