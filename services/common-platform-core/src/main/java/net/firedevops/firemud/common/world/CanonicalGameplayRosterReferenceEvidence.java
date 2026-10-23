@@ -198,6 +198,9 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       default -> throw new IllegalArgumentException("Unknown original selection state");
     }
     uuid(response.getTargetFenceUuid());
+    if (!response.getRecoveryUuid().isEmpty()) {
+      uuid(response.getRecoveryUuid());
+    }
     if (!response.getTerminalOutcome().isEmpty()
         && !java.util.Set.of("MENU", "SELECTED", "DENIED")
             .contains(response.getTerminalOutcome())) {
@@ -279,10 +282,14 @@ public final class CanonicalGameplayRosterReferenceEvidence {
 
   public static void requireDereference(GetCanonicalGameplayRosterReferenceResponse response) {
     requireResponse(response.getRequest(), response);
-    if (response.getState()
-            != CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED
-        && response.getState()
-            != CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED) {
+    if (!response.getRecoveryUuid().isEmpty()
+        || "DENIED".equals(response.getTerminalOutcome())
+        || (response.getState()
+                != CanonicalGameplayRosterReferenceState
+                    .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED
+            && response.getState()
+                != CanonicalGameplayRosterReferenceState
+                    .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED)) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED");
     }
   }

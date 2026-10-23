@@ -24,6 +24,7 @@ public final class CanonicalGameplayRosterRetentionService {
   private final AtomicLong oldestBlocking = new AtomicLong();
   private final AtomicLong cleanupLag = new AtomicLong();
   private UUID cursor;
+  private UUID closedAdmissionCursor;
 
   public CanonicalGameplayRosterRetentionService(
       CanonicalGameplayRosterRetentionRepository repository,
@@ -86,6 +87,33 @@ public final class CanonicalGameplayRosterRetentionService {
         metrics.counter("firemud.canonical.roster.cleanup", "result", "protected").increment();
       }
     }
+    UUID closedAfter = closedAdmissionCursor;
+    var closures =
+        Objects.requireNonNull(
+            transactions.execute(
+                ignored -> repository.closedAdmissionCandidates(closedAfter, policy.batchSize())));
+    if (closures.isEmpty()) closedAdmissionCursor = null;
+    for (var closure : closures) {
+      closedAdmissionCursor = closure.operationUuid();
+      try {
+        var owner =
+            ownerClient.getCanonicalGameplayRosterReference(
+                closure.response().getRequest().getOriginalSelection());
+        boolean removed =
+            Boolean.TRUE.equals(
+                transactions.execute(ignored -> repository.purgeClosedAdmission(closure, owner)));
+        metrics
+            .counter(
+                "firemud.canonical.roster.cleanup",
+                "result",
+                removed ? "admission_purged" : "protected")
+            .increment();
+      } catch (RuntimeException protectedOrUnavailable) {
+        metrics.counter("firemud.canonical.roster.cleanup", "result", "protected").increment();
+      }
+    }
+    transactions.executeWithoutResult(
+        ignored -> repository.purgeOrphanOpenAdmissions(policy, policy.batchSize()));
     transactions.executeWithoutResult(
         ignored -> repository.purgeDisposedTombstones(policy.batchSize()));
     var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));

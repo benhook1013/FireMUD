@@ -17,18 +17,23 @@ public final class CanonicalGameplayRosterReferenceOwner {
   private final CanonicalPublishedPlayerRouteReadService sourceReader;
   private final CanonicalPlayerRouteReadService routeReader;
   private final CanonicalInitialAdmissionRepository admissionRepository;
+  private final net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+      recoveryClient;
 
   public CanonicalGameplayRosterReferenceOwner(
       CanonicalGameplayRosterReferenceRepository repository,
       TransactionOperations transactions,
       CanonicalPublishedPlayerRouteReadService sourceReader,
       CanonicalPlayerRouteReadService routeReader,
-      CanonicalInitialAdmissionRepository admissionRepository) {
+      CanonicalInitialAdmissionRepository admissionRepository,
+      net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+          recoveryClient) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.transactions = Objects.requireNonNull(transactions, "transactions");
     this.sourceReader = Objects.requireNonNull(sourceReader, "sourceReader");
     this.routeReader = Objects.requireNonNull(routeReader, "routeReader");
     this.admissionRepository = Objects.requireNonNull(admissionRepository, "admissionRepository");
+    this.recoveryClient = Objects.requireNonNull(recoveryClient, "recoveryClient");
   }
 
   public GetCanonicalGameplayRosterReferenceResponse begin(
@@ -118,6 +123,22 @@ public final class CanonicalGameplayRosterReferenceOwner {
             java.util.UUID.fromString(target.getTenantUuid()),
             current.realmId());
     requireExactCurrentSnapshot(current, qualified);
+    var recoveries =
+        Objects.requireNonNull(
+            transactions.execute(
+                ignored -> {
+                  repository.lockActiveTarget(request);
+                  admissionRepository.lockExactCurrentOpenSnapshot(qualified);
+                  return repository.beginRecoveries(request, current);
+                }));
+    for (var recovery : recoveries) {
+      try {
+        var verified = recoveryClient.read(recovery);
+        transactions.executeWithoutResult(ignored -> repository.finishRecovery(verified));
+      } catch (RuntimeException unavailableOrConflicting) {
+        // The durable recovery marker remains protected for an exact later retry.
+      }
+    }
     return Boolean.TRUE.equals(
         transactions.execute(
             ignored -> {

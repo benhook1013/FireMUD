@@ -229,6 +229,60 @@ class CanonicalGameplayRosterRetentionServiceTest {
   }
 
   @Test
+  void closedAdmissionsUseIndependentOwnerReadsOutsideSqlAndABoundedSeparateCursor() {
+    var original = candidate(1, "PROTECTED").ownerRequest();
+    var request =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(new UUID(4, 1).toString())
+            .build();
+    var response =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence.response(
+            request, new UUID(4, 2), 1, new UUID(3, 1), null);
+    var closure =
+        new CanonicalGameplayRosterRetentionRepository.ClosedAdmissionCandidate(
+            UUID.fromString(original.getOperationUuid()), new UUID(4, 2), response);
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.response(original, 1, new UUID(3, 1), null)
+            .toBuilder()
+            .setRecoveryUuid(request.getRecoveryUuid())
+            .build();
+    when(repository.candidates(null, 2)).thenReturn(List.of());
+    when(repository.closedAdmissionCandidates(null, 2)).thenReturn(List.of(closure));
+    when(repository.closedAdmissionCandidates(closure.operationUuid(), 2)).thenReturn(List.of());
+    when(ownerClient.getCanonicalGameplayRosterReference(original))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return owner;
+            });
+    when(repository.purgeClosedAdmission(closure, owner))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return false;
+            });
+    when(repository.purgeOrphanOpenAdmissions(policy, 2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return 0;
+            });
+    when(repository.health()).thenReturn(new Health(0, 0));
+    service.sweep();
+    service.sweep();
+    verify(repository).closedAdmissionCandidates(null, 2);
+    verify(repository).closedAdmissionCandidates(closure.operationUuid(), 2);
+    verify(repository).purgeClosedAdmission(closure, owner);
+    verify(repository, times(2)).purgeOrphanOpenAdmissions(policy, 2);
+    verify(repository, never()).observeRetirement(any(), any(), any());
+    verify(repository, never()).dispose(any());
+    assertThat(outcomes("protected")).isEqualTo(1);
+  }
+
+  @Test
   void refusesBothActualAndSynchronizationOnlyAmbientTransactionsBeforeAnyWork() {
     try {
       TransactionSynchronizationManager.setActualTransactionActive(true);

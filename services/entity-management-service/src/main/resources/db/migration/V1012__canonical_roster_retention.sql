@@ -62,13 +62,41 @@ CREATE TABLE entity_canonical_roster_admissions (
     operation_uuid UUID PRIMARY KEY,
     admission_uuid UUID NOT NULL UNIQUE,
     request_binding BYTEA NOT NULL CHECK (octet_length(request_binding) BETWEEN 1 AND 4096),
-    admission_state VARCHAR(16) NOT NULL DEFAULT 'OPEN' CHECK (admission_state IN ('OPEN', 'DISPOSED')),
+    admission_state VARCHAR(16) NOT NULL DEFAULT 'OPEN' CHECK (admission_state IN ('OPEN', 'CLOSED', 'EXPIRED', 'DISPOSED')),
     snapshot_uuid UUID,
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     disposed_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ,
     minimum_retention_millis BIGINT,
+    recovery_uuid UUID,
+    recovery_request BYTEA CHECK (octet_length(recovery_request) BETWEEN 1 AND 8192),
+    recovery_response BYTEA CHECK (octet_length(recovery_response) BETWEEN 1 AND 131072),
+    recovery_owner_request BYTEA CHECK (octet_length(recovery_owner_request) BETWEEN 1 AND 4096),
+    recovery_owner_fence BIGINT CHECK (recovery_owner_fence > 0),
+    recovery_target_fence_uuid UUID,
+    recovery_acknowledgement BYTEA CHECK (octet_length(recovery_acknowledgement) BETWEEN 1 AND 131072),
+    recovery_acknowledgement_state VARCHAR(16) CHECK (recovery_acknowledgement_state IN ('DENIED', 'RETIRED')),
+    recovery_acknowledgement_uuid UUID,
+    recovery_acknowledgement_owner_fence BIGINT,
+    recovery_acknowledgement_target_fence_uuid UUID,
+    CHECK ((recovery_uuid IS NULL AND recovery_request IS NULL AND recovery_response IS NULL
+        AND recovery_owner_request IS NULL AND recovery_owner_fence IS NULL AND recovery_target_fence_uuid IS NULL AND closed_at IS NULL)
+        OR (recovery_uuid IS NOT NULL AND recovery_uuid <> '00000000-0000-0000-0000-000000000000'::UUID
+        AND recovery_request IS NOT NULL AND recovery_response IS NOT NULL AND recovery_owner_request IS NOT NULL
+        AND recovery_owner_fence IS NOT NULL AND recovery_target_fence_uuid IS NOT NULL AND closed_at IS NOT NULL
+        AND admission_state IN ('CLOSED', 'DISPOSED'))),
+    CHECK ((recovery_acknowledgement IS NULL AND recovery_acknowledgement_state IS NULL
+        AND recovery_acknowledgement_uuid IS NULL AND recovery_acknowledgement_owner_fence IS NULL
+        AND recovery_acknowledgement_target_fence_uuid IS NULL)
+        OR (recovery_acknowledgement IS NOT NULL AND recovery_acknowledgement_state IS NOT NULL
+        AND recovery_acknowledgement_uuid IS NOT NULL AND recovery_acknowledgement_owner_fence IS NOT NULL
+        AND recovery_acknowledgement_target_fence_uuid IS NOT NULL AND admission_state = 'CLOSED' AND snapshot_uuid IS NULL
+        AND recovery_acknowledgement_uuid = recovery_uuid AND recovery_acknowledgement_owner_fence = recovery_owner_fence
+        AND recovery_acknowledgement_target_fence_uuid = recovery_target_fence_uuid)),
     CHECK ((admission_state = 'OPEN' AND disposed_at IS NULL AND minimum_retention_millis IS NULL)
-        OR (admission_state = 'DISPOSED' AND snapshot_uuid IS NOT NULL AND disposed_at IS NOT NULL AND minimum_retention_millis > 0))
+        OR (admission_state = 'CLOSED' AND recovery_uuid IS NOT NULL AND closed_at IS NOT NULL AND disposed_at IS NULL AND minimum_retention_millis IS NOT NULL AND minimum_retention_millis > 0)
+        OR (admission_state = 'EXPIRED' AND snapshot_uuid IS NULL AND disposed_at IS NULL AND closed_at IS NULL AND minimum_retention_millis IS NOT NULL AND minimum_retention_millis > 0)
+        OR (admission_state = 'DISPOSED' AND snapshot_uuid IS NOT NULL AND disposed_at IS NOT NULL AND minimum_retention_millis IS NOT NULL AND minimum_retention_millis > 0))
 );
 
 CREATE TABLE entity_canonical_roster_disposal_receipts (
@@ -302,23 +330,60 @@ $$;
 CREATE FUNCTION guard_entity_roster_admission()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.admission_state <> 'OPEN' THEN
+            RAISE EXCEPTION 'roster admission must originate open' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'DELETE' THEN
         IF OLD.admission_state = 'DISPOSED'
            AND OLD.disposed_at + OLD.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() THEN RETURN OLD; END IF;
+        IF OLD.snapshot_uuid IS NULL AND NOT EXISTS (
+            SELECT 1 FROM entity_canonical_roster_original_selections o WHERE o.operation_uuid = OLD.operation_uuid) THEN
+            IF OLD.admission_state = 'EXPIRED'
+               AND OLD.recorded_at + OLD.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() THEN RETURN OLD; END IF;
+            IF OLD.admission_state = 'CLOSED' AND OLD.recovery_acknowledgement IS NOT NULL
+               AND OLD.recovery_acknowledgement_state IN ('DENIED', 'RETIRED')
+               AND OLD.recovery_acknowledgement_uuid = OLD.recovery_uuid
+               AND OLD.recovery_acknowledgement_owner_fence = OLD.recovery_owner_fence
+               AND OLD.recovery_acknowledgement_target_fence_uuid = OLD.recovery_target_fence_uuid
+               AND OLD.closed_at + OLD.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() THEN RETURN OLD; END IF;
+        END IF;
         RAISE EXCEPTION 'roster admission remains protected' USING ERRCODE = '23514';
     END IF;
     IF ROW(NEW.operation_uuid, NEW.admission_uuid, NEW.request_binding, NEW.recorded_at)
         IS DISTINCT FROM ROW(OLD.operation_uuid, OLD.admission_uuid, OLD.request_binding, OLD.recorded_at)
-        OR OLD.admission_state = 'DISPOSED'
+        OR OLD.admission_state IN ('DISPOSED', 'EXPIRED')
         OR (OLD.snapshot_uuid IS NOT NULL AND NEW.snapshot_uuid IS DISTINCT FROM OLD.snapshot_uuid)
-        OR (NEW.admission_state = 'DISPOSED' AND NOT entity_roster_disposal_authorized(NEW.snapshot_uuid)) THEN
+        OR (OLD.admission_state = 'CLOSED' AND (
+            NEW.admission_state NOT IN ('CLOSED', 'DISPOSED') OR NEW.snapshot_uuid IS DISTINCT FROM OLD.snapshot_uuid
+            OR (NEW.admission_state = 'CLOSED' AND NEW.minimum_retention_millis IS DISTINCT FROM OLD.minimum_retention_millis)
+            OR (NEW.admission_state = 'DISPOSED' AND NEW.minimum_retention_millis < OLD.minimum_retention_millis)
+            OR ROW(NEW.closed_at, NEW.recovery_uuid, NEW.recovery_request, NEW.recovery_response,
+                NEW.recovery_owner_request, NEW.recovery_owner_fence, NEW.recovery_target_fence_uuid)
+            IS DISTINCT FROM ROW(OLD.closed_at, OLD.recovery_uuid, OLD.recovery_request, OLD.recovery_response,
+                OLD.recovery_owner_request, OLD.recovery_owner_fence, OLD.recovery_target_fence_uuid)))
+        OR (OLD.recovery_acknowledgement IS NOT NULL AND ROW(NEW.recovery_acknowledgement, NEW.recovery_acknowledgement_state,
+            NEW.recovery_acknowledgement_uuid, NEW.recovery_acknowledgement_owner_fence, NEW.recovery_acknowledgement_target_fence_uuid)
+            IS DISTINCT FROM ROW(OLD.recovery_acknowledgement, OLD.recovery_acknowledgement_state,
+            OLD.recovery_acknowledgement_uuid, OLD.recovery_acknowledgement_owner_fence, OLD.recovery_acknowledgement_target_fence_uuid))
+        OR (NEW.admission_state = 'CLOSED' AND OLD.admission_state = 'OPEN' AND (
+            NEW.snapshot_uuid IS DISTINCT FROM OLD.snapshot_uuid OR NEW.closed_at IS NULL OR NEW.closed_at > clock_timestamp()))
+        OR (NEW.admission_state = 'EXPIRED' AND (OLD.admission_state <> 'OPEN' OR OLD.snapshot_uuid IS NOT NULL
+            OR NEW.snapshot_uuid IS NOT NULL OR NEW.minimum_retention_millis IS NULL OR NEW.minimum_retention_millis <= 0
+            OR OLD.recorded_at + NEW.minimum_retention_millis * interval '1 millisecond' > clock_timestamp()
+            OR EXISTS (SELECT 1 FROM entity_canonical_roster_original_selections o WHERE o.operation_uuid = OLD.operation_uuid)))
+        OR (NEW.admission_state = 'DISPOSED' AND (NOT entity_roster_disposal_authorized(NEW.snapshot_uuid)
+            OR NOT EXISTS (SELECT 1 FROM entity_canonical_roster_retention_lifecycle l
+                WHERE l.snapshot_uuid = NEW.snapshot_uuid AND NEW.minimum_retention_millis >= l.minimum_retention_millis))) THEN
         RAISE EXCEPTION 'roster admission nonce or disposal proof mismatch' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
 END;
 $$;
 CREATE TRIGGER trg_entity_roster_admission_guard
-    BEFORE UPDATE OR DELETE ON entity_canonical_roster_admissions
+    BEFORE INSERT OR UPDATE OR DELETE ON entity_canonical_roster_admissions
     FOR EACH ROW EXECUTE FUNCTION guard_entity_roster_admission();
 CREATE TRIGGER trg_entity_roster_admission_no_truncate
     BEFORE TRUNCATE ON entity_canonical_roster_admissions

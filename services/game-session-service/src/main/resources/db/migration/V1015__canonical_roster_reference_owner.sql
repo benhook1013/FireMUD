@@ -38,6 +38,12 @@ CREATE TABLE game_session_canonical_roster_selection (
     roster_read_started BOOLEAN NOT NULL DEFAULT FALSE,
     terminal_outcome VARCHAR(16) CHECK (terminal_outcome IN ('MENU', 'SELECTED', 'DENIED')),
     terminal_at TIMESTAMPTZ,
+    recovery_uuid UUID CHECK (recovery_uuid <> '00000000-0000-0000-0000-000000000000'::UUID),
+    recovery_started_at TIMESTAMPTZ,
+    recovery_receipt BYTEA CHECK (octet_length(recovery_receipt) BETWEEN 1 AND 131072),
+    CHECK ((recovery_uuid IS NULL) = (recovery_started_at IS NULL)),
+    CHECK (recovery_receipt IS NULL OR (recovery_uuid IS NOT NULL AND terminal_outcome = 'DENIED' AND terminal_at IS NOT NULL)),
+    CHECK (recovery_uuid IS NULL OR terminal_outcome IS NULL OR (terminal_outcome = 'DENIED' AND recovery_receipt IS NOT NULL)),
     CHECK ((terminal_outcome IS NULL) = (terminal_at IS NULL)),
     FOREIGN KEY (target_fence_uuid, owner_fence) REFERENCES game_session_canonical_roster_target_fences (target_fence_uuid, owner_fence),
     CHECK ((canonical_roster_receipt IS NULL) = (receipt_recorded_at IS NULL))
@@ -73,8 +79,9 @@ BEGIN
             WHERE s.target_fence_uuid = OLD.target_fence_uuid
               AND (s.terminal_at IS NULL
                   OR s.terminal_at + OLD.minimum_retention_millis * interval '1 millisecond' > clock_timestamp()
-                  OR (s.roster_read_started AND s.canonical_roster_receipt IS NULL)
-                  OR (s.selected_character_uuid IS NOT NULL AND s.canonical_selected_assignment_receipt IS NULL))) THEN
+                  OR ((s.roster_read_started AND s.canonical_roster_receipt IS NULL
+                       OR s.selected_character_uuid IS NOT NULL AND s.canonical_selected_assignment_receipt IS NULL)
+                      AND NOT (s.recovery_uuid IS NOT NULL AND s.recovery_receipt IS NOT NULL AND s.terminal_outcome = 'DENIED')))) THEN
         RAISE EXCEPTION 'roster target retirement requires closed references and owner-local horizons' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
@@ -107,10 +114,34 @@ BEGIN
         IF NEW.canonical_roster_receipt IS NOT NULL OR NEW.receipt_recorded_at IS NOT NULL
            OR NEW.selection_input IS NOT NULL OR NEW.selected_character_uuid IS NOT NULL
            OR NEW.canonical_selected_assignment_receipt IS NOT NULL OR NEW.roster_read_started
-           OR NEW.terminal_outcome IS NOT NULL THEN
+           OR NEW.terminal_outcome IS NOT NULL OR NEW.recovery_uuid IS NOT NULL
+           OR NEW.recovery_started_at IS NOT NULL OR NEW.recovery_receipt IS NOT NULL THEN
             RAISE EXCEPTION 'roster selection must reserve before owner read' USING ERRCODE = '23514';
         END IF;
         RETURN NEW;
+    END IF;
+    IF OLD.recovery_uuid IS NULL AND NEW.recovery_uuid IS NOT NULL THEN
+        IF OLD.terminal_outcome IS NOT NULL OR NOT EXISTS (
+            SELECT 1 FROM game_session_canonical_roster_target_fences f
+            WHERE f.target_fence_uuid = OLD.target_fence_uuid
+              AND OLD.recorded_at + f.replay_horizon_millis * interval '1 millisecond' <= clock_timestamp())
+            OR ROW(NEW.selection_input, NEW.selected_character_uuid, NEW.canonical_selected_assignment_receipt,
+                   NEW.roster_read_started, NEW.canonical_roster_receipt, NEW.receipt_recorded_at, NEW.terminal_outcome, NEW.terminal_at, NEW.recovery_receipt)
+                IS DISTINCT FROM ROW(OLD.selection_input, OLD.selected_character_uuid, OLD.canonical_selected_assignment_receipt,
+                   OLD.roster_read_started, OLD.canonical_roster_receipt, OLD.receipt_recorded_at, OLD.terminal_outcome, OLD.terminal_at, OLD.recovery_receipt) THEN
+            RAISE EXCEPTION 'roster recovery must fence the unchanged original after its stored replay horizon' USING ERRCODE = '23514';
+        END IF;
+    END IF;
+    IF (OLD.recovery_uuid IS NOT NULL AND (
+        ROW(NEW.recovery_uuid, NEW.recovery_started_at, NEW.selection_input, NEW.selected_character_uuid,
+            NEW.canonical_selected_assignment_receipt, NEW.roster_read_started)
+          IS DISTINCT FROM ROW(OLD.recovery_uuid, OLD.recovery_started_at, OLD.selection_input, OLD.selected_character_uuid,
+            OLD.canonical_selected_assignment_receipt, OLD.roster_read_started)
+        OR (NEW IS DISTINCT FROM OLD AND (NEW.recovery_receipt IS NULL OR NEW.terminal_outcome IS DISTINCT FROM 'DENIED'))))
+        OR (OLD.recovery_receipt IS NOT NULL AND NEW.recovery_receipt IS DISTINCT FROM OLD.recovery_receipt)
+        OR (OLD.recovery_uuid IS NULL AND NEW.recovery_uuid IS NULL
+            AND ROW(NEW.recovery_started_at, NEW.recovery_receipt) IS DISTINCT FROM ROW(OLD.recovery_started_at, OLD.recovery_receipt)) THEN
+        RAISE EXCEPTION 'roster recovery fence and positive closure cannot be replaced' USING ERRCODE = '23514';
     END IF;
     IF ROW(NEW.operation_uuid, NEW.original_request, NEW.owner_fence, NEW.recorded_at, NEW.target_fence_uuid)
         IS DISTINCT FROM ROW(OLD.operation_uuid, OLD.original_request, OLD.owner_fence, OLD.recorded_at, OLD.target_fence_uuid)

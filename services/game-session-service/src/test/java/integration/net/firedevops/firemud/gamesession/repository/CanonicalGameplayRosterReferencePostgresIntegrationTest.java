@@ -9,11 +9,16 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient.VerifiedRecovery;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -129,6 +134,45 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThatThrownBy(() -> dsl.execute("TRUNCATE game_session_canonical_roster_selection"))
         .isInstanceOf(DataAccessException.class);
     assertThat(retainedRow(request)).isEqualTo(retained);
+  }
+
+  @Test
+  void existingTargetFenceKeepsItsConfiguredHorizonsAfterPolicyChanges() throws Exception {
+    var originalPolicy = policy(50L, 20L, 25L);
+    repository = repository(originalPolicy);
+    var request = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(request);
+          repository.reserveSelectionInput(
+              request,
+              net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                  .newBuilder()
+                  .setSchemaVersion(1)
+                  .build());
+          repository.completeSelection(
+              request, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.DENIED);
+        });
+
+    Thread.sleep(80L);
+    var changedPolicy = policy(2_000L, 1_000L, 1_500L);
+    repository = repository(changedPolicy);
+
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.begin(request)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("REPLAY_WINDOW_CLOSED");
+
+    var sameTargetNewOperation =
+        request.toBuilder()
+            .setOperationUuid(UUID.randomUUID().toString())
+            .setSessionUuid(UUID.randomUUID().toString())
+            .build();
+    transaction.execute(ignored -> repository.begin(sameTargetNewOperation));
+    assertThat(fencePolicy(request)).containsExactly(50L, 25L, "ACTIVE");
+
+    var distinctTarget = request();
+    transaction.execute(ignored -> repository.begin(distinctTarget));
+    assertThat(fencePolicy(distinctTarget)).containsExactly(2_000L, 1_500L, "ACTIVE");
   }
 
   @Test
@@ -288,8 +332,14 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
                     .class),
             routeReader,
-            admissions);
-    assertThat(owner.retireTarget(request)).isFalse();
+            admissions,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+                    .class));
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(request, current)))
+        .isFalse();
     org.mockito.Mockito.when(
             admissions.readCurrentOpenSnapshotForRealm(
                 request.getTargetNamespace(), current.canonicalTenantId(), current.realmId()))
@@ -298,7 +348,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 snapshot.ownerProof(), "e".repeat(64)));
     assertThatThrownBy(() -> owner.retireTarget(request))
         .hasMessageContaining("CURRENT_SOURCE_CONFLICT");
-    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(1))
+    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.never())
         .lockExactCurrentOpenSnapshot(snapshot);
     org.mockito.Mockito.when(
             admissions.readCurrentOpenSnapshotForRealm(
@@ -526,6 +576,431 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     }
   }
 
+  @Test
+  void interruptedRosterReadRecoversExactReceiptAndFencesLateWritersBeforeFiniteRetirement()
+      throws Exception {
+    var request = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(request);
+          repository.reserveSelectionInput(request, selectionInput());
+          repository.markRosterReadStarted(request);
+        });
+    Thread.sleep(5L);
+    var recovery =
+        transaction
+            .execute(ignored -> repository.beginRecoveries(request, current(request)))
+            .getFirst();
+    var marked = repository.read(request);
+    assertThat(marked.getRecoveryUuid()).isEqualTo(recovery.getRecoveryUuid());
+    assertThat(marked.getTerminalOutcome()).isEmpty();
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(request))))
+        .containsExactly(recovery);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(request, current(request))))
+        .isFalse();
+    var originalReceipt = receipt(request);
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.record(request, originalReceipt)))
+        .hasMessageContaining("RECOVERY_FENCED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.reserveSelectionInput(request, selectionInput())))
+        .hasMessageContaining("RECOVERY_FENCED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.markRosterReadStarted(request)))
+        .hasMessageContaining("RECOVERY_FENCED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.completeSelection(
+                            request,
+                            CanonicalGameplayRosterReferenceRepository.SelectionOutcome.DENIED)))
+        .hasMessageContaining("RECOVERY_FENCED");
+    transaction.executeWithoutResult(ignored -> repository.completeUnissuedDenied(request));
+    assertThat(repository.read(request).getTerminalOutcome()).isEmpty();
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET selection_input = ? WHERE operation_uuid = ?",
+                    selectionInput().toBuilder().setSelector("1").build().toByteArray(),
+                    UUID.fromString(request.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ? WHERE operation_uuid = ?",
+                    UUID.randomUUID(),
+                    UUID.fromString(request.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    var response = recoveryResponse(recovery, originalReceipt);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.finishRecovery(
+                            verifiedRecovery(
+                                recovery,
+                                response.toBuilder()
+                                    .setTargetFenceUuid(UUID.randomUUID().toString())
+                                    .build()))))
+        .hasMessageContaining("FENCE_CONFLICT");
+    var wrongMarker = recovery.toBuilder().setRecoveryUuid(UUID.randomUUID().toString()).build();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.finishRecovery(
+                            verifiedRecovery(
+                                wrongMarker,
+                                response.toBuilder().setRequest(wrongMarker).build()))))
+        .hasMessageContaining("recovery fence differs");
+    transaction.executeWithoutResult(
+        ignored -> repository.finishRecovery(verifiedRecovery(recovery, response)));
+    assertThat(repository.read(request).getCanonicalRosterReceipt())
+        .isEqualTo(originalReceipt.toByteString());
+    assertThat(repository.read(request).getTerminalOutcome()).isEqualTo("DENIED");
+    var retained = retainedRow(request);
+    transaction.executeWithoutResult(
+        ignored -> repository.finishRecovery(verifiedRecovery(recovery, response)));
+    assertThat(retainedRow(request)).isEqualTo(retained);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.finishRecovery(
+                            verifiedRecovery(
+                                recovery,
+                                response.toBuilder()
+                                    .setAdmissionUuid(UUID.randomUUID().toString())
+                                    .build()))))
+        .hasMessageContaining("RECEIPT_CONFLICT");
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(request, current(request))))
+        .isTrue();
+    assertThat(CanonicalGameplayRosterReferenceEvidence.requireRetirement(repository.read(request)))
+        .isEqualTo(repository.read(request));
+  }
+
+  @Test
+  void frozenActorWithoutAssignmentReceiptClosesOnlyWithExactRecoveredRoster() throws Exception {
+    var request = request();
+    var actor = UUID.randomUUID();
+    var roster =
+        receipt(request).toBuilder()
+            .addActors(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor.newBuilder()
+                    .setCharacterUuid(actor.toString())
+                    .setDisplayName("Chosen")
+                    .setActorKind(
+                        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
+                            .CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
+            .build();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(request);
+          repository.reserveSelectionInput(request, selectionInput());
+          repository.markRosterReadStarted(request);
+          repository.record(request, roster);
+          repository.selectOriginal(request, actor);
+        });
+    Thread.sleep(5L);
+    var recovery =
+        transaction
+            .execute(ignored -> repository.beginRecoveries(request, current(request)))
+            .getFirst();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.selectOriginal(request, actor)))
+        .hasMessageContaining("RECOVERY_FENCED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.recordSelectedAssignment(
+                            request,
+                            net.firedevops.firemud.entitymanagement.v1
+                                .CanonicalGameplayRosterSelectedAssignmentResponse
+                                .getDefaultInstance())))
+        .hasMessageContaining("RECOVERY_FENCED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.finishRecovery(
+                            verifiedRecovery(recovery, recoveryResponse(recovery, null)))))
+        .hasMessageContaining("ROSTER_CONFLICT");
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.finishRecovery(
+                verifiedRecovery(recovery, recoveryResponse(recovery, roster))));
+    var closed = repository.read(request);
+    assertThat(closed.getSelectedCharacterUuid()).isEqualTo(actor.toString());
+    assertThat(closed.getCanonicalSelectedAssignmentReceipt()).isEmpty();
+    assertThat(closed.getTerminalOutcome()).isEqualTo("DENIED");
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(request, current(request))))
+        .isTrue();
+  }
+
+  @Test
+  void positiveNoCaptureRecoveryAllowsClosureWithoutInventingRosterOrSelection() throws Exception {
+    var request = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(request);
+          repository.markRosterReadStarted(request);
+        });
+    Thread.sleep(5L);
+    var recovery =
+        transaction
+            .execute(ignored -> repository.beginRecoveries(request, current(request)))
+            .getFirst();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.finishRecovery(
+                verifiedRecovery(recovery, recoveryResponse(recovery, null))));
+    var result = repository.read(request);
+    assertThat(result.getCanonicalRosterReceipt()).isEmpty();
+    assertThat(result.getSelectedCharacterUuid()).isEmpty();
+    assertThat(result.getTerminalOutcome()).isEqualTo("DENIED");
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(request, current(request))))
+        .isTrue();
+  }
+
+  @Test
+  void storedReplayHorizonAndExactSupersessionAreRequiredBeforeRecovery() throws Exception {
+    repository = repository(policy(300L, 200L, 200L));
+    var request = request();
+    transaction.executeWithoutResult(ignored -> repository.begin(request));
+    // Later lowered configuration must not shorten the already retained target's horizon.
+    repository = repository(policy(1L, 1L, 1L));
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(request))))
+        .isEmpty();
+    Thread.sleep(230L);
+    var oldTarget = CanonicalGameplayRosterReferenceEvidence.target(request);
+    var samePointer =
+        request.toBuilder()
+            .setCanonicalTarget(
+                oldTarget.toBuilder()
+                    .setPointerVersion(oldTarget.getPointerVersion() - 1L)
+                    .build()
+                    .toByteString())
+            .build();
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(samePointer))))
+        .isEmpty();
+    var wrongNamespace = request.toBuilder().setTargetNamespace("different").build();
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(wrongNamespace))))
+        .isEmpty();
+    var regressedCatalog =
+        request.toBuilder()
+            .setCanonicalTarget(
+                oldTarget.toBuilder()
+                    .setCatalogRevision(oldTarget.getCatalogRevision() - 2L)
+                    .build()
+                    .toByteString())
+            .build();
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(regressedCatalog))))
+        .isEmpty();
+    var regressedWorld =
+        request.toBuilder()
+            .setCanonicalTarget(
+                oldTarget.toBuilder()
+                    .setActiveWorldEpoch(oldTarget.getActiveWorldEpoch() - 2L)
+                    .build()
+                    .toByteString())
+            .build();
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(regressedWorld))))
+        .isEmpty();
+    assertThat(repository.read(request).getRecoveryUuid()).isEmpty();
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(request))))
+        .hasSize(1);
+  }
+
+  @Test
+  void ownerRetriesUnknownEntityOutsideSqlAndRetainsPositiveClosureThroughLocalMinimum()
+      throws Exception {
+    repository = repository(policy(500L, 1L, 1L));
+    var request = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(request);
+          repository.markRosterReadStarted(request);
+        });
+    Thread.sleep(5L);
+    var routes =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var current = current(request);
+    var snapshot = currentSnapshot(request);
+    org.mockito.Mockito.when(routes.readCurrentTarget(current.canonicalTenantId()))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              return current;
+            });
+    org.mockito.Mockito.when(
+            admissions.readCurrentOpenSnapshotForRealm(
+                request.getTargetNamespace(), current.canonicalTenantId(), current.realmId()))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              return snapshot;
+            });
+    org.mockito.Mockito.when(admissions.lockExactCurrentOpenSnapshot(snapshot))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isTrue();
+              return snapshot;
+            });
+    var client = org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class);
+    org.mockito.Mockito.when(client.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isSynchronizationActive())
+                  .isFalse();
+              throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+            });
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            client);
+    assertThat(owner.retireTarget(request)).isFalse();
+    var marker = repository.read(request).getRecoveryUuid();
+    assertThat(marker).isNotEmpty();
+    assertThat(repository.read(request).getTerminalOutcome()).isEmpty();
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.record(request, receipt(request))))
+        .hasMessageContaining("RECOVERY_FENCED");
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isSynchronizationActive())
+                  .isFalse();
+              CanonicalGameplayRosterRecoveryRequest retry = call.getArgument(0);
+              assertThat(retry.getRecoveryUuid()).isEqualTo(marker);
+              return verifiedRecovery(retry, recoveryResponse(retry, null));
+            })
+        .when(client)
+        .read(org.mockito.ArgumentMatchers.any());
+    assertThat(owner.retireTarget(request)).isFalse();
+    assertThat(repository.read(request).getTerminalOutcome()).isEqualTo("DENIED");
+    assertThat(repository.read(request).getRetirementUuid()).isEmpty();
+    Thread.sleep(550L);
+    assertThat(owner.retireTarget(request)).isTrue();
+    org.mockito.Mockito.verify(client, org.mockito.Mockito.times(2))
+        .read(org.mockito.ArgumentMatchers.any());
+    assertThatThrownBy(() -> transaction.execute(ignored -> owner.retireTarget(request)))
+        .hasMessageContaining("NO_AMBIENT_TRANSACTION");
+  }
+
+  @Test
+  void recoveryPageUsesConfiguredBoundAndNeverReplacesPendingRecoveryMarkers() throws Exception {
+    var request = request();
+    transaction.executeWithoutResult(
+        ignored -> {
+          for (int i = 0; i < 9; i++) {
+            repository.begin(
+                request.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build());
+          }
+        });
+    Thread.sleep(5L);
+    var page =
+        transaction.execute(ignored -> repository.beginRecoveries(request, current(request)));
+    assertThat(page).hasSize(8);
+    assertThat(
+            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
+                ignored -> repository.beginRecoveries(request, current(request))))
+        .containsExactlyElementsOf(page);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_selection WHERE recovery_uuid IS NOT NULL")
+                .get(0, Long.class))
+        .isEqualTo(8L);
+  }
+
+  private static net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+      selectionInput() {
+    return net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()
+        .setSchemaVersion(1)
+        .build();
+  }
+
+  private CanonicalGameplayRosterRecoveryResponse recoveryResponse(
+      CanonicalGameplayRosterRecoveryRequest recovery, CanonicalGameplayRosterResponse roster) {
+    var original = repository.read(recovery.getOriginalSelection());
+    return CanonicalGameplayRosterRecoveryEvidence.response(
+        recovery,
+        UUID.randomUUID(),
+        original.getOwnerFence(),
+        UUID.fromString(original.getTargetFenceUuid()),
+        roster);
+  }
+
+  /** Storage proof only: the real authenticated client capability is independently qualified. */
+  private static VerifiedRecovery verifiedRecovery(
+      CanonicalGameplayRosterRecoveryRequest request,
+      CanonicalGameplayRosterRecoveryResponse response) {
+    var verified = org.mockito.Mockito.mock(VerifiedRecovery.class);
+    org.mockito.Mockito.when(verified.request()).thenReturn(request);
+    org.mockito.Mockito.when(verified.response()).thenReturn(response);
+    return verified;
+  }
+
   private List<String> history() {
     return dsl.fetch(
             "SELECT version, script, checksum, installed_rank, success FROM flyway_schema_history ORDER BY installed_rank")
@@ -539,6 +1014,30 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
             UUID.fromString(request.getOperationUuid()))
         .intoMap()
         .toString();
+  }
+
+  private List<Object> fencePolicy(GetCanonicalGameplayRosterReferenceRequest request) {
+    byte[] binding =
+        request.toBuilder().clearOperationUuid().clearSessionUuid().build().toByteArray();
+    return dsl.fetchSingle(
+            "SELECT minimum_retention_millis, replay_horizon_millis, fence_state FROM game_session_canonical_roster_target_fences WHERE target_binding = ?",
+            binding)
+        .intoList();
+  }
+
+  private CanonicalGameplayRosterReferenceRepository repository(
+      net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy policy) {
+    return new CanonicalGameplayRosterReferenceRepository(dsl, policy);
+  }
+
+  private static net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy
+      policy(long minimumRetentionMillis, long retryHorizonMillis, long restoreHorizonMillis) {
+    return new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
+        java.time.Duration.ofMillis(minimumRetentionMillis),
+        java.time.Duration.ofMillis(retryHorizonMillis),
+        java.time.Duration.ofMillis(restoreHorizonMillis),
+        java.time.Duration.ofSeconds(1),
+        8);
   }
 
   private void migrate(String target) {
