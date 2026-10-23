@@ -336,10 +336,12 @@ public class GameSessionCanonicalRealmCatalogRepository {
       UUID realmId,
       UUID creationRequestId,
       long catalogRevision) {
-    Condition identity = exactInitialPublicProductionCondition(
-        targetNamespace, canonicalTenantId, realmId, creationRequestId, catalogRevision);
+    Condition identity =
+        exactInitialPublicProductionCondition(
+            targetNamespace, canonicalTenantId, realmId, creationRequestId, catalogRevision);
     Record record = dsl.selectFrom(CATALOG).where(identity).forUpdate().fetchOne();
-    return requireExactInitialPublicProduction(record, targetNamespace, canonicalTenantId, realmId, creationRequestId);
+    return requireExactInitialPublicProduction(
+        record, targetNamespace, canonicalTenantId, realmId, creationRequestId);
   }
 
   /** Shares immutable original-CLOSED catalog evidence while excluding catalog writers. */
@@ -350,14 +352,19 @@ public class GameSessionCanonicalRealmCatalogRepository {
       UUID realmId,
       UUID creationRequestId,
       long catalogRevision) {
-    Condition identity = exactInitialPublicProductionCondition(
-        targetNamespace, canonicalTenantId, realmId, creationRequestId, catalogRevision);
+    Condition identity =
+        exactInitialPublicProductionCondition(
+            targetNamespace, canonicalTenantId, realmId, creationRequestId, catalogRevision);
     Record record = dsl.selectFrom(CATALOG).where(identity).forShare().fetchOne();
-    return requireExactInitialPublicProduction(record, targetNamespace, canonicalTenantId, realmId, creationRequestId);
+    return requireExactInitialPublicProduction(
+        record, targetNamespace, canonicalTenantId, realmId, creationRequestId);
   }
 
   private Condition exactInitialPublicProductionCondition(
-      String targetNamespace, UUID canonicalTenantId, UUID realmId, UUID creationRequestId,
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      UUID creationRequestId,
       long catalogRevision) {
     requireWritableOwnerTransaction();
     requireReadSelector(targetNamespace, canonicalTenantId);
@@ -367,7 +374,8 @@ public class GameSessionCanonicalRealmCatalogRepository {
       throw new CatalogConflictException(
           "Initial public-production catalog revision must be exactly one");
     }
-    return TARGET_NAMESPACE.eq(targetNamespace)
+    return TARGET_NAMESPACE
+        .eq(targetNamespace)
         .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
         .and(REALM_ID.eq(realmId))
         .and(CREATION_REQUEST_ID.eq(creationRequestId))
@@ -375,7 +383,10 @@ public class GameSessionCanonicalRealmCatalogRepository {
   }
 
   private CanonicalRealmCatalogSnapshot requireExactInitialPublicProduction(
-      Record record, String targetNamespace, UUID canonicalTenantId, UUID realmId,
+      Record record,
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
       UUID creationRequestId) {
     if (record == null) {
       throw new InvalidCatalogEvidenceException(
@@ -399,20 +410,24 @@ public class GameSessionCanonicalRealmCatalogRepository {
   @Transactional(propagation = Propagation.MANDATORY)
   public CanonicalRealmCatalogSnapshot lockInitialAdmissionTarget(
       String targetNamespace, UUID canonicalTenantId, UUID realmId, long catalogRevision) {
-    Condition identity = initialAdmissionTargetCondition(
-        targetNamespace, canonicalTenantId, realmId, catalogRevision);
+    Condition identity =
+        initialAdmissionTargetCondition(
+            targetNamespace, canonicalTenantId, realmId, catalogRevision);
     Record record = dsl.selectFrom(CATALOG).where(identity).forUpdate().fetchOne();
-    return requireInitialAdmissionTarget(record, targetNamespace, canonicalTenantId, realmId, catalogRevision);
+    return requireInitialAdmissionTarget(
+        record, targetNamespace, canonicalTenantId, realmId, catalogRevision);
   }
 
   /** Shares exact current-OPEN catalog revalidation across independent account fences. */
   @Transactional(propagation = Propagation.MANDATORY)
   public CanonicalRealmCatalogSnapshot lockCurrentOpenAdmissionTargetForShare(
       String targetNamespace, UUID canonicalTenantId, UUID realmId, long catalogRevision) {
-    Condition identity = initialAdmissionTargetCondition(
-        targetNamespace, canonicalTenantId, realmId, catalogRevision);
+    Condition identity =
+        initialAdmissionTargetCondition(
+            targetNamespace, canonicalTenantId, realmId, catalogRevision);
     Record record = dsl.selectFrom(CATALOG).where(identity).forShare().fetchOne();
-    return requireInitialAdmissionTarget(record, targetNamespace, canonicalTenantId, realmId, catalogRevision);
+    return requireInitialAdmissionTarget(
+        record, targetNamespace, canonicalTenantId, realmId, catalogRevision);
   }
 
   private Condition initialAdmissionTargetCondition(
@@ -423,14 +438,19 @@ public class GameSessionCanonicalRealmCatalogRepository {
     if (catalogRevision <= 0L) {
       throw new IllegalArgumentException("catalogRevision must be positive");
     }
-    return TARGET_NAMESPACE.eq(targetNamespace)
+    return TARGET_NAMESPACE
+        .eq(targetNamespace)
         .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
         .and(REALM_ID.eq(realmId))
         .and(CATALOG_REVISION.eq(catalogRevision));
   }
 
   private CanonicalRealmCatalogSnapshot requireInitialAdmissionTarget(
-      Record record, String targetNamespace, UUID canonicalTenantId, UUID realmId, long catalogRevision) {
+      Record record,
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      long catalogRevision) {
     if (record == null) {
       throw new InvalidCatalogEvidenceException(
           "Exact canonical initial-admission catalog row is missing or stale");

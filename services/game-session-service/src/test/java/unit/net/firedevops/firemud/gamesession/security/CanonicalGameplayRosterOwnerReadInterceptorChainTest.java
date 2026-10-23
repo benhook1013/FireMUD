@@ -121,8 +121,9 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
     var source = sourceReaderProvider();
     var reference = referenceOwnerProvider();
     var adapter = new CanonicalGameplayRosterOwnerReadGrpcAdapter(source, NAMESPACE, reference);
-    for (String identity : java.util.Arrays.asList(
-        null, peerIdentity(NAMESPACE, "game-session-service"), entityIdentity("other"))) {
+    for (String identity :
+        java.util.Arrays.asList(
+            null, peerIdentity(NAMESPACE, "game-session-service"), entityIdentity("other"))) {
       var response = new CapturingReferenceObserver();
       invokeReferenceThroughConfiguredChain(identity, adapter, response, false);
       assertThat(response.errorWasStatusRuntimeException).isTrue();
@@ -135,10 +136,12 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
     verifyNoInteractions(source, reference);
   }
 
-  private static ObjectProvider<net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+  private static ObjectProvider<
+          net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
       referenceOwnerProvider() {
     @SuppressWarnings("unchecked")
-    ObjectProvider<net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner> provider = mock(ObjectProvider.class);
+    ObjectProvider<net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+        provider = mock(ObjectProvider.class);
     when(provider.getIfAvailable()).thenReturn(null);
     return provider;
   }
@@ -218,21 +221,33 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
   }
 
   private static void invokeReferenceThroughConfiguredChain(
-      String peerUri, CanonicalGameplayRosterOwnerReadGrpcAdapter adapter,
-      CapturingReferenceObserver response, boolean authenticatedCallerContext) {
-    var published = support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute();
-    var request = net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
-        UUID.randomUUID(), ACCOUNT, UUID.randomUUID(), NAMESPACE,
-        net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.expectedTarget(published));
-    ServerCallHandler<Object, Object> handler = (nextCall, ignoredHeaders) -> {
-      adapter.getCanonicalGameplayRosterReference(request, response);
-      return new ServerCall.Listener<>() {};
-    };
+      String peerUri,
+      CanonicalGameplayRosterOwnerReadGrpcAdapter adapter,
+      CapturingReferenceObserver response,
+      boolean authenticatedCallerContext) {
+    var published =
+        support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+            .canonicalPublishedRoute();
+    var request =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            UUID.randomUUID(),
+            ACCOUNT,
+            UUID.randomUUID(),
+            NAMESPACE,
+            net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.expectedTarget(
+                published));
+    ServerCallHandler<Object, Object> handler =
+        (nextCall, ignoredHeaders) -> {
+          adapter.getCanonicalGameplayRosterReference(request, response);
+          return new ServerCall.Listener<>() {};
+        };
     invokeThroughConfiguredChain(peerUri, REFERENCE_METHOD, handler, authenticatedCallerContext);
   }
 
   private static void invokeThroughConfiguredChain(
-      String peerUri, String method, ServerCallHandler<Object, Object> handler,
+      String peerUri,
+      String method,
+      ServerCallHandler<Object, Object> handler,
       boolean authenticatedCallerContext) {
     ServerCall<Object, Object> call = new TestServerCall(method, sslSession(peerUri));
     Metadata headers = new Metadata();
@@ -331,12 +346,15 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
   }
 
   private static final class CapturingReferenceObserver
-      implements StreamObserver<net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse> {
+      implements StreamObserver<
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse> {
     private boolean errorWasStatusRuntimeException;
     private Status.Code errorCode;
 
     @Override
-    public void onNext(net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse response) {}
+    public void onNext(
+        net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+            response) {}
 
     @Override
     public void onError(Throwable throwable) {

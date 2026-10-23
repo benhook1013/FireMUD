@@ -266,7 +266,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
                 .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED);
     assertDistinctAccountSourceReadersShareAndExcludeWriters(
-        fixture, current, CanonicalInitialAdmissionRequest.OriginKind.EXPECT_ABSENT);
+        fixture, current, CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER);
   }
 
   @Test
@@ -1932,72 +1932,129 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   private static void assertDistinctAccountSourceReadersShareAndExcludeWriters(
-      Fixture fixture, net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget current,
-      CanonicalInitialAdmissionRequest.OriginKind expectedOrigin) throws Exception {
-    var qualified = fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
-        NAMESPACE, TENANT, current.realmId());
+      Fixture fixture,
+      net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget current,
+      CanonicalInitialAdmissionRequest.OriginKind expectedOrigin)
+      throws Exception {
+    var qualified =
+        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+            NAMESPACE, TENANT, current.realmId());
     assertThat(qualified.ownerProof().originKind()).isEqualTo(expectedOrigin);
-    var target = net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
-        .setTenantUuid(TENANT.toString()).setRealmUuid(current.realmId().toString())
-        .setWorldSlug(current.worldSlug()).setRealmSlug(current.realmSlug())
-        .setGameInstanceUuid(current.canonicalGameInstanceId().toString())
-        .setCanonicalVersionUuid(current.canonicalVersionId().toString())
-        .setPlayableStateNamespaceUuid(current.playableStateNamespaceId().toString())
-        .setPlayableStateScope(net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-        .setEntryPolicy(net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
-        .setCatalogRevision(current.catalogRevision()).setPointerVersion(current.pointerVersion())
-        .setActiveWorldEpoch(current.activeWorldEpoch())
-        .setAdmissionPointerSnapshotDigest(current.admissionPointerSnapshotDigest())
-        .setPublishedOwnerProofDigest(current.ownerProofDigest().substring("sha256:".length()))
-        .setPublishedPolicyDigest("a".repeat(64)).setPublishedReleaseBundleRef("controlled:retained-fixture")
-        .build();
-    var requests = List.of(
-        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NAMESPACE, target),
-        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NAMESPACE, target));
-    assertThat(requests.getFirst().getCanonicalAccountUuid()).isNotEqualTo(requests.get(1).getCanonicalAccountUuid());
-    var references = new CanonicalGameplayRosterReferenceRepository(fixture.dsl,
-        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
-            java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(1),
-            java.time.Duration.ofSeconds(1), 8));
-    var readerPids = List.of(new java.util.concurrent.atomic.AtomicInteger(), new java.util.concurrent.atomic.AtomicInteger());
-    var acquired = List.of(new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(1));
-    var release = List.of(new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(1));
+    var target =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
+            .setTenantUuid(TENANT.toString())
+            .setRealmUuid(current.realmId().toString())
+            .setWorldSlug(current.worldSlug())
+            .setRealmSlug(current.realmSlug())
+            .setGameInstanceUuid(current.canonicalGameInstanceId().toString())
+            .setCanonicalVersionUuid(current.canonicalVersionId().toString())
+            .setPlayableStateNamespaceUuid(current.playableStateNamespaceId().toString())
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setEntryPolicy(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                    .CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
+            .setCatalogRevision(current.catalogRevision())
+            .setPointerVersion(current.pointerVersion())
+            .setActiveWorldEpoch(current.activeWorldEpoch())
+            .setAdmissionPointerSnapshotDigest(current.admissionPointerSnapshotDigest())
+            .setPublishedOwnerProofDigest(current.ownerProofDigest().substring("sha256:".length()))
+            .setPublishedPolicyDigest("a".repeat(64))
+            .setPublishedReleaseBundleRef("controlled:retained-fixture")
+            .build();
+    var requests =
+        List.of(
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NAMESPACE, target),
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NAMESPACE, target));
+    assertThat(requests.getFirst().getCanonicalAccountUuid())
+        .isNotEqualTo(requests.get(1).getCanonicalAccountUuid());
+    var references =
+        new CanonicalGameplayRosterReferenceRepository(
+            fixture.dsl,
+            new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
+                java.time.Duration.ofMinutes(1),
+                java.time.Duration.ofMinutes(1),
+                java.time.Duration.ofMinutes(1),
+                java.time.Duration.ofSeconds(1),
+                8));
+    var readerPids =
+        List.of(
+            new java.util.concurrent.atomic.AtomicInteger(),
+            new java.util.concurrent.atomic.AtomicInteger());
+    var acquired =
+        List.of(
+            new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(1));
+    var release =
+        List.of(
+            new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(1));
     String ownerBefore = pointerAndAuditProjection(fixture);
     String sourcesBefore = predecessorSourceProjection(fixture);
-    long originalsBefore = fixture.dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection").get(0, Long.class);
-    long fencesBefore = fixture.dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences").get(0, Long.class);
-    var writerSql = List.of(
-        "SELECT id FROM gameplay_admission_pointer WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE",
-        "SELECT initial_admission_request_id FROM game_session_canonical_initial_admission_attempt WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? AND status = 'COMMITTED' FOR UPDATE",
-        "SELECT realm_id FROM game_session_canonical_realm_catalog WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE");
-    var writerPids = List.of(new java.util.concurrent.atomic.AtomicInteger(), new java.util.concurrent.atomic.AtomicInteger(), new java.util.concurrent.atomic.AtomicInteger());
+    long originalsBefore =
+        fixture
+            .dsl
+            .fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection")
+            .get(0, Long.class);
+    long fencesBefore =
+        fixture
+            .dsl
+            .fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences")
+            .get(0, Long.class);
+    var writerSql =
+        List.of(
+            "SELECT id FROM gameplay_admission_pointer WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE",
+            "SELECT initial_admission_request_id FROM game_session_canonical_initial_admission_attempt WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? AND status = 'COMMITTED' FOR UPDATE",
+            "SELECT realm_id FROM game_session_canonical_realm_catalog WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE");
+    var writerPids =
+        List.of(
+            new java.util.concurrent.atomic.AtomicInteger(),
+            new java.util.concurrent.atomic.AtomicInteger(),
+            new java.util.concurrent.atomic.AtomicInteger());
     var readers = new java.util.ArrayList<java.util.concurrent.Future<String>>();
     var writers = new java.util.ArrayList<java.util.concurrent.Future<?>>();
     try (var executor = java.util.concurrent.Executors.newFixedThreadPool(5)) {
       try {
         for (int index = 0; index < requests.size(); index++) {
           int slot = index;
-          readers.add(executor.submit(() -> fixture.transactions.execute(status -> {
-            readerPids.get(slot).set(Objects.requireNonNull(fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
-            var original = references.begin(requests.get(slot));
-            assertThat(fixture.initialAdmissionRepository.lockExactCurrentOpenSnapshot(qualified)).isEqualTo(qualified);
-            assertThat(references.find(requests.get(slot))).contains(original);
-            acquired.get(slot).countDown();
-            try {
-              if (!release.get(slot).await(30L, java.util.concurrent.TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Current-source reader was not released");
-              }
-            } catch (InterruptedException interrupted) {
-              Thread.currentThread().interrupt();
-              throw new IllegalStateException(interrupted);
-            } finally {
-              // Retained owner histories and existing selection assertions remain unchanged.
-              status.setRollbackOnly();
-            }
-            return original.getTargetFenceUuid();
-          })));
+          readers.add(
+              executor.submit(
+                  () ->
+                      fixture.transactions.execute(
+                          status -> {
+                            readerPids
+                                .get(slot)
+                                .set(
+                                    Objects.requireNonNull(
+                                        fixture
+                                            .dsl
+                                            .fetchSingle("SELECT pg_backend_pid()")
+                                            .get(0, Integer.class)));
+                            var original = references.begin(requests.get(slot));
+                            assertThat(
+                                    fixture.initialAdmissionRepository.lockExactCurrentOpenSnapshot(
+                                        qualified))
+                                .isEqualTo(qualified);
+                            assertThat(references.find(requests.get(slot))).contains(original);
+                            acquired.get(slot).countDown();
+                            try {
+                              if (!release
+                                  .get(slot)
+                                  .await(30L, java.util.concurrent.TimeUnit.SECONDS)) {
+                                throw new IllegalStateException(
+                                    "Current-source reader was not released");
+                              }
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(interrupted);
+                            } finally {
+                              // Retained owner histories and existing selection assertions remain
+                              // unchanged.
+                              status.setRollbackOnly();
+                            }
+                            return original.getTargetFenceUuid();
+                          })));
           // Both complete revalidations must acquire their shared locks while the first stays open.
           assertThat(acquired.get(slot).await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         }
@@ -2006,29 +2063,49 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         for (int index = 0; index < writerSql.size(); index++) {
           int slot = index;
           var started = new java.util.concurrent.CountDownLatch(1);
-          writers.add(executor.submit(() -> fixture.transactions.execute(status -> {
-            writerPids.get(slot).set(Objects.requireNonNull(fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
-            started.countDown();
-            var locked = fixture.dsl.fetchSingle(writerSql.get(slot), NAMESPACE, TENANT, current.realmId());
-            status.setRollbackOnly();
-            return locked.get(0);
-          })));
+          writers.add(
+              executor.submit(
+                  () ->
+                      fixture.transactions.execute(
+                          status -> {
+                            writerPids
+                                .get(slot)
+                                .set(
+                                    Objects.requireNonNull(
+                                        fixture
+                                            .dsl
+                                            .fetchSingle("SELECT pg_backend_pid()")
+                                            .get(0, Integer.class)));
+                            started.countDown();
+                            var locked =
+                                fixture.dsl.fetchSingle(
+                                    writerSql.get(slot), NAMESPACE, TENANT, current.realmId());
+                            status.setRollbackOnly();
+                            return locked.get(0);
+                          })));
           assertThat(started.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-          int holder = awaitBackendBlockedByCurrentSourceReader(
-              fixture.dsl, writerPids.get(slot).get(), readerPids.getFirst().get(), readerPids.get(1).get());
+          int holder =
+              awaitBackendBlockedByCurrentSourceReader(
+                  fixture.dsl,
+                  writerPids.get(slot).get(),
+                  readerPids.getFirst().get(),
+                  readerPids.get(1).get());
           if (slot == 0) firstReleasedReader = holder == readerPids.getFirst().get() ? 0 : 1;
         }
         assertThat(firstReleasedReader).isNotNegative();
         int remainingReader = 1 - firstReleasedReader;
         release.get(firstReleasedReader).countDown();
-        String firstFence = readers.get(firstReleasedReader).get(5L, java.util.concurrent.TimeUnit.SECONDS);
+        String firstFence =
+            readers.get(firstReleasedReader).get(5L, java.util.concurrent.TimeUnit.SECONDS);
         // PostgreSQL can wait on SHARE members in turn; each writer must still await the other
         // exact reader after its first observed blocker releases its transaction.
         for (var writerPid : writerPids) {
-          awaitBackendBlockedBy(fixture.dsl, writerPid.get(), readerPids.get(remainingReader).get());
+          awaitBackendBlockedBy(
+              fixture.dsl, writerPid.get(), readerPids.get(remainingReader).get());
         }
         release.get(remainingReader).countDown();
-        String secondFence = readers.get(remainingReader).get(5L, java.util.concurrent.TimeUnit.SECONDS);
+        String secondFence =
+            readers.get(remainingReader).get(5L, java.util.concurrent.TimeUnit.SECONDS);
         assertThat(firstFence).isNotEqualTo(secondFence);
         for (var writer : writers) {
           assertThat(writer.get(5L, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
@@ -2039,8 +2116,18 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     }
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(ownerBefore);
     assertThat(predecessorSourceProjection(fixture)).isEqualTo(sourcesBefore);
-    assertThat(fixture.dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection").get(0, Long.class)).isEqualTo(originalsBefore);
-    assertThat(fixture.dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences").get(0, Long.class)).isEqualTo(fencesBefore);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection")
+                .get(0, Long.class))
+        .isEqualTo(originalsBefore);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences")
+                .get(0, Long.class))
+        .isEqualTo(fencesBefore);
   }
 
   private static int awaitBackendBlockedByCurrentSourceReader(
@@ -2049,14 +2136,22 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
     Integer holder = null;
     while (System.nanoTime() < deadline) {
-      holder = observer.fetchSingle(
-          "SELECT CASE WHEN ? = ANY(pg_blocking_pids(?)) THEN ? WHEN ? = ANY(pg_blocking_pids(?)) THEN ? END",
-          firstReaderPid, waitingPid, firstReaderPid, secondReaderPid, waitingPid, secondReaderPid)
-          .get(0, Integer.class);
+      holder =
+          observer
+              .fetchSingle(
+                  "SELECT CASE WHEN ? = ANY(pg_blocking_pids(?)) THEN ? WHEN ? = ANY(pg_blocking_pids(?)) THEN ? END",
+                  firstReaderPid,
+                  waitingPid,
+                  firstReaderPid,
+                  secondReaderPid,
+                  waitingPid,
+                  secondReaderPid)
+              .get(0, Integer.class);
       if (holder != null) break;
       java.util.concurrent.TimeUnit.MILLISECONDS.sleep(10L);
     }
-    assertThat(holder).as("Writer backend %s waits on an exact current-source reader", waitingPid)
+    assertThat(holder)
+        .as("Writer backend %s waits on an exact current-source reader", waitingPid)
         .isIn(firstReaderPid, secondReaderPid);
     return Objects.requireNonNull(holder);
   }
