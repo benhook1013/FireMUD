@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.worldmanagement.v1.CompleteVersionPublicationRequest;
@@ -39,6 +41,41 @@ class WorldPublicationTerminalCompletionGrpcCodecTest {
       assertThat(fresh.requestId()).isNotEqualTo(request.requestId());
       assertThat(fresh.originalOperation()).containsExactly(request.originalOperation());
     }
+  }
+
+  @Test
+  void historicalTerminalReadbackCannotEnterCurrentV2CompletionTransport() throws Exception {
+    var operation = WorldPublicationTerminalTestFixtures.operation();
+    var history = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(history, "game-design-publication-operation/v1");
+    DraftAuthorizationFenceBinding.frame(history, operation.account().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(history, operation.world().canonicalBytes());
+    byte[] original = history.toByteArray();
+    var historicalTerminal =
+        new GameDesignPublicationTerminalEvidence(original, Outcome.NO_PUBLICATION, null, null);
+    assertThat(
+            GameDesignPublicationTerminalEvidence.fromStored(historicalTerminal.canonicalBytes())
+                .operationBytes())
+        .containsExactly(original);
+    assertThatThrownBy(
+            () ->
+                WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                    "test", original, historicalTerminal.canonicalBytes()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Complete canonical publication operation and terminal required");
+
+    var currentTerminal =
+        WorldPublicationTerminalTestFixtures.terminal(operation, Outcome.NO_PUBLICATION);
+    var current =
+        WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+            "test", operation.canonicalBytes(), currentTerminal.canonicalBytes());
+    var changed =
+        WorldPublicationTerminalCompletionGrpcCodec.toRequest(current).toBuilder()
+            .setOriginalOperation(ByteString.copyFrom(original))
+            .setGameDesignTerminalEvidence(ByteString.copyFrom(historicalTerminal.canonicalBytes()))
+            .build();
+    assertThatThrownBy(() -> WorldPublicationTerminalCompletionGrpcCodec.fromRequest(changed))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

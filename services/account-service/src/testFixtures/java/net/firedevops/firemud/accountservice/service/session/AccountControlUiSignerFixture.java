@@ -486,7 +486,7 @@ final class AccountControlUiSignerFixture {
     return java.util.Objects.requireNonNull(result.get());
   }
 
-  private record PublicJwk(String json, String jsonWithoutKeyOps, String fingerprint) {}
+  record PublicJwk(String json, String jsonWithoutKeyOps, String fingerprint) {}
 
   private Instant now() {
     return Instant.ofEpochSecond(clock.instant().getEpochSecond());
@@ -527,7 +527,7 @@ final class AccountControlUiSignerFixture {
     return JSON.writeValueAsString(bundle);
   }
 
-  private static PublicJwk publicJwk(String kid, RSAPublicKey key) throws Exception {
+  static PublicJwk publicJwk(String kid, RSAPublicKey key) throws Exception {
     String modulus = encodeUnsigned(key.getModulus());
     String exponent = encodeUnsigned(key.getPublicExponent());
     Map<String, Object> jwk = new LinkedHashMap<>();
