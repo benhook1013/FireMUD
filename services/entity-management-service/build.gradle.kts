@@ -14,6 +14,7 @@ dependencies {
     implementation(project(":common-platform-core"))
     implementation(project(":common-security"))
     implementation(libs.spring.boot.starter.cache)
+    testImplementation(testFixtures(project(":common-platform-core")))
 }
 
 // Export only owner classes for composed proofs; application and Flyway resources stay local.

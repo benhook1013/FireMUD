@@ -179,6 +179,55 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   /**
+   * Complete current public pointer content, independently qualified by its committed owner proof.
+   */
+  public record CurrentOpenSource(
+      CurrentOpenSnapshot snapshot,
+      UUID tenantId,
+      UUID realmId,
+      String worldSlug,
+      String realmSlug,
+      String admissionState,
+      UUID canonicalGameInstanceId,
+      long pointerVersion,
+      long catalogRevision,
+      Instant updatedAt) {}
+
+  /** Reads exact pointer content without deriving timestamps from a terminal proof. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public CurrentOpenSource readCurrentOpenSourceForRealm(
+      String targetNamespace, UUID canonicalTenantUuid, UUID realmUuid) {
+    requireOutsideTransaction();
+    requireCurrentOpenReadSelector(targetNamespace, canonicalTenantUuid, realmUuid);
+    CurrentOpenPointer before =
+        readCurrentOpenPointer(targetNamespace, canonicalTenantUuid, realmUuid);
+    CurrentOpenSnapshot qualified =
+        readCurrentOpenSnapshotForRealm(targetNamespace, canonicalTenantUuid, realmUuid);
+    CurrentOpenPointer pointer =
+        readCurrentOpenPointer(targetNamespace, canonicalTenantUuid, realmUuid);
+    pointer.requireCanonicalOpen(targetNamespace, canonicalTenantUuid, realmUuid);
+    if (!before.equals(pointer)
+        || !pointer.matches(qualified.ownerProof())
+        || !qualified
+            .admissionPointerSnapshotDigest()
+            .equals(snapshotDigestOrReconciliation(pointer, qualified.ownerProof()))) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Current OPEN pointer changed during complete source read");
+    }
+    return new CurrentOpenSource(
+        qualified,
+        pointer.value("canonical_tenant_id", UUID.class),
+        pointer.value("realm_id", UUID.class),
+        pointer.value("world_slug", String.class),
+        pointer.value("realm_slug", String.class),
+        pointer.value("admission_state", String.class),
+        pointer.value("canonical_game_instance_id", UUID.class),
+        pointer.value("pointer_version", Long.class),
+        pointer.value("catalog_revision", Long.class),
+        pointer.updatedAt());
+  }
+
+  /**
    * Revalidates an already committed outside-transaction snapshot under exact owner row locks. This
    * grants no new admission authority and never calls a remote owner from SQL.
    */
@@ -912,6 +961,18 @@ public class CanonicalInitialAdmissionRepository {
               proof.proofDigest(),
               proof.auditEventId(),
               proof.terminalAt()));
+    }
+
+    private Instant updatedAt() {
+      Object value = fields.get("updated_at");
+      // This owner column is TIMESTAMP WITHOUT TIME ZONE. Plain JDBC SQL returns Timestamp;
+      // generated jOOQ projections may expose LocalDateTime. Both retain the same UTC wall time.
+      if (value instanceof java.sql.Timestamp timestamp)
+        return toInstant(timestamp.toLocalDateTime());
+      if (value instanceof java.time.LocalDateTime timestamp) return toInstant(timestamp);
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Current realm pointer updated_at is not an owning SQL timestamp: "
+              + (value == null ? "null" : value.getClass().getName()));
     }
 
     private <T> T value(String key, Class<T> type) {
