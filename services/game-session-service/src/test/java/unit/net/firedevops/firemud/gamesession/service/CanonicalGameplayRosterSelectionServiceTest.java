@@ -650,6 +650,46 @@ class CanonicalGameplayRosterSelectionServiceTest {
   }
 
   @Test
+  void reserveAndListPreserveOwnerRouteFailureCategoriesAndDeniedCompletion() {
+    var failures = List.of(
+        java.util.Map.entry(new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException("owner target moved"),
+            CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED),
+        java.util.Map.entry(new CanonicalPublishedPlayerRouteReadService.StorageUnavailableException("owner storage unavailable"),
+            CanonicalGameplayRosterSelectionService.Denial.ROUTE_UNAVAILABLE),
+        java.util.Map.entry(new CanonicalPublishedPlayerRouteReadService.GameDesignUnavailableException("policy owner unavailable", null),
+            CanonicalGameplayRosterSelectionService.Denial.ROUTE_UNAVAILABLE),
+        java.util.Map.entry(new CanonicalPlayerRouteReadService.ReadUnavailableException("route owner unavailable"),
+            CanonicalGameplayRosterSelectionService.Denial.ROUTE_UNAVAILABLE),
+        java.util.Map.entry(new IllegalArgumentException("invalid roster proof"),
+            CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF));
+    for (boolean duringReserve : List.of(true, false)) {
+      for (var failure : failures) {
+        var published = PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute();
+        var routes = mock(CanonicalPlayerRouteReadService.class);
+        var publications = mock(CanonicalPublishedPlayerRouteReadService.class);
+        var client = mock(CanonicalGameplayRosterClient.class);
+        when(routes.readCurrentTarget(published.route().canonicalTenantId())).thenReturn(published.route());
+        when(publications.readCurrent(published.route())).thenReturn(published);
+        if (duringReserve) {
+          doThrow(failure.getKey()).when(client).reserveSelectionInput(any(), any(), any(), any(), any());
+        } else {
+          when(client.listPreseededRoster(any(), any())).thenThrow(failure.getKey());
+        }
+        var service = new CanonicalGameplayRosterSelectionService(routes, publications, client);
+        assertDenied(service.select(context(published.route(), UUID.randomUUID().toString()), null, null), failure.getValue());
+        if (failure.getValue() == CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED) {
+          verify(client).completeSelection(any(), any(), org.mockito.ArgumentMatchers.eq(
+              net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository.SelectionOutcome.DENIED));
+        } else {
+          verify(client, never()).completeSelection(any(), any(), any());
+        }
+        if (duringReserve) verify(client, never()).listPreseededRoster(any(), any());
+        verify(client, never()).readSelectedPreseededAssignment(any(), any());
+      }
+    }
+  }
+
+  @Test
   void failedTerminalWritePreservesDenialButRefusesSuccessfulSelectionAndMenu() throws Exception {
     var denied = harness(List.of(), true);
     assertDenied(

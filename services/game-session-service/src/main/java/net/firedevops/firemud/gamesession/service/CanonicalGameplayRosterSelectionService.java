@@ -131,7 +131,8 @@ public final class CanonicalGameplayRosterSelectionService {
     } catch (StatusRuntimeException failure) {
       return new Denied(rosterFailure(failure));
     } catch (RuntimeException invalidOrUnavailable) {
-      return new Denied(Denial.INVALID_ROSTER_PROOF);
+      Denial failure = routeFailure(invalidOrUnavailable);
+      return new Denied(failure == Denial.INVALID_ROUTE_PROOF ? Denial.INVALID_ROSTER_PROOF : failure);
     }
     Denial listFreshnessFailure = requireExactCurrentRoute(current);
     if (listFreshnessFailure != null) {
