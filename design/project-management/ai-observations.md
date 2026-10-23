@@ -340,3 +340,9 @@ Entry format:
 - `2026-10-23`: Isolate uv managed-Python launchers as well as installations
   - Observation: A temporary docs-lock generator set `UV_PYTHON_INSTALL_DIR` inside its task directory, but uv 0.13.5 also created `~/.local/bin/python3.15`. The exact newly created task-owned symlink was verified and removed; no preexisting launcher was overwritten.
   - Expected pattern: Set `UV_PYTHON_BIN_DIR` to a task-private path before temporary installation and confirm it with `uv python dir --bin`; this override was verified locally. Alternatively, `uv python install --no-bin` is supported by the installed help. Installation-directory isolation alone does not isolate launchers.
+
+- `2026-10-23`: Preserve incomplete ORT license-scan evidence after Maven Central 403s
+  - Context: PR #3251 License Gate run `39934774515`, job `120353147724`, recorded 403 responses for 392 distinct Maven Central URLs during Gradle analysis; the response origin remains unknown.
+  - Observation: ORT exited with analyzer errors, emitted unknown-dependency rule warnings, and could not create the WebApp report within its 5120 MiB heap. CycloneDX reports were generated, but artifact upload did not run, so the scan supplies no qualified license proof.
+  - Expected pattern: Keep the required gate fail-closed and establish the 403 response origin before selecting a correction; do not infer a fix from the secondary reporter OOM or unknown-dependency warnings.
+  - Status: Root informed for recurrence and recovery tracking; no cause or repository correction established.
