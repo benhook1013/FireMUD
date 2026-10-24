@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjecti
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadGrpcCodec;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
@@ -40,6 +41,9 @@ import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvi
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
+import net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.ReadAuthoredInitialActorCoreResponse;
 import net.firedevops.firemud.gamedesign.v1.ReadStartSessionTemplateAssociationRequest;
@@ -331,6 +335,35 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         invalidate.accept(fixture);
         assertThatThrownBy(() -> fixture.service.readPlayerCreatedRosterSource(rosterRequest()))
             .isInstanceOfAny(StatusRuntimeException.class, IllegalArgumentException.class);
+      }
+    }
+  }
+
+  @Test
+  void entityRosterRejectsIndependentlyChangedWorldSelectorsAndImmutableReleaseFields() {
+    List<java.util.function.Consumer<Fixture>> invalidations =
+        List.of(
+            fixture -> when(fixture.associationWorld.canonicalBytes()).thenReturn(new byte[] {10}),
+            fixture -> when(fixture.releaseWorld.canonicalBytes()).thenReturn(new byte[] {11}),
+            fixture ->
+                when(fixture.publicationOperation.world().canonicalBytes())
+                    .thenReturn(new byte[] {12}),
+            fixture -> when(fixture.worldRelease.manifestSchemaVersion()).thenReturn(2),
+            fixture -> when(fixture.worldRelease.artifactDigests()).thenReturn(List.of()),
+            fixture -> when(fixture.worldRelease.requiredManifestAssetKeys()).thenReturn(List.of()),
+            fixture ->
+                when(fixture.worldRelease.commandDefinitions()).thenReturn(List.of("changed")),
+            fixture -> when(fixture.worldRelease.generationConfigRevision()).thenReturn("changed"),
+            fixture -> when(fixture.worldRelease.participantDigests()).thenReturn(List.of()));
+    for (var invalidate : invalidations) {
+      try (var fixture = new Fixture()) {
+        invalidate.accept(fixture);
+        assertThatThrownBy(() -> fixture.service.readPlayerCreatedRosterSource(rosterRequest()))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
       }
     }
   }
@@ -818,6 +851,12 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         mock(AuthoredInitialActorCoreReadEvidence.ReadResult.class);
     final WorldCanonicalInstanceLifecycleEvidence lifecycle =
         mock(WorldCanonicalInstanceLifecycleEvidence.class);
+    final AuthoredWorldReleaseAttestationEvidence worldRelease =
+        mock(AuthoredWorldReleaseAttestationEvidence.class);
+    final WorldPublishedStartLocationEvidence associationWorld =
+        mock(WorldPublishedStartLocationEvidence.class);
+    final WorldPublishedStartLocationEvidence releaseWorld =
+        mock(WorldPublishedStartLocationEvidence.class);
     private org.mockito.MockedStatic<StartSessionTemplateAssociationReadGrpcCodec> associationCodec;
     private org.mockito.MockedStatic<AuthoredInitialActorCoreReadGrpcCodec> sourceCodec;
     private org.mockito.MockedStatic<RealmEntryPolicy> policyCodec;
@@ -842,6 +881,34 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
                 (value, context) -> {
                   when(value.contentDigest()).thenReturn("sha256:" + "1".repeat(64));
                   when(value.canonicalBytes()).thenReturn(new byte[] {8});
+                  when(value.manifestSchemaVersion())
+                      .thenReturn((Integer) context.arguments().get(7));
+                  when(value.artifactDigests())
+                      .thenReturn(
+                          ((List<?>) context.arguments().get(8))
+                              .stream()
+                                  .map(AuthoredWorldReleaseAttestationEvidence.Artifact.class::cast)
+                                  .toList());
+                  when(value.requiredManifestAssetKeys())
+                      .thenReturn(
+                          ((List<?>) context.arguments().get(9))
+                              .stream().map(String.class::cast).toList());
+                  when(value.participantDigests())
+                      .thenReturn(
+                          ((List<?>) context.arguments().get(10))
+                              .stream()
+                                  .map(
+                                      GameDesignPublicationTerminalEvidence.Participant.class::cast)
+                                  .toList());
+                  when(value.commandDefinitions())
+                      .thenReturn(
+                          ((List<?>) context.arguments().get(11))
+                              .stream().map(String.class::cast).toList());
+                  when(value.generationConfigRevision())
+                      .thenReturn((String) context.arguments().get(12));
+                  when(value.worldStartLocationEvidence())
+                      .thenReturn(
+                          (WorldPublishedStartLocationEvidence) context.arguments().get(13));
                 });
         policyCodec.when(() -> RealmEntryPolicy.isCanonicalSlug(anyString())).thenCallRealMethod();
         UUID sourceOperation = UUID.randomUUID();
@@ -851,6 +918,7 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         byte[] account = new byte[] {2};
         byte[] sourceBytes = "retained".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         var launch = mock(CanonicalGameInstanceLaunchAssociation.class, RETURNS_DEEP_STUBS);
+        when(launch.launchBindingEvidence().releaseAttestation()).thenReturn(worldRelease);
         var proof = mock(CanonicalInitialAdmissionOwnerProof.class);
         when(proof.provesCommit()).thenReturn(true);
         when(proof.proofDigest()).thenReturn("sha256:" + "a".repeat(64));
@@ -1036,6 +1104,30 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         when(projection.selectedCommitDigest()).thenReturn("sha256:" + "2".repeat(64));
         var originalAssociationRead = historical.descriptorPin().associationRead();
         when(authored.associationRead()).thenReturn(originalAssociationRead);
+        when(originalAssociationRead.worldPublishedStartLocationEvidence())
+            .thenReturn(associationWorld);
+        when(associationWorld.canonicalBytes()).thenReturn(new byte[] {9});
+        when(releaseWorld.canonicalBytes()).thenReturn(new byte[] {9});
+        when(worldRelease.worldStartLocationEvidence()).thenReturn(releaseWorld);
+        var artifact =
+            new AuthoredWorldReleaseAttestationEvidence.Artifact(
+                "world",
+                "WORLD_MANIFEST",
+                "artifacts/sha256/" + "6".repeat(64),
+                "sha256:" + "6".repeat(64),
+                "application/json",
+                1);
+        var participant =
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "world",
+                "PUBLIC",
+                false,
+                null,
+                commit.toString(),
+                "7".repeat(64),
+                1,
+                true,
+                "sha256:" + "8".repeat(64));
         when(authored.associationRead().releaseBundle())
             .thenReturn(
                 PublishedReleaseBundle.newBuilder()
@@ -1049,7 +1141,32 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
                     .setAttestationSchemaVersion("v2")
                     .setManifestHash("sha256:" + "3".repeat(64))
                     .setManifestSchemaVersion(1)
+                    .addRequiredManifestAssetKeys("world")
+                    .addArtifactDigests(
+                        PublishedArtifactDigest.newBuilder()
+                            .setUsageKey(artifact.usageKey())
+                            .setArtifactKind(artifact.artifactKind())
+                            .setImmutableObjectKey(artifact.immutableObjectKey())
+                            .setContentDigest(artifact.contentDigest())
+                            .setContentType(artifact.contentType())
+                            .setArtifactSchemaVersion(artifact.artifactSchemaVersion()))
+                    .addParticipantDigests(
+                        ParticipantDigest.newBuilder()
+                            .setParticipantKey(participant.participantKey())
+                            .setScopeValue(participant.scopeValue())
+                            .setAppliedCommitId(participant.appliedCommitId())
+                            .setContentDigest(participant.contentDigest())
+                            .setDigestSchemaVersion(participant.digestSchemaVersion())
+                            .setAbilitySchemaDigest(participant.abilitySchemaDigest()))
+                    .addCommandDefinitions("look")
+                    .setGenerationConfigRevision("generation-1")
                     .build());
+        when(worldRelease.manifestSchemaVersion()).thenReturn(1);
+        when(worldRelease.artifactDigests()).thenReturn(List.of(artifact));
+        when(worldRelease.requiredManifestAssetKeys()).thenReturn(List.of("world"));
+        when(worldRelease.commandDefinitions()).thenReturn(List.of("look"));
+        when(worldRelease.generationConfigRevision()).thenReturn("generation-1");
+        when(worldRelease.participantDigests()).thenReturn(List.of(participant));
         when(launchBinding.releaseAttestation().publishedReleaseBundleRef())
             .thenReturn("original-release");
         when(launchBinding.releaseAttestation().publishWorkflowId()).thenReturn("publication");
@@ -1082,6 +1199,7 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
             .when(() -> GameDesignPublicationTerminalEvidence.fromStored(any()))
             .thenReturn(publicationTerminal);
         when(publicationOperation.world().request().targetNamespace()).thenReturn(NAMESPACE);
+        when(publicationOperation.world().canonicalBytes()).thenReturn(new byte[] {9});
         when(publicationOperation.account().input().selection().selectedCommit().digest())
             .thenReturn("sha256:" + "2".repeat(64));
         when(publicationTerminal.publishedReleaseBundleDigest())
