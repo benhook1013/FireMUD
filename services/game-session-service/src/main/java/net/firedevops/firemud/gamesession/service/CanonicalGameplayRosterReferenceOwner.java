@@ -268,7 +268,8 @@ public final class CanonicalGameplayRosterReferenceOwner {
         || !target
             .getPublishedReleaseBundleRef()
             .equals(evidence.publishedPolicySetEvidence().publishedReleaseBundleRef())) {
-      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH");
+      throw new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+          "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH");
     }
     return evidence;
   }

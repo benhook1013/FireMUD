@@ -227,13 +227,10 @@ public final class CanonicalGameplayRosterOwnerReadGrpcAdapter
               .withDescription("Original roster selection owner is unavailable")
               .asRuntimeException());
     } catch (RuntimeException unexpected) {
-      Status status =
-          unexpected instanceof IllegalStateException
-                  && "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH".equals(unexpected.getMessage())
-              ? Status.FAILED_PRECONDITION.withDescription(
-                  "Original roster selection authority is stale or invalid")
-              : Status.INTERNAL.withDescription("Original roster selection owner read failed");
-      observer.onError(status.asRuntimeException());
+      observer.onError(
+          Status.INTERNAL
+              .withDescription("Original roster selection owner read failed")
+              .asRuntimeException());
     }
   }
 

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -64,12 +65,19 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
           "CANONICAL_ROSTER_REFERENCE_SWEEP_REQUIRES_NO_AMBIENT_TRANSACTION");
     }
     UUID after = cursor;
-    var candidates =
-        Objects.requireNonNull(
-            transactions.execute(
-                ignored -> repository.targetCandidates(after, policy.batchSize())));
-    if (candidates.isEmpty()) {
-      cursor = null;
+    List<CanonicalGameplayRosterReferenceRepository.TargetCandidate> candidates = List.of();
+    try {
+      candidates =
+          Objects.requireNonNull(
+              transactions.execute(
+                  ignored -> repository.targetCandidates(after, policy.batchSize())));
+      if (candidates.isEmpty()) {
+        cursor = null;
+      }
+    } catch (RuntimeException failure) {
+      metrics
+          .counter("firemud.canonical.roster.reference.cleanup", "result", "failure")
+          .increment();
     }
     for (var candidate : candidates) {
       cursor = candidate.fenceUuid();
