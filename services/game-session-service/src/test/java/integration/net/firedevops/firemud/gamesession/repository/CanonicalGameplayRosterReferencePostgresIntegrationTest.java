@@ -94,12 +94,18 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThat(history().subList(0, beforeCreated.size())).containsExactlyElementsOf(beforeCreated);
     assertThat(history()).hasSize(beforeCreated.size() + 1);
     assertThat(history().getLast()).contains("1020", "V1020__player_created_roster_reference.sql");
+    var beforeScheduling = history();
+    migrate("1021");
+    assertThat(history().subList(0, beforeScheduling.size()))
+        .containsExactlyElementsOf(beforeScheduling);
+    assertThat(history().getLast())
+        .contains("1021", "V1021__canonical_roster_recovery_attempt_scheduling.sql");
     var beforeLatest = history();
     migrate("latest");
     assertThat(history().subList(0, beforeLatest.size())).containsExactlyElementsOf(beforeLatest);
     assertThat(history()).hasSize(beforeLatest.size() + 1);
     assertThat(history().get(history().size() - 1))
-        .contains("1021", "V1021__canonical_roster_recovery_attempt_scheduling.sql");
+        .contains("1022", "V1022__canonical_roster_binary_safe_recovery_guard.sql");
     transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     repository =
         new CanonicalGameplayRosterReferenceRepository(
@@ -256,11 +262,20 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           .isEqualTo(createdTerminalFixture.selected().toByteString());
       var historyBeforeScheduling = history(upgradeDsl);
 
+      migrate(upgradeDataSource, upgradeSchema, "1021");
+      String retainedRowsSql =
+          "SELECT row_to_json(s)::text || ':' || s.xmin::text FROM game_session_canonical_roster_selection s ORDER BY operation_uuid";
+      var rowsBeforeBinaryGuard = upgradeDsl.fetch(retainedRowsSql).getValues(0, String.class);
+      var historyBeforeBinaryGuard = history(upgradeDsl);
       migrate(upgradeDataSource, upgradeSchema, "latest");
+      assertThat(history(upgradeDsl).subList(0, historyBeforeBinaryGuard.size()))
+          .containsExactlyElementsOf(historyBeforeBinaryGuard);
+      assertThat(upgradeDsl.fetch(retainedRowsSql).getValues(0, String.class))
+          .containsExactlyElementsOf(rowsBeforeBinaryGuard);
       assertThat(history(upgradeDsl).subList(0, historyBeforeScheduling.size()))
           .containsExactlyElementsOf(historyBeforeScheduling);
       assertThat(history(upgradeDsl).get(history(upgradeDsl).size() - 1))
-          .contains("1021", "V1021__canonical_roster_recovery_attempt_scheduling.sql");
+          .contains("1022", "V1022__canonical_roster_binary_safe_recovery_guard.sql");
       assertThat(upgradeRow(upgradeDsl, ordinaryTerminal)).isEqualTo(retainedOrdinaryTerminal);
       assertThat(upgradeRow(upgradeDsl, recoveredTerminal)).isEqualTo(retainedRecoveredTerminal);
       assertThat(upgradeRow(upgradeDsl, pendingRecovery)).isEqualTo(retainedPendingRecovery);
@@ -345,6 +360,25 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           upgradeRowValue(upgradeDsl, createdPending, "recovery_last_attempt_at", String.class);
       assertThat(createdAttempt).isNotNull();
       var createdPendingAfterAttempt = upgradePredecessorRow(upgradeDsl, createdPending);
+      for (String change :
+          List.of(
+              "recovery_last_attempt_at = NULL",
+              "recovery_last_attempt_at = recovery_last_attempt_at - interval '1 millisecond'",
+              "recovery_last_attempt_at = recovery_last_attempt_at + interval '1 millisecond', original_request = decode('01', 'hex')")) {
+        assertThatThrownBy(
+                () ->
+                    upgradeDsl.execute(
+                        "UPDATE game_session_canonical_roster_selection SET "
+                            + change
+                            + " WHERE operation_uuid = ?",
+                        UUID.fromString(createdPending.getOperationUuid())))
+            .isInstanceOf(DataAccessException.class);
+      }
+      assertThat(upgradePredecessorRow(upgradeDsl, createdPending))
+          .isEqualTo(createdPendingAfterAttempt);
+      assertThat(
+              upgradeRowValue(upgradeDsl, createdPending, "recovery_last_attempt_at", String.class))
+          .isEqualTo(createdAttempt);
       var alteredSelectedReceipt =
           createdPendingFixture.selected().toBuilder()
               .setTerminal(
@@ -2635,23 +2669,22 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
                     .class));
     var serverIdentity = pki.identity("gs-server");
-    var server =
-        io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder.forAddress(
-                new java.net.InetSocketAddress("127.0.0.1", 0))
-            .maxInboundMessageSize(
-                CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES)
-            .sslContext(
-                io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts.configure(
-                        io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder.forServer(
-                            serverIdentity.privateKey(), serverIdentity.certificate()))
-                    .trustManager(pki.caCertificate())
-                    .clientAuth(io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth.REQUIRE)
-                    .build())
-            .addService(
-                io.grpc.ServerInterceptors.intercept(
-                    adapter, new net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor()))
-            .build()
-            .start();
+    var bytePolicy =
+        new net.firedevops.firemud.gamesession.config.GameSessionGrpcRequestByteConfiguration()
+            .gameSessionGrpcRequestBytePolicy();
+    var serverFactory =
+        new net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory(
+            "127.0.0.1:0",
+            List.of(),
+            pki.keyManagerFactory(serverIdentity),
+            pki.trustManagerFactory(),
+            io.grpc.TlsServerCredentials.ClientAuth.REQUIRE,
+            bytePolicy,
+            bytePolicy.transportMaximumBytes());
+    serverFactory.addService(
+        io.grpc.ServerInterceptors.intercept(
+            adapter, new net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor()));
+    var server = serverFactory.createServer().start();
     var endpoints = new net.firedevops.firemud.common.config.ServiceEndpointsProperties();
     endpoints.setGameSessionService("127.0.0.1:" + server.getPort());
     var client =

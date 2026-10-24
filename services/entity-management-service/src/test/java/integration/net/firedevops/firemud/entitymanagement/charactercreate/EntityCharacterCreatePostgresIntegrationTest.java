@@ -119,7 +119,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
       DSLContext upgradedDsl = DSL.using(parentDataSource, SQLDialect.POSTGRES);
       assertThat(migrationHistory(upgradedDsl).subList(0, parentHistory.size()))
           .containsExactlyElementsOf(parentHistory);
-      assertThat(migrationVersions(upgradedDsl)).contains("1017").last().isEqualTo("1020");
+      assertThat(migrationVersions(upgradedDsl)).contains("1017").last().isEqualTo("1021");
       assertThat(retainedParentRows(upgradedDsl, character, snapshot))
           .containsExactlyElementsOf(retainedRows);
       assertThat(
@@ -132,6 +132,69 @@ class EntityCharacterCreatePostgresIntegrationTest {
     } finally {
       DSL.using(dataSource(null), SQLDialect.POSTGRES)
           .execute("DROP SCHEMA IF EXISTS \"" + parentSchema + "\" CASCADE");
+    }
+  }
+
+  @Test
+  void binaryGuardUpgradePreservesCreatedRowsHistoryAndTerminalReplay() throws Exception {
+    String retainedSchema = "entity_binary_guard_" + UUID.randomUUID().toString().replace("-", "");
+    try {
+      var retainedDataSource = dataSource(retainedSchema);
+      migrate(retainedDataSource, retainedSchema, "1014");
+      var retainedDsl = DSL.using(retainedDataSource, SQLDialect.POSTGRES);
+      // The earlier retained-parent test covers the preseeded cohort separately.
+      // This schema keeps the declared-empty source census valid for the actual created writer.
+      migrate(retainedDataSource, retainedSchema, "1020");
+      var retainedRepository =
+          new EntityCharacterCreateRepository(retainedDsl, Clock.fixed(NOW, ZoneOffset.UTC));
+      var retainedSource = retainControlledSource(retainedDsl);
+      var retainedProof = proof(retainedSource, UUID.randomUUID(), UUID.randomUUID(), false, null);
+      var terminal = retainedRepository.settle(retainedProof, null);
+      UUID operation = UUID.fromString(retainedProof.original().getOperationId());
+      String operationNamespace = retainedProof.action().scope().targetNamespace();
+      String retainedRowsSql =
+          "SELECT 'actor:' || xmin::text || ':' || row_to_json(c)::text AS retained FROM characters c "
+              + "UNION ALL SELECT 'snapshot:' || xmin::text || ':' || row_to_json(s)::text FROM entity_canonical_gameplay_roster_snapshots s "
+              + "UNION ALL SELECT 'snapshot_actor:' || xmin::text || ':' || row_to_json(a)::text FROM entity_canonical_gameplay_roster_snapshot_actors a "
+              + "UNION ALL SELECT 'operation:' || xmin::text || ':' || row_to_json(o)::text FROM entity_character_create_operations o ORDER BY 1";
+      List<String> before = retainedDsl.fetch(retainedRowsSql).getValues(0, String.class);
+      String operationBefore = retainedOperationRow(retainedDsl, operationNamespace, operation);
+      List<String> historyBefore = migrationHistory(retainedDsl);
+
+      migrate(retainedDataSource, retainedSchema, null);
+
+      assertThat(migrationHistory(retainedDsl).subList(0, historyBefore.size()))
+          .containsExactlyElementsOf(historyBefore);
+      assertThat(migrationVersions(retainedDsl)).last().isEqualTo("1021");
+      assertThat(retainedDsl.fetch(retainedRowsSql).getValues(0, String.class))
+          .containsExactlyElementsOf(before);
+      assertThat(retainedRepository.settle(retainedProof, null)).isEqualTo(terminal);
+      assertThat(retainedRepository.replay(retainedProof.request()).orElseThrow())
+          .isEqualTo(terminal);
+      for (String change :
+          List.of(
+              "original_request = decode('01', 'hex')",
+              "terminal_bytes = decode('02', 'hex')",
+              "status = 'PENDING'")) {
+        assertThatThrownBy(
+                () ->
+                    retainedDsl.execute(
+                        "UPDATE entity_character_create_operations SET "
+                            + change
+                            + " WHERE target_namespace = ? AND operation_id = ?",
+                        operationNamespace,
+                        operation))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      }
+      assertThat(retainedOperationRow(retainedDsl, operationNamespace, operation))
+          .isEqualTo(operationBefore);
+      // The replacement also guards a new actual writer transition, not only old terminal replay.
+      var fresh = proof(retainedSource, UUID.randomUUID(), UUID.randomUUID(), false, null);
+      assertThat(retainedRepository.settle(fresh, null).getOutcome())
+          .isEqualTo(EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED);
+    } finally {
+      DSL.using(dataSource(null), SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA IF EXISTS \"" + retainedSchema + "\" CASCADE");
     }
   }
 
@@ -167,7 +230,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
 
       migrate(retainedDataSource, retainedSchema, null);
 
-      assertThat(migrationVersions(retainedDsl)).contains("1017").last().isEqualTo("1020");
+      assertThat(migrationVersions(retainedDsl)).contains("1017").last().isEqualTo("1021");
       assertThat(retainedRow(retainedDsl, "characters", "character_uuid", characterId))
           .isEqualTo(actorBefore);
       assertThat(

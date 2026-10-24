@@ -39,6 +39,8 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 public final class CanonicalPlayerCreatedRosterClient
     extends AbstractReloadingBlockingGrpcClient<
         CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub> {
+  private static final long PLAYER_CREATED_OUTER_RPC_SECONDS = 20L;
+
   private final String namespace;
   private final CanonicalGameplayRosterReferenceOwner owner;
 
@@ -136,7 +138,7 @@ public final class CanonicalPlayerCreatedRosterClient
         CanonicalPlayerCreatedRosterEvidence.requireResponse(
             request,
             current
-                .withDeadlineAfter(5L, TimeUnit.SECONDS)
+                .withDeadlineAfter(PLAYER_CREATED_OUTER_RPC_SECONDS, TimeUnit.SECONDS)
                 .withMaxInboundMessageSize(
                     CanonicalPlayerCreatedRosterEvidence.MAX_ROSTER_RECEIPT_BYTES)
                 .listPlayerCreatedRoster(request));
@@ -204,7 +206,7 @@ public final class CanonicalPlayerCreatedRosterClient
     } else {
       response =
           requireStub()
-              .withDeadlineAfter(5L, TimeUnit.SECONDS)
+              .withDeadlineAfter(PLAYER_CREATED_OUTER_RPC_SECONDS, TimeUnit.SECONDS)
               .withMaxInboundMessageSize(
                   CanonicalPlayerCreatedRosterEvidence.MAX_SELECTED_RECEIPT_BYTES)
               .readSelectedPlayerCreatedCharacter(request);

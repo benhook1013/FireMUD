@@ -80,6 +80,7 @@ dependencies {
     testFixturesImplementation(project(":common-data-runtime"))
     testFixturesImplementation(libs.jooq)
     testFixturesImplementation(libs.flyway.core)
+    testFixturesImplementation(libs.flyway.database.postgresql)
     testFixturesImplementation(platform(libs.spring.boot.dependencies))
     testFixturesImplementation("com.fasterxml.jackson.core:jackson-databind")
     testFixturesImplementation(libs.spring.boot.starter.actuator)

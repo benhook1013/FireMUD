@@ -114,6 +114,13 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
    */
   public synchronized EntityCharacterCreateTerminal createActor(
       UUID account, UUID operation, String displayName) throws Exception {
+    return createActor(account, operation, displayName, false);
+  }
+
+  /** Fills the bounded known opaque proof fields while retaining the actual writer and bindings. */
+  public synchronized EntityCharacterCreateTerminal createActor(
+      UUID account, UUID operation, String displayName, boolean maximumKnownOpaqueFields)
+      throws Exception {
     EntityCharacterCreateBindings.id(Objects.requireNonNull(account, "account").toString());
     EntityCharacterCreateBindings.id(Objects.requireNonNull(operation, "operation").toString());
     AuthenticatedSource source = readAuthenticatedSource();
@@ -145,7 +152,8 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
               inputs.worldInventoryReadEvidence().request().freezeEvidence());
       sourceReceipt = sourceIntakes.retainFresh(inputs, digest);
     }
-    EntityCharacterCreateProofs proof = createProof(sourceReceipt, account, operation, source);
+    EntityCharacterCreateProofs proof =
+        createProof(sourceReceipt, account, operation, source, maximumKnownOpaqueFields);
     return characterCreateRepository.settle(proof, null);
   }
 
@@ -181,7 +189,8 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
       EntityEmptySelectedSourceIntakeReceipt entitySource,
       UUID accountId,
       UUID operationId,
-      AuthenticatedSource rosterSource)
+      AuthenticatedSource rosterSource,
+      boolean maximumKnownOpaqueFields)
       throws Exception {
     CharacterCreateOperatorAction action =
         rosterSourceAction(entitySource, accountId, rosterSource);
@@ -198,7 +207,9 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
             .setOriginalAction(ByteString.copyFrom(actionBytes))
             .setMutationDigest(CharacterCreateOperatorActionCodec.mutationDigest(action))
             .setOriginalSourceReadback(
-                ByteString.copyFromUtf8("controlled-upstream-source-readback"))
+                maximumKnownOpaqueFields
+                    ? opaque(32 * 1024 * 1024, 301)
+                    : ByteString.copyFromUtf8("controlled-upstream-source-readback"))
             .build();
     ReadOriginalCharacterCreateRequest reference =
         ReadOriginalCharacterCreateRequest.newBuilder()
@@ -222,15 +233,23 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
             .setAccountProtectionId(accountProtection.getProtectionId())
             .setAccountProtectionFence(accountProtection.getProtectionFence())
             .setAcquiredAt(readAt.toString())
-            .setOriginalMembershipSnapshot(ByteString.copyFromUtf8("controlled-membership"))
-            .setOriginalEntitlementSnapshot(ByteString.copyFromUtf8("controlled-entitlement"))
+            .setOriginalMembershipSnapshot(
+                maximumKnownOpaqueFields
+                    ? opaque(1024 * 1024, 302)
+                    : ByteString.copyFromUtf8("controlled-membership"))
+            .setOriginalEntitlementSnapshot(
+                maximumKnownOpaqueFields
+                    ? opaque(1024 * 1024, 303)
+                    : ByteString.copyFromUtf8("controlled-entitlement"))
             .build();
     var gameSession =
         new GameSessionCharacterCreateProtectionReader.Readback(
             account,
             gameSessionProtection,
             readAt.plusSeconds(1).toString(),
-            ByteString.copyFromUtf8("controlled-Game-Session-protection-readback"));
+            maximumKnownOpaqueFields
+                ? opaque(48 * 1024 * 1024, 304)
+                : ByteString.copyFromUtf8("controlled-Game-Session-protection-readback"));
     var world =
         WorldCharacterCreateLifecycleProtection.newBuilder()
             .setAccountProtection(account)
@@ -243,6 +262,20 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
             .build();
     return new EntityCharacterCreateProofs(
         request, original, account, gameSession, world, entitySource);
+  }
+
+  /** Uses the same seeded chunked high-entropy construction as the Common transport vector. */
+  private static ByteString opaque(int size, long seed) {
+    var random = new java.util.Random(seed);
+    byte[] chunk = new byte[64 * 1024];
+    var output = ByteString.newOutput(chunk.length);
+    for (int remaining = size; remaining > 0; ) {
+      int count = Math.min(remaining, chunk.length);
+      random.nextBytes(chunk);
+      output.write(chunk, 0, count);
+      remaining -= count;
+    }
+    return output.toByteString();
   }
 
   /**

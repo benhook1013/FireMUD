@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
@@ -68,6 +69,7 @@ import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadServic
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.SQLDialect;
@@ -105,6 +107,7 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
   private final CanonicalGameplayRosterReferenceOwner referenceOwner;
   private final CanonicalPlayableTarget route;
   private final WireFixture wireFixture;
+  private final AtomicInteger controlledWorldLifecycleReads = new AtomicInteger();
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -323,7 +326,7 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
           attempts.readCurrentOriginalAttempt(currentAttemptRequest);
           return retention.retainInOwnerTransaction(retained);
         });
-    migrate("1020");
+    migrateLatest();
     routeReader = new CanonicalPlayerRouteReadService(namespace, catalogs, admissions, launches);
     var gameDesign = mock(AuthoredInitialActorCoreReadClient.class);
     when(gameDesign.read(any()))
@@ -340,6 +343,7 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
         .thenAnswer(
             call -> {
               requireOutsideSql();
+              controlledWorldLifecycleReads.incrementAndGet();
               var requested = (WorldCanonicalInstanceLifecycleEvidence.Request) call.getArgument(0);
               var base = supplied.world();
               var expected = base.request();
@@ -457,19 +461,36 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
     return publishedRouteReader;
   }
 
+  /** Counts complete source resolution's independently reread World lifecycle boundary. */
+  public int controlledWorldLifecycleReadCount() {
+    return controlledWorldLifecycleReads.get();
+  }
+
   public int retainedOriginalReferenceCount() {
     return dsl.fetchCount(DSL.table("game_session_canonical_roster_selection"));
   }
 
   private void migrate(String version) {
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .locations("filesystem:" + migrations)
-        .target(MigrationVersion.fromVersion(version))
-        .load()
-        .migrate();
+    migrateTo(version);
+  }
+
+  private void migrateLatest() {
+    migrateTo(null);
+  }
+
+  private void migrateTo(String version) {
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .locations("filesystem:" + migrations)
+            .placeholders(Map.of("serviceSchema", schema));
+    if (version != null) migration.target(MigrationVersion.fromVersion(version));
+    migration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    migration.load().migrate();
   }
 
   private static Path resolveMigrationDirectory() {

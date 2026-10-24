@@ -2217,6 +2217,40 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
         CanonicalGameplayRosterRetirementEvidence.confirmation(
             acknowledged.acknowledgementRequest(), acknowledgement);
     var confirmed = CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    String retainedTransfer =
+        pageSourceRow(
+            "entity_canonical_roster_retirement_transfers",
+            "observation_uuid",
+            acknowledged.observationUuid());
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.recordRetirementConfirmation(
+                            acknowledged,
+                            confirmed.toBuilder().setRequestDigest("0".repeat(64)).build())))
+        .isInstanceOf(IllegalArgumentException.class);
+    var changedRequest =
+        acknowledged.acknowledgementRequest().toBuilder().setSnapshotDigest("0".repeat(64)).build();
+    var changedCandidate =
+        new CanonicalGameplayRosterRetentionRepository.RetirementTransfer(
+            acknowledged.observationUuid(),
+            acknowledged.state(),
+            acknowledged.original(),
+            changedRequest,
+            acknowledged.acknowledgement());
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.recordRetirementConfirmation(changedCandidate, confirmed)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_retirement_transfers",
+                "observation_uuid",
+                acknowledged.observationUuid()))
+        .isEqualTo(retainedTransfer);
     transaction.executeWithoutResult(
         ignored ->
             assertThat(repository.recordRetirementConfirmation(acknowledged, confirmed)).isTrue());

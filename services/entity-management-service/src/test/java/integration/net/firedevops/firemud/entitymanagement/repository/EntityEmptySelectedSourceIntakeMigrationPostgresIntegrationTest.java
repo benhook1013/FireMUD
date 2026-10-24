@@ -106,7 +106,7 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
             dsl.fetchSingle(
                     "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
                 .get(0, String.class))
-        .isEqualTo("1020");
+        .isEqualTo("1021");
   }
 
   @AfterEach

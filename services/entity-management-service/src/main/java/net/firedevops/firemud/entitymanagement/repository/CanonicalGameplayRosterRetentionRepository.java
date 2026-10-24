@@ -18,6 +18,7 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRe
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
@@ -1974,8 +1975,27 @@ public final class CanonicalGameplayRosterRetentionRepository {
                         ? null
                         : CanonicalGameplayRosterRetirementAcknowledgementRequest.parseFrom(
                             row.get("acknowledgement_request", byte[].class));
+                var acknowledgement =
+                    row.get("acknowledgement_response", byte[].class) == null
+                        ? null
+                        : CanonicalGameplayRosterRetirementAcknowledgementResponse.parseFrom(
+                            row.get("acknowledgement_response", byte[].class));
+                if ((acknowledgement != null && request == null)
+                    || (request == null
+                        && !"WAITING_RETIREMENT".equals(row.get("transfer_state", String.class)))
+                    || (acknowledgement == null
+                        && "ACKNOWLEDGED".equals(row.get("transfer_state", String.class)))) {
+                  throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_INVALID");
+                }
                 if (request != null) {
-                  CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request);
+                  // Each fresh retained row is fully validated once. The guarded response
+                  // validator also computes and binds this same immutable request digest.
+                  String requestDigest =
+                      acknowledgement == null
+                          ? CanonicalGameplayRosterRetirementEvidence.requestDigest(request)
+                          : CanonicalGameplayRosterRetirementEvidence
+                              .requireAcknowledgementResponse(request, acknowledgement)
+                              .getRequestDigest();
                   if (!request.getOriginalSelection().equals(original)
                       || !request
                           .getObservationUuid()
@@ -2004,27 +2024,12 @@ public final class CanonicalGameplayRosterRetentionRepository {
                       || !Arrays.equals(
                           request.getObservedRetirement().toByteArray(),
                           row.get("observed_retirement", byte[].class))
-                      || !CanonicalGameplayRosterRetirementEvidence.requestDigest(request)
-                          .equals(row.get("request_digest", String.class))) {
+                      || !requestDigest.equals(row.get("request_digest", String.class))) {
                     throw new IllegalStateException(
                         "CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
                   }
                 }
-                var acknowledgement =
-                    row.get("acknowledgement_response", byte[].class) == null
-                        ? null
-                        : CanonicalGameplayRosterRetirementAcknowledgementResponse.parseFrom(
-                            row.get("acknowledgement_response", byte[].class));
-                if ((acknowledgement != null && request == null)
-                    || (request == null
-                        && !"WAITING_RETIREMENT".equals(row.get("transfer_state", String.class)))
-                    || (acknowledgement == null
-                        && "ACKNOWLEDGED".equals(row.get("transfer_state", String.class)))) {
-                  throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_INVALID");
-                }
                 if (acknowledgement != null) {
-                  CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
-                      request, acknowledgement);
                   Long effectiveMinimum = row.get("effective_minimum_retention_millis", Long.class);
                   if (effectiveMinimum == null
                       || acknowledgement.getMinimumRetentionMillis() != effectiveMinimum) {
@@ -2189,9 +2194,14 @@ public final class CanonicalGameplayRosterRetentionRepository {
       RetirementTransfer candidate,
       CanonicalGameplayRosterRetirementConfirmationResponse response) {
     requireOwnerTransaction();
+    // The response guard validates the complete confirmation and nested proof once below;
+    // constructing the immutable envelope supplies no validation or retirement authority.
     var confirmation =
-        CanonicalGameplayRosterRetirementEvidence.confirmation(
-            candidate.acknowledgementRequest(), candidate.acknowledgement());
+        CanonicalGameplayRosterRetirementConfirmationRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setAcknowledgementRequest(candidate.acknowledgementRequest())
+            .setAcknowledgement(candidate.acknowledgement())
+            .build();
     CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(confirmation, response);
     Record retained = lockRetirementTransfer(candidate);
     if (!Arrays.equals(

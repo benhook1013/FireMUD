@@ -82,6 +82,12 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     List<String> installed = history(dataSource);
     assertMigrationPresent(installed, migrations.childVersion(), migrations.childScript());
     assertMigrationPresent(installed, migrations.frontVersion(), migrations.frontScript());
+    assertMigrationPresent(
+        installed,
+        migrations == GAME_SESSION ? "1022" : "1021",
+        migrations == GAME_SESSION
+            ? "V1022__canonical_roster_binary_safe_recovery_guard.sql"
+            : "V1021__character_create_binary_safe_immutability.sql");
     assertThat(installed).allSatisfy(row -> assertThat(row).contains("\"success\": true"));
     assertEntitySealPrimaryKey(migrations, dataSource);
   }

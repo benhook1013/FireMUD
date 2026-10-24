@@ -91,7 +91,7 @@ class CanonicalPlayerCreatedRosterClientTest {
     var route = mock(CanonicalPlayableTarget.class);
     when(route.targetNamespace()).thenReturn(fixture.namespace());
     when(source.route()).thenReturn(route);
-    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.withDeadlineAfter(20L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.withMaxInboundMessageSize(anyInt())).thenReturn(stub);
     when(stub.listPlayerCreatedRoster(any()))
         .thenAnswer(
@@ -502,6 +502,8 @@ class CanonicalPlayerCreatedRosterClientTest {
     assertThat(options.getValue().getCompressor()).isEqualTo("gzip");
     assertThat(options.getValue().getMaxInboundMessageSize()).isEqualTo(66 * 1024);
     assertThat(options.getValue().getDeadline()).isNotNull();
+    assertThat(options.getValue().getDeadline().timeRemaining(TimeUnit.MILLISECONDS))
+        .isBetween(19_000L, 20_000L);
     assertThat(options.getValue().getCredentials())
         .isInstanceOf(
             net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials.class);

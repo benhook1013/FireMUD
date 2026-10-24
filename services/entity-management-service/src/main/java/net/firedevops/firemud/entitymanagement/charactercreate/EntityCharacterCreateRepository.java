@@ -4,6 +4,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -350,7 +351,7 @@ public final class EntityCharacterCreateRepository {
           if (abortRequestId == null) {
             // Recheck expiry after every potentially blocking lock and immediately before
             // allocation.
-            requireCurrentAuthority(proof);
+            requireCurrentAuthority(action.expectedVersion().connectScopeExpiresAt());
             if (!tx.fetch(
                     "SELECT character_uuid FROM characters WHERE tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? FOR UPDATE",
                     tenant,
@@ -361,7 +362,7 @@ public final class EntityCharacterCreateRepository {
                   .withDescription("PLAYER_CREATED roster is not empty")
                   .asRuntimeException();
             }
-            requireCurrentAuthority(proof);
+            requireCurrentAuthority(action.expectedVersion().connectScopeExpiresAt());
             character = UUID.randomUUID();
             String core = action.mutation().authoredSource().core().canonicalJson();
             int inserted =
@@ -419,10 +420,10 @@ public final class EntityCharacterCreateRepository {
         });
   }
 
-  private void requireCurrentAuthority(EntityCharacterCreateProofs proof) {
+  private void requireCurrentAuthority(Instant connectScopeExpiresAt) {
     // This is Entity's local admission deadline. Remote observation/acquisition timestamps remain
     // exact retained owner values and are never compared with Entity's clock.
-    if (!clock.instant().isBefore(proof.action().expectedVersion().connectScopeExpiresAt())) {
+    if (!clock.instant().isBefore(connectScopeExpiresAt)) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Original creation authority expired; no abort inferred")
           .asRuntimeException();
