@@ -67,11 +67,46 @@ is_github_timestamp() {
   [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
 }
 
+recover_validation_job_from_attempt() {
+  local attempt attempt_snapshot cache_key expected_branch expected_head_repository
+  attempt_recovered_job_json=''
+  [[ "${EXPECTED_WORKFLOW_PATH}" == ".github/workflows/ci.yml" &&
+    "${EXPECTED_WORKFLOW_NAME}" == "CI — Validation" &&
+    "${REQUIRED_GATE_NAME}" == "Validation Gate" ]] || return 1
+  attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and . == floor)' <<<"${job_json}")" || return 1
+  cache_key="${workflow_run_id}:${attempt}:${job_id}:${check_run_id}"
+  if [[ -n "${attempt_snapshot_cache[${cache_key}]:-}" ]]; then
+    attempt_recovered_job_json="$(jq -cer '.job' <<<"${attempt_snapshot_cache[${cache_key}]}")" || return 1
+    return 0
+  fi
+  if (( attempt_recovery_reads >= attempt_recovery_read_limit )); then
+    echo "Exact-attempt historical sparse-candidate recovery exhausted its ${attempt_recovery_read_limit}-snapshot budget; refusing to assess." >&2
+    return 3
+  fi
+  attempt_recovery_reads=$((attempt_recovery_reads + 1))
+  expected_branch="$(jq -er '.head_branch | select(type == "string" and length > 0)' <<<"${workflow_run_json}")" || return 1
+  expected_head_repository="$(jq -er '.head_repository.full_name | select(type == "string" and length > 0)' <<<"${workflow_run_json}")" || return 1
+  attempt_snapshot="$(bash "$(dirname "${BASH_SOURCE[0]}")/validate-exact-attempt-gate.sh" \
+    "${workflow_run_id}" "${attempt}" "${job_id}" "${check_run_id}" \
+    "${REQUIRED_GATE_NAME}" "${expected_workflow_id}" "${EXPECTED_WORKFLOW_NAME}" \
+    "${EXPECTED_WORKFLOW_PATH}" "${expected_display_title}" "${PR_NUMBER}" \
+    "${BASE_SHA}" "${HEAD_SHA}" "${expected_branch}" "${GITHUB_REPOSITORY}" \
+    "${expected_head_repository}" "${check_status}" "${conclusion}" \
+    "${details_url}" "${started_at}" "${completed_at}" false)" || return 1
+  attempt_snapshot_cache["${cache_key}"]="${attempt_snapshot}"
+  attempt_recovered_job_json="$(jq -cer '.job' <<<"${attempt_snapshot}")" || return 1
+  return 0
+}
+
 api_error_file="$(mktemp)"
 trap 'rm -f "$api_error_file"' EXIT
 expected_workflow_id=""
 declare -A workflow_run_cache=()
 declare -A job_cache=()
+declare -A attempt_snapshot_cache=()
+attempt_recovery_reads=0
+attempt_recovery_read_limit=3
+attempt_recovered_job_json=''
 
 # Recognize only the observed pre-execution Validation cancellation shape. A
 # cancelled workflow may still contain genuine failures; its conclusion alone
@@ -417,6 +452,69 @@ while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_statu
   if [[ "${job_query_status}" -ne 0 ]]; then
     candidate_ambiguous=true
     continue
+  fi
+  if [[ "${EXPECTED_WORKFLOW_PATH}" == ".github/workflows/ci.yml" &&
+    "${EXPECTED_WORKFLOW_NAME}" == "CI — Validation" &&
+    "${REQUIRED_GATE_NAME}" == "Validation Gate" &&
+    "${check_status}" == "completed" &&
+    ( "${preserve_step_conclusion}" == "unknown" || -z "${preserve_step_conclusion}" ) ]]; then
+    case "${conclusion}" in
+      cancelled|skipped|stale) ;;
+      *)
+        preserve_step_state="$(jq -r '
+          if (.steps // null) == null then "absent"
+          elif (.steps | type) != "array" or any(.steps[]; type != "object" or (.name | type) != "string") then "invalid"
+          else
+            [.steps[] | select(.name == "Preserve successful required gate on metadata-only edit")] as $matches
+            | if ($matches | length) == 0 then "absent"
+              elif ($matches | length) == 1 then "present"
+              else "invalid" end
+          end
+        ' <<<"${job_json}" 2>>"${api_error_file}")" || {
+          candidate_ambiguous=true
+          continue
+        }
+        if [[ "${preserve_step_state}" == "invalid" ]]; then
+          candidate_ambiguous=true
+          continue
+        fi
+        if [[ "${preserve_step_state}" == "absent" ]]; then
+          if recover_validation_job_from_attempt; then
+            job_json="${attempt_recovered_job_json}"
+            job_cache["${job_id}"]="${job_json}"
+            preserve_step_state="$(jq -r '
+              if (.steps | type) != "array" or any(.steps[]; type != "object" or (.name | type) != "string") then "invalid"
+              else
+                [.steps[] | select(.name == "Preserve successful required gate on metadata-only edit")] as $matches
+                | if ($matches | length) == 0 then "absent"
+                  elif ($matches | length) == 1 then "present"
+                  else "invalid" end
+              end
+            ' <<<"${job_json}" 2>>"${api_error_file}")" || {
+              candidate_ambiguous=true
+              continue
+            }
+            if [[ "${preserve_step_state}" == "invalid" ]]; then
+              candidate_ambiguous=true
+              continue
+            fi
+            preserve_step_conclusion="$(jq -r '
+              [.steps[]?
+                | select(.name == "Preserve successful required gate on metadata-only edit")
+                | (.conclusion // "")
+              ]
+              | if length == 1 then .[0] else "unknown" end
+            ' <<<"${job_json}" 2>>"${api_error_file}")" || {
+              candidate_ambiguous=true
+              continue
+            }
+          else
+            recovery_status=$?
+            if [[ "${recovery_status}" -eq 3 ]]; then exit 1; fi
+          fi
+        fi
+        ;;
+    esac
   fi
   if [[ "${preserve_step_conclusion}" == "unknown" ||
     -z "${preserve_step_conclusion}" ]]; then
