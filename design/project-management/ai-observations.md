@@ -378,3 +378,7 @@ Entry format:
   - Context: #3294's active checkout already used FireController readiness, but an older dirty root checkout and injected chat instructions still named the retired `check-coderabbit-review.py`. An attempted invocation failed because that script was absent.
   - Observation: FireController verified that the active commit's documentation was already correct; this was a context mismatch, not a missing tool or runtime defect. The lane reread the active worktree's instructions and retained the failed attempt without recreating the retired script or claiming it passed.
   - Expected pattern: pin the active worktree and revision before selecting workflow commands; use the installed release's explicit readiness observation and native assessment, while independently consuming complete review summaries and findings as required by [PR lifecycle](../developer-workflows/pr-lifecycle.md).
+
+## 2026-10-25: Focused service checks can compile another helper's unfinished dependency
+
+Gameplay R206 selected Game Session checks while a disjoint Entity helper was still editing its repository. Gradle transitively compiled Entity and failed on newly referenced classification methods that had not yet been added; this was an incomplete shared working tree, not evidence against a completed correction. Serializing Gradle processes does not stabilize concurrently edited source dependencies. The lane owner stopped further launches and will consolidate proof after the affected helper handoff; preserve this failed run without attributing it to a qualified candidate.

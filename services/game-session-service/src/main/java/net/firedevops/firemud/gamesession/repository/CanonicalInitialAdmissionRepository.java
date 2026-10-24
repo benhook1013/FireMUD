@@ -212,6 +212,12 @@ public class CanonicalInitialAdmissionRepository {
           "Exact current OPEN lock requires a writable owner transaction");
     }
     var expected = qualified.ownerProof();
+    CanonicalRealmCatalogSnapshot lockedCatalog =
+        catalogRepository.lockCurrentOpenAdmissionTargetForShare(
+            expected.targetNamespace(),
+            expected.canonicalTenantId(),
+            expected.realmId(),
+            expected.expectedCatalogRevision());
     var rows =
         dsl.fetch(
             "SELECT * FROM gameplay_admission_pointer WHERE target_namespace = ? "
@@ -240,12 +246,6 @@ public class CanonicalInitialAdmissionRepository {
     if (!COMMITTED.equals(attempt.status()))
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Exact initial-admission attempt is no longer committed");
-    CanonicalRealmCatalogSnapshot lockedCatalog =
-        catalogRepository.lockCurrentOpenAdmissionTargetForShare(
-            expected.targetNamespace(),
-            expected.canonicalTenantId(),
-            expected.realmId(),
-            expected.expectedCatalogRevision());
     verifyCommittedReadback(attempt, lockedCatalog, true);
     var proof = toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
     var actual = new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(pointer, proof));

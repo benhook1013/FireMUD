@@ -58,6 +58,10 @@ public final class CanonicalGameplayRosterRetentionService {
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("CANONICAL_ROSTER_SWEEP_REQUIRES_NO_AMBIENT_TRANSACTION");
     }
+    runCleanupStage(
+        () ->
+            transactions.executeWithoutResult(
+                ignored -> repository.classifyRetainedDependencies(policy.batchSize())));
     runCleanupStage(this::sweepSnapshots);
     runCleanupStage(this::sweepClosedAdmissions);
     runCleanupStage(this::sweepRetirementTransfers);
@@ -73,6 +77,14 @@ public final class CanonicalGameplayRosterRetentionService {
         () ->
             transactions.executeWithoutResult(
                 ignored -> repository.purgeConfirmedRetirementTransfers(policy.batchSize())));
+    runCleanupStage(
+        () ->
+            transactions.executeWithoutResult(
+                ignored -> repository.purgeRetiredTargets(policy.batchSize())));
+    runCleanupStage(
+        () ->
+            transactions.executeWithoutResult(
+                ignored -> repository.purgeTargetClassifications(policy.batchSize())));
     refreshHealth();
   }
 
@@ -97,8 +109,20 @@ public final class CanonicalGameplayRosterRetentionService {
       try {
         boolean changed;
         if ("RETIRED".equals(candidate.lifecycleState())) {
+          boolean initialized =
+              Boolean.TRUE.equals(
+                  transactions.execute(
+                      ignored -> repository.initializeRetainedRetirement(candidate)));
+          if (!initialized) {
+            metrics.counter("firemud.canonical.roster.cleanup", "result", "protected").increment();
+            continue;
+          }
           changed =
               Boolean.TRUE.equals(transactions.execute(ignored -> repository.dispose(candidate)));
+          if (!changed) {
+            transactions.executeWithoutResult(
+                ignored -> repository.prepareRetirement(candidate, policy.batchSize()));
+          }
           metrics
               .counter(
                   "firemud.canonical.roster.cleanup", "result", changed ? "disposed" : "protected")

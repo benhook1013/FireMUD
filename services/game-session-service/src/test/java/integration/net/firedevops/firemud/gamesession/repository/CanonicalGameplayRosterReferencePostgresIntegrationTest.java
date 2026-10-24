@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -82,6 +84,12 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         .containsExactlyElementsOf(beforeObservation);
     assertThat(history().get(history().size() - 1))
         .contains("1017", "V1017__canonical_roster_retirement_observation.sql");
+    var beforeLatest = history();
+    migrate("latest");
+    assertThat(history().subList(0, beforeLatest.size())).containsExactlyElementsOf(beforeLatest);
+    assertThat(history()).hasSize(beforeLatest.size() + 2);
+    assertThat(history().get(history().size() - 1))
+        .contains("1021", "V1021__canonical_roster_recovery_attempt_scheduling.sql");
     transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     repository =
         new CanonicalGameplayRosterReferenceRepository(
@@ -92,6 +100,148 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 java.time.Duration.ofMillis(1),
                 java.time.Duration.ofSeconds(1),
                 8));
+  }
+
+  @Test
+  void recoverySchedulingMigrationPreservesRetainedRowsAndRetriesPendingMarkers() throws Exception {
+    String upgradeSchema = "gs_roster_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+    var upgradeDataSource =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    upgradeDataSource.setSchema(upgradeSchema);
+    migrate(upgradeDataSource, upgradeSchema, "1020");
+    var upgradeDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(upgradeDataSource), SQLDialect.POSTGRES);
+    var upgradeTransaction =
+        new TransactionTemplate(new DataSourceTransactionManager(upgradeDataSource));
+    var upgradeRepository =
+        new CanonicalGameplayRosterReferenceRepository(upgradeDsl, policy(1L, 1L, 1L));
+
+    try {
+      var ordinaryTerminal = request();
+      var recoveredTerminal = request();
+      var pendingRecovery = request();
+      upgradeTransaction.executeWithoutResult(
+          ignored -> {
+            upgradeRepository.begin(ordinaryTerminal);
+            upgradeRepository.completeUnissuedDenied(ordinaryTerminal);
+            for (var original : List.of(recoveredTerminal, pendingRecovery)) {
+              upgradeRepository.begin(original);
+              upgradeRepository.reserveSelectionInput(original, selectionInput());
+              upgradeRepository.markRosterReadStarted(original);
+            }
+          });
+      Thread.sleep(10L);
+
+      var terminalRecoveryUuid = UUID.randomUUID();
+      var pendingRecoveryUuid = UUID.randomUUID();
+      upgradeTransaction.executeWithoutResult(
+          ignored -> {
+            upgradeDsl.execute(
+                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp() WHERE operation_uuid = ?",
+                terminalRecoveryUuid,
+                UUID.fromString(recoveredTerminal.getOperationUuid()));
+            upgradeDsl.execute(
+                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp() WHERE operation_uuid = ?",
+                pendingRecoveryUuid,
+                UUID.fromString(pendingRecovery.getOperationUuid()));
+          });
+      var recoveryRequest =
+          CanonicalGameplayRosterRecoveryEvidence.requireRequest(
+              CanonicalGameplayRosterRecoveryRequest.newBuilder()
+                  .setSchemaVersion(1)
+                  .setOriginalSelection(recoveredTerminal)
+                  .setRecoveryUuid(terminalRecoveryUuid.toString())
+                  .build());
+      var originalRecord = upgradeRepository.read(recoveredTerminal);
+      var terminalRecoveryResponse =
+          CanonicalGameplayRosterRecoveryEvidence.response(
+              recoveryRequest,
+              UUID.randomUUID(),
+              originalRecord.getOwnerFence(),
+              UUID.fromString(originalRecord.getTargetFenceUuid()),
+              null);
+      upgradeTransaction.executeWithoutResult(
+          ignored ->
+              upgradeRepository.finishRecovery(
+                  verifiedRecovery(recoveryRequest, terminalRecoveryResponse)));
+
+      var retainedOrdinaryTerminal = upgradeRow(upgradeDsl, ordinaryTerminal);
+      var retainedRecoveredTerminal = upgradeRow(upgradeDsl, recoveredTerminal);
+      var retainedPendingRecovery = upgradeRow(upgradeDsl, pendingRecovery);
+      assertThat(
+              upgradeDsl
+                  .fetchSingle(
+                      "SELECT terminal_outcome FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(ordinaryTerminal.getOperationUuid()))
+                  .get("terminal_outcome", String.class))
+          .isEqualTo("DENIED");
+      assertThat(
+              upgradeDsl
+                  .fetchSingle(
+                      "SELECT terminal_outcome FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(recoveredTerminal.getOperationUuid()))
+                  .get("terminal_outcome", String.class))
+          .isEqualTo("DENIED");
+      assertThat(upgradeRowValue(upgradeDsl, pendingRecovery, "recovery_uuid", String.class))
+          .isEqualTo(pendingRecoveryUuid.toString());
+      var historyBeforeScheduling = history(upgradeDsl);
+
+      migrate(upgradeDataSource, upgradeSchema, "latest");
+      assertThat(history(upgradeDsl).subList(0, historyBeforeScheduling.size()))
+          .containsExactlyElementsOf(historyBeforeScheduling);
+      assertThat(history(upgradeDsl).get(history(upgradeDsl).size() - 1))
+          .contains("1021", "V1021__canonical_roster_recovery_attempt_scheduling.sql");
+      assertThat(upgradeRow(upgradeDsl, ordinaryTerminal)).isEqualTo(retainedOrdinaryTerminal);
+      assertThat(upgradeRow(upgradeDsl, recoveredTerminal)).isEqualTo(retainedRecoveredTerminal);
+      assertThat(upgradeRow(upgradeDsl, pendingRecovery)).isEqualTo(retainedPendingRecovery);
+      assertThat(
+              upgradeRowValue(
+                  upgradeDsl, ordinaryTerminal, "recovery_last_attempt_at", String.class))
+          .isNull();
+      assertThat(
+              upgradeRowValue(
+                  upgradeDsl, recoveredTerminal, "recovery_last_attempt_at", String.class))
+          .isNull();
+      assertThat(
+              upgradeRowValue(
+                  upgradeDsl, pendingRecovery, "recovery_last_attempt_at", String.class))
+          .isNull();
+
+      // A retained future scheduling value must advance strictly when its pending retry is
+      // selected.
+      upgradeTransaction.executeWithoutResult(
+          ignored ->
+              upgradeDsl.execute(
+                  "UPDATE game_session_canonical_roster_selection SET recovery_last_attempt_at = clock_timestamp() + interval '1 day' WHERE operation_uuid = ?",
+                  UUID.fromString(pendingRecovery.getOperationUuid())));
+      String futureAttempt =
+          upgradeRowValue(upgradeDsl, pendingRecovery, "recovery_last_attempt_at", String.class);
+      var retryPage =
+          upgradeTransaction.execute(
+              ignored ->
+                  upgradeRepository.beginRecoveries(pendingRecovery, current(pendingRecovery)));
+      assertThat(retryPage).hasSize(1);
+      assertThat(retryPage.get(0).getRecoveryUuid()).isEqualTo(pendingRecoveryUuid.toString());
+      assertThat(upgradeRowValue(upgradeDsl, pendingRecovery, "recovery_uuid", String.class))
+          .isEqualTo(pendingRecoveryUuid.toString());
+      assertThat(
+              upgradeDsl.fetchExists(
+                  DSL.selectOne()
+                      .from("game_session_canonical_roster_selection")
+                      .where(
+                          "operation_uuid = ? AND recovery_last_attempt_at > ?::timestamptz",
+                          UUID.fromString(pendingRecovery.getOperationUuid()),
+                          futureAttempt)))
+          .isTrue();
+      assertThat(upgradeRow(upgradeDsl, ordinaryTerminal)).isEqualTo(retainedOrdinaryTerminal);
+      assertThat(upgradeRow(upgradeDsl, recoveredTerminal)).isEqualTo(retainedRecoveredTerminal);
+    } finally {
+      try (var admin =
+          DSL.using(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+        admin.execute("DROP SCHEMA IF EXISTS " + upgradeSchema + " CASCADE");
+      }
+    }
   }
 
   @AfterEach
@@ -1161,28 +1311,197 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   @Test
-  void recoveryPageUsesConfiguredBoundAndNeverReplacesPendingRecoveryMarkers() throws Exception {
+  void recoveryPageAdvancesPastFailedBatchWithoutReplacingRecoveryIdentity() throws Exception {
+    repository = repository(policy(5000L, 1L, 1L));
     var request = request();
+    var originals = new ArrayList<GetCanonicalGameplayRosterReferenceRequest>();
     transaction.executeWithoutResult(
         ignored -> {
           for (int i = 0; i < 9; i++) {
-            repository.begin(
-                request.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build());
+            var original =
+                i == 0
+                    ? request
+                    : request.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build();
+            originals.add(original);
+            repository.begin(original);
+            repository.reserveSelectionInput(original, selectionInput());
+            repository.markRosterReadStarted(original);
           }
         });
     Thread.sleep(5L);
-    var page =
-        transaction.execute(ignored -> repository.beginRecoveries(request, current(request)));
-    assertThat(page).hasSize(8);
+    var routes =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var current = current(request);
+    var snapshot = currentSnapshot(request);
+    org.mockito.Mockito.when(routes.readCurrentTarget(current.canonicalTenantId()))
+        .thenReturn(current);
+    org.mockito.Mockito.when(
+            admissions.readCurrentOpenSnapshotForRealm(
+                request.getTargetNamespace(), current.canonicalTenantId(), current.realmId()))
+        .thenReturn(snapshot);
+    org.mockito.Mockito.when(admissions.lockExactCurrentOpenSnapshot(snapshot))
+        .thenReturn(snapshot);
+    var client = org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class);
+    var failedBatchCalls = new ArrayList<CanonicalGameplayRosterRecoveryRequest>();
+    var retryCalls = new ArrayList<CanonicalGameplayRosterRecoveryRequest>();
+    var failuresRemaining = new AtomicInteger(8);
+    org.mockito.Mockito.when(client.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call -> {
+              CanonicalGameplayRosterRecoveryRequest recovery = call.getArgument(0);
+              if (failuresRemaining.getAndDecrement() > 0) {
+                failedBatchCalls.add(recovery);
+                throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+              }
+              retryCalls.add(recovery);
+              return verifiedRecovery(recovery, recoveryResponse(recovery, null));
+            });
+    var metrics = new SimpleMeterRegistry();
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            client,
+            metrics);
+    assertThat(owner.retireTarget(request)).isFalse();
+    assertThat(failedBatchCalls).hasSize(8);
+    assertThat(retryCalls).isEmpty();
     assertThat(
-            transaction.<List<CanonicalGameplayRosterRecoveryRequest>>execute(
-                ignored -> repository.beginRecoveries(request, current(request))))
-        .containsExactlyElementsOf(page);
+            metrics
+                .get("firemud.canonical.roster.reference.recovery.failure")
+                .tag("kind", "unavailable")
+                .counter()
+                .count())
+        .isEqualTo(8.0);
+    var failedOperationIds =
+        failedBatchCalls.stream()
+            .map(recovery -> recovery.getOriginalSelection().getOperationUuid())
+            .collect(java.util.stream.Collectors.toSet());
+    var laterOriginal =
+        originals.stream()
+            .filter(original -> !failedOperationIds.contains(original.getOperationUuid()))
+            .findFirst()
+            .orElseThrow();
+    var firstAttemptState = new HashMap<String, List<String>>();
+    for (var recovery : failedBatchCalls) {
+      String operationUuid = recovery.getOriginalSelection().getOperationUuid();
+      var row = recoveryScheduleRow(operationUuid);
+      assertThat(row.get("recovery_uuid", String.class)).isEqualTo(recovery.getRecoveryUuid());
+      firstAttemptState.put(
+          operationUuid,
+          List.of(
+              row.get("recovery_uuid", String.class),
+              row.get("recovery_started_at", String.class),
+              row.get("recovery_last_attempt_at", String.class)));
+      assertThat(repository.read(recovery.getOriginalSelection()).getTerminalOutcome()).isEmpty();
+    }
     assertThat(
             dsl.fetchSingle(
                     "SELECT count(*) FROM game_session_canonical_roster_selection WHERE recovery_uuid IS NOT NULL")
                 .get(0, Long.class))
         .isEqualTo(8L);
+
+    // Reconstruct the repository between failed attempts; the ninth untouched operation must
+    // enter the next bounded page while the original UUID and start time remain immutable.
+    repository = repository(policy(5000L, 1L, 1L));
+    owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            client,
+            metrics);
+    assertThat(owner.retireTarget(request)).isFalse();
+    assertThat(retryCalls).hasSize(8);
+    assertThat(
+            retryCalls.stream().map(recovery -> recovery.getOriginalSelection().getOperationUuid()))
+        .contains(laterOriginal.getOperationUuid());
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_selection WHERE recovery_uuid IS NOT NULL")
+                .get(0, Long.class))
+        .isEqualTo(9L);
+    var retriedOperationIds =
+        retryCalls.stream()
+            .map(recovery -> recovery.getOriginalSelection().getOperationUuid())
+            .collect(java.util.stream.Collectors.toSet());
+    for (var entry : firstAttemptState.entrySet()) {
+      var row = recoveryScheduleRow(entry.getKey());
+      assertThat(row.get("recovery_uuid", String.class)).isEqualTo(entry.getValue().get(0));
+      assertThat(row.get("recovery_started_at", String.class)).isEqualTo(entry.getValue().get(1));
+      if (retriedOperationIds.contains(entry.getKey())) {
+        assertThat(
+                dsl.fetchExists(
+                    DSL.selectOne()
+                        .from("game_session_canonical_roster_selection")
+                        .where(
+                            "operation_uuid = ? AND recovery_last_attempt_at > ?::timestamptz",
+                            UUID.fromString(entry.getKey()),
+                            entry.getValue().get(2))))
+            .isTrue();
+      } else {
+        assertThat(row.get("recovery_last_attempt_at", String.class))
+            .isEqualTo(entry.getValue().get(2));
+      }
+    }
+
+    // A recovery page keeps the existing target-fence exclusion: another page cannot select
+    // rows until the first page transaction commits its scheduled attempt timestamps.
+    CountDownLatch pageHeld = new CountDownLatch(1);
+    CountDownLatch releasePage = new CountDownLatch(1);
+    CountDownLatch waiterStarted = new CountDownLatch(1);
+    AtomicInteger holderPid = new AtomicInteger();
+    AtomicInteger waiterPid = new AtomicInteger();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var holder =
+          executor.submit(
+              () ->
+                  transaction.execute(
+                      ignored -> {
+                        holderPid.set(
+                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                        var page = repository.beginRecoveries(request, current(request));
+                        pageHeld.countDown();
+                        try {
+                          if (!releasePage.await(15L, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("fixture timeout");
+                          }
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        }
+                        return page;
+                      }));
+      assertThat(pageHeld.await(5L, TimeUnit.SECONDS)).isTrue();
+      var waiter =
+          executor.submit(
+              () ->
+                  transaction.execute(
+                      ignored -> {
+                        waiterPid.set(
+                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                        waiterStarted.countDown();
+                        return repository.beginRecoveries(request, current(request));
+                      }));
+      assertThat(waiterStarted.await(5L, TimeUnit.SECONDS)).isTrue();
+      awaitBackendBlockedBy(dsl, waiterPid.get(), holderPid.get());
+      releasePage.countDown();
+      assertThat(holder.get(5L, TimeUnit.SECONDS)).hasSize(1);
+      assertThat(waiter.get(5L, TimeUnit.SECONDS)).hasSize(1);
+    } finally {
+      releasePage.countDown();
+    }
   }
 
   @Test
@@ -2131,9 +2450,52 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   private List<String> history() {
-    return dsl.fetch(
+    return history(dsl);
+  }
+
+  private List<String> history(DSLContext context) {
+    return context
+        .fetch(
             "SELECT version, script, checksum, installed_rank, success FROM flyway_schema_history ORDER BY installed_rank")
         .map(row -> row.intoMap().toString());
+  }
+
+  private String upgradeRow(
+      DSLContext context, GetCanonicalGameplayRosterReferenceRequest request) {
+    return context
+        .fetchSingle(
+            "SELECT encode(original_request, 'hex') AS original_request_hex, entry_policy, "
+                + "encode(selection_input, 'hex') AS selection_input_hex, selected_character_uuid::text, "
+                + "encode(canonical_roster_receipt, 'hex') AS roster_receipt_hex, "
+                + "encode(canonical_player_created_roster_receipt, 'hex') AS player_created_roster_receipt_hex, "
+                + "encode(canonical_selected_assignment_receipt, 'hex') AS assignment_receipt_hex, "
+                + "encode(canonical_selected_player_created_character_receipt, 'hex') AS player_created_character_receipt_hex, "
+                + "receipt_recorded_at::text, recovery_uuid::text, recovery_started_at::text, "
+                + "encode(recovery_receipt, 'hex') AS recovery_receipt_hex, terminal_outcome, terminal_at::text, xmin::text "
+                + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            UUID.fromString(request.getOperationUuid()))
+        .intoMap()
+        .toString();
+  }
+
+  private <T> T upgradeRowValue(
+      DSLContext context,
+      GetCanonicalGameplayRosterReferenceRequest request,
+      String column,
+      Class<T> type) {
+    String projection =
+        switch (column) {
+          case "recovery_uuid" -> "recovery_uuid::text";
+          case "recovery_last_attempt_at" -> "recovery_last_attempt_at::text";
+          default -> throw new IllegalArgumentException("unsupported fixture column");
+        };
+    return context
+        .fetchSingle(
+            "SELECT "
+                + projection
+                + " AS value FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            UUID.fromString(request.getOperationUuid()))
+        .get("value", type);
   }
 
   private String retainedRow(GetCanonicalGameplayRosterReferenceRequest request) {
@@ -2143,6 +2505,14 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
             UUID.fromString(request.getOperationUuid()))
         .intoMap()
         .toString();
+  }
+
+  private org.jooq.Record recoveryScheduleRow(String operationUuid) {
+    return dsl.fetchSingle(
+        "SELECT recovery_uuid::text AS recovery_uuid, recovery_started_at::text AS recovery_started_at, "
+            + "recovery_last_attempt_at::text AS recovery_last_attempt_at "
+            + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+        UUID.fromString(operationUuid));
   }
 
   private List<Object> fencePolicy(GetCanonicalGameplayRosterReferenceRequest request) {
@@ -2170,17 +2540,22 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   private void migrate(String target) {
+    migrate(dataSource, schema, target);
+  }
+
+  private void migrate(
+      DriverManagerDataSource migrationDataSource, String migrationSchema, String target) {
     var configuration =
         Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
+            .dataSource(migrationDataSource)
+            .schemas(migrationSchema)
+            .defaultSchema(migrationSchema)
             .locations(
                 "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath(),
                 "filesystem:"
                     + Path.of("../common-saga/src/main/resources/db/migration/saga")
                         .toAbsolutePath())
-            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .placeholders(java.util.Map.of("serviceSchema", migrationSchema))
             .target(target);
     configuration
         .getPluginRegister()

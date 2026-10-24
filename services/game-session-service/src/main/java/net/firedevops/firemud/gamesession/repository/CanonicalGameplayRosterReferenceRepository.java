@@ -454,7 +454,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
                 + "JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) "
                 + "WHERE f.target_binding_digest = ? AND s.terminal_outcome IS NULL "
                 + "AND (s.recovery_uuid IS NOT NULL OR s.recorded_at + f.replay_horizon_millis * interval '1 millisecond' <= clock_timestamp()) "
-                + "ORDER BY s.recovery_started_at NULLS LAST, s.operation_uuid LIMIT ? FOR UPDATE OF s",
+                + "ORDER BY s.recovery_last_attempt_at NULLS FIRST, s.operation_uuid LIMIT ? FOR UPDATE OF s",
             digest(targetBinding(request)),
             policy.batchSize());
     return candidates.map(
@@ -463,10 +463,16 @@ public final class CanonicalGameplayRosterReferenceRepository {
           if (recovery == null) {
             recovery = java.util.UUID.randomUUID();
             dsl.execute(
-                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp() "
+                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp(), recovery_last_attempt_at = clock_timestamp() "
                     + "WHERE operation_uuid = ? AND recovery_uuid IS NULL AND terminal_outcome IS NULL",
                 recovery,
                 row.get("operation_uuid", java.util.UUID.class));
+          } else {
+            dsl.execute(
+                "UPDATE game_session_canonical_roster_selection SET recovery_last_attempt_at = GREATEST(recovery_last_attempt_at + interval '1 microsecond', clock_timestamp()) "
+                    + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
+                row.get("operation_uuid", java.util.UUID.class),
+                recovery);
           }
           try {
             return net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
