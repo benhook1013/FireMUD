@@ -74,7 +74,7 @@ latest_status() {
 # This proves ownership, not original source success. Old base SHA and failed or
 # cancelled publisher steps identify provenance only and cannot grant proof.
 native_identity() {
-  local run_id="$1" attempt="$2" current="$3" run title title_base jobs check check_id
+  local run_id="$1" attempt="$2" current="$3" require_current_base="${4:-false}" run title title_base jobs check check_id
   if [[ "${current}" == true ]]; then
     run="$(gh api --method GET "${api_root}/actions/runs/${run_id}")" || return 1
   else
@@ -84,7 +84,7 @@ native_identity() {
   title_base="$(jq -ern --arg title "${title}" --arg name "${workflow_name}" --arg pr "${PR_NUMBER}" --arg head "${HEAD_SHA}" '
     $title | capture("^(?<name>.*) pr-(?<pr>[1-9][0-9]*) base-(?<base>[0-9A-Fa-f]{40}) head-(?<head>[0-9A-Fa-f]{40})$")
     | select(.name == $name and .pr == $pr and .head == $head) | .base')" || return 1
-  [[ "${current}" != true || "${title_base}" == "${BASE_SHA}" ]] || return 1
+  [[ "${current}" != true && "${require_current_base}" != true || "${title_base}" == "${BASE_SHA}" ]] || return 1
   jq -e --argjson id "${run_id}" --argjson attempt "${attempt}" --argjson workflow "${workflow_id}" \
     --arg repo "${GITHUB_REPOSITORY}" --arg head_repo "${head_repository}" --arg branch "${head_branch}" \
     --arg head "${HEAD_SHA}" --arg title "${title}" --arg name "${workflow_name}" --arg path "${EXPECTED_WORKFLOW_PATH}" \
@@ -128,16 +128,29 @@ native_identity() {
     .head_sha == $head and .status == $job.status and .conclusion == $job.conclusion' <<<"${check}" >/dev/null
 }
 owned_status() {
-  local suffix run_id attempt
+  local status="$1" require_current_base="${2:-false}" suffix run_id attempt
   jq -e --arg url "${api_url}/statuses/${HEAD_SHA}" '
     .creator.id == 41898282 and .creator.login == "github-actions[bot]" and .creator.type == "Bot" and
-    .url == $url and (.state == "pending" or .state == "success" or .state == "failure" or .state == "error")' <<<"$1" >/dev/null || return 1
-  suffix="$(jq -er '.target_url' <<<"$1")" || return 1
+    .url == $url and (.state == "pending" or .state == "success" or .state == "failure" or .state == "error")' <<<"${status}" >/dev/null || return 1
+  suffix="$(jq -er '.target_url' <<<"${status}")" || return 1
   [[ "${suffix}" == "${run_url}"* ]] || return 1
   suffix="${suffix#"${run_url}"}"
   [[ "${suffix}" =~ ^([1-9][0-9]*)/attempts/([1-9][0-9]*)$ ]] || return 1
   run_id="${BASH_REMATCH[1]}"; attempt="${BASH_REMATCH[2]}"
-  native_identity "${run_id}" "${attempt}" false
+  native_identity "${run_id}" "${attempt}" false "${require_current_base}"
+}
+acknowledge_existing_pending() {
+  local status="$1" fresh
+  [[ "$(jq -r '.state' <<<"${status}")" == pending ]] || return 1
+  owned_status "${status}" true || return 1
+  native_identity "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" true ||
+    fail_closed "Current metadata native gate is not attributable."
+  pr="$(current_pr)"
+  pr_matches "${pr}" || unchanged
+  fresh="$(latest_status)" || fail_closed "Latest context became unavailable."
+  [[ "${fresh}" == "${status}" ]] || unchanged
+  report pending-acknowledged
+  exit 0
 }
 pr="$(current_pr)"
 pr_matches "${pr}" || unchanged
@@ -159,7 +172,10 @@ jq -e --arg title "${current_title}" --argjson id "${GITHUB_RUN_ID}" --argjson a
 current_run_number="$(jq -er '.run_number' <<<"${run}")"
 latest="$(latest_status)" || fail_closed "Latest context is incomplete or ambiguous."
 owned=false
-if [[ "${latest}" != null ]] && owned_status "${latest}"; then owned=true; fi
+if [[ "${latest}" != null ]]; then
+  if [[ "${ASSESSMENT}" == dependency-deferred ]] && acknowledge_existing_pending "${latest}"; then :; fi
+  if owned_status "${latest}"; then owned=true; fi
+fi
 if [[ "${ASSESSMENT}" == success ]]; then
   if [[ "${owned}" != true || "$(jq -r '.state' <<<"${latest}")" == success ]]; then unchanged; fi
   assessment_output="$(mktemp)"
@@ -177,7 +193,10 @@ native_identity "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" true || fail_closed "
 pr="$(current_pr)"
 pr_matches "${pr}" || unchanged
 fresh="$(latest_status)" || fail_closed "Latest context became unavailable."
-[[ "${fresh}" == "${latest}" ]] || unchanged
+if [[ "${fresh}" != "${latest}" ]]; then
+  if [[ "${ASSESSMENT}" == dependency-deferred ]] && acknowledge_existing_pending "${fresh}"; then :; fi
+  unchanged
+fi
 # One POST, no retry. Its native REST shape has creator and URL, not sha/app_id.
 ack="$(gh api --method POST "${api_root}/statuses/${HEAD_SHA}" -f state="${state}" -f context="${gate_name}" \
   -f target_url="${current_target}" -f description="Metadata gate original proof: ${state}")" ||
