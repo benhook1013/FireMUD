@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.charactercreate;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
@@ -32,12 +33,17 @@ public final class EntityCharacterCreateSource {
             UUID.fromString(action.scope().tenantId()),
             UUID.fromString(action.target().versionId()));
     if (association == null)
-      throw new IllegalStateException("Genuine Entity selected source is unavailable");
+      throw Status.UNAVAILABLE
+          .withDescription("Genuine Entity selected source association is unavailable")
+          .asRuntimeException();
     var receipt =
         intakes
             .read(action.scope().targetNamespace(), association.get(0, UUID.class))
             .orElseThrow(
-                () -> new IllegalStateException("Entity selected source receipt is unavailable"));
+                () ->
+                    Status.UNAVAILABLE
+                        .withDescription("Entity selected source receipt is unavailable")
+                        .asRuntimeException());
     var owner =
         receipt.inputs().worldInventoryReadEvidence().inventory().publicEvidence().ownerScope();
     if (!action.scope().targetNamespace().equals(receipt.targetNamespace())

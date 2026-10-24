@@ -1,5 +1,10 @@
 package net.firedevops.firemud.common.world;
 
+import com.google.protobuf.CodedOutputStream;
+import com.google.protobuf.MessageLite;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Objects;
@@ -7,6 +12,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest;
@@ -49,10 +55,13 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     if (!observed.hasRequest()) {
       throw new IllegalArgumentException("Complete observed retirement proof required");
     }
-    GetCanonicalGameplayRosterReferenceRequest observedRequest =
-        CanonicalGameplayRosterReferenceEvidence.requireRequest(observed.getRequest());
-    CanonicalGameplayRosterReferenceEvidence.requireResponse(observedRequest, observed);
-    CanonicalGameplayRosterReferenceEvidence.requireRetirement(observed);
+    if (observed.getState()
+        != CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED) {
+      throw new IllegalArgumentException("Complete exact owner retirement proof required");
+    }
+    GetCanonicalGameplayRosterReferenceRequest observedRequest = observed.getRequest();
+    CanonicalGameplayRosterResponse observedRoster =
+        CanonicalGameplayRosterReferenceEvidence.requireResponseSnapshot(observedRequest, observed);
     CanonicalGameplayRosterRetirementEvidence.uuid(request.getObservationUuid());
     CanonicalGameplayRosterRetirementEvidence.uuid(request.getAdmissionUuid());
 
@@ -78,8 +87,12 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     if (hasSnapshotUuid) {
       CanonicalGameplayRosterReferenceEvidence.uuid(request.getSnapshotUuid());
       requireDigest(request.getSnapshotDigest());
-      CanonicalGameplayRosterResponse roster =
-          CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(observed);
+      CanonicalGameplayRosterResponse roster = observedRoster;
+      if (roster == null) {
+        CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(observed);
+        throw new IllegalArgumentException(
+            "Observed retirement does not bind the exact roster snapshot");
+      }
       if (!roster.getSnapshotUuid().equals(request.getSnapshotUuid())
           || !roster.getSnapshotDigest().equals(request.getSnapshotDigest())
           || !roster.getCanonicalAccountUuid().equals(original.getCanonicalAccountUuid())
@@ -103,41 +116,51 @@ public final class CanonicalGameplayRosterRetirementEvidence {
 
   public static String requestDigest(
       CanonicalGameplayRosterRetirementAcknowledgementRequest request) {
-    return digest(requireAcknowledgement(request).toByteArray());
+    return digest(requireAcknowledgement(request));
   }
 
   public static CanonicalGameplayRosterRetirementAcknowledgementResponse response(
       CanonicalGameplayRosterRetirementAcknowledgementRequest request,
       UUID acknowledgementId,
       long effectiveMinimum) {
-    requireAcknowledgement(request);
+    var validatedRequest = requireAcknowledgement(request);
     requireUuid(acknowledgementId, "acknowledgementId");
-    if (effectiveMinimum < request.getMinimumRetentionMillis()) {
+    if (effectiveMinimum < validatedRequest.getMinimumRetentionMillis()) {
       throw new IllegalArgumentException(
           "Effective retention minimum is below the requested minimum");
     }
-    return requireAcknowledgementResponse(
-        request,
+    String requestDigest = digest(validatedRequest);
+    var response =
         CanonicalGameplayRosterRetirementAcknowledgementResponse.newBuilder()
             .setSchemaVersion(1)
-            .setObservationUuid(request.getObservationUuid())
+            .setObservationUuid(validatedRequest.getObservationUuid())
             .setAcknowledgementUuid(acknowledgementId.toString())
-            .setRequestDigest(requestDigest(request))
+            .setRequestDigest(requestDigest)
             .setMinimumRetentionMillis(effectiveMinimum)
-            .build());
+            .build();
+    return requireAcknowledgementResponseValidated(validatedRequest, response, requestDigest);
   }
 
   public static CanonicalGameplayRosterRetirementAcknowledgementResponse
       requireAcknowledgementResponse(
           CanonicalGameplayRosterRetirementAcknowledgementRequest request,
           CanonicalGameplayRosterRetirementAcknowledgementResponse response) {
-    requireAcknowledgement(request);
+    var validatedRequest = requireAcknowledgement(request);
+    return requireAcknowledgementResponseValidated(
+        validatedRequest, response, digest(validatedRequest));
+  }
+
+  private static CanonicalGameplayRosterRetirementAcknowledgementResponse
+      requireAcknowledgementResponseValidated(
+          CanonicalGameplayRosterRetirementAcknowledgementRequest request,
+          CanonicalGameplayRosterRetirementAcknowledgementResponse response,
+          String requestDigest) {
     Objects.requireNonNull(response, "response");
     if (response.getSchemaVersion() != 1
         || !response.getUnknownFields().asMap().isEmpty()
         || response.getSerializedSize() > MAX_RESPONSE_BYTES
         || !response.getObservationUuid().equals(request.getObservationUuid())
-        || !response.getRequestDigest().equals(requestDigest(request))
+        || !response.getRequestDigest().equals(requestDigest)
         || response.getMinimumRetentionMillis() < request.getMinimumRetentionMillis()) {
       throw new IllegalArgumentException("Retirement acknowledgement response binding is invalid");
     }
@@ -151,15 +174,27 @@ public final class CanonicalGameplayRosterRetirementEvidence {
       CanonicalGameplayRosterRetirementAcknowledgementRequest request,
       CanonicalGameplayRosterRetirementAcknowledgementResponse response) {
     requireAcknowledgementResponse(request, response);
-    return requireConfirmation(
+    var confirmation =
         CanonicalGameplayRosterRetirementConfirmationRequest.newBuilder()
             .setSchemaVersion(1)
             .setAcknowledgementRequest(request)
             .setAcknowledgement(response)
-            .build());
+            .build();
+    requireConfirmationShape(confirmation);
+    requireConfirmationPolicyBound(confirmation);
+    return confirmation;
   }
 
   public static CanonicalGameplayRosterRetirementConfirmationRequest requireConfirmation(
+      CanonicalGameplayRosterRetirementConfirmationRequest confirmation) {
+    requireConfirmationShape(confirmation);
+    requireAcknowledgementResponse(
+        confirmation.getAcknowledgementRequest(), confirmation.getAcknowledgement());
+    requireConfirmationPolicyBound(confirmation);
+    return confirmation;
+  }
+
+  private static void requireConfirmationShape(
       CanonicalGameplayRosterRetirementConfirmationRequest confirmation) {
     Objects.requireNonNull(confirmation, "confirmation");
     if (confirmation.getSchemaVersion() != 1
@@ -169,8 +204,10 @@ public final class CanonicalGameplayRosterRetirementEvidence {
         || !confirmation.hasAcknowledgement()) {
       throw new IllegalArgumentException("Closed bounded roster-retirement confirmation required");
     }
-    requireAcknowledgementResponse(
-        confirmation.getAcknowledgementRequest(), confirmation.getAcknowledgement());
+  }
+
+  private static void requireConfirmationPolicyBound(
+      CanonicalGameplayRosterRetirementConfirmationRequest confirmation) {
     if (confirmation.getSerializedSize()
         > acknowledgementLimit(confirmation.getAcknowledgementRequest().getOriginalSelection())
             + MAX_RESPONSE_BYTES
@@ -178,29 +215,35 @@ public final class CanonicalGameplayRosterRetirementEvidence {
       throw new IllegalArgumentException(
           "Retirement confirmation exceeds its policy-specific bound");
     }
-    return confirmation;
   }
 
   public static CanonicalGameplayRosterRetirementConfirmationResponse confirmationResponse(
       CanonicalGameplayRosterRetirementConfirmationRequest confirmation) {
-    requireConfirmation(confirmation);
-    return requireConfirmationResponse(
-        confirmation,
+    var validatedConfirmation = requireConfirmation(confirmation);
+    String requestDigest = digest(validatedConfirmation);
+    var response =
         CanonicalGameplayRosterRetirementConfirmationResponse.newBuilder()
             .setSchemaVersion(1)
-            .setRequestDigest(digest(confirmation.toByteArray()))
-            .build());
+            .setRequestDigest(requestDigest)
+            .build();
+    return requireConfirmationResponseValidated(response, requestDigest);
   }
 
   public static CanonicalGameplayRosterRetirementConfirmationResponse requireConfirmationResponse(
       CanonicalGameplayRosterRetirementConfirmationRequest confirmation,
       CanonicalGameplayRosterRetirementConfirmationResponse response) {
-    requireConfirmation(confirmation);
+    var validatedConfirmation = requireConfirmation(confirmation);
+    return requireConfirmationResponseValidated(response, digest(validatedConfirmation));
+  }
+
+  private static CanonicalGameplayRosterRetirementConfirmationResponse
+      requireConfirmationResponseValidated(
+          CanonicalGameplayRosterRetirementConfirmationResponse response, String requestDigest) {
     Objects.requireNonNull(response, "response");
     if (response.getSchemaVersion() != 1
         || !response.getUnknownFields().asMap().isEmpty()
         || response.getSerializedSize() > MAX_RESPONSE_BYTES
-        || !response.getRequestDigest().equals(digest(confirmation.toByteArray()))) {
+        || !response.getRequestDigest().equals(requestDigest)) {
       throw new IllegalArgumentException("Retirement confirmation response binding is invalid");
     }
     requireDigest(response.getRequestDigest());
@@ -231,11 +274,20 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     }
   }
 
-  private static String digest(byte[] bytes) {
+  private static String digest(MessageLite message) {
     try {
-      return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      try (DigestOutputStream digestOutput =
+          new DigestOutputStream(OutputStream.nullOutputStream(), digest)) {
+        CodedOutputStream codedOutput = CodedOutputStream.newInstance(digestOutput);
+        message.writeTo(codedOutput);
+        codedOutput.flush();
+      }
+      return java.util.HexFormat.of().formatHex(digest.digest());
     } catch (NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    } catch (IOException failure) {
+      throw new IllegalStateException("Unable to hash canonical protobuf", failure);
     }
   }
 }

@@ -358,11 +358,80 @@ class EntityCharacterCreatePostgresIntegrationTest {
   }
 
   @Test
-  void rejectsCurrentIdentityAndRetainedDescriptorProvenanceMismatch() throws Exception {
+  void missingSelectedSourceIsUnavailableButAChangedSourceBindingConflicts() throws Exception {
+    var proof = proof(UUID.randomUUID(), UUID.randomUUID());
+    var action = proof.action();
+    var sourceReader =
+        new EntityCharacterCreateSource(dsl, new EntityEmptySelectedSourceIntakeRepository(dsl));
+    var missingAssociationAction =
+        new CharacterCreateOperatorAction(
+            new CharacterCreateOperatorAction.Scope(
+                "missing",
+                action.scope().tenantId(),
+                action.scope().playableStateNamespaceId(),
+                action.scope().playableStateScope()),
+            action.target(),
+            action.expectedVersion(),
+            action.mutation(),
+            action.auditReason());
+    assertThatThrownBy(() -> sourceReader.read(missingAssociationAction))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("UNAVAILABLE");
+
+    var missingReceiptIntakes = mock(EntityEmptySelectedSourceIntakeRepository.class);
+    when(missingReceiptIntakes.read(source.targetNamespace(), source.intakeRequestId()))
+        .thenReturn(java.util.Optional.empty());
+    var missingReceiptReader = new EntityCharacterCreateSource(dsl, missingReceiptIntakes);
+    assertThatThrownBy(() -> missingReceiptReader.read(action))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("UNAVAILABLE");
+
+    var authored = action.mutation().authoredSource();
+    var changedAuthored =
+        new CharacterCreateOperatorAction.AuthoredSource(
+            authored.schema(),
+            authored.bindingId(),
+            authored.bindingDigest(),
+            authored.canonicalTenantId(),
+            authored.canonicalVersionId(),
+            authored.worldSourceOperationId(),
+            authored.worldSourceEvidenceDigest(),
+            authored.worldSlug(),
+            authored.publicationWorkflowId(),
+            authored.selectedCommitId(),
+            "sha256:" + "f".repeat(64),
+            authored.policy(),
+            authored.core(),
+            authored.descriptor(),
+            authored.disposition(),
+            authored.safeFeedback());
+    var changedBindingAction =
+        new CharacterCreateOperatorAction(
+            action.scope(),
+            action.target(),
+            action.expectedVersion(),
+            new CharacterCreateOperatorAction.Mutation(
+                action.mutation().purpose(),
+                action.mutation().entryPolicy(),
+                action.mutation().catalog(),
+                action.mutation().pointer(),
+                changedAuthored,
+                action.mutation().canonicalCreationInput()),
+            action.auditReason());
+    assertThatThrownBy(() -> sourceReader.read(changedBindingAction))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("ALREADY_EXISTS");
+  }
+
+  @Test
+  void changedPublishedProjectionFailsClosedAndStoredProvenanceCorruptionIsDataLoss()
+      throws Exception {
     UUID account = UUID.randomUUID();
     var proof = proof(account, UUID.randomUUID());
     var terminal = repository.settle(proof, null);
     var published = published(proof);
+    var changedPublishedSource = publishedWithChangedWorkflow(proof);
+    assertThat(changedPublishedSource.matches(proof.action())).isFalse();
     var changedRealm =
         new PublishedIdentity(
             published.targetNamespace(),
@@ -373,18 +442,63 @@ class EntityCharacterCreatePostgresIntegrationTest {
             published.playableStateNamespaceId(),
             published.canonicalVersionId(),
             published.projection());
+    UUID characterId = UUID.fromString(terminal.getCharacterId());
+    var actorBefore =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, to_jsonb(c)::text AS retained_row FROM characters c WHERE character_uuid = ?",
+                characterId));
+    var operationBefore =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, to_jsonb(o)::text AS retained_row FROM entity_character_create_operations o WHERE target_namespace = ? AND operation_id = ?",
+                proof.action().scope().targetNamespace(),
+                UUID.fromString(proof.original().getOperationId())));
+    int actorCountBefore = dsl.fetchCount(DSL.table("characters"));
+    assertThatThrownBy(
+            () ->
+                repository.readPlayerCreatedRoster(
+                    new AuthenticatedAccountSelector(account), changedPublishedSource))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("FAILED_PRECONDITION");
+    assertThatThrownBy(
+            () ->
+                repository.readSelectedPlayerCreatedTerminal(
+                    new AuthenticatedAccountSelector(account), changedPublishedSource, characterId))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("FAILED_PRECONDITION");
     assertThatThrownBy(
             () ->
                 repository.readPlayerCreatedRoster(
                     new AuthenticatedAccountSelector(account), changedRealm))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
-        .hasMessageContaining("DATA_LOSS");
+        .hasMessageContaining("FAILED_PRECONDITION");
+    var actorAfter =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, to_jsonb(c)::text AS retained_row FROM characters c WHERE character_uuid = ?",
+                characterId));
+    var operationAfter =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, to_jsonb(o)::text AS retained_row FROM entity_character_create_operations o WHERE target_namespace = ? AND operation_id = ?",
+                proof.action().scope().targetNamespace(),
+                UUID.fromString(proof.original().getOperationId())));
+    assertThat(actorAfter.get("row_version", String.class))
+        .isEqualTo(actorBefore.get("row_version", String.class));
+    assertThat(actorAfter.get("retained_row", String.class))
+        .isEqualTo(actorBefore.get("retained_row", String.class));
+    assertThat(operationAfter.get("row_version", String.class))
+        .isEqualTo(operationBefore.get("row_version", String.class));
+    assertThat(operationAfter.get("retained_row", String.class))
+        .isEqualTo(operationBefore.get("retained_row", String.class));
+    assertThat(dsl.fetchCount(DSL.table("characters"))).isEqualTo(actorCountBefore);
 
     dsl.execute("ALTER TABLE characters DISABLE TRIGGER trg_entity_created_actor_immutable");
     try {
       dsl.execute(
           "UPDATE characters SET creation_descriptor_json = '{}' WHERE character_uuid = ?",
-          UUID.fromString(terminal.getCharacterId()));
+          characterId);
       assertThatThrownBy(
               () ->
                   repository.readPlayerCreatedRoster(
@@ -806,13 +920,27 @@ class EntityCharacterCreatePostgresIntegrationTest {
   }
 
   private static PublishedIdentity published(EntityCharacterCreateProofs proof) throws Exception {
+    return published(proof, null);
+  }
+
+  private static PublishedIdentity publishedWithChangedWorkflow(EntityCharacterCreateProofs proof)
+      throws Exception {
+    return published(proof, UUID.randomUUID().toString());
+  }
+
+  private static PublishedIdentity published(
+      EntityCharacterCreateProofs proof, String currentPublicationWorkflowId) throws Exception {
     var json = tools.jackson.databind.json.JsonMapper.builder().build();
     var root = json.readTree(proof.original().getOriginalAction().toByteArray());
     var action = proof.action();
     var authored = action.mutation().authoredSource();
     var projectionNode =
         (tools.jackson.databind.node.ObjectNode) root.get("mutation").get("authoredSource");
-    projectionNode.put("publicationWorkflowId", authored.publicationWorkflowId());
+    projectionNode.put(
+        "publicationWorkflowId",
+        currentPublicationWorkflowId == null
+            ? authored.publicationWorkflowId()
+            : currentPublicationWorkflowId);
     ((tools.jackson.databind.node.ObjectNode) projectionNode.get("policy"))
         .put("logicalRevisionId", authored.policy().logicalRevisionId())
         .put("canonicalPolicyJson", authored.policy().canonicalPolicyJson());

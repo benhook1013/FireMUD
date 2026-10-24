@@ -183,7 +183,7 @@ public final class EntityCharacterCreateRepository {
           EntityCharacterCreateBindings.requireOriginal(
               creation.getOriginalRequest().getOriginal(), creation.getAccountOriginal());
     } catch (RuntimeException malformed) {
-      throw corruptRoster();
+      throw corruptRoster(malformed);
     }
     if (creation.getOutcome()
             != EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED
@@ -218,7 +218,7 @@ public final class EntityCharacterCreateRepository {
             .equals(actor.get("creation_descriptor_digest", String.class))) throw corruptRoster();
     if (!published.matches(action) || !published.targetNamespace().equals(operationNamespace)) {
       if (sourceMismatchIsUnavailable) throw selectedPlayerCreatedActorUnavailable();
-      throw corruptRoster();
+      throw publishedPlayerCreatedSourceMismatch();
     }
     return creation;
   }
@@ -234,9 +234,22 @@ public final class EntityCharacterCreateRepository {
         .asRuntimeException();
   }
 
+  private static RuntimeException publishedPlayerCreatedSourceMismatch() {
+    return Status.FAILED_PRECONDITION
+        .withDescription("Current PLAYER_CREATED source does not match the retained character")
+        .asRuntimeException();
+  }
+
   private static RuntimeException corruptRoster() {
     return Status.DATA_LOSS
         .withDescription("Stored PLAYER_CREATED roster provenance is inconsistent")
+        .asRuntimeException();
+  }
+
+  private static RuntimeException corruptRoster(Throwable cause) {
+    return Status.DATA_LOSS
+        .withDescription("Stored PLAYER_CREATED roster provenance is inconsistent")
+        .withCause(cause)
         .asRuntimeException();
   }
 

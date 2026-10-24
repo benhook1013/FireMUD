@@ -1,7 +1,14 @@
 package net.firedevops.firemud.common.world;
 
 import com.google.protobuf.ByteString;
+import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.MessageLite;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
@@ -76,6 +83,12 @@ public final class CanonicalGameplayRosterReferenceEvidence {
 
   public static GetCanonicalGameplayRosterReferenceRequest requireRequest(
       GetCanonicalGameplayRosterReferenceRequest request) {
+    requireRequestTarget(request);
+    return request;
+  }
+
+  private static CanonicalGameplayRosterTarget requireRequestTarget(
+      GetCanonicalGameplayRosterReferenceRequest request) {
     Objects.requireNonNull(request, "request");
     if (request.getSerializedSize() > MAX_REQUEST_BYTES
         || !request.getUnknownFields().asMap().isEmpty()
@@ -86,14 +99,14 @@ public final class CanonicalGameplayRosterReferenceEvidence {
     uuid(request.getOperationUuid());
     uuid(request.getCanonicalAccountUuid());
     uuid(request.getSessionUuid());
-    var target = target(request);
+    CanonicalGameplayRosterTarget target = target(request);
     if (isCreated(target)) {
       playerCreatedSourceIdentity(request);
     } else if (!request.getCanonicalPlayerCreatedSourceIdentity().isEmpty()) {
       throw new IllegalArgumentException(
           "PRESEEDED_ONLY original cannot carry PLAYER_CREATED source identity");
     }
-    return request;
+    return target;
   }
 
   public static CanonicalGameplayRosterTarget target(
@@ -239,6 +252,13 @@ public final class CanonicalGameplayRosterReferenceEvidence {
   public static CanonicalSelectedPlayerCreatedCharacterResponse
       selectedPlayerCreatedCharacterReceipt(GetCanonicalGameplayRosterReferenceResponse response) {
     var roster = playerCreatedReceipt(response).getRoster();
+    return selectedPlayerCreatedCharacterReceipt(response, roster);
+  }
+
+  private static CanonicalSelectedPlayerCreatedCharacterResponse
+      selectedPlayerCreatedCharacterReceipt(
+          GetCanonicalGameplayRosterReferenceResponse response,
+          CanonicalGameplayRosterResponse roster) {
     try {
       var bytes = response.getCanonicalSelectedPlayerCreatedCharacterReceipt();
       if (bytes.isEmpty() || bytes.size() > MAX_SELECTED_PLAYER_CREATED_BYTES) {
@@ -352,6 +372,19 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       selectedAssignmentReceipt(GetCanonicalGameplayRosterReferenceResponse response) {
     requirePreseeded(target(requireRequest(response.getRequest())));
     rejectCreatedFields(response);
+    if (response.getCanonicalSelectedAssignmentReceipt().isEmpty()
+        || response.getCanonicalSelectedAssignmentReceipt().size()
+            > MAX_SELECTED_ASSIGNMENT_BYTES) {
+      throw new IllegalArgumentException("Complete original selected assignment receipt required");
+    }
+    return selectedAssignmentReceipt(response, receipt(response));
+  }
+
+  private static net.firedevops.firemud.entitymanagement.v1
+          .CanonicalGameplayRosterSelectedAssignmentResponse
+      selectedAssignmentReceipt(
+          GetCanonicalGameplayRosterReferenceResponse response,
+          CanonicalGameplayRosterResponse roster) {
     try {
       if (response.getCanonicalSelectedAssignmentReceipt().isEmpty()
           || response.getCanonicalSelectedAssignmentReceipt().size()
@@ -363,7 +396,6 @@ public final class CanonicalGameplayRosterReferenceEvidence {
           net.firedevops.firemud.entitymanagement.v1
               .CanonicalGameplayRosterSelectedAssignmentResponse.parseFrom(
               response.getCanonicalSelectedAssignmentReceipt());
-      var roster = receipt(response);
       if (!selected.getUnknownFields().asMap().isEmpty()
           || !selected.getSnapshot().getUnknownFields().asMap().isEmpty()
           || !selected.toByteString().equals(response.getCanonicalSelectedAssignmentReceipt())
@@ -389,9 +421,21 @@ public final class CanonicalGameplayRosterReferenceEvidence {
   public static GetCanonicalGameplayRosterReferenceResponse requireResponse(
       GetCanonicalGameplayRosterReferenceRequest expected,
       GetCanonicalGameplayRosterReferenceResponse response) {
-    requireRequest(expected);
+    return validateResponse(expected, response).response();
+  }
+
+  static CanonicalGameplayRosterResponse requireResponseSnapshot(
+      GetCanonicalGameplayRosterReferenceRequest expected,
+      GetCanonicalGameplayRosterReferenceResponse response) {
+    return validateResponse(expected, response).snapshotReceipt();
+  }
+
+  private static ValidatedResponse validateResponse(
+      GetCanonicalGameplayRosterReferenceRequest expected,
+      GetCanonicalGameplayRosterReferenceResponse response) {
+    CanonicalGameplayRosterTarget expectedTarget = requireRequestTarget(expected);
     Objects.requireNonNull(response, "response");
-    boolean created = isCreated(target(expected));
+    boolean created = isCreated(expectedTarget);
     if (created) {
       if (!response.getCanonicalRosterReceipt().isEmpty()
           || !response.getCanonicalSelectedAssignmentReceipt().isEmpty()) {
@@ -409,31 +453,39 @@ public final class CanonicalGameplayRosterReferenceEvidence {
             > MAX_SELECTED_PLAYER_CREATED_BYTES
         || !response.getUnknownFields().asMap().isEmpty()
         || !response.hasRequest()
-        || !expected.equals(requireRequest(response.getRequest()))
         || response.getOwnerFence() <= 0
         || response.getCanonicalRosterReceipt().size() > MAX_RECEIPT_BYTES) {
+      throw new IllegalArgumentException("Original roster selection owner binding is invalid");
+    }
+    if (!expected.equals(response.getRequest())) {
       throw new IllegalArgumentException("Original roster selection owner binding is invalid");
     }
     boolean hasRoster =
         !response.getCanonicalRosterReceipt().isEmpty()
             || !response.getCanonicalPlayerCreatedRosterReceipt().isEmpty();
-    if (hasRoster) snapshotReceipt(response);
+    CanonicalGameplayRosterResponse validatedRoster = hasRoster ? snapshotReceipt(response) : null;
     switch (response.getState()) {
       case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED -> {
         if (hasRoster) {
           throw new IllegalArgumentException("Reserved original selection cannot carry a receipt");
         }
       }
-      case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED -> snapshotReceipt(response);
+      case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED -> {
+        if (!hasRoster) snapshotReceipt(response);
+      }
       case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED -> {
         if (response.getTerminalOutcome().isEmpty()) {
           throw new IllegalArgumentException("Closed replay requires original terminal outcome");
         }
       }
-      case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED -> requireRetirement(response);
+      case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED ->
+          requireRetirementValidated(response, expectedTarget);
       default -> throw new IllegalArgumentException("Unknown original selection state");
     }
-    uuid(response.getTargetFenceUuid());
+    if (response.getState()
+        != CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED) {
+      uuid(response.getTargetFenceUuid());
+    }
     if (!response.getRecoveryUuid().isEmpty()) {
       uuid(response.getRecoveryUuid());
     }
@@ -458,7 +510,8 @@ public final class CanonicalGameplayRosterReferenceEvidence {
     if (!response.getSelectedCharacterUuid().isEmpty()) {
       uuid(response.getSelectedCharacterUuid());
       if (!response.hasSelectionInput()
-          || snapshotReceipt(response).getActorsList().stream()
+          || validatedRoster == null
+          || validatedRoster.getActorsList().stream()
                   .filter(
                       actor -> actor.getCharacterUuid().equals(response.getSelectedCharacterUuid()))
                   .count()
@@ -473,11 +526,15 @@ public final class CanonicalGameplayRosterReferenceEvidence {
         throw new IllegalArgumentException(
             "Original assignment receipt requires a frozen chosen actor");
       }
-      if (created) selectedPlayerCreatedCharacterReceipt(response);
-      else selectedAssignmentReceipt(response);
+      if (created) selectedPlayerCreatedCharacterReceipt(response, validatedRoster);
+      else selectedAssignmentReceipt(response, validatedRoster);
     }
-    return response;
+    return new ValidatedResponse(response, validatedRoster);
   }
+
+  private record ValidatedResponse(
+      GetCanonicalGameplayRosterReferenceResponse response,
+      CanonicalGameplayRosterResponse snapshotReceipt) {}
 
   public static CanonicalGameplayRosterResponse receipt(
       GetCanonicalGameplayRosterReferenceResponse response) {
@@ -545,29 +602,30 @@ public final class CanonicalGameplayRosterReferenceEvidence {
   public static GetCanonicalGameplayRosterReferenceResponse sealRetirement(
       GetCanonicalGameplayRosterReferenceResponse response) {
     var unsigned = response.toBuilder().clearRetirementProofDigest().build();
-    var sealed =
-        unsigned.toBuilder().setRetirementProofDigest(digest(unsigned.toByteArray())).build();
+    var sealed = unsigned.toBuilder().setRetirementProofDigest(digest(unsigned)).build();
     return requireResponse(response.getRequest(), sealed);
   }
 
   public static GetCanonicalGameplayRosterReferenceResponse requireRetirement(
       GetCanonicalGameplayRosterReferenceResponse response) {
-    requireRequest(response.getRequest());
+    CanonicalGameplayRosterTarget target = requireRequestTarget(response.getRequest());
+    return requireRetirementValidated(response, target);
+  }
+
+  private static GetCanonicalGameplayRosterReferenceResponse requireRetirementValidated(
+      GetCanonicalGameplayRosterReferenceResponse response, CanonicalGameplayRosterTarget target) {
     if (!response.getUnknownFields().asMap().isEmpty()
         || response.getOwnerFence() <= 0
         || response.getState()
             != CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED
         || !java.util.Set.of("MENU", "SELECTED", "DENIED").contains(response.getTerminalOutcome())
         || !response.getSupersedingPointerDigest().matches("[0-9a-f]{64}")
-        || response.getSupersedingPointerVersion()
-            <= target(response.getRequest()).getPointerVersion()
-        || response.getSupersedingCatalogRevision()
-            < target(response.getRequest()).getCatalogRevision()
-        || response.getSupersedingWorldEpoch() < target(response.getRequest()).getActiveWorldEpoch()
+        || response.getSupersedingPointerVersion() <= target.getPointerVersion()
+        || response.getSupersedingCatalogRevision() < target.getCatalogRevision()
+        || response.getSupersedingWorldEpoch() < target.getActiveWorldEpoch()
         || !response
             .getRetirementProofDigest()
-            .equals(
-                digest(response.toBuilder().clearRetirementProofDigest().build().toByteArray()))) {
+            .equals(digest(response.toBuilder().clearRetirementProofDigest().build()))) {
       throw new IllegalArgumentException("Complete exact owner retirement proof required");
     }
     uuid(response.getRetirementUuid());
@@ -575,12 +633,20 @@ public final class CanonicalGameplayRosterReferenceEvidence {
     return response;
   }
 
-  private static String digest(byte[] bytes) {
+  private static String digest(MessageLite message) {
     try {
-      return java.util.HexFormat.of()
-          .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
-    } catch (java.security.NoSuchAlgorithmException unavailable) {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      try (DigestOutputStream digestOutput =
+          new DigestOutputStream(OutputStream.nullOutputStream(), digest)) {
+        CodedOutputStream codedOutput = CodedOutputStream.newInstance(digestOutput);
+        message.writeTo(codedOutput);
+        codedOutput.flush();
+      }
+      return java.util.HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException(unavailable);
+    } catch (IOException failure) {
+      throw new IllegalStateException("Unable to hash canonical protobuf", failure);
     }
   }
 

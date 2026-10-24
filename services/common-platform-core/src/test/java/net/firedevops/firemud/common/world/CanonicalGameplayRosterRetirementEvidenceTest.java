@@ -8,6 +8,7 @@ import com.google.protobuf.UnknownFieldSet;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
+import net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
@@ -58,6 +59,19 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
         () ->
             CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
                 acknowledgement(original, anchorProof, "", "")));
+  }
+
+  @Test
+  void acknowledgementRequiresRetiredStateEvenWhenTheOwnerResponseBindingsMatch() {
+    var original = original(OPERATION, target());
+    var reserved =
+        CanonicalGameplayRosterReferenceEvidence.response(original, 17L, TARGET_FENCE, null);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                acknowledgement(original, reserved, "", "")));
   }
 
   @Test
@@ -171,6 +185,10 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
     var confirmationResponse =
         CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
     assertEquals(
+        HexFormat.of()
+            .formatHex(MessageDigest.getInstance("SHA-256").digest(confirmation.toByteArray())),
+        confirmationResponse.getRequestDigest());
+    assertEquals(
         confirmationResponse,
         CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(
             confirmation, confirmationResponse));
@@ -187,6 +205,63 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
                 confirmation.toBuilder()
                     .setAcknowledgement(response.toBuilder().setRequestDigest("0".repeat(64)))
                     .build()));
+  }
+
+  @Test
+  void createdFiveMebibyteAcknowledgementStreamsExactDigestsAndRejectsNestedTampering()
+      throws Exception {
+    var fixture =
+        ControlledPlayerCreatedRosterTerminalFixtures.withFiveMebibyteAccountProtection("gameplay");
+    var request = fixture.acknowledgementRequest();
+    var acknowledgement = fixture.acknowledgement();
+    var confirmation = fixture.confirmation();
+
+    assertTrue(request.getSerializedSize() > 5 * 1024 * 1024);
+    var unsignedRetirement =
+        request.getObservedRetirement().toBuilder().clearRetirementProofDigest().build();
+    assertEquals(
+        HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256").digest(unsignedRetirement.toByteArray())),
+        request.getObservedRetirement().getRetirementProofDigest());
+    assertEquals(
+        HexFormat.of()
+            .formatHex(MessageDigest.getInstance("SHA-256").digest(request.toByteArray())),
+        CanonicalGameplayRosterRetirementEvidence.requestDigest(request));
+    assertEquals(
+        acknowledgement,
+        CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
+            request, acknowledgement));
+    var confirmationResponse =
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    assertEquals(
+        HexFormat.of()
+            .formatHex(MessageDigest.getInstance("SHA-256").digest(confirmation.toByteArray())),
+        confirmationResponse.getRequestDigest());
+    assertEquals(
+        confirmationResponse,
+        CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(
+            confirmation, confirmationResponse));
+
+    var changedRetirement =
+        request.toBuilder()
+            .setObservedRetirement(
+                request.getObservedRetirement().toBuilder()
+                    .setSupersedingPointerVersion(
+                        request.getObservedRetirement().getSupersedingPointerVersion() + 1L))
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(changedRetirement));
+
+    var changedConfirmation =
+        confirmation.toBuilder()
+            .setAcknowledgement(
+                acknowledgement.toBuilder().setRequestDigest("0".repeat(64)).build())
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> CanonicalGameplayRosterRetirementEvidence.requireConfirmation(changedConfirmation));
   }
 
   @Test

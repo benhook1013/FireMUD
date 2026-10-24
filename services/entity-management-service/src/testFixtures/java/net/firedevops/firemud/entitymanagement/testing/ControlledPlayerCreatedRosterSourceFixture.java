@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
@@ -123,6 +124,7 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
 
   public Owner owner(String identityName) throws Exception {
     var response = new AtomicReference<>(fixture.response());
+    var failure = new AtomicReference<StatusRuntimeException>();
     var received = new CopyOnWriteArrayList<ReadPlayerCreatedRosterSourceRequest>();
     var observedPeer = new AtomicReference<String>();
     var identity = pki.identity(identityName);
@@ -144,6 +146,11 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
                           StreamObserver<ReadPlayerCreatedRosterSourceResponse> observer) {
                         observedPeer.set(GrpcPeerIdentity.current().uri());
                         received.add(request);
+                        StatusRuntimeException nextFailure = failure.get();
+                        if (nextFailure != null) {
+                          observer.onError(nextFailure);
+                          return;
+                        }
                         observer.onNext(response.get());
                         observer.onCompleted();
                       }
@@ -151,7 +158,7 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
                     new GrpcPeerIdentityInterceptor()))
             .build()
             .start();
-    return new Owner(server, response, received, observedPeer);
+    return new Owner(server, response, failure, received, observedPeer);
   }
 
   public EntityPlayerCreatedRosterSourceClient client(Owner owner) throws Exception {
@@ -165,16 +172,19 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
   public static final class Owner implements AutoCloseable {
     private final Server server;
     private final AtomicReference<ReadPlayerCreatedRosterSourceResponse> response;
+    private final AtomicReference<StatusRuntimeException> failure;
     private final List<ReadPlayerCreatedRosterSourceRequest> received;
     private final AtomicReference<String> observedPeer;
 
     private Owner(
         Server server,
         AtomicReference<ReadPlayerCreatedRosterSourceResponse> response,
+        AtomicReference<StatusRuntimeException> failure,
         List<ReadPlayerCreatedRosterSourceRequest> received,
         AtomicReference<String> observedPeer) {
       this.server = server;
       this.response = response;
+      this.failure = failure;
       this.received = received;
       this.observedPeer = observedPeer;
     }
@@ -189,6 +199,10 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
 
     public void respondWith(ReadPlayerCreatedRosterSourceResponse nextResponse) {
       response.set(Objects.requireNonNull(nextResponse, "nextResponse"));
+    }
+
+    public void failWith(StatusRuntimeException nextFailure) {
+      failure.set(Objects.requireNonNull(nextFailure, "nextFailure"));
     }
 
     @Override
@@ -621,14 +635,14 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
     }
   }
 
-  private static AuthoredInitialActorCoreSourceBinding sourceBinding(
+  public static AuthoredInitialActorCoreSourceBinding sourceBinding(
       StartSessionTemplateAssociationReadEvidence.Association association,
       UUID worldSourceOperationId)
       throws Exception {
     return sourceBinding(association, worldSourceOperationId, true);
   }
 
-  private static AuthoredInitialActorCoreSourceBinding sourceBinding(
+  public static AuthoredInitialActorCoreSourceBinding sourceBinding(
       StartSessionTemplateAssociationReadEvidence.Association association,
       UUID worldSourceOperationId,
       boolean visible)
@@ -792,7 +806,7 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
     return value.getBytes(StandardCharsets.UTF_8);
   }
 
-  private static String digest(char value) {
+  public static String digest(char value) {
     return "sha256:" + String.valueOf(value).repeat(64);
   }
 }

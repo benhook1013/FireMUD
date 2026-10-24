@@ -2053,7 +2053,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   @Test
   void createdNoCaptureRecoveryRetainsPositiveClosureWithoutInventingEitherRosterReceipt()
       throws Exception {
-    repository = new CanonicalGameplayRosterReferenceRepository(dsl, policy(5000L, 5000L, 5000L));
+    repository = repository(policy(500L, 500L, 500L));
     var fixture = createdFixture(false);
     var original = fixture.original();
     transaction.executeWithoutResult(
@@ -2062,7 +2062,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           repository.reserveSelectionInput(original, selectionInput());
           repository.markRosterReadStarted(original);
         });
-    Thread.sleep(5500L);
+    Thread.sleep(550L);
     var recovery =
         transaction
             .execute(ignored -> repository.beginRecoveries(original, current(original)))
@@ -2087,7 +2087,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 transaction.execute(
                     ignored -> repository.recordPlayerCreated(original, fixture.roster())))
         .hasMessageContaining("RECOVERY_FENCED");
-    Thread.sleep(5500L);
+    Thread.sleep(550L);
     assertThat(
             transaction.<Boolean>execute(
                 ignored -> repository.sealTargetRetirement(original, current(original))))
@@ -2097,7 +2097,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThat(acknowledgement.getSnapshotUuid()).isEmpty();
     transaction.execute(
         ignored -> repository.acknowledgeRetirement(acknowledgement, createdPrincipal(original)));
-    Thread.sleep(5500L);
+    Thread.sleep(550L);
     var candidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
             UUID.fromString(proof.getTargetFenceUuid()), original, "RETIRED");

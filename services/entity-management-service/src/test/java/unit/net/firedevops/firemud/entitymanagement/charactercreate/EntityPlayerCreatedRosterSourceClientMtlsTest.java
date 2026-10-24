@@ -10,42 +10,20 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import java.util.stream.Stream;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadGrpcCodec;
-import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
-import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
-import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Audience;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Disposition;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Feedback;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Visibility;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
-import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
-import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
-import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
-import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.testing.PlayerCreatedPublishedPolicyFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterSourceClient.InvalidOwnerEvidenceException;
@@ -58,6 +36,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -283,14 +264,14 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                 List.of(
                     AuthoredInitialActorCoreProjection.fromValidatedBinding(
                         FIXTURE_ID,
-                        sourceBinding(
+                        ControlledPlayerCreatedRosterSourceFixture.sourceBinding(
                             authored.associationRead().association(),
                             authored.associationRead().association().sourceOperationId(),
                             false)))));
     var extraProjection =
         AuthoredInitialActorCoreProjection.fromValidatedBinding(
             UUID.randomUUID(),
-            sourceBinding(
+            ControlledPlayerCreatedRosterSourceFixture.sourceBinding(
                 authored.associationRead().association(),
                 authored.associationRead().association().sourceOperationId()));
     var ambiguousProjections =
@@ -432,7 +413,8 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                   .build(),
               good.toBuilder()
                   .setAuthoredSource(
-                      good.getAuthoredSource().toBuilder().setResultDigest(digest('0')))
+                      good.getAuthoredSource().toBuilder()
+                          .setResultDigest(ControlledPlayerCreatedRosterSourceFixture.digest('0')))
                   .build(),
               good.toBuilder()
                   .setAuthoredSource(
@@ -542,6 +524,33 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
     }
   }
 
+  @ParameterizedTest
+  @MethodSource("ownerFailures")
+  void ownerGrpcFailuresRemainTransportStatuses(Status status, String description)
+      throws Exception {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
+      client.init();
+      owner.failWith(status.withDescription(description).asRuntimeException());
+
+      assertThatThrownBy(() -> client.read(fixture.request()))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure -> {
+                assertThat(failure.getStatus().getCode()).isEqualTo(status.getCode());
+                assertThat(failure.getStatus().getDescription()).isEqualTo(description);
+              });
+      assertThat(owner.receivedRequests()).containsExactly(fixture.request());
+    }
+  }
+
+  private static Stream<Arguments> ownerFailures() {
+    return Stream.of(
+        Arguments.of(Status.UNAVAILABLE, "owner temporarily unavailable"),
+        Arguments.of(Status.FAILED_PRECONDITION, "owner source is not ready"),
+        Arguments.of(Status.INVALID_ARGUMENT, "owner rejected the source request"));
+  }
+
   @Test
   void inboundTransportRejectsResponseBeyond32MiBBeforeSourceDecoding() throws Exception {
     try (var owner = controlled.owner("server");
@@ -567,276 +576,5 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
     return UnknownFieldSet.newBuilder()
         .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
         .build();
-  }
-
-  private static StartSessionPostAuthorizationExecutionTuple postTuple(
-      UUID tenant, String namespace) {
-    StartSessionPreAuthorizationReservationTuple pre =
-        StartSessionPreAuthorizationReservationTuple.createHuman(
-            "world-lifecycle-control-request",
-            FIXTURE_ID,
-            new StartSessionOperatorAction(
-                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
-                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
-                new StartSessionOperatorAction.Scope(tenant, namespace),
-                new StartSessionOperatorAction.Target(19L, FIXTURE_ID),
-                StartSessionOperatorAction.ExpectedVersion.ABSENT,
-                new StartSessionOperatorAction.Mutation(
-                    StartSessionOperatorAction.ClientIp.absent()),
-                "exact original selected authored actor core"));
-    return StartSessionPostAuthorizationExecutionTuple.createHuman(
-        pre,
-        "spiffe://firemud/ns/" + namespace + "/sa/logging-admin-service",
-        "arfp/v1/test-key/" + "b".repeat(64),
-        FIXTURE_ID,
-        19L,
-        authorityBundle(pre, tenant, namespace),
-        new StartSessionAuthorityEvidenceBundle.BundleReference(
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "17",
-            "23",
-            "18446744073709551615"));
-  }
-
-  private static byte[] authorityBundle(
-      StartSessionPreAuthorizationReservationTuple tuple, UUID tenant, String namespace) {
-    String tenantText = tenant.toString();
-    Map<String, Object> value =
-        Map.of(
-            "bundleVersion",
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-            Map.of(
-                "scope", Map.of("tenantId", tenantText, "targetNamespace", namespace),
-                "actionFamily", tuple.actionFamily(),
-                "applicableAccountId", FIXTURE_ID.toString(),
-                "applicableTenantId", tenantText),
-            "accountProjectionEvidence",
-            Map.of(
-                "sourceType", "ACCOUNT",
-                "sourceEvidenceId", digest('a'),
-                "sourceEvidenceVersion", "17",
-                "projectionStatus", "CURRENT",
-                "evaluatedAt", "2026-10-09T00:00:00Z",
-                "expiresAt", "2026-10-09T00:05:00Z"),
-            "issuanceOperationIdentity",
-            Map.of(
-                "issuanceOperationId", FIXTURE_ID.toString(),
-                "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-                "actionFamilyRequestIdentity",
-                    Map.of(
-                        "requestIdentityKind",
-                        "controlPlaneRequestId",
-                        "requestId",
-                        tuple.controlPlaneRequestId()),
-                "mutationDigest", tuple.mutationDigest()),
-            "issuanceKind",
-            "human_operator",
-            "authorityTuple",
-            Map.of(
-                "issuerAuthGeneration", 1L,
-                "accountAuthorityGeneration", 2L,
-                "tenantAuthorityGeneration", Map.of(tenantText, 3L),
-                "membershipAuthorityGeneration", Map.of(tenantText, 4L),
-                "privateRealmGrantVersions", List.of()),
-            "membershipVersion",
-            Map.of(tenantText, 5L),
-            "issuanceFence",
-            "23",
-            "issuanceEvidence",
-            Map.of(
-                "evidenceType",
-                StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-                "actorAccountId",
-                FIXTURE_ID.toString(),
-                "controlUiTokenJti",
-                FIXTURE_ID.toString(),
-                "role",
-                "tenantAdmin",
-                "accountGeneration",
-                "2",
-                "tenantGeneration",
-                "3"));
-    try {
-      return net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-          tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(value));
-    } catch (IOException invalid) {
-      throw new IllegalStateException(invalid);
-    }
-  }
-
-  private static AuthoredInitialActorCoreSourceBinding sourceBinding(
-      StartSessionTemplateAssociationReadEvidence.Association association,
-      UUID worldSourceOperationId)
-      throws Exception {
-    return sourceBinding(association, worldSourceOperationId, true);
-  }
-
-  private static AuthoredInitialActorCoreSourceBinding sourceBinding(
-      StartSessionTemplateAssociationReadEvidence.Association association,
-      UUID worldSourceOperationId,
-      boolean visible)
-      throws Exception {
-    var policy =
-        RealmEntryPolicy.parse(
-            "{\"schemaVersion\":3,\"worldSlug\":\""
-                + association.worldSlug()
-                + "\",\"worldDisplayName\":\"Synthetic World\","
-                + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":"
-                + visible
-                + ","
-                + "\"publicProduction\":true,\"stateScope\":\"SHARED\","
-                + "\"entryPolicy\":\"PLAYER_CREATED\",\"creationDescriptor\":{"
-                + "\"schemaVersion\":1,\"descriptorId\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\","
-                + "\"descriptorRevisionId\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\","
-                + "\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]},"
-                + "\"initialActorCore\":{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"}}",
-            tools.jackson.databind.json.JsonMapper.builder().build());
-    var policyPayload =
-        RealmPolicySource.canonical(
-            Map.of(
-                "revisionKind",
-                RealmPolicySource.REVISION_KIND,
-                "logicalRevisionId",
-                "policy-logical-r1",
-                "policy",
-                RealmPolicySource.tree(policy.canonicalJson())));
-    var disposition = new Disposition("newcomer", List.of(), "welcome");
-    var feedback =
-        new Feedback(
-            "welcome",
-            "actor_created",
-            Audience.SOURCE_ACTOR,
-            "welcome_message",
-            "Welcome, traveler.",
-            List.of(),
-            Visibility.PUBLIC,
-            GameplayRuleManifest.ReplayPolicy.EFFECT_IDEMPOTENT);
-    List<RevisionPayload> revisions =
-        List.of(
-            new RevisionPayload(
-                "0",
-                UUID.fromString("13333333-3333-4333-8333-333333333333"),
-                DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                policyPayload),
-            new RevisionPayload(
-                "1",
-                UUID.fromString("14444444-4444-4444-8444-444444444444"),
-                DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                GameplayRuleSource.upsertPayload(disposition)),
-            new RevisionPayload(
-                "2",
-                UUID.fromString("15555555-5555-4555-8555-555555555555"),
-                DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                GameplayRuleSource.upsertPayload(feedback)));
-    TargetProof target =
-        new TargetProof(
-            association.canonicalTenantId(),
-            association.canonicalVersionId(),
-            42L,
-            "tenant-key",
-            42L,
-            "tenant-key",
-            "NEW_GAME_ROW");
-    DraftCommitBinding commit =
-        DraftCommitBinding.create(
-            target,
-            UUID.fromString("1eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-            association.selectedCommitId(),
-            "base-0",
-            revisions,
-            List.of(
-                new AffectedUnit(
-                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                    RealmPolicySource.SCOPE,
-                    association.canonicalVersionId().toString(),
-                    RealmPolicySource.SCOPE,
-                    "effective",
-                    "0"),
-                new AffectedUnit(
-                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                    GameplayRuleSource.SCOPE,
-                    association.canonicalVersionId().toString(),
-                    GameplayRuleSource.SCOPE,
-                    GameplayRuleSource.SCOPE_ID,
-                    "0")));
-    commit = PlayerCreatedPublishedPolicyFixtures.withWorldSource(commit);
-    var selectedPolicy = RealmPolicySource.revision(commit, revisions.getFirst());
-    var policySnapshot = new RealmPolicySnapshot(commit, "1", List.of(selectedPolicy));
-    var dispositionEntry =
-        new GameplayRuleSource.Entry(
-            Family.DISPOSITIONS,
-            disposition,
-            commit,
-            "1",
-            UUID.fromString("14444444-4444-4444-8444-444444444444"));
-    var feedbackEntry =
-        new GameplayRuleSource.Entry(
-            Family.FEEDBACK,
-            feedback,
-            commit,
-            "2",
-            UUID.fromString("15555555-5555-4555-8555-555555555555"));
-    var gameplay =
-        new GameplayRuleSelectedSource(
-            gameplaySnapshot(commit, List.of(dispositionEntry, feedbackEntry)));
-    return AuthoredInitialActorCoreSourceBinding.resolveAll(
-            worldSourceOperationId,
-            association.sourceEvidenceDigest(),
-            association.worldSlug(),
-            association.publishWorkflowId(),
-            bytes("selected publication operation bytes"),
-            bytes("selected release terminal evidence"),
-            commit,
-            policySnapshot,
-            gameplay)
-        .getFirst();
-  }
-
-  private static String gameplaySnapshot(
-      DraftCommitBinding binding, List<GameplayRuleSource.Entry> entries) {
-    Map<String, Object> families = new java.util.LinkedHashMap<>();
-    for (Family family : Family.values()) {
-      families.put(
-          family.name(),
-          entries.stream()
-              .filter(value -> value.family() == family)
-              .map(GameplayRuleSource.Entry::definition)
-              .toList());
-    }
-    var manifest =
-        GameplayRuleManifest.fromStored(
-            GameplayRuleManifest.canonical(
-                Map.of("schema", GameplayRuleManifest.SCHEMA, "families", families)));
-    Map<String, Object> snapshot = new java.util.LinkedHashMap<>();
-    snapshot.put("schema", "game-design-gameplay-rule-source-snapshot/v1");
-    snapshot.put("bindingJson", binding.canonicalJson());
-    snapshot.put("bindingDigest", binding.digest());
-    snapshot.put("sourceEpoch", "1");
-    snapshot.put("inheritedCommitId", "");
-    snapshot.put("genesisReceiptId", "77777777-7777-4777-8777-777777777777");
-    snapshot.put("manifestJson", manifest.canonicalJson());
-    snapshot.put(
-        "entries",
-        entries.stream()
-            .map(
-                entry ->
-                    Map.of(
-                        "family", entry.family().name(),
-                        "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
-                        "sourceBindingJson", entry.sourceBinding().canonicalJson(),
-                        "sourceBindingDigest", entry.sourceBinding().digest(),
-                        "revisionOrder", entry.revisionOrder(),
-                        "revisionId", entry.revisionId().toString()))
-            .toList());
-    return CommandSource.canonical(snapshot);
-  }
-
-  private static byte[] bytes(String value) {
-    return value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-  }
-
-  private static String digest(char value) {
-    return "sha256:" + String.valueOf(value).repeat(64);
   }
 }

@@ -215,18 +215,23 @@ public final class GameSessionCharacterCreatePublicSourceService {
             .setPublishedPolicySetEvidence(ByteString.copyFrom(facts.policySet().canonicalBytes()))
             .build();
     if (response.getSerializedSize() > MAX_RESPONSE_BYTES) throw missing();
-    var descriptor =
-        PlayerCreationDescriptor.parse(facts.projection().descriptor().canonicalJson());
-    var sourceIdentity =
-        CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
-            CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
-                .setSchemaVersion(1)
-                .setDescriptorUuid(descriptor.descriptorId())
-                .setDescriptorRevisionUuid(descriptor.descriptorRevisionId())
-                .setDescriptorDigest(descriptor.digest())
-                .setAuthoredBindingUuid(facts.projection().bindingId().toString())
-                .setAuthoredBindingDigest(facts.projection().bindingDigest())
-                .build());
+    final PlayerCreationDescriptor descriptor;
+    final CanonicalPlayerCreatedRosterSourceIdentity sourceIdentity;
+    try {
+      descriptor = PlayerCreationDescriptor.parse(facts.projection().descriptor().canonicalJson());
+      sourceIdentity =
+          CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
+              CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
+                  .setSchemaVersion(1)
+                  .setDescriptorUuid(descriptor.descriptorId())
+                  .setDescriptorRevisionUuid(descriptor.descriptorRevisionId())
+                  .setDescriptorDigest(descriptor.digest())
+                  .setAuthoredBindingUuid(facts.projection().bindingId().toString())
+                  .setAuthoredBindingDigest(facts.projection().bindingDigest())
+                  .build());
+    } catch (IllegalArgumentException malformedSourceIdentity) {
+      throw missing();
+    }
     var route = facts.route();
     var target =
         CanonicalGameplayRosterTarget.newBuilder()

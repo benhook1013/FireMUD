@@ -456,12 +456,13 @@ class CanonicalGameplayRosterGrpcAdapterTest {
   @Test
   void createdMethodsValidateFullServiceResponsesBeforeReturningThem() {
     var createdService = mock(EntityPlayerCreatedRosterService.class);
+    var meterRegistry = new SimpleMeterRegistry();
     var adapter =
         new CanonicalGameplayRosterGrpcAdapter(
             mock(CanonicalGameplayRosterService.class),
             mock(CanonicalGameplayRosterSelectedAssignmentService.class),
             createdService,
-            new SimpleMeterRegistry());
+            meterRegistry);
     var request = playerCreatedRequest();
     when(createdService.list(request))
         .thenReturn(
@@ -473,7 +474,7 @@ class CanonicalGameplayRosterGrpcAdapterTest {
     withTrustedPeer(
         CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
         () -> adapter.listPlayerCreatedRoster(request, listObserver));
-    assertOnlyStatus(listObserver, Status.Code.INVALID_ARGUMENT);
+    assertOnlyStatus(listObserver, Status.Code.INTERNAL);
     verify(createdService).list(request);
 
     var selectedRequest = selectedCreatedRequest();
@@ -488,8 +489,69 @@ class CanonicalGameplayRosterGrpcAdapterTest {
     withTrustedPeer(
         CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME,
         () -> adapter.readSelectedPlayerCreatedCharacter(selectedRequest, selectedObserver));
-    assertOnlyStatus(selectedObserver, Status.Code.INVALID_ARGUMENT);
+    assertOnlyStatus(selectedObserver, Status.Code.INTERNAL);
     verify(createdService).selected(selectedRequest);
+    assertThat(meterRegistry.counter("grpc.app_error", "code", "INTERNAL").count()).isEqualTo(2.0);
+
+    var malformedCallerService = mock(EntityPlayerCreatedRosterService.class);
+    var malformedCallerAdapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            mock(CanonicalGameplayRosterService.class),
+            mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+            malformedCallerService,
+            new SimpleMeterRegistry());
+    var malformedListObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse>();
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+        () ->
+            malformedCallerAdapter.listPlayerCreatedRoster(
+                playerCreatedRequest().toBuilder().setCanonicalAccountUuid("malformed").build(),
+                malformedListObserver));
+    assertOnlyStatus(malformedListObserver, Status.Code.INVALID_ARGUMENT);
+
+    var malformedSelectedObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1
+                .CanonicalSelectedPlayerCreatedCharacterResponse>();
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME,
+        () ->
+            malformedCallerAdapter.readSelectedPlayerCreatedCharacter(
+                selectedCreatedRequest().toBuilder().setCanonicalAccountUuid("malformed").build(),
+                malformedSelectedObserver));
+    assertOnlyStatus(malformedSelectedObserver, Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(malformedCallerService);
+  }
+
+  @Test
+  void expectedOwnerRejectionsReturnFailedPreconditionWithoutPartialResponse() {
+    for (String reasonCode :
+        java.util.List.of(
+            "CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED",
+            "CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT",
+            "CANONICAL_ROSTER_LOCAL_ADMISSION_DISPOSED",
+            "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT")) {
+      var createdService = mock(EntityPlayerCreatedRosterService.class);
+      when(createdService.list(any())).thenThrow(new IllegalStateException(reasonCode));
+      var adapter =
+          new CanonicalGameplayRosterGrpcAdapter(
+              mock(CanonicalGameplayRosterService.class),
+              mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+              createdService,
+              new SimpleMeterRegistry());
+      var observer =
+          new RecordingObserver<
+              net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse>();
+
+      withTrustedPeer(
+          CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+          () -> adapter.listPlayerCreatedRoster(playerCreatedRequest(), observer));
+
+      assertOnlyStatus(observer, Status.Code.FAILED_PRECONDITION);
+      verify(createdService).list(any());
+    }
   }
 
   @Test

@@ -147,11 +147,29 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
 
   @Test
   void resolvedCreatedSourceRejectsMalformedDescriptorBindingAndChangedAuthoredReadback() {
-    List<java.util.function.Consumer<Fixture>> invalidations =
+    List<java.util.function.Consumer<Fixture>> malformedSourceIdentities =
         List.of(
             fixture -> when(fixture.projection.descriptor().canonicalJson()).thenReturn("{}"),
+            fixture -> when(fixture.projection.bindingDigest()).thenReturn("d".repeat(64)));
+    for (var invalidate : malformedSourceIdentities) {
+      try (var fixture = new Fixture()) {
+        invalidate.accept(fixture);
+        assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure -> {
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                  assertThat(Status.fromThrowable(failure).getDescription())
+                      .isEqualTo(
+                          "Exact original public CHARACTER_CREATE source is unavailable or changed");
+                });
+      }
+    }
+
+    List<java.util.function.Consumer<Fixture>> invalidations =
+        List.of(
             fixture -> when(fixture.projection.bindingId()).thenReturn(new UUID(0L, 0L)),
-            fixture -> when(fixture.projection.bindingDigest()).thenReturn("d".repeat(64)),
             fixture -> when(fixture.policyEvidence.policyDigest()).thenReturn("c".repeat(64)),
             fixture -> when(fixture.authored.canonicalBytes()).thenReturn(new byte[] {9}),
             fixture -> when(fixture.projection.canonicalTenantId()).thenReturn(UUID.randomUUID()),

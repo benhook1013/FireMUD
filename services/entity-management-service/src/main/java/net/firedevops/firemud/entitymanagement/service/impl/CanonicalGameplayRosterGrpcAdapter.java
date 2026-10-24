@@ -66,7 +66,11 @@ public final class CanonicalGameplayRosterGrpcAdapter
           "CANONICAL_ROSTER_ORIGINAL_RECEIPT_UNRETAINED",
           "CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT",
           "CANONICAL_ROSTER_ORIGINAL_SELECTION_CHANGED",
-          "CANONICAL_ROSTER_SNAPSHOT_STALE");
+          "CANONICAL_ROSTER_SNAPSHOT_STALE",
+          "CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED",
+          "CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT",
+          "CANONICAL_ROSTER_LOCAL_ADMISSION_DISPOSED",
+          "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
 
   private final CanonicalGameplayRosterService rosterService;
   private final CanonicalGameplayRosterSelectedAssignmentService selectedAssignmentService;
@@ -104,9 +108,13 @@ public final class CanonicalGameplayRosterGrpcAdapter
       requireTrustedPeer();
       CanonicalPlayerCreatedRosterEvidence.requireRequest(request);
       if (playerCreatedRosterService == null) throw new PlayerCreatedRosterUnavailableException();
-      response =
-          CanonicalPlayerCreatedRosterEvidence.requireResponse(
-              request, playerCreatedRosterService.list(request));
+      var serviceResponse = playerCreatedRosterService.list(request);
+      try {
+        response = CanonicalPlayerCreatedRosterEvidence.requireResponse(request, serviceResponse);
+      } catch (IllegalArgumentException invalidOutput) {
+        throw new IllegalStateException(
+            "PLAYER_CREATED roster service returned an invalid response", invalidOutput);
+      }
     } catch (Exception failure) {
       responseObserver.onError(
           toPlayerCreatedStatus(failure, "CanonicalGameplayRoster.ListPlayerCreatedRoster"));
@@ -126,9 +134,14 @@ public final class CanonicalGameplayRosterGrpcAdapter
       requireTrustedPeer();
       CanonicalPlayerCreatedRosterEvidence.requireSelectedRequest(request);
       if (playerCreatedRosterService == null) throw new PlayerCreatedRosterUnavailableException();
-      response =
-          CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(
-              request, playerCreatedRosterService.selected(request));
+      var serviceResponse = playerCreatedRosterService.selected(request);
+      try {
+        response =
+            CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(request, serviceResponse);
+      } catch (IllegalArgumentException invalidOutput) {
+        throw new IllegalStateException(
+            "PLAYER_CREATED roster service returned an invalid selected response", invalidOutput);
+      }
     } catch (Exception failure) {
       responseObserver.onError(
           toPlayerCreatedStatus(
