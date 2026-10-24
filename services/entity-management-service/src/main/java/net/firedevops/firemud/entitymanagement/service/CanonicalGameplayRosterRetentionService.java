@@ -192,8 +192,16 @@ public final class CanonicalGameplayRosterRetentionService {
                     transfer.acknowledgementRequest(),
                     ownerClient.acknowledgeCanonicalGameplayRosterRetirement(
                         transfer.acknowledgementRequest()));
-            transactions.executeWithoutResult(
-                ignored -> repository.recordRetirementAcknowledgement(transfer, acknowledgement));
+            boolean acknowledged =
+                Boolean.TRUE.equals(
+                    transactions.execute(
+                        ignored ->
+                            repository.recordRetirementAcknowledgement(transfer, acknowledgement)));
+            if (acknowledged) {
+              metrics
+                  .counter("firemud.canonical.roster.cleanup", "result", "acknowledged")
+                  .increment();
+            }
           }
           case "ACKNOWLEDGED" -> {
             // This page contains only actual ACK bytes committed in an earlier local transaction.
@@ -205,8 +213,15 @@ public final class CanonicalGameplayRosterRetentionService {
                     confirmation,
                     ownerClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(
                         confirmation));
-            transactions.executeWithoutResult(
-                ignored -> repository.recordRetirementConfirmation(transfer, response));
+            boolean confirmed =
+                Boolean.TRUE.equals(
+                    transactions.execute(
+                        ignored -> repository.recordRetirementConfirmation(transfer, response)));
+            if (confirmed) {
+              metrics
+                  .counter("firemud.canonical.roster.cleanup", "result", "confirmed")
+                  .increment();
+            }
           }
           default ->
               throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_STATE_INVALID");

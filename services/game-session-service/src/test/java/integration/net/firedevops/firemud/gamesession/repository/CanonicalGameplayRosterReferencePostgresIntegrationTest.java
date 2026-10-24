@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementCo
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.awaitility.Awaitility;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
@@ -1548,7 +1549,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   @Test
   void storedMinimumStillGatesPurgeAndConfirmationBeforePurgeCannotShortenReceiptHorizon()
       throws Exception {
-    repository = repository(policy(400L, 1L, 1L));
+    repository = repository(policy(5_000L, 1L, 1L));
     var original = request();
     transaction.executeWithoutResult(
         ignored -> {
@@ -1558,7 +1559,21 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           repository.completeSelection(
               original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.MENU);
         });
-    Thread.sleep(450L);
+    Awaitility.await()
+        .alias("database clock reaches the stored roster minimum before retirement")
+        .pollInterval(50L, TimeUnit.MILLISECONDS)
+        .atMost(15L, TimeUnit.SECONDS)
+        .untilAsserted(
+            () ->
+                assertThat(
+                        dsl.fetchSingle(
+                                "SELECT s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() "
+                                    + "FROM game_session_canonical_roster_selection s "
+                                    + "JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) "
+                                    + "WHERE s.operation_uuid = ?",
+                                UUID.fromString(original.getOperationUuid()))
+                            .get(0, Boolean.class))
+                    .isTrue());
     assertThat(
             transaction.<Boolean>execute(
                 ignored -> repository.sealTargetRetirement(original, current(original))))
@@ -1568,13 +1583,20 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     var ack =
         transaction.execute(
             ignored -> repository.acknowledgeRetirement(request, entityPrincipal()));
-    assertThat(ack.getMinimumRetentionMillis()).isEqualTo(400L);
+    assertThat(ack.getMinimumRetentionMillis()).isEqualTo(5_000L);
     var confirmation = CanonicalGameplayRosterRetirementEvidence.confirmation(request, ack);
     transaction.executeWithoutResult(
         ignored -> repository.confirmRetirementAcknowledgement(confirmation, entityPrincipal()));
     var candidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
             UUID.fromString(repository.read(original).getTargetFenceUuid()), original, "RETIRED");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT retired_at + minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
+                        + "FROM game_session_canonical_roster_target_fences WHERE target_fence_uuid = ?",
+                    candidate.fenceUuid())
+                .get(0, Boolean.class))
+        .isTrue();
     assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
         .isFalse();
     assertThatThrownBy(() -> dsl.execute("DELETE FROM game_session_canonical_roster_selection"))
@@ -1584,7 +1606,19 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 dsl.execute(
                     "UPDATE game_session_canonical_roster_retirement_transfers SET target_purged_at = clock_timestamp()"))
         .isInstanceOf(DataAccessException.class);
-    Thread.sleep(450L);
+    Awaitility.await()
+        .alias("database clock reaches the stored target retirement horizon")
+        .pollInterval(50L, TimeUnit.MILLISECONDS)
+        .atMost(15L, TimeUnit.SECONDS)
+        .untilAsserted(
+            () ->
+                assertThat(
+                        dsl.fetchSingle(
+                                "SELECT retired_at + minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() "
+                                    + "FROM game_session_canonical_roster_target_fences WHERE target_fence_uuid = ?",
+                                candidate.fenceUuid())
+                            .get(0, Boolean.class))
+                    .isTrue());
     assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
         .isTrue();
     assertThat(
@@ -1594,7 +1628,20 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThatThrownBy(
             () -> dsl.execute("DELETE FROM game_session_canonical_roster_retirement_transfers"))
         .isInstanceOf(DataAccessException.class);
-    Thread.sleep(450L);
+    Awaitility.await()
+        .alias("database clock reaches the stored confirmed receipt cleanup horizon")
+        .pollInterval(50L, TimeUnit.MILLISECONDS)
+        .atMost(15L, TimeUnit.SECONDS)
+        .untilAsserted(
+            () ->
+                assertThat(
+                        dsl.fetchSingle(
+                                "SELECT GREATEST(confirmed_at, target_purged_at) + effective_minimum_millis * interval '1 millisecond' <= clock_timestamp() "
+                                    + "FROM game_session_canonical_roster_retirement_transfers "
+                                    + "WHERE target_fence_uuid = ? AND confirmed_at IS NOT NULL AND target_purged_at IS NOT NULL",
+                                candidate.fenceUuid())
+                            .get(0, Boolean.class))
+                    .isTrue());
     assertThat(
             transaction.<Integer>execute(
                 ignored -> repository.purgeConfirmedRetirementAcknowledgements(8)))
