@@ -221,10 +221,6 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
     return snapshotRepository;
   }
 
-  public EntityCharacterCreateRepository characterCreateRepository() {
-    return characterCreateRepository;
-  }
-
   public WireFixture wireFixture() {
     return wireFixture;
   }

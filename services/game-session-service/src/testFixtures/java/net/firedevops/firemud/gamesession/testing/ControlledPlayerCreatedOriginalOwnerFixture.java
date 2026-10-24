@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -103,6 +104,10 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
   private final CanonicalPlayableTarget route;
   private final WireFixture wireFixture;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "The caller and fixture intentionally share the isolated DataSource and schema lifecycle.")
   public ControlledPlayerCreatedOriginalOwnerFixture(
       DriverManagerDataSource dataSource,
       WireFixture supplied,
@@ -449,12 +454,8 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
     return publishedRouteReader;
   }
 
-  public DSLContext dsl() {
-    return dsl;
-  }
-
-  public TransactionTemplate transactions() {
-    return transactions;
+  public int retainedOriginalReferenceCount() {
+    return dsl.fetchCount(DSL.table("game_session_canonical_roster_selection"));
   }
 
   private void migrate(String version) {
