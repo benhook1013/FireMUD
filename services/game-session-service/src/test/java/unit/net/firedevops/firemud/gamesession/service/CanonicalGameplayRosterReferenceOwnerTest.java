@@ -148,7 +148,7 @@ class CanonicalGameplayRosterReferenceOwnerTest {
   }
 
   @Test
-  void missingCreatedCollaboratorFailsClosedWhileSixArgumentCompositionStillExists() {
+  void missingCreatedCollaboratorFailsClosedInPreseededComposition() {
     var preseededComposition =
         new CanonicalGameplayRosterReferenceOwner(
             repository,
