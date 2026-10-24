@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -27,9 +28,7 @@ class TextCommandInterpreterCapabilityTest {
     SessionAuthenticationService sessionAuthenticationService =
         Mockito.mock(SessionAuthenticationService.class);
     TextCommandDispatcher dispatcher = Mockito.mock(TextCommandDispatcher.class);
-    SessionContext gameplayContext =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+    SessionContext gameplayContext = GameplayCommandTestFixtures.authoredHelpEmberline();
     when(sessionAuthenticationService.resolveSessionContext("41"))
         .thenReturn(Optional.of(gameplayContext));
     TextCommandInterpreter interpreter =
@@ -60,9 +59,7 @@ class TextCommandInterpreterCapabilityTest {
     TextCommandDispatcher dispatcher = Mockito.mock(TextCommandDispatcher.class);
     EffectiveCommandCapabilitiesSettingsResolver capabilitiesResolver =
         Mockito.mock(EffectiveCommandCapabilitiesSettingsResolver.class);
-    SessionContext gameplayContext =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+    SessionContext gameplayContext = GameplayCommandTestFixtures.authoredHelpEmberline();
     when(sessionAuthenticationService.resolveSessionContext("41"))
         .thenReturn(Optional.of(gameplayContext));
     when(capabilitiesResolver.isEnabled(PlayerCommandCapability.SOCIAL, 22L, 7L))

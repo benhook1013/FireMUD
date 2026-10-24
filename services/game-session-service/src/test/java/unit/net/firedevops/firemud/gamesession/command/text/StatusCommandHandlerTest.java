@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.presentation.ActorStateViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -21,9 +22,7 @@ class StatusCommandHandlerTest {
       Mockito.mock(ScriptEventPublisher.class);
   private final StatusCommandHandler handler =
       new StatusCommandHandler(gameLogicClient, scriptEventPublisher);
-  private final SessionContext context =
-      new SessionContext(
-          1L, 22L, "123", "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
+  private final SessionContext context = GameplayCommandTestFixtures.inventoryEmberline();
 
   @Test
   void statusProjectsEvaluatedResourcesAndVisibleConditionsInStableOrder() {

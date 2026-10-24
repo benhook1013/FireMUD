@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -21,8 +22,7 @@ class ActionStateCommandHandlerTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final ActionStateCommandHandler handler =
       new ActionStateCommandHandler(gameLogicClient, Clock.fixed(NOW, ZoneOffset.UTC));
-  private final SessionContext context =
-      new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+  private final SessionContext context = GameplayCommandTestFixtures.durableDemo();
 
   @Test
   void blockAppliesShortLivedBlockingState() {

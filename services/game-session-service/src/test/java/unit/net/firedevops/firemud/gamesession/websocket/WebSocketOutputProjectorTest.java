@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -154,9 +155,7 @@ class WebSocketOutputProjectorTest {
         .thenReturn(
             Map.of(
                 GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
-    SessionContext context =
-        new SessionContext(
-            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
     AdmittedTextCommandRegistryResolver admittedResolver =
         mock(AdmittedTextCommandRegistryResolver.class);
     when(admittedResolver.resolveMetadata(context, "wave", "wave"))

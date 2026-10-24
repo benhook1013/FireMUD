@@ -38,6 +38,7 @@ import net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -166,8 +167,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeReturnsReplayNoOpForIdempotentMoveReplay() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     SessionContext moved =
         new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-2", "jwt-token");
     GameplayCommand command = gameplayCommand("MOVE", "north");
@@ -202,8 +202,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executePublishesMovementLifecycleEventsAfterFirstApply() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     SessionContext moved =
         new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-2", "jwt-token");
     GameplayCommand command = gameplayCommand("MOVE", "north");
@@ -227,8 +226,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeAppliesDurableItemMutationAndDeliversOutput() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("GET", "GET torch");
     TickEffect effect = tickEffect("tfx-2", "cmd-2");
     TextCommand parsed =
@@ -262,8 +260,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeRejectsDurableItemMutationAndDeliversOutput() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("PUT", "PUT ration INTO torch");
     TickEffect effect = tickEffect("tfx-3", "cmd-3");
     TextCommand parsed =
@@ -308,8 +305,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeAppliesDurableCommunicationAndDeliversOutput() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
     TickEffect effect = tickEffect("tfx-4", "cmd-4");
     TextCommand parsed =
@@ -368,8 +364,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeResolvesAutomationCommandByGameplayIdentityWhenSessionIdIsUnset() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
     command.setSessionId(0L);
     command.setTenantId(22L);
@@ -444,8 +439,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeAppliesDurableAfkAndDeliversOutput() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("BRB", "BRB");
     TickEffect effect = tickEffect("tfx-5", "cmd-5");
     TextCommand parsed =
@@ -479,8 +473,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeAppliesDurableBlockAndStoresReplay() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("GUARD", "GUARD");
     TickEffect effect = tickEffect("tfx-6", "cmd-6");
     TextCommand parsed =
@@ -508,8 +501,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeReplaysStoredCommunicationWithoutInvokingHandler() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
     TickEffect effect = tickEffect("tfx-6", "cmd-6");
     TextCommand parsed =
@@ -536,8 +528,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeReplaysStoredRejectedAfkWithoutInvokingHandler() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("AFK", "AFK");
     TickEffect effect = tickEffect("tfx-7", "cmd-7");
     TextCommand parsed =
@@ -571,8 +562,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeReplaysStoredBlockWithoutInvokingHandler() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("BLOCK", "BLOCK");
     TickEffect effect = tickEffect("tfx-7b", "cmd-7b");
     TextCommand parsed = new TextCommand(TextCommandType.BLOCK, java.util.List.of(), "BLOCK");
@@ -599,8 +589,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeAppliesPersistedAuthoredActionSnapshotWithoutLiveMetadata() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("wave", "wave captain");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
@@ -641,8 +630,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeReplaysPersistedAuthoredActionWithoutApplyingItsSnapshotAgain() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("wave", "wave captain");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
@@ -756,8 +744,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeRejectsMalformedAuthoredSnapshotBeforeReplayOrScriptPublication() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("wave", "wave captain");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
@@ -780,8 +767,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeRejectsAuthoredSnapshotWithAnInvalidModifierBeforeReplay() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("wave", "wave captain");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
@@ -822,8 +808,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   @Test
   void executeRejectsAuthoredSnapshotAboveTheSharedDurationLimitBeforeReplay() {
-    SessionContext context =
-        new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
     GameplayCommand command = gameplayCommand("wave", "wave captain");
     command.setAdmittedReleaseBundleId(300L);
     command.setAdmittedVersionId(41L);
@@ -874,16 +859,7 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   private GameplayCommand gameplayCommand(String commandName, String commandText) {
-    GameplayCommand command = new GameplayCommand();
-    command.setCommandId("cmd-1");
-    command.setTenantId(22L);
-    command.setGameInstanceId(5L);
-    command.setSessionId(42L);
-    command.setCharacterId(91L);
-    command.setCommandName(commandName);
-    command.setCommandText(commandText);
-    command.setSanitizedCommandText(commandText);
-    return command;
+    return GameplayCommandTestFixtures.durableDemoCommand(commandName, commandText);
   }
 
   private TickEffect tickEffect(String effectId, String commandId) {

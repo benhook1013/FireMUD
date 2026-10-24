@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -39,7 +40,10 @@ class HistoryCommandHandlerTest {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     HistoryCommandHandler handler = handler(storage, 10, true);
-    Mockito.when(storage.findRecent(7L, 9L, 7001L, 10)).thenReturn(List.of());
+    Mockito.when(
+            storage.findRecent(
+                7L, 9L, GameplayCommandTestFixtures.historyEmberline().characterId(), 10))
+        .thenReturn(List.of());
 
     SessionContext context = standardContext();
 
@@ -55,7 +59,10 @@ class HistoryCommandHandlerTest {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     HistoryCommandHandler handler = handler(storage, 2, true);
-    Mockito.when(storage.findRecent(7L, 9L, 7001L, 2)).thenReturn(List.of("LOOK", "SAY hi"));
+    Mockito.when(
+            storage.findRecent(
+                7L, 9L, GameplayCommandTestFixtures.historyEmberline().characterId(), 2))
+        .thenReturn(List.of("LOOK", "SAY hi"));
 
     SessionContext context = standardContext();
 
@@ -71,7 +78,9 @@ class HistoryCommandHandlerTest {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     HistoryCommandHandler handler = handler(storage, 10, true);
-    Mockito.when(storage.findRecent(7L, 9L, 7001L, 5))
+    Mockito.when(
+            storage.findRecent(
+                7L, 9L, GameplayCommandTestFixtures.historyEmberline().characterId(), 5))
         .thenReturn(List.of("LOOK", "SAY hello", "INVENTORY"));
     SessionContext context = standardContext();
 
@@ -87,7 +96,8 @@ class HistoryCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertEquals("LOOK\nSAY hello\nINVENTORY", result.outputs().get(0).text());
-    Mockito.verify(storage).findRecent(7L, 9L, 7001L, 5);
+    Mockito.verify(storage)
+        .findRecent(7L, 9L, GameplayCommandTestFixtures.historyEmberline().characterId(), 5);
   }
 
   @Test
@@ -113,7 +123,9 @@ class HistoryCommandHandlerTest {
   void returnsUnavailableWhenHistoryStorageReadFails() {
     PlayerCommandHistoryStorageService storage =
         Mockito.mock(PlayerCommandHistoryStorageService.class);
-    Mockito.when(storage.findRecent(7L, 9L, 7001L, 10))
+    Mockito.when(
+            storage.findRecent(
+                7L, 9L, GameplayCommandTestFixtures.historyEmberline().characterId(), 10))
         .thenThrow(new IllegalStateException("storage unavailable"));
     HistoryCommandHandler handler = handler(storage, 10, true);
 
@@ -192,8 +204,7 @@ class HistoryCommandHandlerTest {
   }
 
   private SessionContext standardContext() {
-    return new SessionContext(
-        22L, 7L, "99", "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    return GameplayCommandTestFixtures.historyEmberline();
   }
 
   private HistoryCommandHandler handler(

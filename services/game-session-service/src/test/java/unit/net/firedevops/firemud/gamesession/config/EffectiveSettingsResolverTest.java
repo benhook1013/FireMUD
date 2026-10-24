@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -52,8 +53,7 @@ class EffectiveSettingsResolverTest {
             authorityReader);
 
     PresentationProperties effective =
-        resolver.presentation(
-            new SessionContext(1L, 22L, "123", "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+        resolver.presentation(GameplayCommandTestFixtures.settingsEmber());
 
     assertThat(effective.defaultLocaleTag()).isEqualTo("fr");
     assertThat(effective.defaultColorMode()).isEqualTo(PresentationProperties.ColorMode.BASIC);

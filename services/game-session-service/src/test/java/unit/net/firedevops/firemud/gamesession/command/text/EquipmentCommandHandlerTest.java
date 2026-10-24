@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -22,9 +23,7 @@ import org.mockito.Mockito;
 class EquipmentCommandHandlerTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final EquipmentCommandHandler handler = new EquipmentCommandHandler(gameLogicClient);
-  private final SessionContext context =
-      new SessionContext(
-          1L, 22L, "123", "emberline@example.com", 911L, "Emberline", 77L, "R-7", "jwt-token");
+  private final SessionContext context = GameplayCommandTestFixtures.inventoryEmberline();
 
   @Test
   void wearWithoutItemReferenceFailsFast() {
