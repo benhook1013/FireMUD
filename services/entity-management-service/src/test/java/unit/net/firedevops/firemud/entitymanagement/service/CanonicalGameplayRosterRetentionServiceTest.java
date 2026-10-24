@@ -28,6 +28,7 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRespons
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -46,6 +47,59 @@ class CanonicalGameplayRosterRetentionServiceTest {
   private final CanonicalGameplayRosterRetentionService service =
       new CanonicalGameplayRosterRetentionService(
           repository, ownerClient, localTransactions(), policy, metrics);
+
+  @BeforeEach
+  void currentRetiredFixturesAlreadyHaveQualifiedSeals() {
+    when(repository.initializeRetainedRetirement(any()))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return true;
+            });
+  }
+
+  @Test
+  void legacyInitializationRefusalKeepsPayloadAndDoesNotReadUnavailableOwner() {
+    var retained = candidate(1, "RETIRED");
+    when(repository.candidates(null, 2)).thenReturn(List.of(retained));
+    org.mockito.Mockito.doReturn(false).when(repository).initializeRetainedRetirement(retained);
+    when(repository.health()).thenReturn(new Health(0, 0));
+    service.sweep();
+    verify(repository).classifyRetainedDependencies(2);
+    verify(repository).initializeRetainedRetirement(retained);
+    verify(repository, never()).dispose(any());
+    verify(repository, never()).prepareRetirement(any(), org.mockito.ArgumentMatchers.anyInt());
+    verify(repository).purgeTargetClassifications(2);
+    verifyNoInteractions(ownerClient);
+    assertThat(outcomes("protected")).isEqualTo(1);
+  }
+
+  @Test
+  void boundedPreparationFailureDoesNotBlockNextSnapshotOrRequireOwnerAvailability() {
+    var failing = candidate(1, "RETIRED");
+    var advancing = candidate(2, "RETIRED");
+    when(repository.candidates(null, 2)).thenReturn(List.of(failing, advancing));
+    when(repository.health()).thenReturn(new Health(0, 0));
+    when(repository.prepareRetirement(failing, 2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              throw new IllegalStateException("original page unavailable");
+            });
+    when(repository.prepareRetirement(advancing, 2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return 2;
+            });
+    service.sweep();
+    verify(repository).prepareRetirement(failing, 2);
+    verify(repository).prepareRetirement(advancing, 2);
+    verify(repository).purgeRetiredTargets(2);
+    verifyNoInteractions(ownerClient);
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertThat(outcomes("protected")).isEqualTo(1);
+  }
 
   @Test
   void boundedPagesPassUnavailableAndUnknownOwnersThenDisposeOnlyRetiredCandidates() {
