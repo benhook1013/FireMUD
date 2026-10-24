@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
@@ -12,11 +13,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import io.grpc.Context;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.StreamObserver;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
@@ -25,6 +30,9 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
@@ -63,6 +71,192 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
   private static final UUID INSTANCE = UUID.randomUUID();
   private static final UUID PLAYABLE = UUID.randomUUID();
   private static final UUID VERSION = UUID.randomUUID();
+
+  @Test
+  void actualSourceCompositionClassifiesOutboundStatusesAsDependencyUnavailable() {
+    for (String boundary : List.of("authored", "world", "policy")) {
+      for (var status :
+          List.of(
+              Status.PERMISSION_DENIED,
+              Status.UNAUTHENTICATED,
+              Status.INVALID_ARGUMENT,
+              Status.DEADLINE_EXCEEDED,
+              Status.UNAVAILABLE,
+              Status.FAILED_PRECONDITION)) {
+        for (boolean rosterRead : List.of(false, true)) {
+          if (boundary.equals("policy") && !rosterRead) continue;
+          try (var fixture = new Fixture()) {
+            var failure =
+                status.withDescription("private downstream failure details").asRuntimeException();
+            if (boundary.equals("authored")) doThrow(failure).when(fixture.gameDesign).read(any());
+            else if (boundary.equals("world")) doThrow(failure).when(fixture.world).read(any());
+            else
+              doThrow(failure)
+                  .when(fixture.publishedPolicies)
+                  .listPublishedRealmEntryPolicies(TENANT, VERSION);
+            var observed = readThroughAdapter(fixture.service, rosterRead);
+            assertThat(observed.status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+            assertThat(observed.status.getDescription())
+                .isEqualTo("Creation source dependency unavailable");
+            assertThat(observed.value).isNull();
+            assertThat(observed.completed).isFalse();
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void actualUninitializedPolicyClientIsUnavailableAndKeepsItsCauseInsideTheService()
+      throws Exception {
+    try (var fixture = new Fixture()) {
+      var tls = new CommonGrpcClientProperties();
+      tls.setCertChain("controlled-gs.crt");
+      tls.setPrivateKey("controlled-gs.key");
+      tls.setCaCert("controlled-ca.crt");
+      var channels = mock(GrpcChannelFactory.class);
+      try (var policy =
+          new GameDesignPublishedRealmPolicyClient(
+              new ServiceEndpointsProperties(), tls, channels, NAMESPACE)) {
+        var actual =
+            new GameSessionCharacterCreatePublicSourceService(
+                NAMESPACE,
+                fixture.routes,
+                fixture.catalogs,
+                fixture.admissions,
+                fixture.launches,
+                fixture.retention,
+                fixture.gameDesign,
+                fixture.world,
+                policy);
+        assertThatThrownBy(() -> actual.readPlayerCreatedRosterSource(rosterRequest()))
+            .isInstanceOf(
+                GameSessionCharacterCreatePublicSourceService.SourceDependencyUnavailableException
+                    .class)
+            .hasCauseInstanceOf(
+                GameDesignPublishedRealmPolicyClient.UninitializedClientException.class);
+        var observed = readThroughAdapter(actual, true);
+        assertThat(observed.status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+        assertThat(observed.status.getDescription())
+            .isEqualTo("Creation source dependency unavailable");
+        assertThat(observed.value).isNull();
+        assertThat(observed.completed).isFalse();
+        verifyNoInteractions(channels);
+      }
+    }
+    try (var fixture = new Fixture()) {
+      var transport =
+          Status.PERMISSION_DENIED.withDescription("private peer reason").asRuntimeException();
+      doThrow(transport).when(fixture.gameDesign).read(any());
+      assertThatThrownBy(() -> fixture.service.read(request()))
+          .isInstanceOf(
+              GameSessionCharacterCreatePublicSourceService.SourceDependencyUnavailableException
+                  .class)
+          .hasCause(transport)
+          .hasMessage("Creation source dependency unavailable");
+    }
+  }
+
+  @Test
+  void localCallerRequestMissingSourceAndUndifferentiatedEvidenceErrorsKeepTheirClassifications() {
+    try (var fixture = new Fixture()) {
+      var adapter =
+          new GameSessionCharacterCreatePublicSourceGrpcService(fixture.service, NAMESPACE);
+      var invalid =
+          new SourceObserver<
+              net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceResponse>();
+      runAsSourcePeer(
+          "entity-management-service",
+          () ->
+              adapter.readPlayerCreatedRosterSource(
+                  rosterRequest().toBuilder().setSchemaVersion(2).build(), invalid));
+      assertThat(invalid.status.getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+      var denied =
+          new SourceObserver<
+              net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceResponse>();
+      runAsSourcePeer(
+          "account-service", () -> adapter.readPlayerCreatedRosterSource(rosterRequest(), denied));
+      assertThat(denied.status.getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+      verifyNoInteractions(fixture.gameDesign, fixture.world, fixture.publishedPolicies);
+    }
+    try (var fixture = new Fixture()) {
+      when(fixture.retention.readByOriginalOperation(anyString(), anyString()))
+          .thenReturn(Optional.empty());
+      assertThat(readThroughAdapter(fixture.service, true).status.getCode())
+          .isEqualTo(Status.Code.FAILED_PRECONDITION);
+      verifyNoInteractions(fixture.gameDesign, fixture.world, fixture.publishedPolicies);
+    }
+    // Common authored-core/World clients use plain IllegalStateException both for missing init
+    // and invalid evidence. Without a typed discriminator their existing classification stays.
+    for (boolean world : List.of(false, true)) {
+      try (var fixture = new Fixture()) {
+        var invalid = new IllegalStateException("undifferentiated client state or evidence error");
+        if (world) doThrow(invalid).when(fixture.world).read(any());
+        else doThrow(invalid).when(fixture.gameDesign).read(any());
+        assertThat(readThroughAdapter(fixture.service, true).status.getCode())
+            .isEqualTo(Status.Code.FAILED_PRECONDITION);
+      }
+    }
+    try (var fixture = new Fixture()) {
+      doThrow(
+              new GameDesignPublishedRealmPolicyClient.InvalidResponseException(
+                  "invalid policy evidence", null))
+          .when(fixture.publishedPolicies)
+          .listPublishedRealmEntryPolicies(TENANT, VERSION);
+      assertThat(readThroughAdapter(fixture.service, true).status.getCode())
+          .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    }
+  }
+
+  private static SourceObserver<?> readThroughAdapter(
+      GameSessionCharacterCreatePublicSourceService source, boolean rosterRead) {
+    var adapter = new GameSessionCharacterCreatePublicSourceGrpcService(source, NAMESPACE);
+    if (rosterRead) {
+      var observer =
+          new SourceObserver<
+              net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceResponse>();
+      runAsSourcePeer(
+          "entity-management-service",
+          () -> adapter.readPlayerCreatedRosterSource(rosterRequest(), observer));
+      return observer;
+    }
+    var observer =
+        new SourceObserver<
+            net.firedevops.firemud.gamesession.v1.ReadCharacterCreatePublicSourceResponse>();
+    runAsSourcePeer(
+        "account-service", () -> adapter.readCharacterCreatePublicSource(request(), observer));
+    return observer;
+  }
+
+  private static void runAsSourcePeer(String service, Runnable operation) {
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/" + service, NAMESPACE, service))
+        .run(operation);
+  }
+
+  private static final class SourceObserver<T> implements StreamObserver<T> {
+    private T value;
+    private Status status = Status.OK;
+    private boolean completed;
+
+    @Override
+    public void onNext(T response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      status = Status.fromThrowable(failure);
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
 
   @Test
   void accountReadsDoNotCallTheRosterPublishedPolicyOwner() {
@@ -135,7 +329,7 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
       try (var fixture = new Fixture()) {
         invalidate.accept(fixture);
         assertThatThrownBy(() -> fixture.service.readPlayerCreatedRosterSource(rosterRequest()))
-            .isInstanceOf(RuntimeException.class);
+            .isInstanceOfAny(StatusRuntimeException.class, IllegalArgumentException.class);
       }
     }
   }

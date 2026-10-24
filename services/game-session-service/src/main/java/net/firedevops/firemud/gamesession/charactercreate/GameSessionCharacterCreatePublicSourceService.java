@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.charactercreate;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
@@ -235,7 +236,12 @@ public final class GameSessionCharacterCreatePublicSourceService {
     requireOriginal(retained, launch, historical, sourceRequest);
 
     outsideSql();
-    var authored = gameDesign.read(sourceRequest);
+    AuthoredInitialActorCoreReadEvidence.ReadResult authored;
+    try {
+      authored = gameDesign.read(sourceRequest);
+    } catch (StatusRuntimeException dependency) {
+      throw new SourceDependencyUnavailableException(dependency);
+    }
     if (!Arrays.equals(authored.canonicalBytes(), retained.canonicalSourceResultBytes())
         || !authored.digest().equals(retained.sourceResultDigest())
         || !sourceRequest.associationRequest().equals(authored.request())
@@ -260,7 +266,12 @@ public final class GameSessionCharacterCreatePublicSourceService {
             descriptor.resultDigest(),
             launch.launchBindingEvidence().releaseAttestation().evidenceDigest());
     outsideSql();
-    var lifecycle = world.read(lifecycleRequest);
+    WorldCanonicalInstanceLifecycleEvidence lifecycle;
+    try {
+      lifecycle = world.read(lifecycleRequest);
+    } catch (StatusRuntimeException dependency) {
+      throw new SourceDependencyUnavailableException(dependency);
+    }
     if (!lifecycleRequest.equals(lifecycle.request())
         || !"ACTIVE".equals(lifecycle.lifecycleStatus())
         || lifecycle.lifecycleEpoch() != before.activeWorldEpoch()
@@ -303,9 +314,15 @@ public final class GameSessionCharacterCreatePublicSourceService {
       AuthoredInitialActorCoreReadEvidence.ReadResult authored,
       WorldCanonicalInstanceLifecycleEvidence lifecycle) {
     outsideSql();
-    var set =
-        publishedPolicies.listPublishedRealmEntryPolicies(
-            route.canonicalTenantId(), route.canonicalVersionId());
+    PublishedRealmEntryPolicySetEvidence set;
+    try {
+      set =
+          publishedPolicies.listPublishedRealmEntryPolicies(
+              route.canonicalTenantId(), route.canonicalVersionId());
+    } catch (StatusRuntimeException
+        | GameDesignPublishedRealmPolicyClient.UninitializedClientException dependency) {
+      throw new SourceDependencyUnavailableException(dependency);
+    }
     if (set == null) throw missing();
     set.requireValidDigest();
     var operation = GameDesignPublicationOperationBinding.fromStored(set.operationBytes());
@@ -687,6 +704,13 @@ public final class GameSessionCharacterCreatePublicSourceService {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive())
       throw new IllegalStateException("Creation source reads must not join an ambient transaction");
+  }
+
+  /** An outbound source owner could not provide evidence; this is not a caller rejection. */
+  public static final class SourceDependencyUnavailableException extends RuntimeException {
+    private SourceDependencyUnavailableException(RuntimeException cause) {
+      super("Creation source dependency unavailable", cause);
+    }
   }
 
   static RuntimeException invalid() {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.charactercreate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -230,6 +231,60 @@ class GameSessionCharacterCreatePublicSourceGrpcServiceTest {
           .isEqualTo(Status.Code.INVALID_ARGUMENT);
     }
     verifyNoInteractions(source);
+  }
+
+  @Test
+  void ownerEvidenceArgumentFailuresArePreconditionsWhileMalformedCallerRequestsRemainInvalid() {
+    var source = mock(GameSessionCharacterCreatePublicSourceService.class);
+    var adapter = new GameSessionCharacterCreatePublicSourceGrpcService(source, "firemud");
+    var request = request();
+    var rosterRequest = GameSessionCharacterCreatePublicSourceServiceTest.rosterRequest();
+    var resolveRequest = GameSessionCharacterCreatePublicSourceServiceTest.resolveRequest();
+    when(source.read(request))
+        .thenThrow(new IllegalArgumentException("invalid retained source evidence"));
+    when(source.readPlayerCreatedRosterSource(rosterRequest))
+        .thenThrow(new IllegalArgumentException("invalid persisted policy evidence"));
+    when(source.resolve(resolveRequest))
+        .thenThrow(new IllegalArgumentException("invalid current owner evidence"));
+
+    var account = call(adapter, "account-service", "firemud", request);
+    assertThat(account.code).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(account.value).isNull();
+    assertThat(
+            call(
+                    adapter,
+                    "account-service",
+                    "firemud",
+                    request.toBuilder().setSchemaVersion(2).build())
+                .code)
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+    var entity = roster(adapter, "entity-management-service", "firemud", rosterRequest);
+    assertThat(entity.code).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(entity.value).isNull();
+    assertThat(
+            roster(
+                    adapter,
+                    "entity-management-service",
+                    "firemud",
+                    rosterRequest.toBuilder().setSchemaVersion(2).build())
+                .code)
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+
+    var target = resolve(adapter, "account-service", "firemud", resolveRequest);
+    assertThat(target.code).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(target.value).isNull();
+    assertThat(
+            resolve(
+                    adapter,
+                    "account-service",
+                    "firemud",
+                    resolveRequest.toBuilder().setSchemaVersion(2).build())
+                .code)
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    verify(source).read(request);
+    verify(source).readPlayerCreatedRosterSource(rosterRequest);
+    verify(source).resolve(resolveRequest);
   }
 
   @Test

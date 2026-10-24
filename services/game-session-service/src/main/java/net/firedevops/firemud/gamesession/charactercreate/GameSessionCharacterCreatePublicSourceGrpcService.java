@@ -52,8 +52,7 @@ public final class GameSessionCharacterCreatePublicSourceGrpcService
       observer.onCompleted();
     } catch (StatusRuntimeException status) {
       observer.onError(status);
-    } catch (IllegalArgumentException invalid) {
-      observer.onError(GameSessionCharacterCreatePublicSourceService.invalid());
+
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException storage) {
       observer.onError(
@@ -87,10 +86,16 @@ public final class GameSessionCharacterCreatePublicSourceGrpcService
       }
       observer.onNext(result);
       observer.onCompleted();
+    } catch (
+        GameSessionCharacterCreatePublicSourceService.SourceDependencyUnavailableException
+            dependency) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Creation source dependency unavailable")
+              .asRuntimeException());
     } catch (StatusRuntimeException status) {
       observer.onError(status);
-    } catch (IllegalArgumentException invalid) {
-      observer.onError(GameSessionCharacterCreatePublicSourceService.invalid());
+
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException storage) {
       observer.onError(
@@ -125,10 +130,16 @@ public final class GameSessionCharacterCreatePublicSourceGrpcService
       }
       observer.onNext(result);
       observer.onCompleted();
+    } catch (
+        GameSessionCharacterCreatePublicSourceService.SourceDependencyUnavailableException
+            dependency) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Creation source dependency unavailable")
+              .asRuntimeException());
     } catch (StatusRuntimeException status) {
       observer.onError(status);
-    } catch (IllegalArgumentException invalid) {
-      observer.onError(GameSessionCharacterCreatePublicSourceService.invalid());
+
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException storage) {
       observer.onError(
