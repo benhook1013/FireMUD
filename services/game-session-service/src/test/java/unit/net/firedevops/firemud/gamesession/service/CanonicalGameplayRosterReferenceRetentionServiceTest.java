@@ -61,10 +61,10 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     var transferCleanupLag =
         metrics.get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds").gauge();
 
-    assertThat(oldestBlocking.value()).isEqualTo(-1);
-    assertThat(cleanupLag.value()).isEqualTo(-1);
-    assertThat(oldestPendingTransfer.value()).isEqualTo(-1);
-    assertThat(transferCleanupLag.value()).isEqualTo(-1);
+    assertThat(oldestBlocking.value()).isNaN();
+    assertThat(cleanupLag.value()).isNaN();
+    assertThat(oldestPendingTransfer.value()).isNaN();
+    assertThat(transferCleanupLag.value()).isNaN();
 
     when(repository.targetCandidates(null, 2)).thenReturn(List.of());
     when(repository.health()).thenReturn(new Health(0, 0));
@@ -153,13 +153,22 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
                 .get("firemud.canonical.roster.reference.oldest_pending_transfer_seconds")
                 .gauge()
                 .value())
-        .isEqualTo(-1);
+        .isNaN();
     assertThat(
             metrics
                 .get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds")
                 .gauge()
                 .value())
-        .isEqualTo(-1);
+        .isNaN();
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.oldest_blocking_seconds")
+                .gauge()
+                .value())
+        .isZero();
+    assertThat(
+            metrics.get("firemud.canonical.roster.reference.cleanup_lag_seconds").gauge().value())
+        .isZero();
     assertThat(
             metrics
                 .get("firemud.canonical.roster.reference.transfer_cleanup")
@@ -192,8 +201,20 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     assertThat(lag.value()).isZero();
 
     service.sweep();
-    assertThat(oldest.value()).isEqualTo(-1);
-    assertThat(lag.value()).isEqualTo(-1);
+    assertThat(oldest.value()).isNaN();
+    assertThat(lag.value()).isNaN();
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.oldest_pending_transfer_seconds")
+                .gauge()
+                .value())
+        .isZero();
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds")
+                .gauge()
+                .value())
+        .isZero();
     assertThat(outcomes("health_failure")).isEqualTo(1);
 
     service.sweep();
@@ -275,10 +296,10 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
 
     service.sweep();
     assertThat(outcomes("failure")).isEqualTo(2);
-    assertThat(blocking.value()).isEqualTo(-1);
-    assertThat(lag.value()).isEqualTo(-1);
-    assertThat(pending.value()).isEqualTo(-1);
-    assertThat(transferLag.value()).isEqualTo(-1);
+    assertThat(blocking.value()).isNaN();
+    assertThat(lag.value()).isNaN();
+    assertThat(pending.value()).isNaN();
+    assertThat(transferLag.value()).isNaN();
     assertThat(outcomes("health_failure")).isEqualTo(1);
     assertThat(
             metrics
