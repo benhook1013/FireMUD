@@ -603,10 +603,16 @@ class CanonicalGameplayRosterRetentionServiceTest {
 
     service.sweep();
     verify(repository, never()).recordRetirementAcknowledgement(any(), any());
+    assertThat(outcomes("acknowledged")).isZero();
+    assertThat(outcomes("confirmed")).isZero();
     service.sweep();
     verify(ownerClient, never()).confirmCanonicalGameplayRosterRetirementAcknowledgement(any());
+    assertThat(outcomes("acknowledged")).isEqualTo(1);
+    assertThat(outcomes("confirmed")).isZero();
     service.sweep();
     verify(repository, never()).recordRetirementConfirmation(any(), any());
+    assertThat(outcomes("acknowledged")).isEqualTo(1);
+    assertThat(outcomes("confirmed")).isZero();
     service.sweep();
 
     verify(ownerClient, times(2)).acknowledgeCanonicalGameplayRosterRetirement(request);
@@ -616,6 +622,70 @@ class CanonicalGameplayRosterRetentionServiceTest {
     verify(repository).recordRetirementConfirmation(acknowledged, confirmationResponse);
     verify(repository, times(4)).purgeConfirmedRetirementTransfers(2);
     assertThat(outcomes("failure")).isEqualTo(2);
+    assertThat(outcomes("acknowledged")).isEqualTo(1);
+    assertThat(outcomes("confirmed")).isEqualTo(1);
+  }
+
+  @Test
+  void idempotentTransferNoOpsDoNotRecordAcknowledgedOrConfirmedOutcomes() {
+    var pending = transfer(1);
+    var acknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            pending.acknowledgementRequest(),
+            new UUID(9, 1),
+            pending.acknowledgementRequest().getMinimumRetentionMillis());
+    var prior = transfer(2);
+    var priorAcknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            prior.acknowledgementRequest(),
+            new UUID(9, 2),
+            prior.acknowledgementRequest().getMinimumRetentionMillis());
+    var acknowledged =
+        new RetirementTransfer(
+            prior.observationUuid(),
+            "ACKNOWLEDGED",
+            prior.original(),
+            prior.acknowledgementRequest(),
+            priorAcknowledgement);
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            prior.acknowledgementRequest(), priorAcknowledgement);
+    var confirmationResponse =
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    when(repository.retirementTransfers(null, 2)).thenReturn(List.of(pending, acknowledged));
+    when(ownerClient.acknowledgeCanonicalGameplayRosterRetirement(pending.acknowledgementRequest()))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return acknowledgement;
+            });
+    when(repository.recordRetirementAcknowledgement(pending, acknowledgement))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return false;
+            });
+    when(ownerClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+        .thenAnswer(
+            ignored -> {
+              assertOutsideTransaction();
+              return confirmationResponse;
+            });
+    when(repository.recordRetirementConfirmation(acknowledged, confirmationResponse))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return false;
+            });
+    when(repository.health()).thenReturn(new Health(0, 0));
+
+    service.sweep();
+
+    verify(repository).recordRetirementAcknowledgement(pending, acknowledgement);
+    verify(repository).recordRetirementConfirmation(acknowledged, confirmationResponse);
+    assertThat(outcomes("acknowledged")).isZero();
+    assertThat(outcomes("confirmed")).isZero();
+    assertThat(outcomes("failure")).isZero();
   }
 
   @Test
