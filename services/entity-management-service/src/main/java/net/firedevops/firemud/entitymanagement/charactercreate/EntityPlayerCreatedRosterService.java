@@ -68,7 +68,10 @@ public final class EntityPlayerCreatedRosterService {
     var retained =
         requireTransactionResult(
             transactions.execute(
-                status -> retentionRepository.originalPlayerCreatedReceipt(checkedOriginal)),
+                status -> {
+                  retentionRepository.requireAdmission(request, admission);
+                  return retentionRepository.originalPlayerCreatedReceipt(checkedOriginal);
+                }),
             "PLAYER_CREATED receipt lookup returned no result");
     if (retained.isPresent()) {
       return CanonicalPlayerCreatedRosterEvidence.requireResponse(request, retained.orElseThrow());

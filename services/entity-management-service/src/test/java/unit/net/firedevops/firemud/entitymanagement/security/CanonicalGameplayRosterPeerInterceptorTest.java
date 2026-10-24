@@ -201,6 +201,11 @@ class CanonicalGameplayRosterPeerInterceptorTest {
     ServerCallHandler<String, String> claimedNext = mock(ServerCallHandler.class);
     interceptor.interceptCall(claimed, new Metadata(), claimedNext);
     verify(claimedNext, never()).startCall(any(), any());
+    verify(claimed)
+        .close(
+            org.mockito.ArgumentMatchers.argThat(
+                status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+            any(Metadata.class));
   }
 
   @Test

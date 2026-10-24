@@ -581,6 +581,94 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
+  void exactCurrentOpenLockRejectsUnjoinedDslConnectionInsideSpringTransaction() throws Exception {
+    var retainedV2 = prepareRetainedV2Admission();
+    Fixture fixture = retainedV2.fixture();
+    var qualified =
+        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+            NAMESPACE, TENANT, retainedV2.prepared().catalog().realmId());
+    DSLContext unjoinedDsl =
+        DSL.using(fixture.transactionManager.getDataSource(), SQLDialect.POSTGRES);
+    var admissions =
+        new CanonicalInitialAdmissionRepository(
+            unjoinedDsl, fixture.catalogRepository, fixture.pointerRepository);
+
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    ignored -> admissions.lockExactCurrentOpenSnapshot(qualified)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Exact current OPEN lock requires the DSL connection to join the owner transaction");
+  }
+
+  @Test
+  void exactCurrentOpenLockWaitsForCatalogBeforeAcquiringPointerLock() throws Exception {
+    var retainedV2 = prepareRetainedV2Admission();
+    Fixture fixture = retainedV2.fixture();
+    var qualified =
+        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+            NAMESPACE, TENANT, retainedV2.prepared().catalog().realmId());
+    var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+    var readerPid = new java.util.concurrent.atomic.AtomicInteger();
+    var readerStarted = new java.util.concurrent.CountDownLatch(1);
+    var reader =
+        new java.util.concurrent.atomic.AtomicReference<
+            java.util.concurrent.Future<CanonicalInitialAdmissionRepository.CurrentOpenSnapshot>>();
+
+    try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+      fixture.transactions.executeWithoutResult(
+          ignored -> {
+            fixture.dsl.fetchSingle(
+                "SELECT realm_id FROM game_session_canonical_realm_catalog "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? "
+                    + "FOR UPDATE",
+                NAMESPACE,
+                TENANT,
+                qualified.ownerProof().realmId());
+            holderPid.set(
+                Objects.requireNonNull(
+                    fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
+            reader.set(
+                executor.submit(
+                    () ->
+                        fixture.transactions.execute(
+                            transaction -> {
+                              readerPid.set(
+                                  Objects.requireNonNull(
+                                      fixture
+                                          .dsl
+                                          .fetchSingle("SELECT pg_backend_pid()")
+                                          .get(0, Integer.class)));
+                              readerStarted.countDown();
+                              return fixture.initialAdmissionRepository
+                                  .lockExactCurrentOpenSnapshot(qualified);
+                            })));
+            try {
+              assertThat(readerStarted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+              awaitBackendBlockedBy(fixture.dsl, readerPid.get(), holderPid.get());
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(interrupted);
+            }
+            assertThat(
+                    fixture
+                        .dsl
+                        .fetchSingle(
+                            "SELECT count(*) FROM pg_locks "
+                                + "WHERE pid = ? "
+                                + "AND relation = to_regclass('gameplay_admission_pointer') "
+                                + "AND mode = 'RowShareLock' AND granted",
+                            readerPid.get())
+                        .get(0, Long.class))
+                .as("reader holds no OPEN pointer row-lock relation while catalog is contested")
+                .isZero();
+          });
+      assertThat(reader.get().get(5L, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(qualified);
+    }
+  }
+
+  @Test
   void freshHumanReservationDeniesBeforeEffectsAndRetainedPendingCannotCommit() throws Exception {
     Fixture fixture = fixture("1005");
     PredecessorAdmission predecessor = preparePre1006Admission(fixture);
@@ -2646,7 +2734,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             uuid(122));
     reservePre1006Attempt(fixture, predecessor.launch(), admission);
     seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
+    migration(fixture, "1017").migrate();
     migration(fixture, "1020").migrate();
+    migration(fixture, null).migrate();
     return new RetainedV2Admission(fixture, prepared, origin);
   }
 

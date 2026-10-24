@@ -99,22 +99,14 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     flywayConfiguration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     assertThat(retainedParentRows(dsl)).isEqualTo(parentRows);
-    assertThat(
-            dsl.fetch(
-                "SELECT creation_target_namespace, creation_operation_id, actor_entry_policy, "
-                    + "authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters"))
-        .allSatisfy(row -> assertThat(row.intoArray()).containsOnlyNulls());
-    assertThat(
-            dsl.fetch(
-                "SELECT canonical_player_created_source_identity FROM entity_canonical_gameplay_roster_snapshots WHERE entry_policy = 'PRESEEDED_ONLY'"))
-        .allSatisfy(row -> assertThat(row.get(0, byte[].class)).isNull());
+    assertInheritedNullableFieldsRemainNull();
     assertThat(history(dsl).subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     assertThat(
             dsl.fetchSingle(
                     "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
                 .get(0, String.class))
-        .isEqualTo("1017");
+        .isEqualTo("1020");
   }
 
   @AfterEach
@@ -230,6 +222,31 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     }
   }
 
+  private static String predecessorRowProjection(String table) {
+    return switch (table) {
+      case "characters" ->
+          "to_jsonb(t) - ARRAY['creation_target_namespace', 'creation_operation_id', 'actor_entry_policy', 'authored_initial_core_json', 'creation_descriptor_json', 'creation_descriptor_digest']::TEXT[]";
+      case "entity_canonical_gameplay_roster_snapshots" ->
+          "to_jsonb(t) - 'canonical_player_created_source_identity'";
+      default -> "to_jsonb(t)";
+    };
+  }
+
+  private void assertInheritedNullableFieldsRemainNull() {
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM characters WHERE creation_target_namespace IS NOT NULL OR creation_operation_id IS NOT NULL "
+                        + "OR actor_entry_policy IS NOT NULL OR authored_initial_core_json IS NOT NULL "
+                        + "OR creation_descriptor_json IS NOT NULL OR creation_descriptor_digest IS NOT NULL")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE canonical_player_created_source_identity IS NOT NULL")
+                .get(0, Long.class))
+        .isZero();
+  }
+
   /** Storage retention only; synthetic parent rows establish no authenticated owner authority. */
   private static Map<String, List<String>> retainedParentRows(DSLContext source) {
     Map<String, List<String>> rows = new java.util.LinkedHashMap<>();
@@ -245,25 +262,16 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
             "entity_canonical_gameplay_roster_snapshot_actors",
             "saga_instance",
             "saga_step")) {
-      String retainedProjection =
-          switch (table) {
-            case "characters" ->
-                "to_jsonb(t) - 'creation_target_namespace' - 'creation_operation_id' - 'actor_entry_policy' "
-                    + "- 'authored_initial_core_json' - 'creation_descriptor_json' - 'creation_descriptor_digest'";
-            case "entity_canonical_gameplay_roster_snapshots" ->
-                "to_jsonb(t) - 'canonical_player_created_source_identity'";
-            default -> "to_jsonb(t)";
-          };
       rows.put(
           table,
           source
               .fetch(
                   "SELECT jsonb_build_object('row', "
-                      + retainedProjection
+                      + predecessorRowProjection(table)
                       + ", 'xmin', t.xmin::TEXT)::TEXT FROM "
                       + table
                       + " t ORDER BY ("
-                      + retainedProjection
+                      + predecessorRowProjection(table)
                       + ")::TEXT")
               .getValues(0, String.class));
     }

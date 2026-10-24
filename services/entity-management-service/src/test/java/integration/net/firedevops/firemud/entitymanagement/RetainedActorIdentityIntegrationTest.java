@@ -642,7 +642,7 @@ class RetainedActorIdentityIntegrationTest {
         .extracting(migration -> migration.getVersion().getVersion())
         .containsExactly(
             "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
-            "1010", "1011", "1012", "1014", "1015", "1016", "1017");
+            "1010", "1011", "1012", "1014", "1015", "1016", "1017", "1018", "1019", "1020");
     assertThat(flyway.info().applied())
         .filteredOn(migration -> migration.getVersion() != null)
         .extracting(migration -> migration.getScript())
@@ -664,9 +664,12 @@ class RetainedActorIdentityIntegrationTest {
             "V1014__canonical_roster_retirement_observation.sql",
             "V1015__entity_character_create_terminal.sql",
             "V1016__player_created_roster_snapshot_receipts.sql",
-            "V1017__player_created_actor_quarantine.sql");
+            "V1017__player_created_actor_quarantine.sql",
+            "V1018__canonical_roster_staged_retirement.sql",
+            "V1019__canonical_roster_snapshot_retirement_seals.sql",
+            "V1020__canonical_roster_created_retirement_recognition.sql");
     assertThat(flyway.info().current().getVersion())
-        .isEqualTo(MigrationVersion.fromVersion("1017"));
+        .isEqualTo(MigrationVersion.fromVersion("1020"));
     assertThat(flyway.info().applied())
         .extracting(migration -> migration.getState())
         .doesNotContain(MigrationState.OUT_OF_ORDER);
@@ -739,7 +742,7 @@ class RetainedActorIdentityIntegrationTest {
         .extracting(MigrationHistoryEntry::version)
         .containsExactly(
             "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
-            "1010", "1011", "1012", "1014", "1015", "1016", "1017");
+            "1010", "1011", "1012", "1014", "1015", "1016", "1017", "1018", "1019", "1020");
     assertThat(upgradedHistory)
         .extracting(MigrationHistoryEntry::script)
         .containsExactly(
@@ -760,7 +763,10 @@ class RetainedActorIdentityIntegrationTest {
             "V1014__canonical_roster_retirement_observation.sql",
             "V1015__entity_character_create_terminal.sql",
             "V1016__player_created_roster_snapshot_receipts.sql",
-            "V1017__player_created_actor_quarantine.sql");
+            "V1017__player_created_actor_quarantine.sql",
+            "V1018__canonical_roster_staged_retirement.sql",
+            "V1019__canonical_roster_snapshot_retirement_seals.sql",
+            "V1020__canonical_roster_created_retirement_recognition.sql");
     assertThat(upgradedHistory).allSatisfy(entry -> assertThat(entry.success()).isTrue());
 
     try (Connection connection = connectToMigrationSchema();
@@ -1023,7 +1029,7 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(upgradeFlyway.getConfiguration().isOutOfOrder()).isFalse();
     upgradeFlyway.migrate();
     assertThat(upgradeFlyway.info().current().getVersion())
-        .isEqualTo(MigrationVersion.fromVersion("1017"));
+        .isEqualTo(MigrationVersion.fromVersion("1020"));
     assertThat(upgradeFlyway.info().applied())
         .extracting(migration -> migration.getState())
         .doesNotContain(MigrationState.OUT_OF_ORDER);
