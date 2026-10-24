@@ -13,6 +13,9 @@ firemudJooq {
 
 dependencies {
     testFixturesCompileOnly(libs.spotbugs.annotations)
+    testFixturesImplementation(libs.jooq)
+    testFixturesImplementation(libs.spring.boot.starter.jdbc)
+    testFixturesImplementation(libs.micrometer.core)
     implementation(project(":common-platform-core"))
     implementation(project(":common-security"))
     implementation(libs.spring.boot.starter.cache)
