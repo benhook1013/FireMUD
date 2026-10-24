@@ -59,6 +59,46 @@ class CanonicalGameplayRosterRetentionServiceTest {
   }
 
   @Test
+  void invalidKeyedItemsInEveryStageAdvanceWithoutOwnerCallsOrMutations() {
+    var badSnapshot = Candidate.invalid(new UUID(0, 1));
+    var snapshot = candidate(2, "RETIRED");
+    var badClosure = ClosedAdmissionCandidate.invalid(new UUID(2, 1), new UUID(5, 1));
+    var closure = closure(2);
+    var badTransfer = RetirementTransfer.invalid(new UUID(8, 1), "PENDING_ACK");
+    var transfer = transfer(2);
+    when(repository.candidates(null, 2)).thenReturn(List.of(badSnapshot, snapshot));
+    when(repository.closedAdmissionCandidates(null, 2)).thenReturn(List.of(badClosure, closure));
+    when(repository.retirementTransfers(null, 2)).thenReturn(List.of(badTransfer, transfer));
+    when(repository.health()).thenReturn(new Health(0, 0));
+    when(repository.dispose(snapshot)).thenReturn(true);
+    when(ownerClient.getCanonicalGameplayRosterReference(
+            closure.response().getRequest().getOriginalSelection()))
+        .thenReturn(closureOwner(closure));
+    when(ownerClient.acknowledgeCanonicalGameplayRosterRetirement(
+            transfer.acknowledgementRequest()))
+        .thenReturn(
+            CanonicalGameplayRosterRetirementEvidence.response(
+                transfer.acknowledgementRequest(), UUID.randomUUID(), 1000));
+
+    service.sweep();
+    assertThat(outcomes("failure")).isEqualTo(3);
+    verify(repository).dispose(snapshot);
+    verify(repository).purgeClosedAdmission(eq(closure), any());
+    verify(repository).recordRetirementAcknowledgement(eq(transfer), any());
+    verify(repository, never()).initializeRetainedRetirement(badSnapshot);
+    verify(repository, never()).purgeClosedAdmission(eq(badClosure), any());
+    verify(repository, never()).recordRetirementAcknowledgement(eq(badTransfer), any());
+    verify(ownerClient, times(1)).getCanonicalGameplayRosterReference(any());
+    verify(ownerClient, times(1)).acknowledgeCanonicalGameplayRosterRetirement(any());
+
+    service.sweep();
+    verify(repository).candidates(snapshot.snapshotUuid(), 2);
+    verify(repository).closedAdmissionCandidates(closure.operationUuid(), 2);
+    verify(repository).retirementTransfers(transfer.observationUuid(), 2);
+    assertThat(outcomes("failure")).isEqualTo(3);
+  }
+
+  @Test
   void legacyInitializationRefusalKeepsPayloadAndDoesNotReadUnavailableOwner() {
     var retained = candidate(1, "RETIRED");
     when(repository.candidates(null, 2)).thenReturn(List.of(retained));

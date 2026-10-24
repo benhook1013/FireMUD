@@ -85,6 +85,20 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
     migrate(dataSource, "latest");
     assertThat(retainedRows()).containsExactlyElementsOf(retained);
     assertInheritedNullableFieldsRemainNull();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireUnsealedTarget(localRequest())))
+        .as("retained snapshot classification must be initialized before acquisition")
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+    assertThat(retainedRows()).containsExactlyElementsOf(retained);
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isFalse();
   }
 
   @AfterEach
@@ -93,6 +107,521 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
       DSL.using(dataSource(null), SQLDialect.POSTGRES)
           .execute("DROP SCHEMA \"" + schema.replaceAll("[^a-zA-Z0-9_]", "") + "\" CASCADE");
     }
+  }
+
+  @Test
+  void malformedOriginalPageKeepsItsKeyAndPassesLaterSnapshotWithoutChangingSource() {
+    var firstSnapshot = retainedSnapshot();
+    var firstLocal = localRequest();
+    bindSnapshot(firstLocal, recoveryOwner(recovery(firstLocal)), firstSnapshot);
+    UUID badSnapshot = binding.snapshot().snapshotUuid();
+    binding =
+        new CanonicalGameplayRosterRetentionBinding(
+            UUID.randomUUID(),
+            new CanonicalGameplayRosterSnapshotReference(
+                UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"), "b".repeat(64)),
+            binding.target());
+    transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+    var laterLocal = localRequest();
+    bindSnapshot(laterLocal, recoveryOwner(recovery(laterLocal)), retainedSnapshot());
+    corruptRestoredBytes(
+        "entity_canonical_roster_original_selections", "owner_request", firstLocal.requestUuid());
+    String retained =
+        pageSourceRow(
+            "entity_canonical_roster_original_selections",
+            "operation_uuid",
+            firstLocal.requestUuid());
+    var firstPage = transaction.execute(ignored -> repository.candidates(null, 1));
+    assertThat(firstPage).hasSize(1);
+    assertThat(firstPage.getFirst().valid()).isFalse();
+    assertThat(firstPage.getFirst().snapshotUuid()).isEqualTo(badSnapshot);
+    var laterPage =
+        transaction.execute(
+            ignored -> repository.candidates(firstPage.getFirst().snapshotUuid(), 1));
+    assertThat(laterPage).hasSize(1);
+    assertThat(laterPage.getFirst().valid()).isTrue();
+    assertThat(laterPage.getFirst().ownerRequest().getOperationUuid())
+        .isEqualTo(laterLocal.requestUuid().toString());
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_original_selections",
+                "operation_uuid",
+                firstLocal.requestUuid()))
+        .isEqualTo(retained);
+  }
+
+  @Test
+  void malformedRecoveryAndTransferPagesPassLaterRowsAndKeepInvalidSources() {
+    for (int index = 0; index < 2; index++) {
+      var recovery = recovery(localRequest());
+      transaction.executeWithoutResult(
+          ignored ->
+              repository.closeAdmission(
+                  recovery, recoveryOwner(recovery), policy(Duration.ofMillis(1))));
+    }
+    var closures = transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 2));
+    var bad = closures.getFirst();
+    corruptRestoredBytes(
+        "entity_canonical_roster_admissions", "recovery_response", bad.operationUuid());
+    String retainedClosure =
+        pageSourceRow("entity_canonical_roster_admissions", "operation_uuid", bad.operationUuid());
+    var firstClosure =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    assertThat(firstClosure.valid()).isFalse();
+    assertThat(firstClosure.operationUuid()).isEqualTo(bad.operationUuid());
+    assertThat(
+            transaction
+                .execute(
+                    ignored ->
+                        repository.closedAdmissionCandidates(firstClosure.operationUuid(), 1))
+                .getFirst()
+                .valid())
+        .isTrue();
+    // Explicit inconsistent-restore fixtures: production never disables immutable source guards.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers DISABLE TRIGGER USER");
+          for (int index = 0; index < closures.size(); index++) {
+            var closure = closures.get(index);
+            var response = closure.response();
+            dsl.execute(
+                "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, closed_admission_receipt, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'WAITING_RETIREMENT')",
+                new UUID(0, index + 1),
+                closure.operationUuid(),
+                response.getRequest().getOriginalSelection().toByteArray(),
+                closure.admissionUuid(),
+                response.toByteArray(),
+                response.getOwnerFence(),
+                UUID.fromString(response.getTargetFenceUuid()));
+          }
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers ENABLE TRIGGER USER");
+        });
+    corruptRestoredBytes(
+        "entity_canonical_roster_retirement_transfers", "original_request", bad.operationUuid());
+    String retainedTransfer =
+        pageSourceRow(
+            "entity_canonical_roster_retirement_transfers", "operation_uuid", bad.operationUuid());
+    var firstTransfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(firstTransfer.valid()).isFalse();
+    assertThat(firstTransfer.observationUuid()).isEqualTo(new UUID(0, 1));
+    var laterTransfer =
+        transaction
+            .execute(ignored -> repository.retirementTransfers(firstTransfer.observationUuid(), 1))
+            .getFirst();
+    assertThat(laterTransfer.valid()).isTrue();
+    assertThat(laterTransfer.observationUuid()).isEqualTo(new UUID(0, 2));
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_admissions", "operation_uuid", bad.operationUuid()))
+        .isEqualTo(retainedClosure);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_retirement_transfers",
+                "operation_uuid",
+                bad.operationUuid()))
+        .isEqualTo(retainedTransfer);
+  }
+
+  @Test
+  void conflictingTransferRemainsProtectedWhileDurablePreparationCursorPassesIt() {
+    var snapshot = retainedSnapshot();
+    var first = recoveryOwner(recovery(localRequest()));
+    var owners = new java.util.ArrayList<GetCanonicalGameplayRosterReferenceResponse>();
+    for (int index = 0; index < 5; index++) {
+      var local = localRequest();
+      var owner =
+          CanonicalGameplayRosterReferenceEvidence.response(
+              recovery(local).getOriginalSelection(),
+              first.getOwnerFence(),
+              UUID.fromString(first.getTargetFenceUuid()),
+              null);
+      owners.add(owner);
+      bindSnapshot(local, owner, snapshot);
+    }
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    var anchor =
+        owners.stream()
+            .filter(owner -> owner.getRequest().equals(candidate.ownerRequest()))
+            .findFirst()
+            .orElseThrow();
+    var sealedProof = retirement(anchor, snapshot);
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.observeRetirement(candidate, sealedProof, policy(Duration.ofMillis(1))));
+    UUID bad = UUID.fromString(candidate.ownerRequest().getOperationUuid());
+    var operations =
+        dsl.fetch(
+                "SELECT operation_uuid FROM entity_canonical_roster_original_selections ORDER BY operation_uuid")
+            .getValues(0, UUID.class);
+    // Explicit inconsistent restore: nonce, positive proof and ACK intent conflicts stay protected.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers DISABLE TRIGGER USER");
+          for (int index = 0; index < 4; index++) {
+            UUID operation = operations.get(index);
+            var original =
+                owners.stream()
+                    .filter(
+                        owner -> owner.getRequest().getOperationUuid().equals(operation.toString()))
+                    .findFirst()
+                    .orElseThrow()
+                    .getRequest();
+            UUID actualNonce =
+                dsl.fetchSingle(
+                        "SELECT admission_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                        operation)
+                    .get(0, UUID.class);
+            UUID observation = new UUID(0, index + 1);
+            if (index == 0 || index == 3) {
+              // The fourth original is a qualified WAITING carrier and must promote before release.
+              dsl.execute(
+                  "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'WAITING_RETIREMENT')",
+                  observation,
+                  operation,
+                  original.toByteArray(),
+                  index == 0 ? UUID.randomUUID() : actualNonce,
+                  snapshot.snapshotUuid(),
+                  snapshot.snapshotDigest(),
+                  sealedProof.getOwnerFence(),
+                  UUID.fromString(sealedProof.getTargetFenceUuid()));
+            } else {
+              var observed = index == 1 ? retirement(anchor, snapshot) : sealedProof;
+              var intent =
+                  net.firedevops.firemud.gamesession.v1
+                      .CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+                      .setSchemaVersion(1)
+                      .setOriginalSelection(original)
+                      .setObservedRetirement(observed)
+                      .setObservationUuid(observation.toString())
+                      .setAdmissionUuid((index == 2 ? UUID.randomUUID() : actualNonce).toString())
+                      .setSnapshotUuid(snapshot.snapshotUuid().toString())
+                      .setSnapshotDigest(snapshot.snapshotDigest())
+                      .setMinimumRetentionMillis(1)
+                      .build();
+              CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(intent);
+              dsl.execute(
+                  "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, observed_retirement, acknowledgement_request, request_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'PENDING_ACK', ?, ?, ?)",
+                  observation,
+                  operation,
+                  original.toByteArray(),
+                  actualNonce,
+                  snapshot.snapshotUuid(),
+                  snapshot.snapshotDigest(),
+                  sealedProof.getOwnerFence(),
+                  UUID.fromString(sealedProof.getTargetFenceUuid()),
+                  observed.toByteArray(),
+                  intent.toByteArray(),
+                  CanonicalGameplayRosterRetirementEvidence.requestDigest(intent));
+            }
+          }
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers ENABLE TRIGGER USER");
+        });
+    var protectedSources =
+        operations.subList(0, 3).stream()
+            .map(
+                operation ->
+                    pageSourceRow(
+                        "entity_canonical_roster_retirement_transfers",
+                        "operation_uuid",
+                        operation))
+            .toList();
+    String source =
+        pageSourceRow("entity_canonical_roster_original_selections", "operation_uuid", bad);
+    String transfer =
+        pageSourceRow("entity_canonical_roster_retirement_transfers", "operation_uuid", bad);
+    assertThat(preparePage(1)).isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT retirement_preparation_cursor FROM entity_canonical_roster_retention_lifecycle")
+                .get(0, UUID.class))
+        .isEqualTo(bad);
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(preparePage(1)).isZero();
+    assertThat(preparePage(1)).isZero();
+    assertThat(preparePage(1)).isEqualTo(1);
+    assertThat(preparePage(1)).isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retention_releases")))
+        .isEqualTo(2);
+    assertThat(
+            dsl.fetchExists(
+                DSL.selectOne()
+                    .from("entity_canonical_roster_retention_releases")
+                    .where("reference_uuid = ?", bad)))
+        .isFalse();
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var incomplete = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT retirement_prepared_count FROM entity_canonical_roster_retention_lifecycle")
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(incomplete))).isFalse();
+    assertThat(pageSourceRow("entity_canonical_roster_original_selections", "operation_uuid", bad))
+        .isEqualTo(source);
+    assertThat(pageSourceRow("entity_canonical_roster_retirement_transfers", "operation_uuid", bad))
+        .isEqualTo(transfer);
+    assertThat(
+            operations.subList(0, 3).stream()
+                .map(
+                    operation ->
+                        pageSourceRow(
+                            "entity_canonical_roster_retirement_transfers",
+                            "operation_uuid",
+                            operation))
+                .toList())
+        .containsExactlyElementsOf(protectedSources);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT transfer_state FROM entity_canonical_roster_retirement_transfers WHERE operation_uuid = ?",
+                    operations.get(3))
+                .get(0, String.class))
+        .isEqualTo("PENDING_ACK");
+  }
+
+  private void corruptRestoredBytes(String table, String column, UUID operation) {
+    // Explicit inconsistent-restore fixture; source immutability remains enabled in production.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute("ALTER TABLE " + table + " DISABLE TRIGGER USER");
+          dsl.execute(
+              "UPDATE " + table + " SET " + column + " = ? WHERE operation_uuid = ?",
+              new byte[] {(byte) 0x80},
+              operation);
+          dsl.execute("ALTER TABLE " + table + " ENABLE TRIGGER USER");
+        });
+  }
+
+  private String pageSourceRow(String table, String key, UUID value) {
+    return dsl.fetchSingle(
+            "SELECT row_to_json(t)::text || ':' || t.xmin::text FROM "
+                + table
+                + " t WHERE "
+                + key
+                + " = ?",
+            value)
+        .get(0, String.class);
+  }
+
+  @Test
+  void boundedTargetClassificationPassesTrueUnknownAndKeepsEveryAdmissionBoundaryClosed() {
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+
+    var unknownAccount = UUID.randomUUID();
+    var unknownLocal =
+        localRequest(
+            unknownAccount, target(), UUID.fromString("00000000-0000-4000-8000-000000000001"));
+    var laterKnownAccount = UUID.randomUUID();
+    var laterKnownLocal =
+        localRequest(
+            laterKnownAccount, target(), UUID.fromString("00000000-0000-4000-8000-000000000002"));
+    UUID unknownNonce = transaction.execute(ignored -> repository.reserveAdmission(unknownLocal));
+    UUID knownNonce = transaction.execute(ignored -> repository.reserveAdmission(laterKnownLocal));
+    transaction.executeWithoutResult(
+        ignored ->
+            dsl.execute(
+                "ALTER TABLE entity_canonical_roster_target_classifications DISABLE TRIGGER USER"));
+    try {
+      transaction.executeWithoutResult(
+          ignored ->
+              dsl.execute(
+                  "DELETE FROM entity_canonical_roster_target_classifications WHERE source_kind = 'ADMISSION' AND operation_uuid IN (?, ?)",
+                  unknownLocal.requestUuid(),
+                  laterKnownLocal.requestUuid()));
+    } finally {
+      transaction.executeWithoutResult(
+          ignored ->
+              dsl.execute(
+                  "ALTER TABLE entity_canonical_roster_target_classifications ENABLE TRIGGER USER"));
+    }
+    corruptRestoredBytes(
+        "entity_canonical_roster_admissions", "request_binding", unknownLocal.requestUuid());
+
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isEqualTo(1);
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isEqualTo(1);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT classification_state FROM entity_canonical_roster_target_classifications WHERE source_kind = 'ADMISSION' AND operation_uuid = ? AND admission_uuid = ?",
+                    unknownLocal.requestUuid(),
+                    unknownNonce)
+                .get(0, String.class))
+        .isEqualTo("UNKNOWN");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT classification_state FROM entity_canonical_roster_target_classifications WHERE source_kind = 'ADMISSION' AND operation_uuid = ? AND admission_uuid = ?",
+                    laterKnownLocal.requestUuid(),
+                    knownNonce)
+                .get(0, String.class))
+        .isEqualTo("KNOWN");
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isTrue();
+    var anotherAccount = UUID.randomUUID();
+    var blocked =
+        localRequest(
+            anotherAccount, target(), UUID.fromString("00000000-0000-4000-8000-000000000003"));
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(blocked)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThat(
+            dsl.fetchExists(
+                dsl.selectOne()
+                    .from("entity_canonical_roster_admissions")
+                    .where("operation_uuid = ?", blocked.requestUuid())))
+        .isFalse();
+  }
+
+  @Test
+  void unrelatedKnownTargetAdmissionProgressesAfterBoundedInitializationCompletes() {
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+    var unrelated = localRequest(UUID.randomUUID(), target(), UUID.randomUUID());
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(unrelated));
+    transaction.executeWithoutResult(ignored -> repository.requireAdmission(unrelated, nonce));
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isFalse();
+  }
+
+  @Test
+  void sameTargetSiblingSealsReplayIndependentlyAfterRepositoryReconstruction() {
+    UUID classificationOperation = UUID.randomUUID();
+    UUID classificationHold = UUID.randomUUID();
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_snapshot_targets "
+                        + "WHERE snapshot_uuid = ? AND source_kind = 'SNAPSHOT' AND classification_state = 'KNOWN'",
+                    binding.snapshot().snapshotUuid())
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.acquire(
+                binding, classificationOperation, classificationHold, ReferenceKind.RECOVERY));
+    transaction.executeWithoutResult(
+        ignored -> repository.release(binding, UUID.randomUUID(), classificationHold));
+
+    var firstSnapshot = retainedSnapshot();
+    var secondSnapshot = insertSiblingSnapshot(firstSnapshot);
+    long ownerFence = 1L;
+    UUID targetFence = UUID.randomUUID();
+    UUID retirementUuid = UUID.randomUUID();
+    var firstLocal = localRequest();
+    var secondLocal = localRequest();
+    var firstOwner =
+        CanonicalGameplayRosterReferenceEvidence.response(
+            recovery(firstLocal).getOriginalSelection(),
+            ownerFence,
+            targetFence,
+            firstSnapshot.toWire());
+    var secondOwner =
+        CanonicalGameplayRosterReferenceEvidence.response(
+            recovery(secondLocal).getOriginalSelection(),
+            ownerFence,
+            targetFence,
+            secondSnapshot.toWire());
+    bindSnapshot(firstLocal, firstOwner, firstSnapshot);
+    bindSnapshot(secondLocal, secondOwner, secondSnapshot);
+    String firstSource =
+        pageSourceRow(
+            "entity_canonical_roster_original_selections",
+            "operation_uuid",
+            firstLocal.requestUuid());
+    String secondSource =
+        pageSourceRow(
+            "entity_canonical_roster_original_selections",
+            "operation_uuid",
+            secondLocal.requestUuid());
+
+    var candidates = transaction.execute(ignored -> repository.candidates(null, 10));
+    var firstCandidate =
+        candidates.stream()
+            .filter(candidate -> candidate.snapshotUuid().equals(firstSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    var secondCandidate =
+        candidates.stream()
+            .filter(candidate -> candidate.snapshotUuid().equals(secondSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    var firstProof = retirement(firstOwner, firstSnapshot, retirementUuid);
+    var secondProof = retirement(secondOwner, secondSnapshot, retirementUuid);
+    assertThat(firstProof.getCanonicalRosterReceipt())
+        .isEqualTo(firstSnapshot.toWire().toByteString());
+    assertThat(secondProof.getCanonicalRosterReceipt())
+        .isEqualTo(secondSnapshot.toWire().toByteString());
+
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        firstCandidate, firstProof, policy(Duration.ofMillis(1)))))
+        .isTrue();
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        secondCandidate, secondProof, policy(Duration.ofMillis(1)))))
+        .as("a reconstructed owner repository accepts the sibling's separate exact seal")
+        .isTrue();
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    var replayCandidates = transaction.execute(ignored -> repository.candidates(null, 10));
+    var replayFirst =
+        replayCandidates.stream()
+            .filter(value -> value.snapshotUuid().equals(firstSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    var replaySecond =
+        replayCandidates.stream()
+            .filter(value -> value.snapshotUuid().equals(secondSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        replayFirst, firstProof, policy(Duration.ofMillis(1)))))
+        .as("lost-reply replay at the current epoch returns the first sibling's persisted result")
+        .isTrue();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        replaySecond, secondProof, policy(Duration.ofMillis(1)))))
+        .as("lost-reply replay at the current epoch returns the second sibling's persisted result")
+        .isTrue();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_retention_lifecycle "
+                        + "WHERE snapshot_uuid IN (?, ?) AND lifecycle_state = 'RETIRED'",
+                    firstSnapshot.snapshotUuid(),
+                    secondSnapshot.snapshotUuid())
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_original_selections",
+                "operation_uuid",
+                firstLocal.requestUuid()))
+        .isEqualTo(firstSource);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_original_selections",
+                "operation_uuid",
+                secondLocal.requestUuid()))
+        .isEqualTo(secondSource);
   }
 
   @Test
@@ -1367,6 +1896,64 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
         List.of(new CanonicalGameplayRosterActor(actor, "Retained Actor")));
   }
 
+  private CanonicalGameplayRosterSnapshot insertSiblingSnapshot(
+      CanonicalGameplayRosterSnapshot source) {
+    var sibling =
+        new CanonicalGameplayRosterSnapshot(
+            source.canonicalAccountUuid(),
+            UUID.randomUUID(),
+            UUID.randomUUID().toString().replace("-", "")
+                + UUID.randomUUID().toString().replace("-", ""),
+            source.target(),
+            source.actors());
+    var target = source.target();
+    dsl.execute(
+        "INSERT INTO entity_canonical_gameplay_roster_snapshots "
+            + "(snapshot_uuid, snapshot_digest, canonical_account_uuid, tenant_uuid, realm_uuid, "
+            + "world_slug, realm_slug, game_instance_uuid, catalog_revision, canonical_version_uuid, "
+            + "pointer_version, active_world_epoch, published_policy_digest, published_release_bundle_ref, "
+            + "admission_pointer_snapshot_digest, published_owner_proof_digest, "
+            + "playable_state_namespace_uuid, playable_state_scope, entry_policy, roster_count) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        sibling.snapshotUuid(),
+        sibling.snapshotDigest(),
+        sibling.canonicalAccountUuid(),
+        target.tenantUuid(),
+        target.realmUuid(),
+        target.worldSlug(),
+        target.realmSlug(),
+        target.gameInstanceUuid(),
+        target.catalogRevision(),
+        target.canonicalVersionUuid(),
+        target.pointerVersion(),
+        target.activeWorldEpoch(),
+        target.publishedPolicyDigest(),
+        target.publishedReleaseBundleRef(),
+        target.admissionPointerSnapshotDigest(),
+        target.publishedOwnerProofDigest(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope().name(),
+        target.entryPolicy().name(),
+        sibling.actors().size());
+    for (int index = 0; index < sibling.actors().size(); index++) {
+      var actor = sibling.actors().get(index);
+      dsl.execute(
+          "INSERT INTO entity_canonical_gameplay_roster_snapshot_actors "
+              + "(snapshot_uuid, ordinal_position, character_uuid, display_name, actor_kind) "
+              + "VALUES (?, ?, ?, ?, ?)",
+          sibling.snapshotUuid(),
+          index,
+          actor.characterUuid(),
+          actor.displayName(),
+          "PLAYER");
+    }
+    dsl.execute(
+        "UPDATE entity_canonical_gameplay_roster_snapshots SET construction_state = 'SEALED' "
+            + "WHERE snapshot_uuid = ?",
+        sibling.snapshotUuid());
+    return sibling;
+  }
+
   private int preparePage(int limit) {
     var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
     return transaction.execute(ignored -> repository.prepareRetirement(candidate, limit));
@@ -1388,13 +1975,20 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
 
   private GetCanonicalGameplayRosterReferenceResponse retirement(
       GetCanonicalGameplayRosterReferenceResponse owner, CanonicalGameplayRosterSnapshot snapshot) {
+    return retirement(owner, snapshot, UUID.randomUUID());
+  }
+
+  private GetCanonicalGameplayRosterReferenceResponse retirement(
+      GetCanonicalGameplayRosterReferenceResponse owner,
+      CanonicalGameplayRosterSnapshot snapshot,
+      UUID retirementUuid) {
     var builder =
         owner.toBuilder()
             .setState(
                 net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
                     .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
             .setTerminalOutcome("DENIED")
-            .setRetirementUuid(UUID.randomUUID().toString())
+            .setRetirementUuid(retirementUuid.toString())
             .setSupersedingPointerDigest("f".repeat(64))
             .setSupersedingPointerVersion(binding.target().pointerVersion() + 1)
             .setSupersedingCatalogRevision(binding.target().catalogRevision())
@@ -1643,14 +2237,17 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   }
 
   private CanonicalGameplayRosterReadRequest localRequest() {
-    var target = binding.target();
-    UUID operation = UUID.randomUUID();
+    return localRequest(binding.canonicalAccountUuid(), binding.target(), UUID.randomUUID());
+  }
+
+  private static CanonicalGameplayRosterReadRequest localRequest(
+      UUID canonicalAccount, CanonicalGameplayRosterTarget target, UUID operation) {
     return new CanonicalGameplayRosterReadRequest(
         operation,
-        binding.canonicalAccountUuid(),
+        canonicalAccount,
         target,
         new CanonicalGameplayRosterExecutionContext(
-            binding.canonicalAccountUuid(),
+            canonicalAccount,
             target.tenantUuid(),
             target.playableStateNamespaceId(),
             target.gameInstanceUuid(),
