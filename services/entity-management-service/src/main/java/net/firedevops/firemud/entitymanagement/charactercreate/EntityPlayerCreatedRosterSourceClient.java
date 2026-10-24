@@ -87,6 +87,16 @@ public final class EntityPlayerCreatedRosterSourceClient
         requireInitializedStub("Creation public source is unavailable")
             .withDeadlineAfter(5L, TimeUnit.SECONDS)
             .readPlayerCreatedRosterSource(request);
+    try {
+      return validateOwnerResponse(request, response);
+    } catch (RuntimeException invalidOwnerEvidence) {
+      throw new InvalidOwnerEvidenceException(invalidOwnerEvidence);
+    }
+  }
+
+  private AuthenticatedSource validateOwnerResponse(
+      ReadPlayerCreatedRosterSourceRequest request,
+      ReadPlayerCreatedRosterSourceResponse response) {
     if (response == null
         || !response.getUnknownFields().asMap().isEmpty()
         || response.getSchemaVersion() != 1
@@ -335,6 +345,15 @@ public final class EntityPlayerCreatedRosterSourceClient
 
   private static RuntimeException invalid() {
     return EntityCharacterCreateBindings.invalid();
+  }
+
+  /** Authenticated owner response failed its closed value checks; caller input is separate. */
+  public static final class InvalidOwnerEvidenceException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    private InvalidOwnerEvidenceException(RuntimeException cause) {
+      super("Game Session PLAYER_CREATED roster source evidence is invalid", cause);
+    }
   }
 
   /** Constructor custody establishes this transport read, never the other owners' authority. */

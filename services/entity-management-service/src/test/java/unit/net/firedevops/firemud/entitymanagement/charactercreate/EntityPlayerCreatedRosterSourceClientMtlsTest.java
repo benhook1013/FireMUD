@@ -7,6 +7,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
@@ -66,6 +67,7 @@ import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.testing.PlayerCreatedPublishedPolicyFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
+import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterSourceClient.InvalidOwnerEvidenceException;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -183,7 +185,10 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                     pki.clientProperties(directory, pki.identity("entity")),
                     channels,
                     "Other"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
   }
 
   @Test
@@ -244,7 +249,12 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               request.toBuilder().setReadRequestId(new UUID(0, 0).toString()).build(),
               request.toBuilder().setCatalogRevision(0).build(),
               request.toBuilder().setPointerVersion(0).build())) {
-        assertThatThrownBy(() -> client.read(changed)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> client.read(changed))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.INVALID_ARGUMENT));
       }
       assertThat(owner.received).isEmpty();
     }
@@ -486,11 +496,64 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               good.toBuilder().setUnknownFields(unknown()).build())) {
         owner.response.set(changed);
         assertThatThrownBy(() -> client.read(fixture.request()))
-            .isInstanceOf(RuntimeException.class);
+            .isInstanceOfSatisfying(
+                InvalidOwnerEvidenceException.class,
+                failure -> assertThat(failure.getCause()).isNotNull());
       }
       assertThat(owner.received).isNotEmpty().allMatch(fixture.request()::equals);
       owner.response.set(good);
       assertThat(client.read(fixture.request()).response()).isEqualTo(good);
+    }
+  }
+
+  @Test
+  void authenticatedMalformedOwnerResponseKeepsGuardAndCodecCausesDistinctFromCallerInput()
+      throws Exception {
+    try (var owner = owner("server");
+        var client = client(owner)) {
+      client.init();
+      owner.response.set(fixture.response().toBuilder().setSchemaVersion(2).build());
+      assertThatThrownBy(() -> client.read(fixture.request()))
+          .isInstanceOfSatisfying(
+              InvalidOwnerEvidenceException.class,
+              failure ->
+                  assertThat(failure.getCause())
+                      .isInstanceOfSatisfying(
+                          StatusRuntimeException.class,
+                          guard ->
+                              assertThat(guard.getStatus().getCode())
+                                  .isEqualTo(Status.Code.INVALID_ARGUMENT)));
+      owner.response.set(
+          fixture.response().toBuilder()
+              .setWorldLifecycleEvidence(ByteString.copyFromUtf8("not-json-world-evidence"))
+              .build());
+      assertThatThrownBy(() -> client.read(fixture.request()))
+          .isInstanceOf(InvalidOwnerEvidenceException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class);
+      assertThat(owner.received).containsExactly(fixture.request(), fixture.request());
+      owner.response.set(fixture.response());
+      assertThat(client.read(fixture.request()).response()).isEqualTo(fixture.response());
+    }
+  }
+
+  @Test
+  void authenticatedOutboundFailuresKeepTheirExactTransportStatus() throws Exception {
+    for (var status :
+        List.of(Status.UNAVAILABLE, Status.FAILED_PRECONDITION, Status.INVALID_ARGUMENT)) {
+      var outbound = status.withDescription("controlled source owner transport failure");
+      try (var owner = owner("server", outbound.asRuntimeException());
+          var client = client(owner)) {
+        client.init();
+        assertThatThrownBy(() -> client.read(fixture.request()))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure -> {
+                  assertThat(failure.getStatus().getCode()).isEqualTo(outbound.getCode());
+                  assertThat(failure.getStatus().getDescription())
+                      .isEqualTo(outbound.getDescription());
+                });
+        assertThat(owner.received).containsExactly(fixture.request());
+      }
     }
   }
 
@@ -532,6 +595,10 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
   }
 
   private static Owner owner(String name) throws Exception {
+    return owner(name, null);
+  }
+
+  private static Owner owner(String name, StatusRuntimeException outboundFailure) throws Exception {
     var response = new AtomicReference<>(fixture.response());
     var received = new CopyOnWriteArrayList<ReadPlayerCreatedRosterSourceRequest>();
     var observedPeer = new AtomicReference<String>();
@@ -554,6 +621,10 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                           StreamObserver<ReadPlayerCreatedRosterSourceResponse> observer) {
                         observedPeer.set(GrpcPeerIdentity.current().uri());
                         received.add(request);
+                        if (outboundFailure != null) {
+                          observer.onError(outboundFailure);
+                          return;
+                        }
                         observer.onNext(response.get());
                         observer.onCompleted();
                       }
