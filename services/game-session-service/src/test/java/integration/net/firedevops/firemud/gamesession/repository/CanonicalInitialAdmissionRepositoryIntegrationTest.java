@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -196,7 +197,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             admissions,
             org.mockito.Mockito.mock(
                 net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
-                    .class));
+                    .class),
+            new SimpleMeterRegistry());
     // This is the actual guard hidden by the old whole-route mock.
     assertThatThrownBy(
             () ->
@@ -470,7 +472,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .class),
             routes,
             admissions,
-            recoveryClient);
+            recoveryClient,
+            new SimpleMeterRegistry());
     assertThat(owner.retireTarget(missingRoster)).isFalse();
     assertThat(references.read(missingRoster).getRecoveryUuid()).isNotEmpty();
     assertThat(references.read(missingAssignment).getRecoveryUuid()).isNotEmpty();
