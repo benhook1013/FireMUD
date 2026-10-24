@@ -319,8 +319,11 @@ public final class CanonicalGameplayRosterReferenceRepository {
     var original = readExact(request, true);
     CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
     if (original.getCanonicalRosterReceipt().isEmpty()) {
+      if (!original.hasSelectionInput()) {
+        throw new IllegalStateException("CANONICAL_ROSTER_SELECTION_INPUT_UNAVAILABLE");
+      }
       dsl.execute(
-          "UPDATE game_session_canonical_roster_selection SET roster_read_started = TRUE WHERE operation_uuid = ? AND NOT roster_read_started AND terminal_outcome IS NULL",
+          "UPDATE game_session_canonical_roster_selection SET roster_read_started = TRUE WHERE operation_uuid = ? AND NOT roster_read_started AND terminal_outcome IS NULL AND selection_input IS NOT NULL",
           CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()));
     }
   }

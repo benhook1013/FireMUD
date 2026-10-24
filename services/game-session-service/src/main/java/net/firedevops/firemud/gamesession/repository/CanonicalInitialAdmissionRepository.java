@@ -7,6 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collections;
@@ -189,7 +190,26 @@ public class CanonicalInitialAdmissionRepository {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
         || !"read committed"
             .equals(dsl.fetchSingle("SHOW transaction_isolation").get(0, String.class))) {
-      throw new IllegalStateException("Exact current OPEN lock requires writable READ COMMITTED");
+      throw new IllegalStateException(
+          "Exact current OPEN lock requires a joined writable READ COMMITTED owner transaction");
+    }
+    dsl.connectionResult(
+        connection -> {
+          if (connection.getAutoCommit()) {
+            throw new IllegalStateException(
+                "Exact current OPEN lock requires the DSL connection to join the owner transaction");
+          }
+          if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+            throw new IllegalStateException(
+                "Exact current OPEN lock requires READ COMMITTED isolation");
+          }
+          return null;
+        });
+    if (!"off"
+        .equalsIgnoreCase(
+            dsl.fetchSingle("SHOW transaction_read_only").get(0, String.class).trim())) {
+      throw new IllegalStateException(
+          "Exact current OPEN lock requires a writable owner transaction");
     }
     var expected = qualified.ownerProof();
     var rows =

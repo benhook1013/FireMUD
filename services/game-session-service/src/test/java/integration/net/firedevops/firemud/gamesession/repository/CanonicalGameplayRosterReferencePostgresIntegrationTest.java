@@ -186,6 +186,50 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   @Test
+  void rosterReadCannotStartBeforeSelectionInputIsDurablyReserved() {
+    var request = request();
+    var original = transaction.execute(ignored -> repository.begin(request));
+    var retainedSelectionRow = retainedRow(request);
+    var retainedDispatchState =
+        dsl.fetchSingle(
+            "SELECT selection_input IS NOT NULL AS has_selection_input, roster_read_started, xmin::text "
+                + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            UUID.fromString(request.getOperationUuid()));
+    assertThat(retainedDispatchState.get("has_selection_input", Boolean.class)).isFalse();
+    assertThat(retainedDispatchState.get("roster_read_started", Boolean.class)).isFalse();
+
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.markRosterReadStarted(request)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_SELECTION_INPUT_UNAVAILABLE");
+
+    assertThat(repository.read(request).toByteArray()).containsExactly(original.toByteArray());
+    assertThat(retainedRow(request)).isEqualTo(retainedSelectionRow);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT selection_input IS NOT NULL AS has_selection_input, roster_read_started, xmin::text "
+                        + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                    UUID.fromString(request.getOperationUuid()))
+                .formatJSON())
+        .isEqualTo(retainedDispatchState.formatJSON());
+
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.reserveSelectionInput(request, selectionInput());
+          repository.markRosterReadStarted(request);
+        });
+    var dispatchedState =
+        dsl.fetchSingle(
+            "SELECT selection_input IS NOT NULL AS has_selection_input, roster_read_started "
+                + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            UUID.fromString(request.getOperationUuid()));
+    assertThat(dispatchedState.get("has_selection_input", Boolean.class)).isTrue();
+    assertThat(dispatchedState.get("roster_read_started", Boolean.class)).isTrue();
+  }
+
+  @Test
   void existingTargetFenceKeepsItsConfiguredHorizonsAfterPolicyChanges() throws Exception {
     var originalPolicy = policy(50L, 20L, 25L);
     repository = repository(originalPolicy);
@@ -910,6 +954,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     transaction.executeWithoutResult(
         ignored -> {
           repository.begin(request);
+          repository.reserveSelectionInput(request, selectionInput());
           repository.markRosterReadStarted(request);
         });
     Thread.sleep(5L);
@@ -1001,6 +1046,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     transaction.executeWithoutResult(
         ignored -> {
           repository.begin(request);
+          repository.reserveSelectionInput(request, selectionInput());
           repository.markRosterReadStarted(request);
         });
     Thread.sleep(5L);
@@ -1795,6 +1841,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     transaction.executeWithoutResult(
         ignored -> {
           repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
           repository.markRosterReadStarted(original);
         });
     Thread.sleep(5L);

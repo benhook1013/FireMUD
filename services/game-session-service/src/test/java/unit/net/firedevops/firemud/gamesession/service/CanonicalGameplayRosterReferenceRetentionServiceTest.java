@@ -52,6 +52,34 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
   }
 
   @Test
+  void healthGaugesStartUnknownUntilASuccessfulSweepObservesZero() {
+    var oldestBlocking =
+        metrics.get("firemud.canonical.roster.reference.oldest_blocking_seconds").gauge();
+    var cleanupLag = metrics.get("firemud.canonical.roster.reference.cleanup_lag_seconds").gauge();
+    var oldestPendingTransfer =
+        metrics.get("firemud.canonical.roster.reference.oldest_pending_transfer_seconds").gauge();
+    var transferCleanupLag =
+        metrics.get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds").gauge();
+
+    assertThat(oldestBlocking.value()).isEqualTo(-1);
+    assertThat(cleanupLag.value()).isEqualTo(-1);
+    assertThat(oldestPendingTransfer.value()).isEqualTo(-1);
+    assertThat(transferCleanupLag.value()).isEqualTo(-1);
+
+    when(repository.targetCandidates(null, 2)).thenReturn(List.of());
+    when(repository.health()).thenReturn(new Health(0, 0));
+    when(repository.transferHealth())
+        .thenReturn(new CanonicalGameplayRosterReferenceRepository.TransferHealth(0, 0));
+
+    service.sweep();
+
+    assertThat(oldestBlocking.value()).isZero();
+    assertThat(cleanupLag.value()).isZero();
+    assertThat(oldestPendingTransfer.value()).isZero();
+    assertThat(transferCleanupLag.value()).isZero();
+  }
+
+  @Test
   void boundedConfirmedReceiptCleanupAndHealthContinueAfterTargetFailure() {
     when(repository.targetCandidates(null, 2)).thenReturn(List.of(candidate(1, "RETIRED")));
     when(repository.purgeRetiredTarget(any()))

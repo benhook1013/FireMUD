@@ -18,10 +18,10 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
   private final TransactionOperations transactions;
   private final CanonicalGameplayRosterReferencePolicy policy;
   private final MeterRegistry metrics;
-  private final AtomicLong oldestBlocking = new AtomicLong();
-  private final AtomicLong cleanupLag = new AtomicLong();
-  private final AtomicLong oldestPendingTransfer = new AtomicLong();
-  private final AtomicLong transferCleanupLag = new AtomicLong();
+  private final AtomicLong oldestBlocking = new AtomicLong(-1L);
+  private final AtomicLong cleanupLag = new AtomicLong(-1L);
+  private final AtomicLong oldestPendingTransfer = new AtomicLong(-1L);
+  private final AtomicLong transferCleanupLag = new AtomicLong(-1L);
   private UUID cursor;
 
   public CanonicalGameplayRosterReferenceRetentionService(

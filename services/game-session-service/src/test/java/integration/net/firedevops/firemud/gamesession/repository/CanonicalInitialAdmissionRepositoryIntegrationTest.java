@@ -563,6 +563,28 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
+  void exactCurrentOpenLockRejectsUnjoinedDslConnectionInsideSpringTransaction() throws Exception {
+    var retainedV2 = prepareRetainedV2Admission();
+    Fixture fixture = retainedV2.fixture();
+    var qualified =
+        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+            NAMESPACE, TENANT, retainedV2.prepared().catalog().realmId());
+    DSLContext unjoinedDsl =
+        DSL.using(fixture.transactionManager.getDataSource(), SQLDialect.POSTGRES);
+    var admissions =
+        new CanonicalInitialAdmissionRepository(
+            unjoinedDsl, fixture.catalogRepository, fixture.pointerRepository);
+
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    ignored -> admissions.lockExactCurrentOpenSnapshot(qualified)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Exact current OPEN lock requires the DSL connection to join the owner transaction");
+  }
+
+  @Test
   void freshHumanReservationDeniesBeforeEffectsAndRetainedPendingCannotCommit() throws Exception {
     Fixture fixture = fixture("1005");
     PredecessorAdmission predecessor = preparePre1006Admission(fixture);
