@@ -5,7 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionOperations;
@@ -18,10 +18,10 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
   private final TransactionOperations transactions;
   private final CanonicalGameplayRosterReferencePolicy policy;
   private final MeterRegistry metrics;
-  private final AtomicLong oldestBlocking = new AtomicLong(-1L);
-  private final AtomicLong cleanupLag = new AtomicLong(-1L);
-  private final AtomicLong oldestPendingTransfer = new AtomicLong(-1L);
-  private final AtomicLong transferCleanupLag = new AtomicLong(-1L);
+  private final AtomicReference<Double> oldestBlocking = new AtomicReference<>(Double.NaN);
+  private final AtomicReference<Double> cleanupLag = new AtomicReference<>(Double.NaN);
+  private final AtomicReference<Double> oldestPendingTransfer = new AtomicReference<>(Double.NaN);
+  private final AtomicReference<Double> transferCleanupLag = new AtomicReference<>(Double.NaN);
   private UUID cursor;
 
   public CanonicalGameplayRosterReferenceRetentionService(
@@ -38,22 +38,22 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
     Gauge.builder(
             "firemud.canonical.roster.reference.oldest_pending_transfer_seconds",
             oldestPendingTransfer,
-            AtomicLong::doubleValue)
+            value -> value.get().doubleValue())
         .register(metrics);
     Gauge.builder(
             "firemud.canonical.roster.reference.transfer_cleanup_lag_seconds",
             transferCleanupLag,
-            AtomicLong::doubleValue)
+            value -> value.get().doubleValue())
         .register(metrics);
     Gauge.builder(
             "firemud.canonical.roster.reference.oldest_blocking_seconds",
             oldestBlocking,
-            AtomicLong::doubleValue)
+            value -> value.get().doubleValue())
         .register(metrics);
     Gauge.builder(
             "firemud.canonical.roster.reference.cleanup_lag_seconds",
             cleanupLag,
-            AtomicLong::doubleValue)
+            value -> value.get().doubleValue())
         .register(metrics);
   }
 
@@ -121,11 +121,11 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
     try {
       var transferHealth =
           Objects.requireNonNull(transactions.execute(ignored -> repository.transferHealth()));
-      oldestPendingTransfer.set(transferHealth.oldestPendingSeconds());
-      transferCleanupLag.set(transferHealth.cleanupLagSeconds());
+      oldestPendingTransfer.set((double) transferHealth.oldestPendingSeconds());
+      transferCleanupLag.set((double) transferHealth.cleanupLagSeconds());
     } catch (RuntimeException failure) {
-      oldestPendingTransfer.set(-1L);
-      transferCleanupLag.set(-1L);
+      oldestPendingTransfer.set(Double.NaN);
+      transferCleanupLag.set(Double.NaN);
       metrics
           .counter(
               "firemud.canonical.roster.reference.transfer_cleanup", "result", "health_failure")
@@ -133,11 +133,11 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
     }
     try {
       var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));
-      oldestBlocking.set(health.oldestBlockingSeconds());
-      cleanupLag.set(health.cleanupLagSeconds());
+      oldestBlocking.set((double) health.oldestBlockingSeconds());
+      cleanupLag.set((double) health.cleanupLagSeconds());
     } catch (RuntimeException failure) {
-      oldestBlocking.set(-1L);
-      cleanupLag.set(-1L);
+      oldestBlocking.set(Double.NaN);
+      cleanupLag.set(Double.NaN);
       metrics
           .counter("firemud.canonical.roster.reference.cleanup", "result", "health_failure")
           .increment();
