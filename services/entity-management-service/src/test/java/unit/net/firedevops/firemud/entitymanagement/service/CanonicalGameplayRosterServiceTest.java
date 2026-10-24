@@ -138,7 +138,7 @@ class CanonicalGameplayRosterServiceTest {
 
     verify(ownerPort).resolveCurrentTarget(request);
     verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
-    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+    verify(repository)
         .readOriginalRosterReceipt(
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
@@ -166,7 +166,7 @@ class CanonicalGameplayRosterServiceTest {
 
     verify(ownerPort).resolveCurrentTarget(request);
     verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
-    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+    verify(repository)
         .readOriginalRosterReceipt(
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
@@ -194,7 +194,7 @@ class CanonicalGameplayRosterServiceTest {
 
     verify(ownerPort).resolveCurrentTarget(request);
     verify(repository).reserveOriginalRosterAdmission(org.mockito.ArgumentMatchers.any());
-    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMostOnce())
+    verify(repository)
         .readOriginalRosterReceipt(
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),

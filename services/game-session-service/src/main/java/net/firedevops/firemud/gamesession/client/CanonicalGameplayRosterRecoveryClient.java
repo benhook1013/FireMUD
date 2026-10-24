@@ -73,7 +73,11 @@ public final class CanonicalGameplayRosterRecoveryClient
         requireInitializedStub("Entity recovery unavailable")
             .withDeadlineAfter(5L, TimeUnit.SECONDS)
             .recoverOriginalSelection(request);
-    CanonicalGameplayRosterRecoveryEvidence.requireResponse(request, response);
+    try {
+      CanonicalGameplayRosterRecoveryEvidence.requireResponse(request, response);
+    } catch (IllegalArgumentException invalidResponse) {
+      throw new IllegalStateException("Entity recovery response is invalid", invalidResponse);
+    }
     return new VerifiedRecovery(request, response);
   }
 
