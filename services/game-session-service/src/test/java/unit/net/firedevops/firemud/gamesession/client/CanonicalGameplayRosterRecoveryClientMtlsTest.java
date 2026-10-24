@@ -139,6 +139,11 @@ class CanonicalGameplayRosterRecoveryClientMtlsTest {
             "test")) {
       client.init();
       if (accepted) {
+        var invalidCallerRequest = request.toBuilder().setSchemaVersion(2).build();
+        assertThatThrownBy(() -> client.read(invalidCallerRequest))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(rpcStarts).hasValue(0);
+
         var result = client.read(request);
         assertThat(result.request()).isEqualTo(request);
         assertThat(result.response()).isEqualTo(response.get());
@@ -156,7 +161,13 @@ class CanonicalGameplayRosterRecoveryClientMtlsTest {
                     .build())) {
           response.set(malformed);
           assertThatThrownBy(() -> client.read(request))
-              .isInstanceOf(IllegalArgumentException.class);
+              .isInstanceOfSatisfying(
+                  IllegalStateException.class,
+                  failure -> {
+                    assertThat(failure.getMessage())
+                        .isEqualTo("Entity recovery response is invalid");
+                    assertThat(failure.getCause()).isInstanceOf(IllegalArgumentException.class);
+                  });
         }
         response.set(
             originalResponse.toBuilder()

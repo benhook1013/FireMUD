@@ -401,6 +401,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
   public void markRosterReadStarted(GetCanonicalGameplayRosterReferenceRequest request) {
     requireWritableTransaction();
     var original = readExact(request, true);
+    CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
     if (!hasRoster(original)) {
       dsl.execute(
           "UPDATE game_session_canonical_roster_selection SET roster_read_started = TRUE WHERE operation_uuid = ? AND NOT roster_read_started AND terminal_outcome IS NULL",
@@ -505,7 +506,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
     return sealed == 1;
   }
 
-  private static boolean isSupersedingTarget(
+  public static boolean isSupersedingTarget(
       GetCanonicalGameplayRosterReferenceRequest request,
       net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget current) {
     var original = CanonicalGameplayRosterReferenceEvidence.target(request);

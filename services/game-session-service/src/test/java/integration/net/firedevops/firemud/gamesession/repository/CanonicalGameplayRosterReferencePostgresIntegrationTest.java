@@ -159,6 +159,42 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   @Test
+  void terminalOriginalCannotBeMarkedAsRosterReadStarted() {
+    repository = repository(policy(60_000L, 60_000L, 60_000L));
+    var request = request();
+    transaction.execute(ignored -> repository.begin(request));
+    transaction.executeWithoutResult(ignored -> repository.completeUnissuedDenied(request));
+    var retainedResponseBytes = repository.read(request).toByteArray();
+    var retainedSelectionRow = retainedRow(request);
+    var retainedLifecycle =
+        dsl.fetchSingle(
+            "SELECT roster_read_started, terminal_outcome, "
+                + "encode(original_request, 'hex') AS original_request_hex, xmin::text "
+                + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            UUID.fromString(request.getOperationUuid()));
+    assertThat(retainedLifecycle.get("roster_read_started", Boolean.class)).isFalse();
+    assertThat(retainedLifecycle.get("terminal_outcome", String.class)).isEqualTo("DENIED");
+
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.markRosterReadStarted(request)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED");
+
+    assertThat(repository.read(request).toByteArray()).containsExactly(retainedResponseBytes);
+    assertThat(retainedRow(request)).isEqualTo(retainedSelectionRow);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT roster_read_started, terminal_outcome, "
+                        + "encode(original_request, 'hex') AS original_request_hex, xmin::text "
+                        + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                    UUID.fromString(request.getOperationUuid()))
+                .formatJSON())
+        .isEqualTo(retainedLifecycle.formatJSON());
+  }
+
+  @Test
   void existingTargetFenceKeepsItsConfiguredHorizonsAfterPolicyChanges() throws Exception {
     var originalPolicy = policy(50L, 20L, 25L);
     repository = repository(originalPolicy);
@@ -289,6 +325,54 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                                 .build())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("CONFLICT");
+  }
+
+  @Test
+  void nonsupersedingCommittedRouteReturnsBeforeAdmissionReadsOrOwnerWrites() {
+    var request = request();
+    var original = transaction.execute(ignored -> repository.begin(request));
+    var originalResponseBytes = original.toByteArray();
+    var originalTarget = CanonicalGameplayRosterReferenceEvidence.target(request);
+    var samePointerRequest =
+        request.toBuilder()
+            .setCanonicalTarget(
+                originalTarget.toBuilder()
+                    .setPointerVersion(originalTarget.getPointerVersion() - 1L)
+                    .build()
+                    .toByteString())
+            .build();
+    var current = current(samePointerRequest);
+    var routes =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class);
+    org.mockito.Mockito.when(
+            routes.readCurrentTarget(UUID.fromString(originalTarget.getTenantUuid())))
+        .thenReturn(current);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var recovery = org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class);
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            recovery,
+            new SimpleMeterRegistry());
+
+    assertThat(owner.retireTarget(request)).isFalse();
+    org.mockito.Mockito.verifyNoInteractions(admissions, recovery);
+    assertThat(repository.read(request).toByteArray()).containsExactly(originalResponseBytes);
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_selection")
+                .get(0, Long.class))
+        .isEqualTo(1L);
   }
 
   @Test
