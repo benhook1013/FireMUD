@@ -85,7 +85,8 @@ public final class EntityCharacterCreateBindings {
       ReadOriginalCharacterCreateResponse original,
       ReadOriginalCharacterCreateProtectionResponse protection) {
     requireBound(protection, MAX_ACCOUNT_RESPONSE_BYTES);
-    if (!protection.hasOriginal()
+    if (original == null
+        || !protection.hasOriginal()
         || !original.equals(protection.getOriginal())
         || !request
             .getAccountProtection()
@@ -94,7 +95,9 @@ public final class EntityCharacterCreateBindings {
         || request.getAccountProtection().getProtectionFence()
             != protection.getAccountProtectionFence()
         || protection.getOriginalMembershipSnapshot().isEmpty()
-        || protection.getOriginalEntitlementSnapshot().isEmpty()) throw invalid();
+        || protection.getOriginalMembershipSnapshot().size() > 1024 * 1024
+        || protection.getOriginalEntitlementSnapshot().isEmpty()
+        || protection.getOriginalEntitlementSnapshot().size() > 1024 * 1024) throw invalid();
     instant(protection.getAcquiredAt());
   }
 

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.charactercreate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -704,6 +705,42 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
       assertThatThrownBy(() -> fixture.service.read(request()))
           .isInstanceOf(StatusRuntimeException.class);
     }
+  }
+
+  @Test
+  void accountSourceRejectsOverlengthSlugsBeforeReadingAnyOwner() {
+    String overlength = "a".repeat(RealmEntryPolicy.MAX_SLUG_LENGTH + 1);
+    for (var invalid :
+        List.of(
+            request().toBuilder().setWorldSlug(overlength).build(),
+            request().toBuilder().setRealmSlug(overlength).build())) {
+      try (var fixture = new Fixture()) {
+        assertThatThrownBy(() -> fixture.service.read(invalid))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.INVALID_ARGUMENT));
+        verifyNoInteractions(
+            fixture.routes,
+            fixture.catalogs,
+            fixture.admissions,
+            fixture.launches,
+            fixture.retention,
+            fixture.gameDesign,
+            fixture.world,
+            fixture.publishedPolicies);
+      }
+    }
+  }
+
+  @Test
+  void accountSourceRequestValidationAcceptsMaximumCanonicalSlugs() {
+    String maximum = "a".repeat(RealmEntryPolicy.MAX_SLUG_LENGTH);
+    var bounded = request().toBuilder().setWorldSlug(maximum).setRealmSlug(maximum).build();
+    assertThatCode(
+            () -> GameSessionCharacterCreatePublicSourceService.requireRequest(bounded, NAMESPACE))
+        .doesNotThrowAnyException();
   }
 
   @Test

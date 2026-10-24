@@ -620,8 +620,8 @@ public final class GameSessionCharacterCreatePublicSourceService {
         || request.getSchemaVersion() != 1
         || !namespace.equals(request.getTargetNamespace())
         || !"SHARED".equals(request.getPlayableStateScope())
-        || !request.getWorldSlug().matches("[a-z0-9]+(?:-[a-z0-9]+)*")
-        || !request.getRealmSlug().matches("[a-z0-9]+(?:-[a-z0-9]+)*")
+        || !RealmEntryPolicy.isCanonicalSlug(request.getWorldSlug())
+        || !RealmEntryPolicy.isCanonicalSlug(request.getRealmSlug())
         || request.getCatalogRevision() <= 0
         || request.getPointerVersion() <= 0) throw invalid();
     for (String id :
