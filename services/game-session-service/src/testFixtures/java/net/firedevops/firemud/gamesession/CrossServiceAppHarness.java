@@ -42,7 +42,6 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
-import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
 import org.springframework.test.util.TestSocketUtils;
 
 /** Shared bootstrap helpers for nested cross-service Spring application contexts in tests. */
@@ -144,9 +143,7 @@ public final class CrossServiceAppHarness {
     props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
     props.put(
         "spring.autoconfigure.exclude",
-        "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
-            + "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,"
-            + "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
+        "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
     props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
     props.put("firemud.services.accountService", "localhost:" + accountPort);
     props.put("firemud.grpc.plaintext", "true");
@@ -211,12 +208,6 @@ public final class CrossServiceAppHarness {
     @Primary
     ConflictTracker conflictTracker() {
       return key -> {};
-    }
-
-    @Bean
-    @Primary
-    GrpcServiceDiscoverer grpcServiceDiscoverer() {
-      return org.mockito.Mockito.mock(GrpcServiceDiscoverer.class);
     }
 
     @Bean

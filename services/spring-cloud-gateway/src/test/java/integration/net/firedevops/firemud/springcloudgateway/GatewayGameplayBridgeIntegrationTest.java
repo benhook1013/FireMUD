@@ -142,19 +142,19 @@ class GatewayGameplayBridgeIntegrationTest {
     TEST_UPSTREAM_URL.set(upstreamUrl);
     return new GatewayHolder(
         ReactiveTestApplicationSupport.startReactiveApp(
-            Map.of(
-                "spring.profiles.active",
-                "test",
-                "spring.flyway.enabled",
-                "false",
-                "firemud.database.enabled",
-                "false",
-                GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
-                "",
-                GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER,
-                ""),
+            Map.ofEntries(
+                Map.entry("spring.profiles.active", "test"),
+                Map.entry("spring.flyway.enabled", "false"),
+                Map.entry("firemud.database.enabled", "false"),
+                propertyEntry(GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT),
+                propertyEntry(GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)),
             SpringCloudGatewayApplication.class,
             GatewayBridgeTestOverrideConfiguration.class));
+  }
+
+  private static Map.Entry<String, String> propertyEntry(String assignment) {
+    int separator = assignment.indexOf('=');
+    return Map.entry(assignment.substring(0, separator), assignment.substring(separator + 1));
   }
 
   private record GatewayHolder(ReactiveTestApplicationSupport.ReactiveAppHolder app) {
@@ -185,13 +185,13 @@ class GatewayGameplayBridgeIntegrationTest {
                   Map.entry("spring.main.allow-bean-definition-overriding", "true"),
                   Map.entry("spring.flyway.enabled", "false"),
                   Map.entry("firemud.database.enabled", "false"),
-                  Map.entry(GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT, ""),
-                  Map.entry(GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED, ""),
-                  Map.entry(GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH, ""),
-                  Map.entry(GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH, ""),
-                  Map.entry(GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH, ""),
+                  propertyEntry(GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT),
+                  propertyEntry(GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED),
+                  propertyEntry(GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH),
+                  propertyEntry(GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH),
+                  propertyEntry(GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH),
                   Map.entry("firemud.grpc.plaintext", "true"),
-                  Map.entry(GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER, "")),
+                  propertyEntry(GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)),
               UpstreamStubApplication.class);
       return new UpstreamHolder(app.context(), app.port());
     }
@@ -265,6 +265,7 @@ class GatewayGameplayBridgeIntegrationTest {
   }
 
   @Configuration
+  @Import(NoGrpcServerTestConfiguration.class)
   static class GatewayBridgeTestOverrideConfiguration {
     @Bean
     @Primary
