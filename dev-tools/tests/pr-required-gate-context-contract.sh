@@ -702,6 +702,123 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ "${GH_SCENARIO:-}" == attempt-fallback-* ]]; then
+  python3 - "${GH_SCENARIO}" "$@" <<'ATTEMPT_FALLBACK_FIXTURE'
+import json
+import sys
+
+scenario = sys.argv[1]
+args = sys.argv[2:]
+endpoint = next(argument for argument in args if argument.startswith("/repos/"))
+repo = "example/firemud"
+head = "a" * 40
+base = "b" * 40
+title = f"CI — Validation pr-123 base-{base} head-{head}"
+ids = [100, 101] if scenario == "attempt-fallback-newer-failure" else [100]
+rows = []
+for index, identity in enumerate(ids):
+    conclusion = "failure" if identity == 101 else "success"
+    start = f"2026-07-30T0{index + 1}:00:00Z"
+    finish = f"2026-07-30T0{index + 1}:30:00Z"
+    rows.append({"app": {"slug": "github-actions"}, "name": "Validation Gate", "id": identity,
+                 "details_url": f"https://github.com/{repo}/actions/runs/{identity}/job/{identity}",
+                 "status": "completed", "conclusion": conclusion, "completed_at": finish,
+                 "started_at": start, "created_at": start})
+if endpoint.endswith("/actions/workflows/ci.yml"):
+    result = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
+elif endpoint.endswith(f"/commits/{head}/check-runs"):
+    result = [{"total_count": len(rows), "check_runs": rows}]
+elif "/actions/runs/" in endpoint and endpoint.endswith("/attempts/1/jobs"):
+    assert "per_page=100" in args and "--paginate" not in args and "--slurp" not in args, args
+    assert scenario != "attempt-fallback-known-skipped", "known preservation evidence must stay on the ordinary path"
+    identity = int(endpoint.split("/actions/runs/")[1].split("/")[0])
+    candidate = next(row for row in rows if row["id"] == identity)
+    index = ids.index(identity)
+    steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed",
+              "conclusion": "skipped" if scenario != "attempt-fallback-metadata" else "success"}]
+    job = {"id": identity, "run_id": identity, "run_attempt": 1, "head_sha": head,
+           "workflow_name": "CI — Validation", "name": "Validation Gate", "status": "completed",
+           "conclusion": candidate["conclusion"], "created_at": candidate["created_at"],
+           "started_at": candidate["started_at"], "completed_at": candidate["completed_at"],
+           "html_url": candidate["details_url"], "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{identity}",
+           "steps": steps}
+    if scenario == "attempt-fallback-empty":
+        job["steps"] = []
+    if scenario == "attempt-fallback-no-steps":
+        job.pop("steps")
+    if scenario == "attempt-fallback-wrong-check-url":
+        job["check_run_url"] = f"https://api.github.com/repos/{repo}/check-runs/999"
+    if scenario == "attempt-fallback-duplicate":
+        result = {"total_count": 2, "jobs": [job, dict(job)]}
+    elif scenario == "attempt-fallback-malformed":
+        result = {"total_count": "1", "jobs": [job]}
+    elif scenario == "attempt-fallback-oversized":
+        others = [{"id": 1000 + index, "run_id": identity, "run_attempt": 1, "head_sha": head,
+                   "workflow_name": "CI — Validation", "name": f"Build and Test (module-{index:03d})",
+                   "status": "completed", "conclusion": "success",
+                   "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{1000 + index}"}
+                  for index in range(100)]
+        result = {"total_count": 101, "jobs": [job, *others]}
+    elif scenario == "attempt-fallback-incomplete":
+        result = {"total_count": 2, "jobs": [job]}
+    else:
+        if scenario == "attempt-fallback-wrong-attempt":
+            job["run_attempt"] = 2
+        if scenario == "attempt-fallback-wrong-head":
+            job["head_sha"] = "d" * 40
+        if scenario == "attempt-fallback-wrong-workflow":
+            job["workflow_name"] = "Security Checks"
+        result = {"total_count": 1, "jobs": [job]}
+elif "/actions/runs/" in endpoint and "/attempts/" in endpoint:
+    identity = int(endpoint.split("/actions/runs/")[1].split("/")[0])
+    result = {"id": identity, "workflow_id": 42, "run_attempt": 1, "name": "CI — Validation",
+              "path": ".github/workflows/ci.yml", "head_sha": head, "display_title": title,
+              "repository": {"full_name": repo}, "event": "pull_request",
+              "status": "completed",
+              "pull_requests": [{"number": 123, "base": {"sha": base}, "head": {"sha": head}}]}
+    if scenario == "attempt-fallback-stale-tuple":
+        result["display_title"] = result["display_title"].replace(base, "c" * 40)
+elif "/actions/runs/" in endpoint:
+    identity = int(endpoint.rsplit("/", 1)[1])
+    result = {"id": identity, "workflow_id": 42, "run_attempt": 1, "name": "CI — Validation",
+              "path": ".github/workflows/ci.yml", "head_sha": head, "display_title": title,
+              "repository": {"full_name": repo}, "event": "pull_request",
+              "pull_requests": [{"number": 123, "base": {"sha": base}, "head": {"sha": head}}]}
+elif "/actions/jobs/" in endpoint:
+    identity = int(endpoint.rsplit("/", 1)[1])
+    candidate = next(row for row in rows if row["id"] == identity)
+    result = {"id": identity, "run_id": identity, "run_attempt": 1, "head_sha": head,
+              "workflow_name": "CI — Validation", "name": "Validation Gate", "status": "completed",
+              "conclusion": candidate["conclusion"], "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{identity}",
+              "steps": []}
+    if scenario == "attempt-fallback-known-skipped":
+        result["steps"] = [
+            {"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"},
+        ]
+    if scenario == "attempt-fallback-duplicate-direct":
+        result["steps"] = [
+            {"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"},
+            {"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "failure"},
+        ]
+    if scenario == "attempt-fallback-malformed-direct":
+        result["steps"] = "unavailable"
+elif "/check-runs/" in endpoint:
+    identity = int(endpoint.rsplit("/", 1)[1])
+    candidate = next(row for row in rows if row["id"] == identity)
+    result = {"id": identity, "app": {"id": 15368, "slug": "github-actions"}, "head_sha": head,
+              "name": "Validation Gate", "status": "completed", "conclusion": candidate["conclusion"],
+              "details_url": candidate["details_url"], "started_at": candidate["started_at"],
+              "completed_at": candidate["completed_at"]}
+    if scenario == "attempt-fallback-wrong-app":
+        result["app"]["id"] = 1
+    if scenario == "attempt-fallback-wrong-check-details":
+        result["details_url"] += "?changed=true"
+else:
+    raise AssertionError(endpoint)
+print(json.dumps(result))
+ATTEMPT_FALLBACK_FIXTURE
+  exit 0
+fi
 if [[ "${GH_SCENARIO:-}" == cancellation-* ]]; then
   python3 - "$GH_SCENARIO" "$@" <<'CANCELLATION_FIXTURE'
 import copy
@@ -1426,6 +1543,46 @@ run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-mu
   echo "complete multi-page check coverage lost successful proof" >&2
   exit 1
 }
+
+attempt_fallback_output="$tmp_dir/attempt-fallback-success-output"
+if ! run_action "$tmp_dir/attempt-fallback-success-count" none attempt-fallback-success "" "$attempt_fallback_output" >"$tmp_dir/attempt-fallback-success-log" 2>&1; then
+  cat "$tmp_dir/attempt-fallback-success-log" >&2
+  echo "complete exact-attempt job snapshot did not recover the ordinary skipped preservation step" >&2
+  exit 1
+fi
+[[ "$(<"$attempt_fallback_output")" == assessment=success ]] || {
+  echo "complete exact-attempt job snapshot did not recover the ordinary skipped preservation step" >&2
+  exit 1
+}
+attempt_fallback_known_output="$tmp_dir/attempt-fallback-known-skipped-output"
+run_action "$tmp_dir/attempt-fallback-known-skipped-count" none attempt-fallback-known-skipped "" "$attempt_fallback_known_output"
+[[ "$(<"$attempt_fallback_known_output")" == assessment=success ]] || {
+  echo "known skipped preservation with sparse unrelated step metadata lost the ordinary assessment path" >&2
+  exit 1
+}
+attempt_fallback_metadata_output="$tmp_dir/attempt-fallback-metadata-output"
+run_action "$tmp_dir/attempt-fallback-metadata-count" none attempt-fallback-metadata "" "$attempt_fallback_metadata_output"
+[[ "$(<"$attempt_fallback_metadata_output")" == assessment=dependency-deferred ]] || {
+  echo "complete exact-attempt metadata preservation was treated as substantive proof" >&2
+  exit 1
+}
+attempt_fallback_failure_output="$tmp_dir/attempt-fallback-newer-failure-output"
+if run_action "$tmp_dir/attempt-fallback-newer-failure-count" none attempt-fallback-newer-failure "" "$attempt_fallback_failure_output" >"$tmp_dir/attempt-fallback-newer-failure-log" 2>&1; then
+  echo "complete exact-attempt fallback allowed newer substantive failure over older success" >&2
+  exit 1
+fi
+[[ ! -s "$attempt_fallback_failure_output" ]] || {
+  echo "newer exact-attempt failure emitted successful proof" >&2
+  exit 1
+}
+for scenario in attempt-fallback-empty attempt-fallback-no-steps attempt-fallback-duplicate attempt-fallback-malformed attempt-fallback-oversized attempt-fallback-incomplete attempt-fallback-stale-tuple attempt-fallback-wrong-attempt attempt-fallback-wrong-head attempt-fallback-wrong-workflow attempt-fallback-wrong-app attempt-fallback-wrong-check-url attempt-fallback-wrong-check-details attempt-fallback-duplicate-direct attempt-fallback-malformed-direct; do
+  output_file="$tmp_dir/$scenario-output"
+  if run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
+    echo "exact-attempt fallback accepted missing or unbound gate evidence: $scenario" >&2
+    exit 1
+  fi
+  [[ ! -s "$output_file" ]] || { echo "invalid exact-attempt fallback emitted proof: $scenario" >&2; exit 1; }
+done
 
 # API uncertainty is an error, never dependency deferral or a retry.
 for failure_mode in transient network rate-limit permanent permission; do
