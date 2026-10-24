@@ -41,6 +41,13 @@ public final class CanonicalGameplayRosterReferenceRepository {
     }
   }
 
+  /** The operation UUID is already bound to different exact original request bytes. */
+  public static final class OriginalRequestConflictException extends IllegalStateException {
+    public OriginalRequestConflictException() {
+      super("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+    }
+  }
+
   public GetCanonicalGameplayRosterReferenceResponse begin(
       GetCanonicalGameplayRosterReferenceRequest request) {
     requireWritableTransaction();
@@ -96,7 +103,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
       return java.util.Optional.empty();
     }
     if (!Arrays.equals(request.toByteArray(), row.get("original_request", byte[].class))) {
-      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+      throw new OriginalRequestConflictException();
     }
     return java.util.Optional.of(readExact(request, false));
   }
@@ -251,7 +258,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
       throw new OriginalUnavailableException();
     }
     if (!Arrays.equals(request.toByteArray(), row.get("original_request", byte[].class))) {
-      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+      throw new OriginalRequestConflictException();
     }
     if (lock && Boolean.TRUE.equals(row.get("replay_closed", Boolean.class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REPLAY_WINDOW_CLOSED");
