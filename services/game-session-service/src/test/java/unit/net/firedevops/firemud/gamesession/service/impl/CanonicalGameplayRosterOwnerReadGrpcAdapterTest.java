@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvide
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayRosterOwnerReadGrpcAdapter;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerReadRequest;
@@ -253,6 +254,12 @@ class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
                 new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
                 Status.Code.INTERNAL),
             Map.entry(
+                new CanonicalGameplayRosterReferenceRepository.OriginalRequestConflictException(),
+                Status.Code.FAILED_PRECONDITION),
+            Map.entry(
+                new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT"),
+                Status.Code.INTERNAL),
+            Map.entry(
                 new IllegalStateException(
                     "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: unexpected detail"),
                 Status.Code.INTERNAL),
@@ -274,11 +281,15 @@ class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
       assertStatus(observer, failure.getValue());
       var captured = org.mockito.ArgumentCaptor.forClass(Throwable.class);
       verify(observer).onError(captured.capture());
+      String expectedDescription = "Original roster selection owner read failed";
+      if (failure.getKey()
+          instanceof CanonicalGameplayRosterReferenceRepository.OriginalRequestConflictException) {
+        expectedDescription = "Original roster selection request conflicts with retained operation";
+      } else if (failure.getValue() == Status.Code.FAILED_PRECONDITION) {
+        expectedDescription = "Original roster selection authority is stale or invalid";
+      }
       assertThat(Status.fromThrowable(captured.getValue()).getDescription())
-          .isEqualTo(
-              failure.getValue() == Status.Code.FAILED_PRECONDITION
-                  ? "Original roster selection authority is stale or invalid"
-                  : "Original roster selection owner read failed");
+          .isEqualTo(expectedDescription);
       verify(observer, never()).onNext(any());
     }
     verify(owner, org.mockito.Mockito.times(failures.size())).read(request);
