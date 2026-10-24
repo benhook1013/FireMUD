@@ -105,7 +105,11 @@ public final class CanonicalGameplayRosterRetentionService {
       cursor = null;
     }
     for (var candidate : candidates) {
-      cursor = candidate.binding().snapshot().snapshotUuid();
+      cursor = candidate.snapshotUuid();
+      if (!candidate.valid()) {
+        recordFailure();
+        continue;
+      }
       try {
         boolean changed;
         if ("RETIRED".equals(candidate.lifecycleState())) {
@@ -163,6 +167,10 @@ public final class CanonicalGameplayRosterRetentionService {
     if (closures.isEmpty()) closedAdmissionCursor = null;
     for (var closure : closures) {
       closedAdmissionCursor = closure.operationUuid();
+      if (!closure.valid()) {
+        recordFailure();
+        continue;
+      }
       try {
         var owner =
             ownerClient.getCanonicalGameplayRosterReference(
@@ -191,6 +199,10 @@ public final class CanonicalGameplayRosterRetentionService {
     if (transfers.isEmpty()) retirementTransferCursor = null;
     for (var transfer : transfers) {
       retirementTransferCursor = transfer.observationUuid();
+      if (!transfer.valid()) {
+        recordFailure();
+        continue;
+      }
       try {
         switch (transfer.state()) {
           case "WAITING_RETIREMENT" -> {

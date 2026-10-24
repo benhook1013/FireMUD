@@ -1,6 +1,7 @@
 package integration.net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -39,7 +40,7 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
   private static final MigrationSet GAME_SESSION =
       new MigrationSet("game-session", GS_MIGRATIONS, "1017", "1020", "1020", "1021");
   private static final MigrationSet ENTITY =
-      new MigrationSet("entity-management", ENTITY_MIGRATIONS, "1014", "1017", "1017", "1018");
+      new MigrationSet("entity-management", ENTITY_MIGRATIONS, "1014", "1018", "1018", "1019");
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -77,10 +78,15 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     List<String> installed = history(dataSource);
     assertMigrationPresent(installed, migrations.childVersion(), migrations.childScript());
     assertMigrationPresent(installed, migrations.frontVersion(), migrations.frontScript());
-    assertThat(installed).allSatisfy(row -> assertThat(row).contains("success=true"));
+    assertThat(installed).allSatisfy(row -> assertThat(row).contains("\"success\": true"));
+    assertEntitySealPrimaryKey(migrations, dataSource);
   }
 
   private void proveRetainedParentUpgradeAndNoOp(MigrationSet migrations) {
+    if (migrations == ENTITY) {
+      proveEntityAncestorUpgradeAndNoOp();
+      return;
+    }
     String schema = newSchema(migrations.name() + "_parent_");
     DriverManagerDataSource dataSource = dataSource(schema);
     migrate(dataSource, schema, migrations.locations(), migrations.parentVersion());
@@ -97,13 +103,347 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     assertMigrationPresent(upgradedHistory, migrations.childVersion(), migrations.childScript());
     assertMigrationPresent(upgradedHistory, migrations.frontVersion(), migrations.frontScript());
     assertThat(retainedOwnerRows(migrations, dataSource)).containsExactlyElementsOf(retainedBytes);
+    assertEntitySealPrimaryKey(migrations, dataSource);
 
     migrate(dataSource, schema, migrations.locations(), null);
     assertThat(history(dataSource)).containsExactlyElementsOf(upgradedHistory);
     assertThat(retainedOwnerRows(migrations, dataSource)).containsExactlyElementsOf(retainedBytes);
+    assertEntitySealPrimaryKey(migrations, dataSource);
   }
 
+  private void proveEntityAncestorUpgradeAndNoOp() {
+    String schema = newSchema("entity_management_parent_");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, schema, ENTITY.locations(), ENTITY.parentVersion());
+    List<String> parentHistory = history(dataSource);
+    assertThat(parentHistory).isNotEmpty();
+
+    migrate(dataSource, schema, ENTITY.locations(), ENTITY.childVersion());
+    List<String> stagedHistory = history(dataSource);
+    assertHistoryPrefix(stagedHistory, parentHistory, "entity retained V1014 parent");
+    assertMigrationPresent(stagedHistory, "1018", ENTITY.childScript());
+
+    List<EntitySnapshotSeed> snapshots = seedEntitySnapshots(dataSource);
+    UUID sealSnapshot = snapshots.get(0).snapshotUuid();
+    String sealDigest = seedEntitySeal(dataSource, sealSnapshot, snapshots.get(0).snapshotDigest());
+    List<String> stagedRows = retainedOwnerRows(ENTITY, dataSource);
+    List<String> stagedSourceHistory = history(dataSource);
+
+    migrate(dataSource, schema, ENTITY.locations(), null);
+    List<String> upgradedHistory = history(dataSource);
+    assertHistoryPrefix(
+        upgradedHistory, stagedSourceHistory, "entity V1018-to-V1019 retained source");
+    assertMigrationPresent(upgradedHistory, "1019", ENTITY.frontScript());
+    assertThat(retainedOwnerRows(ENTITY, dataSource)).containsExactlyElementsOf(stagedRows);
+    assertEntitySealPrimaryKey(ENTITY, dataSource);
+    assertEntitySnapshotClassification(dataSource, snapshots, sealSnapshot, sealDigest);
+    List<String> classifiedMetadata = retainedEntitySnapshotTargets(dataSource);
+    assertThat(retainedOwnerRows(ENTITY, dataSource)).containsExactlyElementsOf(stagedRows);
+
+    migrate(dataSource, schema, ENTITY.locations(), null);
+    assertThat(history(dataSource)).containsExactlyElementsOf(upgradedHistory);
+    assertThat(retainedOwnerRows(ENTITY, dataSource)).containsExactlyElementsOf(stagedRows);
+    assertThat(retainedEntitySnapshotTargets(dataSource))
+        .containsExactlyElementsOf(classifiedMetadata);
+    assertEntitySealPrimaryKey(ENTITY, dataSource);
+  }
+
+  private void proveEntityPublishedChildUpgradeAndNoOp() {
+    proveEntityPublishedV1017UpgradeAndNoOp();
+    String schema = newSchema("entity_management_child_");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, schema, ENTITY.locations(), ENTITY.publishedChildVersion());
+    List<EntitySnapshotSeed> snapshots = seedEntitySnapshots(dataSource);
+    UUID sealSnapshot = snapshots.get(0).snapshotUuid();
+    String sealDigest = seedEntitySeal(dataSource, sealSnapshot, snapshots.get(0).snapshotDigest());
+
+    List<String> childHistory = history(dataSource);
+    List<String> retainedRows = retainedOwnerRows(ENTITY, dataSource);
+    assertMigrationPresent(childHistory, "1018", ENTITY.childScript());
+
+    migrate(dataSource, schema, ENTITY.locations(), null);
+    List<String> upgradedHistory = history(dataSource);
+    assertHistoryPrefix(upgradedHistory, childHistory, "entity already-applied V1018 child");
+    assertMigrationPresent(upgradedHistory, "1019", ENTITY.frontScript());
+    assertThat(retainedOwnerRows(ENTITY, dataSource)).containsExactlyElementsOf(retainedRows);
+    assertEntitySealPrimaryKey(ENTITY, dataSource);
+    assertEntitySnapshotClassification(dataSource, snapshots, sealSnapshot, sealDigest);
+    List<String> classifiedMetadata = retainedEntitySnapshotTargets(dataSource);
+
+    migrate(dataSource, schema, ENTITY.locations(), null);
+    assertThat(history(dataSource)).containsExactlyElementsOf(upgradedHistory);
+    assertThat(retainedOwnerRows(ENTITY, dataSource)).containsExactlyElementsOf(retainedRows);
+    assertThat(retainedEntitySnapshotTargets(dataSource))
+        .containsExactlyElementsOf(classifiedMetadata);
+    assertEntitySealPrimaryKey(ENTITY, dataSource);
+  }
+
+  private void proveEntityPublishedV1017UpgradeAndNoOp() {
+    String schema = newSchema("entity_management_v1017_child_");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, schema, ENTITY.locations(), "1017");
+    List<EntitySnapshotSeed> snapshots = seedEntitySnapshots(dataSource);
+    UUID operation = UUID.randomUUID();
+    byte[] requestBinding = new byte[] {19, 20, 21};
+    DSL.using(dataSource, SQLDialect.POSTGRES)
+        .execute(
+            "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding) VALUES (?, ?, ?)",
+            operation,
+            UUID.randomUUID(),
+            requestBinding);
+
+    List<String> sourceRowsAt1017 = retainedEntitySnapshotAndAdmissionRows(dataSource);
+    List<String> historyAt1017 = history(dataSource);
+    assertThat(historyAt1017).isNotEmpty();
+
+    migrate(dataSource, schema, ENTITY.locations(), "1018");
+    List<String> historyAt1018 = history(dataSource);
+    assertHistoryPrefix(historyAt1018, historyAt1017, "entity published V1017 source");
+    assertMigrationPresent(historyAt1018, "1018", ENTITY.childScript());
+    assertThat(retainedEntitySnapshotAndAdmissionRows(dataSource))
+        .containsExactlyElementsOf(sourceRowsAt1017);
+
+    migrate(dataSource, schema, ENTITY.locations(), null);
+    List<String> upgradedHistory = history(dataSource);
+    assertHistoryPrefix(upgradedHistory, historyAt1018, "entity published V1017 through V1019");
+    assertMigrationPresent(upgradedHistory, "1019", ENTITY.frontScript());
+    assertThat(retainedEntitySnapshotAndAdmissionRows(dataSource))
+        .containsExactlyElementsOf(sourceRowsAt1017);
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isTrue();
+    for (int index = 0; index < snapshots.size(); index++) {
+      assertThat(
+              dsl.fetchSingle("SELECT entity_roster_initialize_snapshot_targets(?)", 1)
+                  .get(0, Integer.class))
+          .isEqualTo(1);
+    }
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_initialize_snapshot_targets(?)", 1)
+                .get(0, Integer.class))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .as("the retained raw admission remains unclassified after snapshot inventory progresses")
+        .isTrue();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_snapshot_targets "
+                        + "WHERE source_kind = 'SNAPSHOT' AND classification_state = 'KNOWN'")
+                .get(0, Long.class))
+        .isEqualTo(3L);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_target_classifications")))
+        .isZero();
+    List<String> classifiedSnapshotTargets = retainedEntitySnapshotTargets(dataSource);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_admissions "
+                        + "WHERE operation_uuid = ? AND request_binding = ?",
+                    operation,
+                    requestBinding)
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                    operation))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+
+    migrate(dataSource, schema, ENTITY.locations(), null);
+    assertThat(history(dataSource)).containsExactlyElementsOf(upgradedHistory);
+    assertThat(retainedEntitySnapshotAndAdmissionRows(dataSource))
+        .containsExactlyElementsOf(sourceRowsAt1017);
+    assertThat(retainedEntitySnapshotTargets(dataSource))
+        .containsExactlyElementsOf(classifiedSnapshotTargets);
+  }
+
+  private List<EntitySnapshotSeed> seedEntitySnapshots(DriverManagerDataSource dataSource) {
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    UUID account = UUID.randomUUID();
+    UUID tenant = UUID.randomUUID();
+    UUID realm = UUID.randomUUID();
+    UUID instance = UUID.randomUUID();
+    UUID namespace = UUID.randomUUID();
+    UUID canonicalVersion = UUID.randomUUID();
+    dsl.execute("INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?)", tenant);
+    dsl.execute(
+        "INSERT INTO entity_playable_state_namespace_scopes "
+            + "(tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, 'PLAYABLE_STATE_SCOPE_SHARED')",
+        tenant,
+        namespace);
+
+    List<EntitySnapshotSeed> seeds = new ArrayList<>();
+    for (int index = 0; index < 3; index++) {
+      UUID snapshot = UUID.randomUUID();
+      String snapshotDigest = String.valueOf((char) ('a' + index)).repeat(64);
+      boolean createdSource = index == 2;
+      byte[] sourceIdentity = createdSource ? new byte[] {11, 12, 13} : null;
+      String entryPolicy = createdSource ? "PLAYER_CREATED" : "PRESEEDED_ONLY";
+      dsl.execute(
+          "INSERT INTO entity_canonical_gameplay_roster_snapshots "
+              + "(snapshot_uuid, snapshot_digest, canonical_account_uuid, tenant_uuid, realm_uuid, "
+              + "world_slug, realm_slug, game_instance_uuid, catalog_revision, canonical_version_uuid, "
+              + "pointer_version, active_world_epoch, published_policy_digest, published_release_bundle_ref, "
+              + "admission_pointer_snapshot_digest, published_owner_proof_digest, playable_state_namespace_uuid, "
+              + "playable_state_scope, entry_policy, canonical_player_created_source_identity, "
+              + "publication_evidence_format, roster_count, construction_state) "
+              + "VALUES (?, ?, ?, ?, ?, 'world', 'realm', ?, 7, ?, 9, 10, ?, 'bundle-ref', ?, ?, ?, "
+              + "'PLAYABLE_STATE_SCOPE_SHARED', ?, ?, 'CANONICAL_UUID_V2', 0, 'BUILDING')",
+          snapshot,
+          snapshotDigest,
+          account,
+          tenant,
+          realm,
+          instance,
+          canonicalVersion,
+          "b".repeat(64),
+          "c".repeat(64),
+          "d".repeat(64),
+          namespace,
+          entryPolicy,
+          sourceIdentity);
+      dsl.execute(
+          "UPDATE entity_canonical_gameplay_roster_snapshots SET construction_state = 'SEALED' "
+              + "WHERE snapshot_uuid = ?",
+          snapshot);
+      seeds.add(new EntitySnapshotSeed(snapshot, snapshotDigest, createdSource));
+    }
+    return List.copyOf(seeds);
+  }
+
+  private String seedEntitySeal(
+      DriverManagerDataSource dataSource, UUID snapshot, String snapshotDigest) {
+    byte[] targetBinding = new byte[] {6, 7};
+    DSL.using(dataSource, SQLDialect.POSTGRES)
+        .execute(
+            "INSERT INTO entity_canonical_roster_retired_targets "
+                + "(target_digest, target_binding, snapshot_uuid, snapshot_digest, "
+                + "owner_retirement_proof, minimum_retention_millis) "
+                + "SELECT encode(sha256(?), 'hex'), ?, ?, ?, ?, 1000",
+            targetBinding,
+            targetBinding,
+            snapshot,
+            snapshotDigest,
+            new byte[] {8, 9});
+    return DSL.using(dataSource, SQLDialect.POSTGRES)
+        .fetchSingle(
+            "SELECT target_digest FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
+            snapshot)
+        .get(0, String.class);
+  }
+
+  private void assertEntitySnapshotClassification(
+      DriverManagerDataSource dataSource,
+      List<EntitySnapshotSeed> snapshots,
+      UUID sealSnapshot,
+      String sealDigest) {
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isTrue();
+    assertThat(retainedEntitySnapshotTargets(dataSource)).isEmpty();
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
+                    sealSnapshot))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(entitySealPurgeable(dsl, sealDigest)).isFalse();
+
+    for (int index = 0; index < snapshots.size(); index++) {
+      int initialized =
+          dsl.fetchSingle("SELECT entity_roster_initialize_snapshot_targets(?)", 1)
+              .get(0, Integer.class);
+      assertThat(initialized).isEqualTo(1);
+      assertThat(
+              dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                  .get(0, Boolean.class))
+          .isEqualTo(index < snapshots.size() - 1);
+    }
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_initialize_snapshot_targets(?)", 1)
+                .get(0, Integer.class))
+        .isZero();
+
+    for (EntitySnapshotSeed seed : snapshots) {
+      boolean projectionMatches =
+          dsl.fetchSingle(
+                  "SELECT m.classification_state = 'KNOWN' "
+                      + "AND m.target_projection = entity_roster_snapshot_target_projection(s) "
+                      + "AND m.source_snapshot_projection = entity_roster_snapshot_target_projection(s) "
+                      + "AND (m.target_projection -> 'canonical_player_created_source_identity') "
+                      + "= COALESCE(to_jsonb(s.canonical_player_created_source_identity), 'null'::jsonb) "
+                      + "FROM entity_canonical_roster_snapshot_targets m "
+                      + "JOIN entity_canonical_gameplay_roster_snapshots s USING (snapshot_uuid, snapshot_digest) "
+                      + "WHERE m.snapshot_uuid = ? AND m.source_kind = 'SNAPSHOT'",
+                  seed.snapshotUuid())
+              .get(0, Boolean.class);
+      assertThat(projectionMatches).isTrue();
+      boolean createdSourceIsNull =
+          dsl.fetchSingle(
+                  "SELECT canonical_player_created_source_identity IS NULL "
+                      + "FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                  seed.snapshotUuid())
+              .get(0, Boolean.class);
+      assertThat(createdSourceIsNull).isEqualTo(!seed.createdSourceIdentityPresent());
+    }
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_snapshot_targets "
+                        + "WHERE source_kind = 'SNAPSHOT' AND target_projection = ("
+                        + "SELECT target_projection FROM entity_canonical_roster_snapshot_targets WHERE snapshot_uuid = ? AND source_kind = 'SNAPSHOT')",
+                    snapshots.get(0).snapshotUuid())
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(entitySealPurgeable(dsl, sealDigest)).isFalse();
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
+                    sealSnapshot))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  private boolean entitySealPurgeable(DSLContext dsl, String targetDigest) {
+    return dsl.fetchSingle("SELECT entity_roster_retired_target_purgeable(?)", targetDigest)
+        .get(0, Boolean.class);
+  }
+
+  private List<String> retainedEntitySnapshotAndAdmissionRows(DriverManagerDataSource dataSource) {
+    return DSL
+        .using(dataSource, SQLDialect.POSTGRES)
+        .fetch(
+            "SELECT retained_row FROM ("
+                + "SELECT 'snapshot:' || to_jsonb(t)::TEXT || ':' || t.xmin::TEXT AS retained_row "
+                + "FROM entity_canonical_gameplay_roster_snapshots t UNION ALL "
+                + "SELECT 'admission:' || to_jsonb(t)::TEXT || ':' || t.xmin::TEXT "
+                + "FROM entity_canonical_roster_admissions t) retained ORDER BY retained_row")
+        .getValues(0, String.class)
+        .stream()
+        .toList();
+  }
+
+  private List<String> retainedEntitySnapshotTargets(DriverManagerDataSource dataSource) {
+    return DSL.using(dataSource, SQLDialect.POSTGRES)
+        .fetch(
+            "SELECT to_jsonb(t)::TEXT || ':' || t.xmin::TEXT "
+                + "FROM entity_canonical_roster_snapshot_targets t ORDER BY snapshot_uuid, source_kind")
+        .getValues(0, String.class);
+  }
+
+  private record EntitySnapshotSeed(
+      UUID snapshotUuid, String snapshotDigest, boolean createdSourceIdentityPresent) {}
+
   private void provePublishedChildUpgradeAndNoOp(MigrationSet migrations) {
+    if (migrations == ENTITY) {
+      proveEntityPublishedChildUpgradeAndNoOp();
+      return;
+    }
     String schema = newSchema(migrations.name() + "_child_");
     DriverManagerDataSource dataSource = dataSource(schema);
     migrate(dataSource, schema, migrations.locations(), migrations.publishedChildVersion());
@@ -119,10 +459,12 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     assertHistoryPrefix(upgradedHistory, childHistory, migrations.name() + " published child");
     assertMigrationPresent(upgradedHistory, migrations.frontVersion(), migrations.frontScript());
     assertThat(retainedOwnerRows(migrations, dataSource)).containsExactlyElementsOf(retainedBytes);
+    assertEntitySealPrimaryKey(migrations, dataSource);
 
     migrate(dataSource, schema, migrations.locations(), null);
     assertThat(history(dataSource)).containsExactlyElementsOf(upgradedHistory);
     assertThat(retainedOwnerRows(migrations, dataSource)).containsExactlyElementsOf(retainedBytes);
+    assertEntitySealPrimaryKey(migrations, dataSource);
   }
 
   private void seedRetainedOwnerRow(
@@ -145,12 +487,7 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
           new byte[] {2, 3});
       return;
     }
-    dsl.execute(
-        "INSERT INTO entity_canonical_roster_admissions "
-            + "(operation_uuid, admission_uuid, request_binding) VALUES (?, ?, ?)",
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        new byte[] {4, 5});
+    throw new IllegalStateException("Entity fixtures use populated snapshot cohorts");
   }
 
   private List<String> retainedOwnerRows(
@@ -173,13 +510,31 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     }
     return dsl
         .fetch(
-            "SELECT jsonb_build_array(operation_uuid::text, admission_uuid::text, "
-                + "encode(request_binding, 'hex'), admission_state, snapshot_uuid::text, "
-                + "recorded_at::text)::text FROM entity_canonical_roster_admissions "
-                + "ORDER BY operation_uuid")
+            "SELECT retained_row FROM ("
+                + "SELECT 'snapshot:' || to_jsonb(t)::TEXT || ':' || t.xmin::TEXT AS retained_row "
+                + "FROM entity_canonical_gameplay_roster_snapshots t UNION ALL "
+                + "SELECT 'admission:' || to_jsonb(t)::TEXT || ':' || t.xmin::TEXT "
+                + "FROM entity_canonical_roster_admissions t UNION ALL "
+                + "SELECT 'retired_target:' || to_jsonb(t)::TEXT || ':' || t.xmin::TEXT "
+                + "FROM entity_canonical_roster_retired_targets t) retained ORDER BY retained_row")
         .getValues(0, String.class)
         .stream()
         .toList();
+  }
+
+  private void assertEntitySealPrimaryKey(
+      MigrationSet migrations, DriverManagerDataSource dataSource) {
+    if (migrations != ENTITY) {
+      return;
+    }
+    String definition =
+        DSL.using(dataSource, SQLDialect.POSTGRES)
+            .fetchSingle(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    + "WHERE conrelid = 'entity_canonical_roster_retired_targets'::regclass "
+                    + "AND contype = 'p'")
+            .get(0, String.class);
+    assertThat(definition).contains("PRIMARY KEY (target_digest, snapshot_uuid)");
   }
 
   private void migrate(
@@ -205,9 +560,9 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
   private List<String> history(DriverManagerDataSource dataSource) {
     return DSL.using(dataSource, SQLDialect.POSTGRES)
         .fetch(
-            "SELECT version, script, checksum, installed_rank, success "
-                + "FROM flyway_schema_history ORDER BY installed_rank")
-        .map(row -> row.intoMap().toString());
+            "SELECT to_jsonb(t)::TEXT || ':' || t.xmin::TEXT "
+                + "FROM flyway_schema_history t ORDER BY installed_rank")
+        .getValues(0, String.class);
   }
 
   private void assertHistoryPrefix(List<String> current, List<String> original, String cohort) {
@@ -219,7 +574,13 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
 
   private void assertMigrationPresent(List<String> history, String version, String script) {
     assertThat(history)
-        .anySatisfy(row -> assertThat(row).contains(version, script, "success=true"));
+        .anySatisfy(
+            row ->
+                assertThat(row)
+                    .contains(
+                        "\"version\": \"" + version + "\"",
+                        "\"script\": \"" + script + "\"",
+                        "\"success\": true"));
   }
 
   private DriverManagerDataSource dataSource(String schema) {
@@ -259,13 +620,13 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     private String childScript() {
       return this == GAME_SESSION
           ? "V1020__player_created_roster_reference.sql"
-          : "V1017__player_created_actor_quarantine.sql";
+          : "V1018__canonical_roster_staged_retirement.sql";
     }
 
     private String frontScript() {
       return this == GAME_SESSION
           ? "V1021__canonical_roster_recovery_attempt_scheduling.sql"
-          : "V1018__canonical_roster_staged_retirement.sql";
+          : "V1019__canonical_roster_snapshot_retirement_seals.sql";
     }
   }
 }

@@ -339,6 +339,12 @@ class CanonicalGameplayRosterIntegrationTest {
             transactions.<Boolean>execute(
                 ignored -> repository.observeRetirement(protectedCandidate, proof, policy)))
         .isTrue();
+    var preparationCandidate = retentionCandidate(snapshot, ownerRequest);
+    assertThat(
+            transactions.<Integer>execute(
+                ignored -> repository.prepareRetirement(preparationCandidate, 8)))
+        .isEqualTo(1);
+    // Preparation advances the local epoch; final-disposal checks use the reloaded candidate.
     var retired = retentionCandidate(snapshot, ownerRequest);
     assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(retired))).isFalse();
     transactions.executeWithoutResult(
@@ -456,6 +462,363 @@ class CanonicalGameplayRosterIntegrationTest {
         (String) row.get("lifecycle_state"),
         (String) row.get("owner_retirement_proof_digest"));
   }
+
+  @Test
+  void independentlyRetiresSameTargetSiblingSnapshotsAndRejectsLateCapture() throws Exception {
+    // Existing controlled owner evidence exercises local sibling state, not an upstream producer.
+    CanonicalGameplayRosterTarget exactTarget = target(namespaceUuid, UUID.randomUUID());
+    UUID actor = createPersistedActor(accountUuid, exactTarget, 58L, "First Roster Name");
+    UUID targetFence = UUID.randomUUID();
+    UUID retirementId = UUID.randomUUID();
+    BoundRosterOriginal first = captureOriginalSelection(exactTarget, targetFence);
+
+    jdbcTemplate.update(
+        "UPDATE characters SET name = ? WHERE character_uuid = ?", "Second Roster Name", actor);
+    BoundRosterOriginal second = captureOriginalSelection(exactTarget, targetFence);
+    jdbcTemplate.update(
+        "UPDATE characters SET name = ? WHERE character_uuid = ?", "Unbound Direct Roster", actor);
+    CanonicalGameplayRosterReadRequest directRequest = originalRosterRequest(exactTarget);
+    CanonicalGameplayRosterSnapshot directSnapshot =
+        characterRepository.captureCanonicalGameplayRosterSnapshot(
+            directRequest,
+            new CanonicalGameplayRosterOwnerEvidence(
+                directRequest.requestUuid(), accountUuid, exactTarget, Instant.now()));
+    assertThat(directSnapshot.snapshotUuid())
+        .isNotIn(first.snapshot().snapshotUuid(), second.snapshot().snapshotUuid());
+    assertThat(second.localRequest().requestUuid())
+        .isNotEqualTo(first.localRequest().requestUuid());
+    assertThat(second.admission()).isNotEqualTo(first.admission());
+    assertThat(second.snapshot().snapshotUuid()).isNotEqualTo(first.snapshot().snapshotUuid());
+    assertThat(second.snapshot().snapshotDigest()).isNotEqualTo(first.snapshot().snapshotDigest());
+    assertThat(second.snapshot().target()).isEqualTo(first.snapshot().target());
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT snapshot_uuid FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                UUID.class,
+                first.localRequest().requestUuid()))
+        .isEqualTo(first.snapshot().snapshotUuid());
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT snapshot_uuid FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                UUID.class,
+                second.localRequest().requestUuid()))
+        .isEqualTo(second.snapshot().snapshotUuid());
+
+    CanonicalGameplayRosterReadRequest delayedRequest = originalRosterRequest(exactTarget);
+    UUID delayedAdmission = characterRepository.reserveOriginalRosterAdmission(delayedRequest);
+    var delayedOwnerRequest = ownerRequest(delayedRequest);
+    var delayedOwnerResponse =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            delayedOwnerRequest, 1L, targetFence, null);
+    var delayedEvidence =
+        new CanonicalGameplayRosterOwnerEvidence(
+            delayedRequest.requestUuid(), accountUuid, exactTarget, Instant.now());
+
+    var repository =
+        new net.firedevops.firemud.entitymanagement.repository
+            .CanonicalGameplayRosterRetentionRepository(dsl);
+    var transactions = new TransactionTemplate(transactionManager);
+    var siblingRetention = java.time.Duration.ofSeconds(2);
+    var policy =
+        new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionPolicy(
+            siblingRetention,
+            siblingRetention,
+            siblingRetention,
+            java.time.Duration.ofSeconds(1),
+            8);
+    List<BoundRosterOriginal> siblings = List.of(first, second);
+    var secondBinding =
+        new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionBinding(
+            accountUuid,
+            new CanonicalGameplayRosterSnapshotReference(
+                second.snapshot().snapshotUuid(), second.snapshot().snapshotDigest()),
+            exactTarget);
+    UUID secondHold = UUID.randomUUID();
+    transactions.executeWithoutResult(
+        ignored ->
+            repository.acquire(
+                secondBinding,
+                UUID.randomUUID(),
+                secondHold,
+                net.firedevops.firemud.entitymanagement.repository
+                    .CanonicalGameplayRosterRetentionRepository.ReferenceKind.HOLD));
+
+    var firstProof = retirementProof(first, targetFence, retirementId);
+    var secondProof = retirementProof(second, targetFence, retirementId);
+    CountDownLatch firstSealed = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    CountDownLatch allowFirstCommit = new CountDownLatch(1);
+    AtomicInteger firstSealPid = new AtomicInteger();
+    AtomicInteger secondSealPid = new AtomicInteger();
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<Boolean> firstSeal =
+          executor.submit(
+              () ->
+                  transactions.execute(
+                      ignored -> {
+                        firstSealPid.set(
+                            java.util.Objects.requireNonNull(
+                                jdbcTemplate.queryForObject(
+                                    "SELECT pg_backend_pid()", Integer.class)));
+                        assertThat(
+                                repository.observeRetirement(
+                                    retentionCandidate(first.snapshot(), first.ownerRequest()),
+                                    firstProof,
+                                    policy))
+                            .isTrue();
+                        assertThat(
+                                jdbcTemplate.queryForObject(
+                                    "SELECT retirement_observed_at + minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
+                                        + "FROM entity_canonical_roster_retention_lifecycle WHERE snapshot_uuid = ?",
+                                    Boolean.class,
+                                    first.snapshot().snapshotUuid()))
+                            .as("the stored sibling seal horizon has not elapsed")
+                            .isTrue();
+                        assertThat(
+                                repository.dispose(
+                                    retentionCandidate(first.snapshot(), first.ownerRequest())))
+                            .as("a current epoch cannot bypass the persisted seal horizon")
+                            .isFalse();
+                        firstSealed.countDown();
+                        awaitSiblingLatch(allowFirstCommit, "first sibling seal commit");
+                        return true;
+                      }));
+      assertThat(firstSealed.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<Boolean> secondSeal =
+          executor.submit(
+              () ->
+                  transactions.execute(
+                      ignored -> {
+                        secondSealPid.set(
+                            java.util.Objects.requireNonNull(
+                                jdbcTemplate.queryForObject(
+                                    "SELECT pg_backend_pid()", Integer.class)));
+                        secondStarted.countDown();
+                        return repository.observeRetirement(
+                            retentionCandidate(second.snapshot(), second.ownerRequest()),
+                            secondProof,
+                            policy);
+                      }));
+      assertThat(secondStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      awaitBackendBlockedBy(secondSealPid.get(), firstSealPid.get());
+      allowFirstCommit.countDown();
+      assertThat(firstSeal.get(15, TimeUnit.SECONDS)).isTrue();
+      assertThat(secondSeal.get(15, TimeUnit.SECONDS))
+          .as("the shared target fence admits an independent sibling seal after the first commits")
+          .isTrue();
+    } finally {
+      allowFirstCommit.countDown();
+    }
+
+    assertThat(
+            transactions.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        retentionCandidate(first.snapshot(), first.ownerRequest()),
+                        firstProof,
+                        policy)))
+        .as("exact replay preserves the first snapshot's persisted seal")
+        .isTrue();
+    assertThat(
+            transactions.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        retentionCandidate(second.snapshot(), second.ownerRequest()),
+                        secondProof,
+                        policy)))
+        .as("exact replay preserves the sibling snapshot's independent seal")
+        .isTrue();
+    assertThat(
+            transactions.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        retentionCandidate(first.snapshot(), first.ownerRequest()),
+                        retirementProof(first, targetFence, UUID.randomUUID()),
+                        policy)))
+        .as("a changed retirement proof cannot replace an existing snapshot seal")
+        .isFalse();
+
+    jdbcTemplate.update(
+        "UPDATE characters SET name = ? WHERE character_uuid = ?", "Changed After Seal", actor);
+    CanonicalGameplayRosterReadRequest changedDirectRequest = originalRosterRequest(exactTarget);
+    assertThatThrownBy(
+            () ->
+                characterRepository.captureCanonicalGameplayRosterSnapshot(
+                    changedDirectRequest,
+                    new CanonicalGameplayRosterOwnerEvidence(
+                        changedDirectRequest.requestUuid(),
+                        accountUuid,
+                        exactTarget,
+                        Instant.now())))
+        .as("direct capture cannot create or reuse an alternate snapshot after the target seal")
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                transactions.executeWithoutResult(
+                    ignored ->
+                        repository.acquire(
+                            secondBinding,
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            net.firedevops.firemud.entitymanagement.repository
+                                .CanonicalGameplayRosterRetentionRepository.ReferenceKind
+                                .RECOVERY)))
+        .as("recovery acquisition is covered by the same target fence")
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+
+    assertThatThrownBy(
+            () ->
+                characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+                    delayedRequest, delayedEvidence, delayedOwnerResponse, delayedAdmission))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                characterRepository.reserveOriginalRosterAdmission(
+                    originalRosterRequest(exactTarget)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+
+    CanonicalGameplayRosterTarget unrelatedTarget = target(namespaceUuid, UUID.randomUUID());
+    BoundRosterOriginal unrelated = captureOriginalSelection(unrelatedTarget, UUID.randomUUID());
+    assertThat(unrelated.snapshot().target()).isEqualTo(unrelatedTarget);
+
+    for (BoundRosterOriginal sibling : siblings) {
+      var preparation = retentionCandidate(sibling.snapshot(), sibling.ownerRequest());
+      assertThat(
+              transactions.<Integer>execute(
+                  ignored -> repository.prepareRetirement(preparation, 8)))
+          .isEqualTo(1);
+    }
+    Thread.sleep(2_100L);
+    var firstReady = retentionCandidate(first.snapshot(), first.ownerRequest());
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(firstReady))).isTrue();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                Long.class,
+                first.snapshot().snapshotUuid()))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                Long.class,
+                second.snapshot().snapshotUuid()))
+        .isEqualTo(1L);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT transfer_state FROM entity_canonical_roster_retirement_transfers WHERE operation_uuid = ?",
+                String.class,
+                first.localRequest().requestUuid()))
+        .isEqualTo("PENDING_ACK");
+    assertThatThrownBy(
+            () ->
+                characterRepository.reserveOriginalRosterAdmission(
+                    originalRosterRequest(exactTarget)))
+        .as("disposing one sibling leaves the shared target fence closed")
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("LOCAL_ADMISSION_FENCE_CLOSED");
+
+    var heldSecond = retentionCandidate(second.snapshot(), second.ownerRequest());
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(heldSecond)))
+        .as("the sibling's independent hold prevents its final disposal")
+        .isFalse();
+    assertThat(transactions.<Integer>execute(ignored -> repository.purgeRetiredTargets(8)))
+        .as(
+            "the shared seal rows cannot be cleaned while the sibling hold and direct snapshot remain")
+        .isZero();
+
+    transactions.executeWithoutResult(
+        ignored -> repository.release(secondBinding, UUID.randomUUID(), secondHold));
+    var secondReady = retentionCandidate(second.snapshot(), second.ownerRequest());
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(secondReady)))
+        .as("releasing the hold restarts the stored local retirement horizon")
+        .isFalse();
+    Thread.sleep(2_100L);
+    assertThat(transactions.<Boolean>execute(ignored -> repository.dispose(secondReady))).isTrue();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                Long.class,
+                second.snapshot().snapshotUuid()))
+        .isZero();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT transfer_state FROM entity_canonical_roster_retirement_transfers WHERE operation_uuid = ?",
+                String.class,
+                second.localRequest().requestUuid()))
+        .isEqualTo("PENDING_ACK");
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                Long.class,
+                directSnapshot.snapshotUuid()))
+        .isEqualTo(1L);
+    assertThat(transactions.<Integer>execute(ignored -> repository.purgeRetiredTargets(8)))
+        .as(
+            "pending transfers, the pre-existing unbound direct snapshot, and retained nonce keep seals")
+        .isZero();
+  }
+
+  private BoundRosterOriginal captureOriginalSelection(
+      CanonicalGameplayRosterTarget target, UUID targetFence) {
+    CanonicalGameplayRosterReadRequest request = originalRosterRequest(target);
+    UUID admission = characterRepository.reserveOriginalRosterAdmission(request);
+    var ownerRequest = ownerRequest(request);
+    var ownerResponse =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+            ownerRequest, 1L, targetFence, null);
+    var evidence =
+        new CanonicalGameplayRosterOwnerEvidence(
+            request.requestUuid(), accountUuid, target, Instant.now());
+    var snapshot =
+        characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+            request, evidence, ownerResponse, admission);
+    return new BoundRosterOriginal(request, admission, ownerRequest, snapshot);
+  }
+
+  private net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+      ownerRequest(CanonicalGameplayRosterReadRequest request) {
+    return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+        request.requestUuid(),
+        request.canonicalAccountUuid(),
+        request.playerExecutionContext().sessionUuid(),
+        "gameplay",
+        request.expectedTarget().toWire());
+  }
+
+  private net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+      retirementProof(BoundRosterOriginal original, UUID targetFence, UUID retirementId) {
+    CanonicalGameplayRosterTarget target = original.snapshot().target();
+    return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+        .sealRetirement(
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+                    original.ownerRequest(), 1L, targetFence, original.snapshot().toWire())
+                .toBuilder()
+                .setSelectionInput(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                        .newBuilder()
+                        .setSchemaVersion(1)
+                        .setSelector("1"))
+                .setTerminalOutcome("DENIED")
+                .setState(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+                .setRetirementUuid(retirementId.toString())
+                .setSupersedingPointerDigest("f".repeat(64))
+                .setSupersedingPointerVersion(target.pointerVersion() + 1L)
+                .setSupersedingCatalogRevision(target.catalogRevision() + 1L)
+                .setSupersedingWorldEpoch(target.activeWorldEpoch() + 1L)
+                .build());
+  }
+
+  private record BoundRosterOriginal(
+      CanonicalGameplayRosterReadRequest localRequest,
+      UUID admission,
+      net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest ownerRequest,
+      CanonicalGameplayRosterSnapshot snapshot) {}
 
   @Test
   void returnsOnlyFreshOwnerResolvedActorsForExactAccountTenantAndNamespace() {
@@ -860,6 +1223,17 @@ class CanonicalGameplayRosterIntegrationTest {
             target.realmUuid(),
             operation,
             target.playableStateScope()));
+  }
+
+  private void awaitSiblingLatch(CountDownLatch latch, String operation) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting to release " + operation);
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interrupted);
+    }
   }
 
   private void awaitBackendBlockedBy(int waitingPid, int holderPid) throws InterruptedException {

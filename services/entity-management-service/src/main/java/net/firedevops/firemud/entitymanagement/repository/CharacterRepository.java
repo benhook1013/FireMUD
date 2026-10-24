@@ -1037,6 +1037,9 @@ public class CharacterRepository {
       throw new IllegalArgumentException("Exact PRESEEDED_ONLY owner evidence is required");
     }
 
+    // Serialize direct capture and snapshot reuse with the same account/full-target fence
+    // used by nonce-qualified capture. This guard precedes actor or snapshot access.
+    new CanonicalGameplayRosterRetentionRepository(dsl).requireUnsealedTarget(request);
     CanonicalGameplayRosterTarget target = ownerEvidence.target();
     lockCanonicalRosterNamespace(target);
     requireEntityTenantRowForRoster(target.tenantUuid());
