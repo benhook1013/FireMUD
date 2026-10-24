@@ -907,7 +907,9 @@ class EntityCharacterCreatePostgresIntegrationTest {
     byte[] bytes = raw.getBytes(StandardCharsets.UTF_8);
     CharacterCreateOperatorAction action = CharacterCreateOperatorActionCodec.decode(bytes);
     if (rosterSource != null) {
-      action = requireRosterSourceAction(action, entitySource, accountId, rosterSource);
+      action =
+          ControlledPlayerCreatedOwnerStoreFixture.rosterSourceAction(
+              entitySource, accountId, rosterSource);
       bytes = CharacterCreateOperatorActionCodec.encode(action);
     }
     Instant controlledOwnerReadsAt =
@@ -991,115 +993,6 @@ class EntityCharacterCreatePostgresIntegrationTest {
     when(proof.world()).thenReturn(world);
     when(proof.entitySource()).thenReturn(entitySource);
     return proof;
-  }
-
-  private static CharacterCreateOperatorAction requireRosterSourceAction(
-      CharacterCreateOperatorAction original,
-      EntityEmptySelectedSourceIntakeReceipt entitySource,
-      UUID accountId,
-      AuthenticatedSource source) {
-    var target = source.target();
-    var request = source.response().getRequest();
-    var catalog = source.response().getCatalog();
-    var pointer = source.response().getPointer();
-    var projection = source.authored().projections().getFirst();
-    if (!entitySource.targetNamespace().equals(request.getTargetNamespace())
-        || !entitySource.canonicalTenantId().equals(target.tenantUuid())
-        || !entitySource.canonicalVersionId().equals(target.canonicalVersionUuid())
-        || !entitySource.selectedCommitId().equals(projection.selectedCommitId())) {
-      throw new IllegalArgumentException(
-          "Controlled Entity writer fixture does not match the authenticated publication source");
-    }
-    var authored = authoredSource(projection);
-    return new CharacterCreateOperatorAction(
-        new CharacterCreateOperatorAction.Scope(
-            request.getTargetNamespace(),
-            target.tenantUuid().toString(),
-            target.playableStateNamespaceId().toString(),
-            CharacterCreateOperatorAction.PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
-        new CharacterCreateOperatorAction.Target(
-            accountId.toString(),
-            target.realmUuid().toString(),
-            target.worldSlug(),
-            target.realmSlug(),
-            target.gameInstanceUuid().toString(),
-            target.canonicalVersionUuid().toString()),
-        new CharacterCreateOperatorAction.ExpectedVersion(
-            Long.toString(target.catalogRevision()),
-            Long.toString(target.pointerVersion()),
-            Long.toString(target.activeWorldEpoch()),
-            EntityCharacterCreateBindings.instant(pointer.getUpdatedAt()).plusSeconds(1),
-            EntityCharacterCreateBindings.instant(pointer.getUpdatedAt()).plusSeconds(301)),
-        new CharacterCreateOperatorAction.Mutation(
-            original.mutation().purpose(),
-            original.mutation().entryPolicy(),
-            new CharacterCreateOperatorAction.Catalog(
-                target.tenantUuid().toString(),
-                catalog.getTenantSlug(),
-                target.worldSlug(),
-                catalog.getWorldDisplayName(),
-                target.realmUuid().toString(),
-                target.realmSlug(),
-                catalog.getRealmDisplayName(),
-                catalog.getVisible(),
-                catalog.getPublicProduction(),
-                catalog.getStateScope(),
-                target.playableStateNamespaceId().toString(),
-                catalog.getCharacterCreationPolicy(),
-                Long.toString(target.catalogRevision())),
-            new CharacterCreateOperatorAction.Pointer(
-                target.tenantUuid().toString(),
-                target.realmUuid().toString(),
-                target.worldSlug(),
-                target.realmSlug(),
-                pointer.getAdmissionState(),
-                target.gameInstanceUuid().toString(),
-                Long.toString(target.pointerVersion()),
-                Long.toString(target.catalogRevision()),
-                EntityCharacterCreateBindings.instant(pointer.getUpdatedAt())),
-            authored,
-            original.mutation().canonicalCreationInput()),
-        original.auditReason());
-  }
-
-  private static CharacterCreateOperatorAction.AuthoredSource authoredSource(
-      AuthoredInitialActorCoreProjection projection) {
-    var policy = projection.policy();
-    return new CharacterCreateOperatorAction.AuthoredSource(
-        AuthoredInitialActorCoreProjection.SCHEMA,
-        projection.bindingId().toString(),
-        projection.bindingDigest(),
-        projection.canonicalTenantId().toString(),
-        projection.canonicalVersionId().toString(),
-        projection.worldSourceOperationId().toString(),
-        projection.worldSourceEvidenceDigest(),
-        projection.worldSlug(),
-        projection.publicationWorkflowId(),
-        projection.selectedCommitId().toString(),
-        projection.selectedCommitDigest(),
-        new CharacterCreateOperatorAction.Policy(
-            policy.commitId().toString(),
-            policy.revisionId().toString(),
-            policy.logicalRevisionId(),
-            policy.canonicalJson(),
-            policy.contentDigest()),
-        new CharacterCreateOperatorAction.Core(projection.core().canonicalJson()),
-        new CharacterCreateOperatorAction.Descriptor(
-            projection.descriptor().canonicalJson(), projection.descriptor().digest()),
-        authoredRule(projection.disposition()),
-        authoredRule(projection.safeFeedback()));
-  }
-
-  private static CharacterCreateOperatorAction.Rule authoredRule(
-      AuthoredInitialActorCoreProjection.RuleDefinition rule) {
-    return new CharacterCreateOperatorAction.Rule(
-        rule.key(),
-        rule.definitionJson(),
-        rule.definitionDigest(),
-        rule.sourceCommitId().toString(),
-        rule.sourceCommitDigest(),
-        rule.revisionId().toString(),
-        rule.revisionOrder());
   }
 
   private static PublishedIdentity published(EntityCharacterCreateProofs proof) throws Exception {

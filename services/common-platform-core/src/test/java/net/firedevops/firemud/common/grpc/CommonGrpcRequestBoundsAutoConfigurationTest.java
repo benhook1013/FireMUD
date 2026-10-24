@@ -5,14 +5,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Empty;
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.BindableService;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
 import io.grpc.MethodDescriptor;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerServiceDefinition;
+import io.grpc.Status;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.protobuf.ProtoUtils;
 import io.grpc.stub.ClientCalls;
@@ -22,6 +26,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.config.CommonGrpcRequestBoundsAutoConfiguration;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.WebApplicationType;
@@ -32,6 +39,7 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration;
 import org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration;
 import org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryCustomizer;
+import org.springframework.boot.grpc.server.autoconfigure.GrpcServerProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -180,6 +188,136 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
   }
 
   @Test
+  void explicitNoServerFixtureAlsoBootsWhenFrameworkGrpcSupportIsExcluded() {
+    new ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonGrpcRequestBoundsAutoConfiguration.class))
+        .withUserConfiguration(
+            DiscoveredServiceConfiguration.class, NoGrpcServerTestConfiguration.class)
+        .withPropertyValues("spring.grpc.server.port=0", "spring.grpc.server.ssl.enabled=false")
+        .withBean(GrpcRequestBytePolicy.class, GrpcRequestBytePolicy::createdRosterRetirement)
+        .run(
+            context -> {
+              assertThat(context)
+                  .hasNotFailed()
+                  .hasSingleBean(GrpcServerLifecycle.class)
+                  .hasSingleBean(GrpcServerFactory.class)
+                  .hasSingleBean(GrpcServiceConfigurer.class)
+                  .doesNotHaveBean("boundedGrpcServerLifecycle");
+              var lifecycle = context.getBean(GrpcServerLifecycle.class);
+              assertThat(lifecycle).isSameAs(context.getBean("grpcServerLifecycle"));
+              verify(lifecycle, never()).start();
+              verifyNoInteractions(context.getBean(GrpcServiceConfigurer.class));
+              var factory = context.getBean(GrpcServerFactory.class);
+              assertThat(factory).isExactlyInstanceOf(BoundedGrpcServerFactory.class);
+              assertThatThrownBy(factory::createServer)
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("no exact registered descriptor");
+            });
+  }
+
+  @Test
+  void createdPolicyRequiresExplicitTransportOptInAndKeepsOrdinaryMethodsBounded() {
+    var createdRunner =
+        runner
+            .withBean(GrpcRequestBytePolicy.class, GrpcRequestBytePolicy::createdRosterRetirement)
+            .withBean(CreatedRosterService.class, CreatedRosterService::new);
+    createdRunner.run(
+        context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(
+                  context.getBean(GrpcServerProperties.class).getMaxInboundMessageSize().toBytes())
+              .isEqualTo(GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+          assertPurposeAndOrdinaryAdmission(
+              context.getBean(GrpcServerLifecycle.class).getPort(), Status.Code.RESOURCE_EXHAUSTED);
+          assertThat(context.getBean(DiscoveryState.class).events).doesNotContain("handler");
+        });
+    createdRunner
+        .withPropertyValues(
+            "spring.grpc.server.max-inbound-message-size="
+                + CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES
+                + "B")
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(
+                      context
+                          .getBean(GrpcServerProperties.class)
+                          .getMaxInboundMessageSize()
+                          .toBytes())
+                  .isEqualTo(
+                      CanonicalGameplayRosterRetirementEvidence
+                          .MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+              // UNIMPLEMENTED comes from the generated base only after the actual eligible request
+              // parses.
+              assertPurposeAndOrdinaryAdmission(
+                  context.getBean(GrpcServerLifecycle.class).getPort(), Status.Code.UNIMPLEMENTED);
+              assertThat(context.getBean(DiscoveryState.class).events).doesNotContain("handler");
+            });
+    createdRunner
+        .withPropertyValues("spring.grpc.server.max-inbound-message-size=0B")
+        .run(context -> assertThat(context).hasFailed());
+    createdRunner
+        .withPropertyValues(
+            "spring.grpc.server.max-inbound-message-size="
+                + ((long)
+                        CanonicalGameplayRosterRetirementEvidence
+                            .MAX_PLAYER_CREATED_CONFIRMATION_BYTES
+                    + 1)
+                + "B")
+        .run(context -> assertThat(context).hasFailed());
+  }
+
+  private static void assertPurposeAndOrdinaryAdmission(int port, Status.Code purposeStatus)
+      throws Exception {
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(
+                9999,
+                UnknownFieldSet.Field.newBuilder()
+                    .addLengthDelimited(
+                        ByteString.copyFrom(new byte[GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES]))
+                    .build())
+            .build();
+    var request =
+        CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+            .setUnknownFields(unknown)
+            .build();
+    assertThat(request.getSerializedSize())
+        .isGreaterThan(GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+    ManagedChannel channel =
+        NettyChannelBuilder.forAddress("127.0.0.1", port).usePlaintext().build();
+    try {
+      var options =
+          CallOptions.DEFAULT.withDeadlineAfter(5, TimeUnit.SECONDS).withCompression("gzip");
+      assertThatThrownBy(
+              () ->
+                  ClientCalls.blockingUnaryCall(
+                      channel,
+                      CanonicalGameplayRosterOwnerReadServiceGrpc
+                          .getAcknowledgeCanonicalGameplayRosterRetirementMethod(),
+                      options,
+                      request))
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(purposeStatus));
+      assertThatThrownBy(
+              () ->
+                  ClientCalls.blockingUnaryCall(
+                      channel, READ, options, Empty.newBuilder().setUnknownFields(unknown).build()))
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+    } finally {
+      channel.shutdownNow();
+      assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
   void alternateFactoryAndDuplicatePoliciesFailClosed() {
     runner
         .withBean("unguarded", GrpcServerFactory.class, () -> mock(GrpcServerFactory.class))
@@ -254,6 +392,11 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
       return interceptor(state, "second");
     }
   }
+
+  @GrpcService
+  static class CreatedRosterService
+      extends CanonicalGameplayRosterOwnerReadServiceGrpc
+          .CanonicalGameplayRosterOwnerReadServiceImplBase {}
 
   @GrpcService
   static class DiscoveredService implements BindableService {

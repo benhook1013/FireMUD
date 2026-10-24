@@ -269,6 +269,9 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
               String digest =
                   CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
                       request.getCanonicalAccountUuid(), target, sourceIdentity, wireActors);
+              if (!digest.equals(request.getExpectedSnapshot().getSnapshotDigest())) {
+                throw new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE");
+              }
               CanonicalPlayerCreatedRosterResponse readback =
                   readBackSnapshot(
                       tx,
@@ -279,12 +282,6 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
                       sourceIdentity.toByteArray(),
                       wireActors,
                       digest);
-              if (!readback
-                  .getRoster()
-                  .getSnapshotDigest()
-                  .equals(request.getExpectedSnapshot().getSnapshotDigest())) {
-                throw new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE");
-              }
               long selectedCount =
                   actors.stream()
                       .filter(

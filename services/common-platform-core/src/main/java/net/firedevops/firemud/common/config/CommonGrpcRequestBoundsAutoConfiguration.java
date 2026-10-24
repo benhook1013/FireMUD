@@ -28,7 +28,6 @@ import org.springframework.boot.util.LambdaSafe;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
-import org.springframework.core.env.Environment;
 import org.springframework.grpc.server.GrpcServerFactory;
 import org.springframework.grpc.server.ServerBuilderCustomizer;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
@@ -59,8 +58,7 @@ public class CommonGrpcRequestBoundsAutoConfiguration {
       GrpcServiceConfigurer configurer,
       ObjectProvider<SslBundles> bundles,
       ObjectProvider<ServerBuilderCustomizer<?>> builderCustomizers,
-      ObjectProvider<GrpcServerFactoryCustomizer> factoryCustomizers,
-      Environment environment) {
+      ObjectProvider<GrpcServerFactoryCustomizer> factoryCustomizers) {
     KeyManagerFactory keys = null;
     TrustManagerFactory trust = null;
     if (properties.getSsl().determineEnabled()) {
@@ -75,10 +73,8 @@ public class CommonGrpcRequestBoundsAutoConfiguration {
               ? bundle.getManagers().getTrustManagerFactory()
               : InsecureTrustManagerFactory.INSTANCE;
     }
-    int transportMaximum = policy.transportMaximumBytes();
-    if (environment.containsProperty("spring.grpc.server.max-inbound-message-size")) {
-      transportMaximum = Math.toIntExact(properties.getMaxInboundMessageSize().toBytes());
-    }
+    // Preserve the framework's 4 MiB default; policy maxima only constrain explicit opt-in.
+    int transportMaximum = Math.toIntExact(properties.getMaxInboundMessageSize().toBytes());
     List<ServerBuilderCustomizer<NettyServerBuilder>> customizers =
         List.of(
             builder -> configureProperties(builder, properties),

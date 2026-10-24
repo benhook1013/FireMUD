@@ -725,6 +725,28 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                     selectedRequest, inputs.source(), wrongNamespaceOriginal))
         .isInstanceOf(IllegalArgumentException.class);
 
+    var beforeQuarantineSnapshot =
+        dsl.fetchSingle(
+            "SELECT to_jsonb(s)::text AS row_json, xmin::text AS row_version FROM entity_canonical_gameplay_roster_snapshots s WHERE snapshot_uuid = ?",
+            UUID.fromString(snapshot.getRoster().getSnapshotUuid()));
+    var beforeQuarantineCounts = rosterRowCounts();
+    assertThat(
+            dsl.execute(
+                "UPDATE characters SET actor_identity_status='QUARANTINED', actor_identity_quarantine_reason='OWNER_PROVENANCE_REVOKED' WHERE character_uuid=? AND actor_identity_status='OWNER_RESOLVED'",
+                actorId))
+        .isOne();
+    assertThatThrownBy(
+            () ->
+                snapshotRepository.readSelected(selectedRequest, inputs.source(), selectedOriginal))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_SNAPSHOT_STALE");
+    assertThat(rosterRowCounts()).isEqualTo(beforeQuarantineCounts);
+    assertThat(
+            dsl.fetchSingle(
+                "SELECT to_jsonb(s)::text AS row_json, xmin::text AS row_version FROM entity_canonical_gameplay_roster_snapshots s WHERE snapshot_uuid = ?",
+                UUID.fromString(snapshot.getRoster().getSnapshotUuid())))
+        .isEqualTo(beforeQuarantineSnapshot);
+
     UUID recoveryId = UUID.randomUUID();
     var recoveryRequest =
         CanonicalGameplayRosterRecoveryRequest.newBuilder()

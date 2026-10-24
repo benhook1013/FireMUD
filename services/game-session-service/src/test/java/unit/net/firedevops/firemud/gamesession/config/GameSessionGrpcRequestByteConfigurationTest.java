@@ -49,6 +49,17 @@ class GameSessionGrpcRequestByteConfigurationTest {
     var policy = new GameSessionGrpcRequestByteConfiguration().gameSessionGrpcRequestBytePolicy();
     assertThat(policy.transportMaximumBytes())
         .isEqualTo(CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+    var transportProperties =
+        new org.springframework.boot.context.properties.bind.Binder(
+                new org.springframework.boot.context.properties.source
+                    .MapConfigurationPropertySource(
+                    java.util.Map.of(
+                        "spring.grpc.server.max-inbound-message-size",
+                        policy.transportMaximumBytes() + "B")))
+            .bind(
+                "spring.grpc.server",
+                org.springframework.boot.grpc.server.autoconfigure.GrpcServerProperties.class)
+            .get();
     var factory =
         new BoundedGrpcServerFactory(
             "127.0.0.1:0",
@@ -57,7 +68,7 @@ class GameSessionGrpcRequestByteConfigurationTest {
             null,
             TlsServerCredentials.ClientAuth.NONE,
             policy,
-            policy.transportMaximumBytes());
+            Math.toIntExact(transportProperties.getMaxInboundMessageSize().toBytes()));
     Map<String, Integer> parsedMessages = new HashMap<>();
     factory.addService(
         recordOriginalMessages(

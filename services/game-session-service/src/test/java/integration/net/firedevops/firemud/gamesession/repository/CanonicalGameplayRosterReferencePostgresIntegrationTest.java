@@ -2672,6 +2672,17 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     var bytePolicy =
         new net.firedevops.firemud.gamesession.config.GameSessionGrpcRequestByteConfiguration()
             .gameSessionGrpcRequestBytePolicy();
+    var transportProperties =
+        new org.springframework.boot.context.properties.bind.Binder(
+                new org.springframework.boot.context.properties.source
+                    .MapConfigurationPropertySource(
+                    java.util.Map.of(
+                        "spring.grpc.server.max-inbound-message-size",
+                        bytePolicy.transportMaximumBytes() + "B")))
+            .bind(
+                "spring.grpc.server",
+                org.springframework.boot.grpc.server.autoconfigure.GrpcServerProperties.class)
+            .get();
     var serverFactory =
         new net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory(
             "127.0.0.1:0",
@@ -2680,7 +2691,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
             pki.trustManagerFactory(),
             io.grpc.TlsServerCredentials.ClientAuth.REQUIRE,
             bytePolicy,
-            bytePolicy.transportMaximumBytes());
+            Math.toIntExact(transportProperties.getMaxInboundMessageSize().toBytes()));
     serverFactory.addService(
         io.grpc.ServerInterceptors.intercept(
             adapter, new net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor()));

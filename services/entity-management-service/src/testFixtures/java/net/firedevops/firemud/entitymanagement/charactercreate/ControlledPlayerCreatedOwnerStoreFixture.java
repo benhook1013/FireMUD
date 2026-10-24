@@ -322,7 +322,7 @@ public final class ControlledPlayerCreatedOwnerStoreFixture {
         .build();
   }
 
-  private static CharacterCreateOperatorAction rosterSourceAction(
+  public static CharacterCreateOperatorAction rosterSourceAction(
       EntityEmptySelectedSourceIntakeReceipt entitySource,
       UUID accountId,
       AuthenticatedSource source) {

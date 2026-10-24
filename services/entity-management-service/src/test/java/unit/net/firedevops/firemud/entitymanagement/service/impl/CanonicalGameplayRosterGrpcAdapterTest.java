@@ -592,6 +592,31 @@ class CanonicalGameplayRosterGrpcAdapterTest {
   }
 
   @Test
+  void changedCreatedSnapshotReturnsFailedPreconditionWithoutInternalMetric() {
+    var createdService = mock(EntityPlayerCreatedRosterService.class);
+    var request = selectedCreatedRequest();
+    when(createdService.selected(request))
+        .thenThrow(new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE"));
+    var meters = new SimpleMeterRegistry();
+    var adapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            mock(CanonicalGameplayRosterService.class),
+            mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+            createdService,
+            meters);
+    var observer =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1
+                .CanonicalSelectedPlayerCreatedCharacterResponse>();
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME,
+        () -> adapter.readSelectedPlayerCreatedCharacter(request, observer));
+    assertOnlyStatus(observer, Status.Code.FAILED_PRECONDITION);
+    assertThat(meters.counter("grpc.app_error", "code", "INTERNAL").count()).isZero();
+    verify(createdService).selected(request);
+  }
+
+  @Test
   void expectedOwnerRejectionsReturnFailedPreconditionWithoutPartialResponse() {
     for (String reasonCode :
         java.util.List.of(

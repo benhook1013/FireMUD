@@ -139,7 +139,7 @@ class BoundedGrpcServerFactoryTest {
             pki.trustManagerFactory(),
             TlsServerCredentials.ClientAuth.REQUIRE,
             policy,
-            policy.transportMaximumBytes());
+            explicitTransportMaximum(policy));
     factory.addService(
         ServerServiceDefinition.builder("test.Owner")
             .addMethod(ordinary, handler())
@@ -212,6 +212,21 @@ class BoundedGrpcServerFactoryTest {
         .satisfies(failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(code));
   }
 
+  private static int explicitTransportMaximum(GrpcRequestBytePolicy policy) {
+    var properties =
+        new org.springframework.boot.context.properties.bind.Binder(
+                new org.springframework.boot.context.properties.source
+                    .MapConfigurationPropertySource(
+                    java.util.Map.of(
+                        "spring.grpc.server.max-inbound-message-size",
+                        policy.transportMaximumBytes() + "B")))
+            .bind(
+                "spring.grpc.server",
+                org.springframework.boot.grpc.server.autoconfigure.GrpcServerProperties.class)
+            .get();
+    return Math.toIntExact(properties.getMaxInboundMessageSize().toBytes());
+  }
+
   private static BoundedGrpcServerFactory factory(GrpcRequestBytePolicy policy) {
     return new BoundedGrpcServerFactory(
         "127.0.0.1:0",
@@ -220,7 +235,7 @@ class BoundedGrpcServerFactoryTest {
         null,
         TlsServerCredentials.ClientAuth.NONE,
         policy,
-        policy.transportMaximumBytes());
+        explicitTransportMaximum(policy));
   }
 
   private static MethodDescriptor<byte[], byte[]> method(String name, AtomicInteger parses) {

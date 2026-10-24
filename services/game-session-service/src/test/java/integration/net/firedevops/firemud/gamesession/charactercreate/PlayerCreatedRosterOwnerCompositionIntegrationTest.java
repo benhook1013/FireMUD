@@ -777,6 +777,17 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
                 net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy.ordinary();
             default -> throw new IllegalArgumentException("Unknown controlled owner server role");
           };
+      var transportProperties =
+          new org.springframework.boot.context.properties.bind.Binder(
+                  new org.springframework.boot.context.properties.source
+                      .MapConfigurationPropertySource(
+                      java.util.Map.of(
+                          "spring.grpc.server.max-inbound-message-size",
+                          bytePolicy.transportMaximumBytes() + "B")))
+              .bind(
+                  "spring.grpc.server",
+                  org.springframework.boot.grpc.server.autoconfigure.GrpcServerProperties.class)
+              .get();
       var factory =
           new net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory(
               "127.0.0.1:0",
@@ -785,7 +796,7 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
               pki.trustManagerFactory(),
               io.grpc.TlsServerCredentials.ClientAuth.REQUIRE,
               bytePolicy,
-              bytePolicy.transportMaximumBytes());
+              Math.toIntExact(transportProperties.getMaxInboundMessageSize().toBytes()));
       for (var service : services)
         factory.addService(
             ServerInterceptors.intercept(
