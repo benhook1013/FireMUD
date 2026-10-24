@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
@@ -347,7 +348,8 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
             admissions,
             org.mockito.Mockito.mock(
                 net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
-                    .class));
+                    .class),
+            new SimpleMeterRegistry());
     assertThat(
             transaction.<Boolean>execute(
                 ignored -> repository.sealTargetRetirement(request, current)))
@@ -954,6 +956,7 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
               return snapshot;
             });
     var client = org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class);
+    var metrics = new SimpleMeterRegistry();
     org.mockito.Mockito.when(client.read(org.mockito.ArgumentMatchers.any()))
         .thenAnswer(
             call -> {
@@ -976,10 +979,18 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                     .class),
             routes,
             admissions,
-            client);
+            client,
+            metrics);
     assertThat(owner.retireTarget(request)).isFalse();
     var marker = repository.read(request).getRecoveryUuid();
     assertThat(marker).isNotEmpty();
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.recovery.failure")
+                .tag("kind", "unavailable")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
     assertThat(repository.read(request).getTerminalOutcome()).isEmpty();
     assertThatThrownBy(
             () -> transaction.execute(ignored -> repository.record(request, receipt(request))))
@@ -1001,6 +1012,14 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         .when(client)
         .read(org.mockito.ArgumentMatchers.any());
     assertThat(owner.retireTarget(request)).isFalse();
+    assertThat(repository.read(request).getRecoveryUuid()).isEqualTo(marker);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.recovery.failure")
+                .tag("kind", "unavailable")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
     assertThat(repository.read(request).getTerminalOutcome()).isEqualTo("DENIED");
     assertThat(repository.read(request).getRetirementUuid()).isEmpty();
     Thread.sleep(5500L);
@@ -1374,11 +1393,58 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.MENU);
           });
     }
+    var originalFenceUuid =
+        dsl.fetchSingle(
+                "SELECT target_fence_uuid FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                UUID.fromString(first.getOperationUuid()))
+            .get("target_fence_uuid", UUID.class);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT target_fence_uuid FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                    UUID.fromString(second.getOperationUuid()))
+                .get("target_fence_uuid", UUID.class))
+        .isEqualTo(originalFenceUuid);
+    for (var original : List.of(first, second)) {
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT owner_fence FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(original.getOperationUuid()))
+                  .get("owner_fence", Long.class))
+          .isEqualTo(1L);
+    }
     Thread.sleep(5L);
     assertThat(
             transaction.<Boolean>execute(
                 ignored -> repository.sealTargetRetirement(first, current(first))))
         .isTrue();
+    for (var original : List.of(first, second)) {
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT target_fence_uuid FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(original.getOperationUuid()))
+                  .get("target_fence_uuid", UUID.class))
+          .isEqualTo(originalFenceUuid);
+    }
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET owner_fence = 2 WHERE operation_uuid = ?",
+                    UUID.fromString(first.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    for (var original : List.of(first, second)) {
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT owner_fence FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(original.getOperationUuid()))
+                  .get("owner_fence", Long.class))
+          .isEqualTo(1L);
+    }
+    var retiredFence =
+        dsl.fetchSingle(
+            "SELECT owner_fence, fence_state FROM game_session_canonical_roster_target_fences WHERE target_fence_uuid = ?",
+            originalFenceUuid);
+    assertThat(retiredFence.get("owner_fence", Long.class)).isEqualTo(1L);
+    assertThat(retiredFence.get("fence_state", String.class)).isEqualTo("RETIRED");
     var candidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
             UUID.fromString(repository.read(first).getTargetFenceUuid()), first, "RETIRED");
@@ -1850,7 +1916,8 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         org.mockito.Mockito.mock(
             net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class),
         admissions,
-        org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class));
+        org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class),
+        new SimpleMeterRegistry());
   }
 
   private static GetCanonicalGameplayRosterReferenceRequest publishedRequest(
