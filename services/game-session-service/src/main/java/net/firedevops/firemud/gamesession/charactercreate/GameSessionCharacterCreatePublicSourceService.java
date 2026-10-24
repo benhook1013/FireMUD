@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjecti
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadGrpcCodec;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
@@ -441,10 +442,11 @@ public final class GameSessionCharacterCreatePublicSourceService {
     var terminal = GameDesignPublicationTerminalEvidence.fromStored(set.terminalEvidenceBytes());
     var association = authored.associationRead().association();
     var bundle = authored.associationRead().releaseBundle();
+    var associationWorld = authored.associationRead().worldPublishedStartLocationEvidence();
     var worldRelease = lifecycle.launchBinding().releaseAttestation();
     var sourceRelease =
         net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence
-            .releaseContent(bundle, worldRelease.worldStartLocationEvidence());
+            .releaseContent(bundle, associationWorld);
     if (!namespace.equals(operation.world().request().targetNamespace())
         || !route.canonicalTenantId().equals(set.target().canonicalTenantId())
         || !route.canonicalVersionId().equals(set.target().canonicalVersionId())
@@ -460,6 +462,34 @@ public final class GameSessionCharacterCreatePublicSourceService {
             sourceRelease.canonicalBytes(), terminal.releaseContent().canonicalBytes())
         || !set.manifestHash().equals(bundle.getManifestHash())
         || !set.manifestHash().equals(worldRelease.manifestHash())
+        || sourceRelease.manifestSchemaVersion() != worldRelease.manifestSchemaVersion()
+        || !sourceRelease.artifactDigests().equals(worldRelease.artifactDigests())
+        || !sourceRelease
+            .requiredManifestAssetKeys()
+            .equals(worldRelease.requiredManifestAssetKeys())
+        || !sourceRelease.commandDefinitions().equals(worldRelease.commandDefinitions())
+        || !sourceRelease.generationConfigRevision().equals(worldRelease.generationConfigRevision())
+        || !sourceRelease.participantDigests().stream()
+            .map(
+                value ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        value.participantKey(),
+                        value.scopeValue(),
+                        value.baseVersionId() != null,
+                        value.baseVersionId(),
+                        value.appliedCommitId(),
+                        value.contentDigest(),
+                        value.digestSchemaVersion(),
+                        value.abilitySchemaDigest() != null,
+                        value.abilitySchemaDigest()))
+            .toList()
+            .equals(worldRelease.participantDigests())
+        || !Arrays.equals(
+            associationWorld.canonicalBytes(),
+            worldRelease.worldStartLocationEvidence().canonicalBytes())
+        || !Arrays.equals(
+            worldRelease.worldStartLocationEvidence().canonicalBytes(),
+            operation.world().canonicalBytes())
         || set.versionNumber() != bundle.getVersionNumber()) throw missing();
     var matches =
         set.policies().stream()
