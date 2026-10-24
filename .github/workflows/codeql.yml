@@ -34,7 +34,7 @@ jobs:
       should_run: ${{ steps.compute.outputs.should_run }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -154,7 +154,7 @@ jobs:
 
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -178,7 +178,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL (Java PR Fast Path)
         if: matrix.language == 'java' && github.event_name == 'pull_request'
-        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -186,7 +186,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL (Java Full Scan)
         if: matrix.language == 'java' && github.event_name != 'pull_request'
-        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -194,7 +194,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL
         if: matrix.language != 'java'
-        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -204,7 +204,7 @@ jobs:
         run: ./gradlew codeqlClasses
 
       - name: 📊 Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
 
   codeql-gate:
     name: CodeQL Gate
@@ -220,7 +220,7 @@ jobs:
     if: ${{ always() && github.event_name == 'pull_request' }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
