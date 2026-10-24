@@ -219,6 +219,64 @@ class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
     assertStatus(invalidObserver, Status.Code.FAILED_PRECONDITION);
   }
 
+  @Test
+  void referenceSourceMismatchAloneUsesStaleAuthorityStatusWithoutLeakingOwnerReason() {
+    var sources = provider();
+    @SuppressWarnings("unchecked")
+    ObjectProvider<net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+        references = mock(ObjectProvider.class);
+    var owner =
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    when(references.getIfAvailable()).thenReturn(owner);
+    var published = PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute();
+    var request =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            UUID.randomUUID(),
+            ACCOUNT,
+            UUID.randomUUID(),
+            NAMESPACE,
+            net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient.expectedTarget(
+                published));
+    var adapter = new CanonicalGameplayRosterOwnerReadGrpcAdapter(sources, NAMESPACE, references);
+    var failures =
+        List.of(
+            Map.entry(
+                new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
+                Status.Code.FAILED_PRECONDITION),
+            Map.entry(
+                new IllegalStateException(
+                    "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: unexpected detail"),
+                Status.Code.INTERNAL),
+            Map.entry(
+                new RuntimeException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
+                Status.Code.INTERNAL),
+            Map.entry(
+                new IllegalStateException("unrelated owner invariant"), Status.Code.INTERNAL));
+    for (var failure : failures) {
+      doThrow(failure.getKey()).when(owner).read(request);
+      @SuppressWarnings("unchecked")
+      StreamObserver<
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse>
+          observer = mock(StreamObserver.class);
+      runAsPeer(
+          ENTITY_SERVICE,
+          NAMESPACE,
+          () -> adapter.getCanonicalGameplayRosterReference(request, observer));
+      assertStatus(observer, failure.getValue());
+      var captured = org.mockito.ArgumentCaptor.forClass(Throwable.class);
+      verify(observer).onError(captured.capture());
+      assertThat(Status.fromThrowable(captured.getValue()).getDescription())
+          .isEqualTo(
+              failure.getValue() == Status.Code.FAILED_PRECONDITION
+                  ? "Original roster selection authority is stale or invalid"
+                  : "Original roster selection owner read failed");
+      verify(observer, never()).onNext(any());
+    }
+    verify(owner, org.mockito.Mockito.times(failures.size())).read(request);
+    org.mockito.Mockito.verifyNoInteractions(sources);
+  }
+
   private static void assertStatus(StreamObserver<?> observer, Status.Code expected) {
     var errorCaptor = org.mockito.ArgumentCaptor.forClass(Throwable.class);
     verify(observer).onError(errorCaptor.capture());

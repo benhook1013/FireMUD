@@ -156,6 +156,13 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
                     "storage unavailable"),
                 Status.Code.UNAVAILABLE),
             java.util.Map.entry(
+                new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
+                Status.Code.FAILED_PRECONDITION),
+            java.util.Map.entry(
+                new IllegalStateException(
+                    "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: unrelated detail"),
+                Status.Code.INTERNAL),
+            java.util.Map.entry(
                 new IllegalStateException("unexpected retained fence invariant"),
                 Status.Code.INTERNAL));
     try (var channel = channel("entity")) {
@@ -169,6 +176,75 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
       }
     }
     verify(owner, times(cases.size())).read(request);
+  }
+
+  @Test
+  void authenticatedReferenceReadUsesActualOwnerCurrentSourceMismatchBoundary() throws Exception {
+    var request = request();
+    var references =
+        mock(
+            net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository
+                .class);
+    when(references.read(request))
+        .thenReturn(
+            CanonicalGameplayRosterReferenceEvidence.response(
+                request, 1L, UUID.randomUUID(), null));
+    var sources = mock(CanonicalPublishedPlayerRouteReadService.class);
+    when(sources.readCurrent(
+            any(
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+                    .class)))
+        .thenAnswer(
+            call -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isSynchronizationActive())
+                  .isFalse();
+              var evidence =
+                  mock(
+                      net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                          .class);
+              when(evidence.request()).thenReturn(call.getArgument(0));
+              when(evidence.admissionPointerSnapshotDigest()).thenReturn("0".repeat(64));
+              return evidence;
+            });
+    // Real owner comparison and authenticated handler; repositories/source remain controlled
+    // doubles. This does not establish SQL or genuine upstream source custody.
+    var actualOwner =
+        new CanonicalGameplayRosterReferenceOwner(
+            references,
+            org.springframework.transaction.support.TransactionOperations.withoutTransaction(),
+            sources,
+            mock(net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class),
+            mock(
+                net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository
+                    .class),
+            mock(
+                net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+                    .class));
+    start("server", actualOwner);
+    try (var channel = channel("entity")) {
+      assertThatThrownBy(() -> stub(channel.channel()).getCanonicalGameplayRosterReference(request))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure -> {
+                assertThat(failure.getStatus().getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                assertThat(failure.getStatus().getDescription())
+                    .isEqualTo("Original roster selection authority is stale or invalid");
+              });
+    }
+    verify(references).read(request);
+    verify(sources)
+        .readCurrent(
+            any(
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+                    .class));
+    verifyNoInteractions(owner);
   }
 
   @Test
@@ -430,11 +506,16 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
   }
 
   private void start(String identity, boolean ownerPresent) throws Exception {
+    start(identity, ownerPresent ? owner : null);
+  }
+
+  private void start(String identity, CanonicalGameplayRosterReferenceOwner availableOwner)
+      throws Exception {
     @SuppressWarnings("unchecked")
     ObjectProvider<CanonicalPublishedPlayerRouteReadService> route = mock(ObjectProvider.class);
     @SuppressWarnings("unchecked")
     ObjectProvider<CanonicalGameplayRosterReferenceOwner> provider = mock(ObjectProvider.class);
-    when(provider.getIfAvailable()).thenReturn(ownerPresent ? owner : null);
+    when(provider.getIfAvailable()).thenReturn(availableOwner);
     var serverIdentity = pki.identity(identity);
     server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))

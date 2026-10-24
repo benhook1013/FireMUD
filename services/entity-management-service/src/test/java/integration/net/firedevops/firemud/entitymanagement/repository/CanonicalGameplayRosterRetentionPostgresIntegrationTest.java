@@ -410,6 +410,71 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   }
 
   @Test
+  void longerEntityClosureHorizonPreventsEarlyTransferEvenWhenOwnerAlreadyRetired() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    var minimum = Duration.ofSeconds(3);
+    var closed =
+        transaction.execute(ignored -> repository.closeAdmission(recovery, owner, policy(minimum)));
+    var candidate =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    var denied = owner.toBuilder().setTerminalOutcome("DENIED").build();
+    var retired = retirement(owner, null);
+    // A GS owner may already have retired under a shorter independent local horizon. Neither
+    // its positive proof nor elapsed GS time may expose an ACK intent before Entity can purge.
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    for (var terminalOwner : List.of(denied, retired)) {
+      assertThat(
+              transaction.<Boolean>execute(
+                  ignored -> repository.purgeClosedAdmission(candidate, terminalOwner)))
+          .isFalse();
+      var pendingTransfers =
+          transaction.execute(ignored -> repository.retirementTransfers(null, 1));
+      assertThat(pendingTransfers).isEmpty();
+      assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers")))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT recovery_response FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                      local.requestUuid())
+                  .get(0, byte[].class))
+          .isEqualTo(closed.toByteArray());
+    }
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM entity_canonical_roster_admissions"))
+        .isInstanceOf(DataAccessException.class);
+
+    dsl.fetch("SELECT pg_sleep(3.1)");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      assertThat(repository.purgeClosedAdmission(candidate, retired)).isTrue();
+                      assertThat(repository.retirementTransfers(null, 1)).hasSize(1);
+                      assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions")))
+                          .isZero();
+                      throw new IllegalStateException("controlled transfer/purge rollback");
+                    }))
+        .hasMessage("controlled transfer/purge rollback");
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers"))).isZero();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.purgeClosedAdmission(candidate, retired)))
+        .isTrue();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    var transfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(transfer.state()).isEqualTo("PENDING_ACK");
+    assertThat(transfer.original()).isEqualTo(recovery.getOriginalSelection());
+    assertThat(transfer.acknowledgementRequest().getAdmissionUuid())
+        .isEqualTo(closed.getAdmissionUuid());
+    assertThat(transfer.acknowledgementRequest().getObservedRetirement()).isEqualTo(retired);
+    assertThat(transfer.acknowledgementRequest().getMinimumRetentionMillis())
+        .isEqualTo(minimum.toMillis());
+  }
+
+  @Test
   void qualifiedDisposalExtendsClosedAdmissionRetentionWhenRetirementHorizonIncreases() {
     var local = localRequest();
     var recovery = recovery(local);

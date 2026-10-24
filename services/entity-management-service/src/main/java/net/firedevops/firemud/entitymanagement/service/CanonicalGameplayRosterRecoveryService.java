@@ -2,8 +2,10 @@ package net.firedevops.firemud.entitymanagement.service;
 
 import java.util.Objects;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.RecoveryConflictException;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
 import org.springframework.transaction.support.TransactionOperations;
@@ -35,8 +37,20 @@ public final class CanonicalGameplayRosterRecoveryService {
       throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_REQUIRES_NO_AMBIENT_TRANSACTION");
     }
     var owner = ownerClient.getCanonicalGameplayRosterReference(request.getOriginalSelection());
-    CanonicalGameplayRosterRecoveryEvidence.requireOwnerRecovery(request, owner);
-    return Objects.requireNonNull(
-        transactions.execute(ignored -> repository.closeAdmission(request, owner, policy)));
+    try {
+      CanonicalGameplayRosterReferenceEvidence.requireResponse(
+          request.getOriginalSelection(), owner);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_OWNER_RESPONSE_INVALID", invalid);
+    }
+    if (!request.getRecoveryUuid().equals(owner.getRecoveryUuid())) {
+      throw new RecoveryConflictException("CANONICAL_ROSTER_RECOVERY_CONFLICT");
+    }
+    try {
+      return Objects.requireNonNull(
+          transactions.execute(ignored -> repository.closeAdmission(request, owner, policy)));
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_RECEIPT_INVALID", invalid);
+    }
   }
 }
