@@ -70,13 +70,70 @@ public final class CanonicalGameplayRosterSelectionService {
       return new Denied(routeFailure(unavailableOrInvalid));
     }
 
+    Result result =
+        selectForCurrent(
+            authenticatedContext,
+            selector,
+            expectedMenuIdentity,
+            current,
+            accountUuid.orElseThrow());
+    net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository
+            .SelectionOutcome
+        outcome = null;
+    if (result instanceof SelectedOwnerReference) {
+      outcome =
+          net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository
+              .SelectionOutcome.SELECTED;
+    } else if (result instanceof SelectionRequired) {
+      outcome =
+          net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository
+              .SelectionOutcome.MENU;
+    } else if (result instanceof Denied denied
+        && switch (denied.reason()) {
+          case NO_PRESEEDED_ACTOR,
+              INVALID_SELECTOR,
+              SELECTOR_OUT_OF_RANGE,
+              MISSING_MENU_IDENTITY,
+              STALE_MENU_IDENTITY,
+              ROUTE_CHANGED ->
+              true;
+          default -> false;
+        }) {
+      outcome =
+          net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository
+              .SelectionOutcome.DENIED;
+    }
+    if (outcome != null) {
+      try {
+        rosterClient.completeSelection(current, authenticatedContext, outcome);
+      } catch (RuntimeException unavailableOrRecoverable) {
+        return result instanceof Denied ? result : new Denied(Denial.ROSTER_UNAVAILABLE);
+      }
+    }
+    return result;
+  }
+
+  private Result selectForCurrent(
+      PlayerExecutionContext authenticatedContext,
+      String selector,
+      SelectionMenuIdentity expectedMenuIdentity,
+      CanonicalPublishedPlayerRoute current,
+      UUID accountUuid) {
     CanonicalGameplayRosterClient.PreseededRosterSnapshot snapshot;
     try {
+      rosterClient.reserveSelectionInput(
+          current,
+          authenticatedContext,
+          selector,
+          expectedMenuIdentity == null ? null : expectedMenuIdentity.snapshotUuid(),
+          expectedMenuIdentity == null ? null : expectedMenuIdentity.snapshotDigest());
       snapshot = rosterClient.listPreseededRoster(current, authenticatedContext);
     } catch (StatusRuntimeException failure) {
       return new Denied(rosterFailure(failure));
     } catch (RuntimeException invalidOrUnavailable) {
-      return new Denied(Denial.INVALID_ROSTER_PROOF);
+      Denial failure = routeFailure(invalidOrUnavailable);
+      return new Denied(
+          failure == Denial.INVALID_ROUTE_PROOF ? Denial.INVALID_ROSTER_PROOF : failure);
     }
     Denial listFreshnessFailure = requireExactCurrentRoute(current);
     if (listFreshnessFailure != null) {
@@ -84,7 +141,7 @@ public final class CanonicalGameplayRosterSelectionService {
     }
 
     Optional<CanonicalGameplayActorSelection.ValidatedRoster> validated =
-        CanonicalGameplayActorSelection.validate(snapshot, accountUuid.orElseThrow(), current);
+        CanonicalGameplayActorSelection.validate(snapshot, accountUuid, current);
     if (validated.isEmpty()) {
       return new Denied(Denial.INVALID_ROSTER_PROOF);
     }
@@ -113,7 +170,6 @@ public final class CanonicalGameplayRosterSelectionService {
         (CanonicalGameplayActorSelection.Selected) selection;
     PlayerExecutionContext selectedContext =
         authenticatedContext.toBuilder()
-            .setRequestId(UUID.randomUUID().toString())
             .setCharacterId(selected.characterUuid().toString())
             .build();
 

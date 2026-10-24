@@ -1,0 +1,2724 @@
+package net.firedevops.firemud.entitymanagement.repository;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.ReferenceKind;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterExecutionContext;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionBinding;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionPolicy;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshot;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshotReference;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
+import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+/**
+ * Controlled SQL owner-family proof only. Fixture owner evidence is synthetic; these tests do not
+ * authenticate upstream release/retirement authority or prove eligible disposal.
+ */
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
+class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
+  @Container
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  private String schema;
+  private DSLContext dsl;
+  private TransactionTemplate transaction;
+  private CanonicalGameplayRosterRetentionRepository repository;
+  private CanonicalGameplayRosterRetentionBinding binding;
+
+  @BeforeEach
+  void upgradeRetainedV1011ActorReceiptAndSealedSnapshot() {
+    schema = "roster_retention_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    migrate(dataSource, "1011");
+    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    binding =
+        new CanonicalGameplayRosterRetentionBinding(
+            UUID.randomUUID(),
+            new CanonicalGameplayRosterSnapshotReference(UUID.randomUUID(), "a".repeat(64)),
+            target());
+    transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+    List<String> retained = retainedRows();
+    migrate(dataSource, "latest");
+    assertThat(retainedRows()).containsExactlyElementsOf(retained);
+    assertInheritedNullableFieldsRemainNull();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireUnsealedTarget(localRequest())))
+        .as("retained snapshot classification must be initialized before acquisition")
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+    assertThat(retainedRows()).containsExactlyElementsOf(retained);
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isFalse();
+  }
+
+  @AfterEach
+  void dropOwnedFixture() {
+    if (schema != null) {
+      DSL.using(dataSource(null), SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA \"" + schema.replaceAll("[^a-zA-Z0-9_]", "") + "\" CASCADE");
+    }
+  }
+
+  @Test
+  void malformedOriginalPageKeepsItsKeyAndPassesLaterSnapshotWithoutChangingSource() {
+    var firstSnapshot = retainedSnapshot();
+    var firstLocal = localRequest();
+    bindSnapshot(firstLocal, recoveryOwner(recovery(firstLocal)), firstSnapshot);
+    UUID badSnapshot = binding.snapshot().snapshotUuid();
+    binding =
+        new CanonicalGameplayRosterRetentionBinding(
+            UUID.randomUUID(),
+            new CanonicalGameplayRosterSnapshotReference(
+                UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"), "b".repeat(64)),
+            binding.target());
+    transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+    var laterLocal = localRequest();
+    bindSnapshot(laterLocal, recoveryOwner(recovery(laterLocal)), retainedSnapshot());
+    corruptRestoredBytes(
+        "entity_canonical_roster_original_selections", "owner_request", firstLocal.requestUuid());
+    String retained =
+        pageSourceRow(
+            "entity_canonical_roster_original_selections",
+            "operation_uuid",
+            firstLocal.requestUuid());
+    var firstPage = transaction.execute(ignored -> repository.candidates(null, 1));
+    assertThat(firstPage).hasSize(1);
+    assertThat(firstPage.getFirst().valid()).isFalse();
+    assertThat(firstPage.getFirst().snapshotUuid()).isEqualTo(badSnapshot);
+    var laterPage =
+        transaction.execute(
+            ignored -> repository.candidates(firstPage.getFirst().snapshotUuid(), 1));
+    assertThat(laterPage).hasSize(1);
+    assertThat(laterPage.getFirst().valid()).isTrue();
+    assertThat(laterPage.getFirst().ownerRequest().getOperationUuid())
+        .isEqualTo(laterLocal.requestUuid().toString());
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_original_selections",
+                "operation_uuid",
+                firstLocal.requestUuid()))
+        .isEqualTo(retained);
+  }
+
+  @Test
+  void malformedRecoveryAndTransferPagesPassLaterRowsAndKeepInvalidSources() {
+    for (int index = 0; index < 2; index++) {
+      var recovery = recovery(localRequest());
+      transaction.executeWithoutResult(
+          ignored ->
+              repository.closeAdmission(
+                  recovery, recoveryOwner(recovery), policy(Duration.ofMillis(1))));
+    }
+    var closures = transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 2));
+    var bad = closures.getFirst();
+    corruptRestoredBytes(
+        "entity_canonical_roster_admissions", "recovery_response", bad.operationUuid());
+    String retainedClosure =
+        pageSourceRow("entity_canonical_roster_admissions", "operation_uuid", bad.operationUuid());
+    var firstClosure =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    assertThat(firstClosure.valid()).isFalse();
+    assertThat(firstClosure.operationUuid()).isEqualTo(bad.operationUuid());
+    assertThat(
+            transaction
+                .execute(
+                    ignored ->
+                        repository.closedAdmissionCandidates(firstClosure.operationUuid(), 1))
+                .getFirst()
+                .valid())
+        .isTrue();
+    // Explicit inconsistent-restore fixtures: production never disables immutable source guards.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers DISABLE TRIGGER USER");
+          for (int index = 0; index < closures.size(); index++) {
+            var closure = closures.get(index);
+            var response = closure.response();
+            dsl.execute(
+                "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, closed_admission_receipt, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'WAITING_RETIREMENT')",
+                new UUID(0, index + 1),
+                closure.operationUuid(),
+                response.getRequest().getOriginalSelection().toByteArray(),
+                closure.admissionUuid(),
+                response.toByteArray(),
+                response.getOwnerFence(),
+                UUID.fromString(response.getTargetFenceUuid()));
+          }
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers ENABLE TRIGGER USER");
+        });
+    corruptRestoredBytes(
+        "entity_canonical_roster_retirement_transfers", "original_request", bad.operationUuid());
+    String retainedTransfer =
+        pageSourceRow(
+            "entity_canonical_roster_retirement_transfers", "operation_uuid", bad.operationUuid());
+    var firstTransfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(firstTransfer.valid()).isFalse();
+    assertThat(firstTransfer.observationUuid()).isEqualTo(new UUID(0, 1));
+    var laterTransfer =
+        transaction
+            .execute(ignored -> repository.retirementTransfers(firstTransfer.observationUuid(), 1))
+            .getFirst();
+    assertThat(laterTransfer.valid()).isTrue();
+    assertThat(laterTransfer.observationUuid()).isEqualTo(new UUID(0, 2));
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_admissions", "operation_uuid", bad.operationUuid()))
+        .isEqualTo(retainedClosure);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_retirement_transfers",
+                "operation_uuid",
+                bad.operationUuid()))
+        .isEqualTo(retainedTransfer);
+  }
+
+  @Test
+  void conflictingTransferRemainsProtectedWhileDurablePreparationCursorPassesIt() {
+    var snapshot = retainedSnapshot();
+    var first = recoveryOwner(recovery(localRequest()));
+    var owners = new java.util.ArrayList<GetCanonicalGameplayRosterReferenceResponse>();
+    for (int index = 0; index < 5; index++) {
+      var local = localRequest();
+      var owner =
+          CanonicalGameplayRosterReferenceEvidence.response(
+              recovery(local).getOriginalSelection(),
+              first.getOwnerFence(),
+              UUID.fromString(first.getTargetFenceUuid()),
+              null);
+      owners.add(owner);
+      bindSnapshot(local, owner, snapshot);
+    }
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    var anchor =
+        owners.stream()
+            .filter(owner -> owner.getRequest().equals(candidate.ownerRequest()))
+            .findFirst()
+            .orElseThrow();
+    var sealedProof = retirement(anchor, snapshot);
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.observeRetirement(candidate, sealedProof, policy(Duration.ofMillis(1))));
+    UUID bad = UUID.fromString(candidate.ownerRequest().getOperationUuid());
+    var operations =
+        dsl.fetch(
+                "SELECT operation_uuid FROM entity_canonical_roster_original_selections ORDER BY operation_uuid")
+            .getValues(0, UUID.class);
+    // Explicit inconsistent restore: nonce, positive proof and ACK intent conflicts stay protected.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers DISABLE TRIGGER USER");
+          for (int index = 0; index < 4; index++) {
+            UUID operation = operations.get(index);
+            var original =
+                owners.stream()
+                    .filter(
+                        owner -> owner.getRequest().getOperationUuid().equals(operation.toString()))
+                    .findFirst()
+                    .orElseThrow()
+                    .getRequest();
+            UUID actualNonce =
+                dsl.fetchSingle(
+                        "SELECT admission_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                        operation)
+                    .get(0, UUID.class);
+            UUID observation = new UUID(0, index + 1);
+            if (index == 0 || index == 3) {
+              // The fourth original is a qualified WAITING carrier and must promote before release.
+              dsl.execute(
+                  "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'WAITING_RETIREMENT')",
+                  observation,
+                  operation,
+                  original.toByteArray(),
+                  index == 0 ? UUID.randomUUID() : actualNonce,
+                  snapshot.snapshotUuid(),
+                  snapshot.snapshotDigest(),
+                  sealedProof.getOwnerFence(),
+                  UUID.fromString(sealedProof.getTargetFenceUuid()));
+            } else {
+              var observed = index == 1 ? retirement(anchor, snapshot) : sealedProof;
+              var intent =
+                  net.firedevops.firemud.gamesession.v1
+                      .CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+                      .setSchemaVersion(1)
+                      .setOriginalSelection(original)
+                      .setObservedRetirement(observed)
+                      .setObservationUuid(observation.toString())
+                      .setAdmissionUuid((index == 2 ? UUID.randomUUID() : actualNonce).toString())
+                      .setSnapshotUuid(snapshot.snapshotUuid().toString())
+                      .setSnapshotDigest(snapshot.snapshotDigest())
+                      .setMinimumRetentionMillis(1)
+                      .build();
+              CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(intent);
+              dsl.execute(
+                  "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, observed_retirement, acknowledgement_request, request_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'PENDING_ACK', ?, ?, ?)",
+                  observation,
+                  operation,
+                  original.toByteArray(),
+                  actualNonce,
+                  snapshot.snapshotUuid(),
+                  snapshot.snapshotDigest(),
+                  sealedProof.getOwnerFence(),
+                  UUID.fromString(sealedProof.getTargetFenceUuid()),
+                  observed.toByteArray(),
+                  intent.toByteArray(),
+                  CanonicalGameplayRosterRetirementEvidence.requestDigest(intent));
+            }
+          }
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_retirement_transfers ENABLE TRIGGER USER");
+        });
+    var protectedSources =
+        operations.subList(0, 3).stream()
+            .map(
+                operation ->
+                    pageSourceRow(
+                        "entity_canonical_roster_retirement_transfers",
+                        "operation_uuid",
+                        operation))
+            .toList();
+    String source =
+        pageSourceRow("entity_canonical_roster_original_selections", "operation_uuid", bad);
+    String transfer =
+        pageSourceRow("entity_canonical_roster_retirement_transfers", "operation_uuid", bad);
+    assertThat(preparePage(1)).isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT retirement_preparation_cursor FROM entity_canonical_roster_retention_lifecycle")
+                .get(0, UUID.class))
+        .isEqualTo(bad);
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(preparePage(1)).isZero();
+    assertThat(preparePage(1)).isZero();
+    assertThat(preparePage(1)).isEqualTo(1);
+    assertThat(preparePage(1)).isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retention_releases")))
+        .isEqualTo(2);
+    assertThat(
+            dsl.fetchExists(
+                DSL.selectOne()
+                    .from("entity_canonical_roster_retention_releases")
+                    .where("reference_uuid = ?", bad)))
+        .isFalse();
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var incomplete = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT retirement_prepared_count FROM entity_canonical_roster_retention_lifecycle")
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(incomplete))).isFalse();
+    assertThat(pageSourceRow("entity_canonical_roster_original_selections", "operation_uuid", bad))
+        .isEqualTo(source);
+    assertThat(pageSourceRow("entity_canonical_roster_retirement_transfers", "operation_uuid", bad))
+        .isEqualTo(transfer);
+    assertThat(
+            operations.subList(0, 3).stream()
+                .map(
+                    operation ->
+                        pageSourceRow(
+                            "entity_canonical_roster_retirement_transfers",
+                            "operation_uuid",
+                            operation))
+                .toList())
+        .containsExactlyElementsOf(protectedSources);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT transfer_state FROM entity_canonical_roster_retirement_transfers WHERE operation_uuid = ?",
+                    operations.get(3))
+                .get(0, String.class))
+        .isEqualTo("PENDING_ACK");
+  }
+
+  private void corruptRestoredBytes(String table, String column, UUID operation) {
+    // Explicit inconsistent-restore fixture; source immutability remains enabled in production.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute("ALTER TABLE " + table + " DISABLE TRIGGER USER");
+          dsl.execute(
+              "UPDATE " + table + " SET " + column + " = ? WHERE operation_uuid = ?",
+              new byte[] {(byte) 0x80},
+              operation);
+          dsl.execute("ALTER TABLE " + table + " ENABLE TRIGGER USER");
+        });
+  }
+
+  private String pageSourceRow(String table, String key, UUID value) {
+    return dsl.fetchSingle(
+            "SELECT row_to_json(t)::text || ':' || t.xmin::text FROM "
+                + table
+                + " t WHERE "
+                + key
+                + " = ?",
+            value)
+        .get(0, String.class);
+  }
+
+  @Test
+  void boundedTargetClassificationPassesTrueUnknownAndKeepsEveryAdmissionBoundaryClosed() {
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+
+    var unknownAccount = UUID.randomUUID();
+    var unknownLocal =
+        localRequest(
+            unknownAccount, target(), UUID.fromString("00000000-0000-4000-8000-000000000001"));
+    var laterKnownAccount = UUID.randomUUID();
+    var laterKnownLocal =
+        localRequest(
+            laterKnownAccount, target(), UUID.fromString("00000000-0000-4000-8000-000000000002"));
+    UUID unknownNonce = transaction.execute(ignored -> repository.reserveAdmission(unknownLocal));
+    UUID knownNonce = transaction.execute(ignored -> repository.reserveAdmission(laterKnownLocal));
+    transaction.executeWithoutResult(
+        ignored ->
+            dsl.execute(
+                "ALTER TABLE entity_canonical_roster_target_classifications DISABLE TRIGGER USER"));
+    try {
+      transaction.executeWithoutResult(
+          ignored ->
+              dsl.execute(
+                  "DELETE FROM entity_canonical_roster_target_classifications WHERE source_kind = 'ADMISSION' AND operation_uuid IN (?, ?)",
+                  unknownLocal.requestUuid(),
+                  laterKnownLocal.requestUuid()));
+    } finally {
+      transaction.executeWithoutResult(
+          ignored ->
+              dsl.execute(
+                  "ALTER TABLE entity_canonical_roster_target_classifications ENABLE TRIGGER USER"));
+    }
+    corruptRestoredBytes(
+        "entity_canonical_roster_admissions", "request_binding", unknownLocal.requestUuid());
+
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isEqualTo(1);
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isEqualTo(1);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT classification_state FROM entity_canonical_roster_target_classifications WHERE source_kind = 'ADMISSION' AND operation_uuid = ? AND admission_uuid = ?",
+                    unknownLocal.requestUuid(),
+                    unknownNonce)
+                .get(0, String.class))
+        .isEqualTo("UNKNOWN");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT classification_state FROM entity_canonical_roster_target_classifications WHERE source_kind = 'ADMISSION' AND operation_uuid = ? AND admission_uuid = ?",
+                    laterKnownLocal.requestUuid(),
+                    knownNonce)
+                .get(0, String.class))
+        .isEqualTo("KNOWN");
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isTrue();
+    var anotherAccount = UUID.randomUUID();
+    var blocked =
+        localRequest(
+            anotherAccount, target(), UUID.fromString("00000000-0000-4000-8000-000000000003"));
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(blocked)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThat(
+            dsl.fetchExists(
+                dsl.selectOne()
+                    .from("entity_canonical_roster_admissions")
+                    .where("operation_uuid = ?", blocked.requestUuid())))
+        .isFalse();
+  }
+
+  @Test
+  void unrelatedKnownTargetAdmissionProgressesAfterBoundedInitializationCompletes() {
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+    var unrelated = localRequest(UUID.randomUUID(), target(), UUID.randomUUID());
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(unrelated));
+    transaction.executeWithoutResult(ignored -> repository.requireAdmission(unrelated, nonce));
+    assertThat(
+            dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isFalse();
+  }
+
+  @Test
+  void sameTargetSiblingSealsReplayIndependentlyAfterRepositoryReconstruction() {
+    UUID classificationOperation = UUID.randomUUID();
+    UUID classificationHold = UUID.randomUUID();
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_snapshot_targets "
+                        + "WHERE snapshot_uuid = ? AND source_kind = 'SNAPSHOT' AND classification_state = 'KNOWN'",
+                    binding.snapshot().snapshotUuid())
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.acquire(
+                binding, classificationOperation, classificationHold, ReferenceKind.RECOVERY));
+    transaction.executeWithoutResult(
+        ignored -> repository.release(binding, UUID.randomUUID(), classificationHold));
+
+    var firstSnapshot = retainedSnapshot();
+    var secondSnapshot = insertSiblingSnapshot(firstSnapshot);
+    long ownerFence = 1L;
+    UUID targetFence = UUID.randomUUID();
+    UUID retirementUuid = UUID.randomUUID();
+    var firstLocal = localRequest();
+    var secondLocal = localRequest();
+    var firstOwner =
+        CanonicalGameplayRosterReferenceEvidence.response(
+            recovery(firstLocal).getOriginalSelection(),
+            ownerFence,
+            targetFence,
+            firstSnapshot.toWire());
+    var secondOwner =
+        CanonicalGameplayRosterReferenceEvidence.response(
+            recovery(secondLocal).getOriginalSelection(),
+            ownerFence,
+            targetFence,
+            secondSnapshot.toWire());
+    bindSnapshot(firstLocal, firstOwner, firstSnapshot);
+    bindSnapshot(secondLocal, secondOwner, secondSnapshot);
+    String firstSource =
+        pageSourceRow(
+            "entity_canonical_roster_original_selections",
+            "operation_uuid",
+            firstLocal.requestUuid());
+    String secondSource =
+        pageSourceRow(
+            "entity_canonical_roster_original_selections",
+            "operation_uuid",
+            secondLocal.requestUuid());
+
+    var candidates = transaction.execute(ignored -> repository.candidates(null, 10));
+    var firstCandidate =
+        candidates.stream()
+            .filter(candidate -> candidate.snapshotUuid().equals(firstSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    var secondCandidate =
+        candidates.stream()
+            .filter(candidate -> candidate.snapshotUuid().equals(secondSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    var firstProof = retirement(firstOwner, firstSnapshot, retirementUuid);
+    var secondProof = retirement(secondOwner, secondSnapshot, retirementUuid);
+    assertThat(firstProof.getCanonicalRosterReceipt())
+        .isEqualTo(firstSnapshot.toWire().toByteString());
+    assertThat(secondProof.getCanonicalRosterReceipt())
+        .isEqualTo(secondSnapshot.toWire().toByteString());
+
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        firstCandidate, firstProof, policy(Duration.ofMillis(1)))))
+        .isTrue();
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        secondCandidate, secondProof, policy(Duration.ofMillis(1)))))
+        .as("a reconstructed owner repository accepts the sibling's separate exact seal")
+        .isTrue();
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    var replayCandidates = transaction.execute(ignored -> repository.candidates(null, 10));
+    var replayFirst =
+        replayCandidates.stream()
+            .filter(value -> value.snapshotUuid().equals(firstSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    var replaySecond =
+        replayCandidates.stream()
+            .filter(value -> value.snapshotUuid().equals(secondSnapshot.snapshotUuid()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        replayFirst, firstProof, policy(Duration.ofMillis(1)))))
+        .as("lost-reply replay at the current epoch returns the first sibling's persisted result")
+        .isTrue();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        replaySecond, secondProof, policy(Duration.ofMillis(1)))))
+        .as("lost-reply replay at the current epoch returns the second sibling's persisted result")
+        .isTrue();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_retention_lifecycle "
+                        + "WHERE snapshot_uuid IN (?, ?) AND lifecycle_state = 'RETIRED'",
+                    firstSnapshot.snapshotUuid(),
+                    secondSnapshot.snapshotUuid())
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_original_selections",
+                "operation_uuid",
+                firstLocal.requestUuid()))
+        .isEqualTo(firstSource);
+    assertThat(
+            pageSourceRow(
+                "entity_canonical_roster_original_selections",
+                "operation_uuid",
+                secondLocal.requestUuid()))
+        .isEqualTo(secondSource);
+  }
+
+  @Test
+  void retainedProtectedInventoryAndImmutableRowsSurviveUpgradeThenRetireNormally() {
+    var legacy = rebuildLegacyCohort(false, 0, false, false);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT original_selection_count FROM entity_canonical_roster_retention_lifecycle")
+                .get(0, Long.class))
+        .isEqualTo(2L);
+    classifyAllRetainedSources();
+    assertThat(immutableRetentionRows()).containsExactlyElementsOf(legacy);
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(
+                    repository.observeRetirement(
+                        candidate, legacyProof, policy(Duration.ofMillis(1))))
+                .isTrue());
+    assertThat(preparePage(1)).isEqualTo(1);
+    assertThat(preparePage(1)).isEqualTo(1);
+  }
+
+  @Test
+  void retainedRetiredProofAndPartialIntentInitializeAtomicallyWithoutOwnerRead() {
+    var legacy = rebuildLegacyCohort(true, 1, false, false);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT original_selection_count, retirement_original_count, retirement_prepared_count FROM entity_canonical_roster_retention_lifecycle")
+                .get("retirement_prepared_count", Long.class))
+        .isEqualTo(1L);
+    classifyAllRetainedSources();
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      assertThat(repository.initializeRetainedRetirement(candidate)).isTrue();
+                      throw new IllegalStateException(
+                          "controlled retained initialization rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retired_targets"))).isZero();
+    assertThat(immutableRetentionRows()).containsExactlyElementsOf(legacy);
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.initializeRetainedRetirement(candidate)))
+        .isTrue();
+    assertThat(preparePage(1)).isEqualTo(1);
+    assertThat(preparePage(1)).isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT owner_retirement_proof FROM entity_canonical_roster_retention_lifecycle")
+                .get(0, byte[].class))
+        .isEqualTo(legacyProof.toByteArray());
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var completed = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(completed))).isTrue();
+  }
+
+  @Test
+  void inconsistentRetainedOriginalInventoryStaysUnknownWithoutRecreatingAuthority() {
+    rebuildLegacyCohort(true, 1, false, false, true);
+    classifyAllRetainedSources();
+    var inventory =
+        dsl.fetchSingle(
+            "SELECT original_selection_count, retirement_original_count FROM entity_canonical_roster_retention_lifecycle");
+    assertThat(inventory.get("original_selection_count", Long.class)).isNull();
+    assertThat(inventory.get("retirement_original_count", Long.class)).isNull();
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.initializeRetainedRetirement(candidate)))
+        .isFalse();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(candidate))).isFalse();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retired_targets"))).isZero();
+  }
+
+  @Test
+  void retainedDisposedAdmissionFencesTargetWithoutSyntheticSeal() {
+    assertRetainedDisposedLineage(false);
+  }
+
+  @Test
+  void retainedTransferOnlyCohortFencesTargetAfterPayloadAndOldNonceAreAlreadyGone() {
+    assertRetainedDisposedLineage(true);
+  }
+
+  private void assertRetainedDisposedLineage(boolean alreadyPurged) {
+    var legacy = rebuildLegacyCohort(true, 1, true, alreadyPurged);
+    classifyAllRetainedSources();
+    assertThat(immutableRetentionRows()).containsExactlyElementsOf(legacy);
+    if (!alreadyPurged)
+      assertThat(
+              dsl.fetchSingle("SELECT admission_state FROM entity_canonical_roster_admissions")
+                  .get(0, String.class))
+          .isEqualTo("DISPOSED");
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.reserveAdmission(localRequest())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    transaction.executeWithoutResult(ignored -> repository.purgeDisposedTombstones(2));
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retired_targets"))).isZero();
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.reserveAdmission(localRequest())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    var transfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    var ack =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            transfer.acknowledgementRequest(), UUID.randomUUID(), 1);
+    transaction.executeWithoutResult(
+        ignored -> repository.recordRetirementAcknowledgement(transfer, ack));
+    var acknowledged =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            acknowledged.acknowledgementRequest(), acknowledged.acknowledgement());
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.recordRetirementConfirmation(
+                acknowledged,
+                CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation)));
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementTransfers(1)))
+        .isEqualTo(1);
+    transaction.executeWithoutResult(ignored -> repository.purgeTargetClassifications(10));
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_target_classifications")))
+        .isZero();
+    var old = legacyRequests.getFirst();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.requireAdmission(old, legacyNonces.get(old.requestUuid()))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+  }
+
+  @Test
+  void malformedRetainedBindingIsDurableUnknownAndCannotStarveLaterClassification() {
+    UUID bad = new UUID(0, 1);
+    dsl.execute(
+        "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding) VALUES (?, ?, ?)",
+        bad,
+        UUID.randomUUID(),
+        new byte[] {1});
+    for (int index = 0; index < 4; index++) {
+      var local = localRequest();
+      dsl.execute(
+          "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding) VALUES (?, ?, ?)",
+          local.requestUuid(),
+          UUID.randomUUID(),
+          legacyAdmissionBinding(local));
+    }
+    var before = immutableRetentionRows();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      assertThat(repository.classifyRetainedDependencies(2)).isEqualTo(2);
+                      throw new IllegalStateException("controlled classification rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_target_classifications")))
+        .isZero();
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(2)))
+        .isEqualTo(2);
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(2)))
+        .isEqualTo(2);
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(2)))
+        .isEqualTo(1);
+    assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(2)))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT classification_state FROM entity_canonical_roster_target_classifications WHERE operation_uuid = ?",
+                    bad)
+                .get(0, String.class))
+        .isEqualTo("UNKNOWN");
+    assertThat(immutableRetentionRows()).containsExactlyElementsOf(before);
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.reserveAdmission(localRequest())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM entity_canonical_roster_target_classifications WHERE operation_uuid = ?",
+                    bad))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_target_classifications SET source_binding = ? WHERE operation_uuid = ?",
+                    new byte[] {2},
+                    bad))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void immutableAcquireReleaseAndHoldOutcomesNeverGrantTerminality() {
+    UUID acquireOperation = UUID.randomUUID();
+    UUID reference = UUID.randomUUID();
+    UUID hold = UUID.randomUUID();
+    UUID releaseOperation = UUID.randomUUID();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.acquire(
+              binding, acquireOperation, reference, ReferenceKind.ORIGINAL_SELECTION);
+          repository.acquire(
+              binding, acquireOperation, reference, ReferenceKind.ORIGINAL_SELECTION);
+          repository.acquire(binding, UUID.randomUUID(), hold, ReferenceKind.HOLD);
+          assertThat(repository.protection(binding).liveReferences()).isEqualTo(1);
+          assertThat(repository.protection(binding).holds()).isEqualTo(1);
+          repository.release(binding, releaseOperation, reference);
+          repository.release(binding, releaseOperation, reference);
+          assertThat(repository.protection(binding).liveReferences()).isZero();
+          assertThat(repository.protection(binding).holds()).isEqualTo(1);
+          assertThat(repository.protection(binding).disposalEligible()).isFalse();
+          repository.release(binding, UUID.randomUUID(), hold);
+          var zeroReferences = repository.protection(binding);
+          assertThat(zeroReferences.liveReferences()).isZero();
+          assertThat(zeroReferences.holds()).isZero();
+          assertThat(zeroReferences.terminality())
+              .isEqualTo("AUTHENTICATED_SUPERSESSION_UNAVAILABLE");
+          assertThat(zeroReferences.disposalEligible()).isFalse();
+        });
+    List<String> retained = retainedRows();
+    for (String table :
+        List.of(
+            "entity_canonical_roster_retention_lifecycle",
+            "entity_canonical_roster_retention_references",
+            "entity_canonical_roster_retention_releases",
+            "entity_canonical_gameplay_roster_snapshots",
+            "entity_canonical_gameplay_roster_snapshot_actors")) {
+      assertThatThrownBy(() -> dsl.execute("DELETE FROM " + table))
+          .isInstanceOf(DataAccessException.class);
+      assertThatThrownBy(() -> dsl.execute("TRUNCATE " + table + " CASCADE"))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_retention_lifecycle "
+                        + "SET lifecycle_state = 'RETIRED'"))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(retainedRows()).containsExactlyElementsOf(retained);
+  }
+
+  @Test
+  void staleTargetFenceUnknownReferenceAndIdentityReuseFailClosed() {
+    UUID acquireOperation = UUID.randomUUID();
+    UUID reference = UUID.randomUUID();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.acquire(binding, acquireOperation, reference, ReferenceKind.RECOVERY));
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.acquire(
+                            binding, UUID.randomUUID(), reference, ReferenceKind.RECOVERY)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_REFERENCE_IDEMPOTENCY_CONFLICT");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.release(binding, UUID.randomUUID(), UUID.randomUUID())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_REFERENCE_UNAVAILABLE");
+    var old = binding.target();
+    var stale =
+        new CanonicalGameplayRosterTarget(
+            old.tenantUuid(),
+            old.realmUuid(),
+            old.worldSlug(),
+            old.realmSlug(),
+            old.gameInstanceUuid(),
+            old.catalogRevision(),
+            old.pointerVersion() + 1,
+            old.activeWorldEpoch(),
+            old.canonicalVersionUuid(),
+            old.publishedPolicyDigest(),
+            old.publishedReleaseBundleRef(),
+            old.admissionPointerSnapshotDigest(),
+            old.publishedOwnerProofDigest(),
+            old.playableStateNamespaceId(),
+            old.playableStateScope(),
+            old.entryPolicy());
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.protection(
+                            new CanonicalGameplayRosterRetentionBinding(
+                                binding.canonicalAccountUuid(), binding.snapshot(), stale))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_RETENTION_TARGET_MISMATCH");
+    assertThatThrownBy(() -> repository.protection(binding))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_RETENTION_OWNER_TRANSACTION_REQUIRED");
+  }
+
+  @Test
+  void rollbackPreservesActorReceiptSnapshotAndDoesNotReleaseAReference() {
+    UUID reference = UUID.randomUUID();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.acquire(
+                binding, UUID.randomUUID(), reference, ReferenceKind.ORIGINAL_SELECTION));
+    List<String> retained = retainedRows();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      repository.release(binding, UUID.randomUUID(), reference);
+                      throw new IllegalStateException("controlled rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    transaction.executeWithoutResult(
+        ignored -> assertThat(repository.protection(binding).liveReferences()).isEqualTo(1));
+    assertThat(retainedRows()).containsExactlyElementsOf(retained);
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM entity_canonical_roster_retention_releases")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
+  void concurrentAcquisitionRemainsAtomicWhileDirectDisposalIsRefused() throws Exception {
+    CountDownLatch acquired = new CountDownLatch(1);
+    CountDownLatch inspected = new CountDownLatch(1);
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var acquire =
+          executor.submit(
+              () ->
+                  transaction.executeWithoutResult(
+                      ignored -> {
+                        repository.acquire(
+                            binding, UUID.randomUUID(), UUID.randomUUID(), ReferenceKind.RECOVERY);
+                        acquired.countDown();
+                        await(inspected);
+                      }));
+      var dispose =
+          executor.submit(
+              () -> {
+                await(acquired);
+                try {
+                  assertThatThrownBy(
+                          () ->
+                              transaction.executeWithoutResult(
+                                  ignored -> {
+                                    dsl.execute("SET LOCAL lock_timeout = '500ms'");
+                                    dsl.execute(
+                                        "DELETE FROM entity_canonical_gameplay_roster_snapshots "
+                                            + "WHERE snapshot_uuid = ?",
+                                        binding.snapshot().snapshotUuid());
+                                  }))
+                      .isInstanceOf(DataAccessException.class);
+                } finally {
+                  inspected.countDown();
+                }
+              });
+      acquire.get(15, TimeUnit.SECONDS);
+      dispose.get(15, TimeUnit.SECONDS);
+    }
+    transaction.executeWithoutResult(
+        ignored -> {
+          assertThat(repository.protection(binding).liveReferences()).isEqualTo(1);
+          assertThat(repository.protection(binding).disposalEligible()).isFalse();
+        });
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                    binding.snapshot().snapshotUuid()))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void closedNonceRejectsDelayedBindingAndExactRecoveryReplayIsImmutable() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(local));
+    var response =
+        transaction.execute(
+            ignored -> repository.closeAdmission(recovery, owner, policy(Duration.ofHours(1))));
+    assertThat(response.getAdmissionUuid()).isEqualTo(nonce.toString());
+    assertThat(response.getCanonicalRosterReceipt()).isEmpty();
+    assertThat(
+            transaction
+                .<net.firedevops.firemud.entitymanagement.v1
+                        .CanonicalGameplayRosterRecoveryResponse>
+                    execute(
+                        ignored ->
+                            repository.closeAdmission(
+                                recovery, owner, policy(Duration.ofHours(2)))))
+        .isEqualTo(response);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireAdmission(local, nonce)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.bindAdmission(
+                            local.requestUuid(), nonce, binding.snapshot().snapshotUuid())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(local)))
+        .isInstanceOf(IllegalStateException.class);
+    var conflict = recovery.toBuilder().setRecoveryUuid(UUID.randomUUID().toString()).build();
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.closeAdmission(
+                            conflict, recoveryOwner(conflict), policy(Duration.ofHours(1)))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_RECOVERY_CONFLICT");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_admissions SET admission_state = 'OPEN', closed_at = NULL, minimum_retention_millis = NULL"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_admissions SET recovery_response = ?",
+                    new byte[] {1}))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM entity_canonical_roster_admissions"))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void closedUnboundAdmissionRequiresExactPositiveOwnerAcknowledgementAndLocalHorizon() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    transaction.execute(
+        ignored -> repository.closeAdmission(recovery, owner, policy(Duration.ofMillis(1))));
+    var candidate =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    // Let the physical database's clock pass the deliberately tiny controlled fixture horizon.
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.purgeClosedAdmission(candidate, owner)))
+        .isFalse();
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM entity_canonical_roster_admissions"))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.purgeClosedAdmission(
+                            candidate,
+                            owner.toBuilder()
+                                .setRecoveryUuid(UUID.randomUUID().toString())
+                                .setTerminalOutcome("DENIED")
+                                .build())))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.purgeClosedAdmission(
+                            candidate,
+                            owner.toBuilder()
+                                .setOwnerFence(2)
+                                .setTerminalOutcome("DENIED")
+                                .build())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.purgeClosedAdmission(
+                        candidate, owner.toBuilder().setTerminalOutcome("DENIED").build())))
+        .isTrue();
+    assertThat(
+            transaction
+                .<List<CanonicalGameplayRosterRetentionRepository.ClosedAdmissionCandidate>>execute(
+                    ignored -> repository.closedAdmissionCandidates(null, 1)))
+        .isEmpty();
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(local)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireAdmission(local, candidate.admissionUuid())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(retainedRows()).hasSize(4);
+
+    var heldLocal = localRequest();
+    var heldRecovery = recovery(heldLocal);
+    var heldOwner = recoveryOwner(heldRecovery);
+    transaction.execute(
+        ignored -> repository.closeAdmission(heldRecovery, heldOwner, policy(Duration.ofHours(1))));
+    var held =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.purgeClosedAdmission(
+                        held, heldOwner.toBuilder().setTerminalOutcome("DENIED").build())))
+        .isFalse();
+  }
+
+  @Test
+  void longerEntityClosureHorizonPreventsEarlyTransferEvenWhenOwnerAlreadyRetired() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    var minimum = Duration.ofSeconds(3);
+    var closed =
+        transaction.execute(ignored -> repository.closeAdmission(recovery, owner, policy(minimum)));
+    var candidate =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    var denied = owner.toBuilder().setTerminalOutcome("DENIED").build();
+    var retired = retirement(owner, null);
+    // A GS owner may already have retired under a shorter independent local horizon. Neither
+    // its positive proof nor elapsed GS time may expose an ACK intent before Entity can purge.
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    for (var terminalOwner : List.of(denied, retired)) {
+      assertThat(
+              transaction.<Boolean>execute(
+                  ignored -> repository.purgeClosedAdmission(candidate, terminalOwner)))
+          .isFalse();
+      var pendingTransfers =
+          transaction.execute(ignored -> repository.retirementTransfers(null, 1));
+      assertThat(pendingTransfers).isEmpty();
+      assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers")))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT recovery_response FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                      local.requestUuid())
+                  .get(0, byte[].class))
+          .isEqualTo(closed.toByteArray());
+    }
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM entity_canonical_roster_admissions"))
+        .isInstanceOf(DataAccessException.class);
+
+    dsl.fetch("SELECT pg_sleep(3.1)");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      assertThat(repository.purgeClosedAdmission(candidate, retired)).isTrue();
+                      assertThat(repository.retirementTransfers(null, 1)).hasSize(1);
+                      assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions")))
+                          .isZero();
+                      throw new IllegalStateException("controlled transfer/purge rollback");
+                    }))
+        .hasMessage("controlled transfer/purge rollback");
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers"))).isZero();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.purgeClosedAdmission(candidate, retired)))
+        .isTrue();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    var transfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(transfer.state()).isEqualTo("PENDING_ACK");
+    assertThat(transfer.original()).isEqualTo(recovery.getOriginalSelection());
+    assertThat(transfer.acknowledgementRequest().getAdmissionUuid())
+        .isEqualTo(closed.getAdmissionUuid());
+    assertThat(transfer.acknowledgementRequest().getObservedRetirement()).isEqualTo(retired);
+    assertThat(transfer.acknowledgementRequest().getMinimumRetentionMillis())
+        .isEqualTo(minimum.toMillis());
+  }
+
+  @Test
+  void qualifiedDisposalExtendsClosedAdmissionRetentionWhenRetirementHorizonIncreases() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(local));
+    var actor =
+        dsl.fetchSingle(
+                "SELECT character_uuid FROM entity_canonical_gameplay_roster_snapshot_actors WHERE snapshot_uuid = ?",
+                binding.snapshot().snapshotUuid())
+            .get("character_uuid", UUID.class);
+    var snapshot =
+        new CanonicalGameplayRosterSnapshot(
+            binding.canonicalAccountUuid(),
+            binding.snapshot().snapshotUuid(),
+            binding.snapshot().snapshotDigest(),
+            binding.target(),
+            List.of(new CanonicalGameplayRosterActor(actor, "Retained Actor")));
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.requireAdmission(local, nonce);
+          repository.bindOriginal(owner, snapshot);
+          repository.bindAdmission(local.requestUuid(), nonce, snapshot.snapshotUuid());
+        });
+    var closed =
+        transaction.execute(
+            ignored -> repository.closeAdmission(recovery, owner, policy(Duration.ofMillis(1))));
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_admissions SET minimum_retention_millis = 2 WHERE operation_uuid = ?",
+                    local.requestUuid()))
+        .isInstanceOf(DataAccessException.class);
+    var proof =
+        CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+            owner.toBuilder()
+                .setCanonicalRosterReceipt(snapshot.toWire().toByteString())
+                .setState(
+                    net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+                .setTerminalOutcome("DENIED")
+                .setRetirementUuid(UUID.randomUUID().toString())
+                .setSupersedingPointerDigest("f".repeat(64))
+                .setSupersedingPointerVersion(binding.target().pointerVersion() + 1)
+                .setSupersedingCatalogRevision(binding.target().catalogRevision())
+                .setSupersedingWorldEpoch(binding.target().activeWorldEpoch())
+                .build());
+    var protectedCandidate =
+        transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored ->
+                    repository.observeRetirement(
+                        protectedCandidate, proof, policy(Duration.ofMillis(20)))))
+        .isTrue();
+    assertThat(preparePage(2)).isEqualTo(1);
+    dsl.fetch("SELECT pg_sleep(0.03)");
+    var retiredCandidate =
+        transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(retiredCandidate)))
+        .isTrue();
+    var disposed =
+        dsl.fetchSingle(
+            "SELECT * FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+            local.requestUuid());
+    assertThat(disposed.get("admission_state", String.class)).isEqualTo("DISPOSED");
+    assertThat(disposed.get("minimum_retention_millis", Long.class)).isEqualTo(20L);
+    assertThat(disposed.get("recovery_uuid", UUID.class).toString())
+        .isEqualTo(recovery.getRecoveryUuid());
+    assertThat(disposed.get("recovery_request", byte[].class)).isEqualTo(recovery.toByteArray());
+    assertThat(disposed.get("recovery_response", byte[].class)).isEqualTo(closed.toByteArray());
+    assertThat(disposed.get("recovery_owner_request", byte[].class))
+        .isEqualTo(owner.getRequest().toByteArray());
+    assertThat(disposed.get("recovery_owner_fence", Long.class)).isEqualTo(owner.getOwnerFence());
+    assertThat(disposed.get("recovery_target_fence_uuid", UUID.class).toString())
+        .isEqualTo(owner.getTargetFenceUuid());
+    assertThat(disposed.get("admission_uuid", UUID.class)).isEqualTo(nonce);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshots"))).isZero();
+  }
+
+  @Test
+  void retirementSealPreparesMoreThanOnePageWhileHoldProtectsPayloadAndReplayKeepsIdentities() {
+    var snapshot = retainedSnapshot();
+    var owners = new java.util.ArrayList<GetCanonicalGameplayRosterReferenceResponse>();
+    var nonces = new java.util.HashMap<String, UUID>();
+    var firstOwner = recoveryOwner(recovery(localRequest()));
+    for (int index = 0; index < 5; index++) {
+      var local = localRequest();
+      var owner =
+          CanonicalGameplayRosterReferenceEvidence.response(
+              recovery(local).getOriginalSelection(),
+              firstOwner.getOwnerFence(),
+              UUID.fromString(firstOwner.getTargetFenceUuid()),
+              null);
+      owners.add(owner);
+      nonces.put(local.requestUuid().toString(), bindSnapshot(local, owner, snapshot));
+    }
+    // This nonce has already crossed reservation but has not captured any snapshot.
+    var late = localRequest();
+    UUID lateNonce = transaction.execute(ignored -> repository.reserveAdmission(late));
+    UUID hold = UUID.randomUUID();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.acquire(binding, UUID.randomUUID(), hold, ReferenceKind.HOLD);
+          repository.acquire(binding, UUID.randomUUID(), UUID.randomUUID(), ReferenceKind.RECOVERY);
+        });
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    var anchor =
+        owners.stream()
+            .filter(owner -> owner.getRequest().equals(candidate.ownerRequest()))
+            .findFirst()
+            .orElseThrow();
+    var proof = retirement(anchor, snapshot);
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(repository.observeRetirement(candidate, proof, policy(Duration.ofMillis(1))))
+                .isTrue());
+    assertThat(
+            transaction
+                .<List<CanonicalGameplayRosterRetentionRepository.RetirementTransfer>>execute(
+                    ignored -> repository.retirementTransfers(null, 10)))
+        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireAdmission(late, lateNonce)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.reserveAdmission(localRequest())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.acquire(
+                            binding, UUID.randomUUID(), UUID.randomUUID(), ReferenceKind.RECOVERY)))
+        .isInstanceOf(IllegalStateException.class);
+
+    var sealedCandidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      assertThat(repository.prepareRetirement(sealedCandidate, 2)).isEqualTo(2);
+                      throw new IllegalStateException("controlled page rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("controlled page rollback");
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retention_releases"))).isZero();
+    var alternate =
+        new CanonicalGameplayRosterRetentionBinding(
+            binding.canonicalAccountUuid(),
+            new CanonicalGameplayRosterSnapshotReference(
+                UUID.randomUUID(), binding.snapshot().snapshotDigest()),
+            binding.target());
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.acquire(
+                            alternate,
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            ReferenceKind.ORIGINAL_SELECTION)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThat(preparePage(2)).isEqualTo(2);
+    var firstPage = transaction.execute(ignored -> repository.retirementTransfers(null, 10));
+    assertThat(firstPage).hasSize(2);
+    var stale = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.acquire(binding, UUID.randomUUID(), UUID.randomUUID(), ReferenceKind.HOLD));
+    assertThat(transaction.<Integer>execute(ignored -> repository.prepareRetirement(stale, 2)))
+        .isZero();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(stale))).isFalse();
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(preparePage(2)).isEqualTo(2);
+    assertThat(preparePage(2)).isEqualTo(1);
+    var transfers = transaction.execute(ignored -> repository.retirementTransfers(null, 10));
+    assertThat(transfers)
+        .hasSize(5)
+        .allSatisfy(
+            transfer -> {
+              var request = transfer.acknowledgementRequest();
+              assertThat(request.getObservedRetirement()).isEqualTo(proof);
+              assertThat(request.getAdmissionUuid())
+                  .isEqualTo(
+                      nonces.get(request.getOriginalSelection().getOperationUuid()).toString());
+              assertThat(request.getSnapshotUuid()).isEqualTo(snapshot.snapshotUuid().toString());
+              assertThat(request.getSnapshotDigest()).isEqualTo(snapshot.snapshotDigest());
+            });
+    assertThat(preparePage(2)).isZero();
+    assertThat(preparePage(2)).isZero();
+    assertThat(
+            transaction
+                .<List<CanonicalGameplayRosterRetentionRepository.RetirementTransfer>>execute(
+                    ignored -> repository.retirementTransfers(null, 10)))
+        .isEqualTo(transfers);
+    assertThat(transfers).containsAll(firstPage);
+    for (var transfer : transfers) {
+      var acknowledgement =
+          CanonicalGameplayRosterRetirementEvidence.response(
+              transfer.acknowledgementRequest(), UUID.randomUUID(), 1);
+      transaction.executeWithoutResult(
+          ignored -> repository.recordRetirementAcknowledgement(transfer, acknowledgement));
+    }
+    for (var transfer : transaction.execute(ignored -> repository.retirementTransfers(null, 10))) {
+      var confirmation =
+          CanonicalGameplayRosterRetirementEvidence.confirmation(
+              transfer.acknowledgementRequest(), transfer.acknowledgement());
+      transaction.executeWithoutResult(
+          ignored ->
+              repository.recordRetirementConfirmation(
+                  transfer,
+                  CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation)));
+    }
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementTransfers(10)))
+        .isZero();
+    var retired = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(retired))).isFalse();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshots")))
+        .isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_original_selections")))
+        .isEqualTo(5);
+    assertThat(transaction.<Integer>execute(ignored -> repository.purgeRetiredTargets(2))).isZero();
+  }
+
+  @Test
+  void concurrentHoldWaitsForPreparationThenInvalidatesItsEpochAndProtectsFinalDisposal()
+      throws Exception {
+    var local = localRequest();
+    var owner = recoveryOwner(recovery(local));
+    var snapshot = retainedSnapshot();
+    bindSnapshot(local, owner, snapshot);
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.observeRetirement(
+                candidate, retirement(owner, snapshot), policy(Duration.ofMillis(1))));
+    var sealed = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    var preparationPid = new java.util.concurrent.atomic.AtomicInteger();
+    var holdPid = new java.util.concurrent.atomic.AtomicInteger();
+    CountDownLatch prepared = new CountDownLatch(1);
+    CountDownLatch holdStarted = new CountDownLatch(1);
+    CountDownLatch allowCommit = new CountDownLatch(1);
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var preparation =
+          executor.submit(
+              () ->
+                  transaction.executeWithoutResult(
+                      ignored -> {
+                        preparationPid.set(
+                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                        assertThat(repository.prepareRetirement(sealed, 2)).isEqualTo(1);
+                        prepared.countDown();
+                        await(allowCommit);
+                      }));
+      await(prepared);
+      var hold =
+          executor.submit(
+              () ->
+                  transaction.executeWithoutResult(
+                      ignored -> {
+                        holdPid.set(
+                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                        holdStarted.countDown();
+                        repository.acquire(
+                            binding, UUID.randomUUID(), UUID.randomUUID(), ReferenceKind.HOLD);
+                      }));
+      await(holdStarted);
+      try {
+        awaitBackendBlockedBy(holdPid.get(), preparationPid.get());
+      } finally {
+        allowCommit.countDown();
+      }
+      preparation.get(15, TimeUnit.SECONDS);
+      hold.get(15, TimeUnit.SECONDS);
+    } finally {
+      allowCommit.countDown();
+    }
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(sealed))).isFalse();
+    var held = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(held.localEpoch()).isGreaterThan(sealed.localEpoch());
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(held))).isFalse();
+    assertThat(
+            transaction
+                .<List<CanonicalGameplayRosterRetentionRepository.RetirementTransfer>>execute(
+                    ignored -> repository.retirementTransfers(null, 2)))
+        .hasSize(1);
+  }
+
+  @Test
+  void missingAdmissionCannotCompleteAndDoesNotStarveLaterOriginalPages() {
+    var snapshot = retainedSnapshot();
+    var owners = new java.util.ArrayList<GetCanonicalGameplayRosterReferenceResponse>();
+    var first = recoveryOwner(recovery(localRequest()));
+    for (int index = 0; index < 5; index++) {
+      var local = localRequest();
+      var owner =
+          CanonicalGameplayRosterReferenceEvidence.response(
+              recovery(local).getOriginalSelection(),
+              first.getOwnerFence(),
+              UUID.fromString(first.getTargetFenceUuid()),
+              null);
+      owners.add(owner);
+      bindSnapshot(local, owner, snapshot);
+    }
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    var anchor =
+        owners.stream()
+            .filter(owner -> owner.getRequest().equals(candidate.ownerRequest()))
+            .findFirst()
+            .orElseThrow();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.observeRetirement(
+                candidate, retirement(anchor, snapshot), policy(Duration.ofMillis(1))));
+    UUID missing = UUID.fromString(candidate.ownerRequest().getOperationUuid());
+    // Controlled restore inconsistency: missing rows are not positive completion evidence.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute("ALTER TABLE entity_canonical_roster_admissions DISABLE TRIGGER USER");
+          dsl.execute(
+              "DELETE FROM entity_canonical_roster_admissions WHERE operation_uuid = ?", missing);
+          dsl.execute("ALTER TABLE entity_canonical_roster_admissions ENABLE TRIGGER USER");
+        });
+    assertThat(preparePage(2)).isEqualTo(1);
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(preparePage(2)).isEqualTo(2);
+    assertThat(preparePage(2)).isEqualTo(1);
+    assertThat(
+            transaction
+                .<List<CanonicalGameplayRosterRetentionRepository.RetirementTransfer>>execute(
+                    ignored -> repository.retirementTransfers(null, 10)))
+        .hasSize(4);
+    var incomplete = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(incomplete))).isFalse();
+    // Even after losing that original and releasing its orphaned local reference, the stored
+    // positive inventory count prevents absence from becoming completion.
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_original_selections DISABLE TRIGGER USER");
+          dsl.execute(
+              "DELETE FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+              missing);
+          dsl.execute(
+              "ALTER TABLE entity_canonical_roster_original_selections ENABLE TRIGGER USER");
+          repository.release(binding, UUID.randomUUID(), missing);
+        });
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var missingOriginal = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(missingOriginal)))
+        .isFalse();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        dsl.execute(
+                            "UPDATE entity_canonical_roster_retention_lifecycle SET lifecycle_state = 'DISPOSING', local_epoch = local_epoch + 1 WHERE snapshot_uuid = ?",
+                            snapshot.snapshotUuid())))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void
+      pendingAndActualAcknowledgedTransfersSurvivePayloadDisposalUntilConfirmationAndEffectiveHorizon() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    var snapshot = retainedSnapshot();
+    UUID nonce = bindSnapshot(local, owner, snapshot);
+    transaction.executeWithoutResult(
+        ignored -> repository.closeAdmission(recovery, owner, policy(Duration.ofMillis(1))));
+    var proof = retirement(owner, snapshot);
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored -> repository.observeRetirement(candidate, proof, policy(Duration.ofMillis(1))));
+    assertThat(preparePage(2)).isEqualTo(1);
+    var committed =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    byte[] exactRequest = committed.acknowledgementRequest().toByteArray();
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var retired = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(retired))).isTrue();
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    transaction.executeWithoutResult(ignored -> repository.purgeDisposedTombstones(1));
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_original_selections"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshots"))).isZero();
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    var retried =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(retried).isEqualTo(committed);
+    assertThat(retried.acknowledgementRequest().toByteArray()).isEqualTo(exactRequest);
+    assertThat(retried.acknowledgementRequest().getAdmissionUuid()).isEqualTo(nonce.toString());
+    assertThat(transaction.<Integer>execute(ignored -> repository.purgeRetiredTargets(1))).isZero();
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM entity_canonical_roster_retired_targets"))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementTransfers(1)))
+        .isZero();
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM entity_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+
+    var acknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            retried.acknowledgementRequest(), UUID.randomUUID(), 2000);
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(repository.recordRetirementAcknowledgement(retried, acknowledgement))
+                .isTrue());
+    // A lost ACK reply reuses the exact persisted request and response; a changed ACK conflicts.
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(repository.recordRetirementAcknowledgement(retried, acknowledgement))
+                .isFalse());
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.recordRetirementAcknowledgement(
+                            retried,
+                            CanonicalGameplayRosterRetirementEvidence.response(
+                                retried.acknowledgementRequest(), UUID.randomUUID(), 2000))))
+        .isInstanceOf(IllegalStateException.class);
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    var acknowledged =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(acknowledged.state()).isEqualTo("ACKNOWLEDGED");
+    assertThat(acknowledged.acknowledgement()).isEqualTo(acknowledgement);
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM entity_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            acknowledged.acknowledgementRequest(), acknowledgement);
+    var confirmed = CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(repository.recordRetirementConfirmation(acknowledged, confirmed)).isTrue());
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(repository.recordRetirementConfirmation(acknowledged, confirmed)).isFalse());
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementTransfers(1)))
+        .isZero();
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM entity_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    dsl.fetch("SELECT pg_sleep(2.1)");
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementTransfers(1)))
+        .isEqualTo(1);
+    assertThat(transaction.<Integer>execute(ignored -> repository.purgeRetiredTargets(1)))
+        .isEqualTo(1);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireAdmission(local, nonce)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+  }
+
+  @Test
+  void deniedUnboundNonceLeavesExactWaitingIntentUntilIndependentPositiveRetirement() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    var closed =
+        transaction.execute(
+            ignored -> repository.closeAdmission(recovery, owner, policy(Duration.ofMillis(1))));
+    var closure =
+        transaction.execute(ignored -> repository.closedAdmissionCandidates(null, 1)).getFirst();
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var denied = owner.toBuilder().setTerminalOutcome("DENIED").build();
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.purgeClosedAdmission(closure, denied)))
+        .isTrue();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    var row = dsl.fetchSingle("SELECT * FROM entity_canonical_roster_retirement_transfers");
+    assertThat(row.get("admission_uuid", UUID.class).toString())
+        .isEqualTo(closed.getAdmissionUuid());
+    assertThat(row.get("closed_admission_receipt", byte[].class)).isEqualTo(closed.toByteArray());
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    var waiting =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(waiting.state()).isEqualTo("WAITING_RETIREMENT");
+    assertThat(waiting.acknowledgementRequest()).isNull();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.observeWaitingRetirement(waiting, denied)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(local)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM entity_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    var retired = retirement(owner, null);
+    transaction.executeWithoutResult(
+        ignored -> assertThat(repository.observeWaitingRetirement(waiting, retired)).isTrue());
+    transaction.executeWithoutResult(
+        ignored -> assertThat(repository.observeWaitingRetirement(waiting, retired)).isFalse());
+    var pending =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(pending.observationUuid()).isEqualTo(waiting.observationUuid());
+    assertThat(pending.acknowledgementRequest().getOriginalSelection())
+        .isEqualTo(recovery.getOriginalSelection());
+    assertThat(pending.acknowledgementRequest().getAdmissionUuid())
+        .isEqualTo(closed.getAdmissionUuid());
+    assertThat(pending.acknowledgementRequest().getSnapshotUuid()).isEmpty();
+    assertThat(pending.acknowledgementRequest().getObservedRetirement()).isEqualTo(retired);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void committedObservationSerializesTheDelayedNonceAndDeniesCaptureAfterItsLockReleases()
+      throws Exception {
+    var local = localRequest();
+    var owner = recoveryOwner(recovery(local));
+    var snapshot = retainedSnapshot();
+    UUID nonce = bindSnapshot(local, owner, snapshot);
+    var proof = retirement(owner, snapshot);
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    var observationPid = new java.util.concurrent.atomic.AtomicInteger();
+    var delayedPid = new java.util.concurrent.atomic.AtomicInteger();
+    CountDownLatch observed = new CountDownLatch(1);
+    CountDownLatch delayedStarted = new CountDownLatch(1);
+    CountDownLatch allowCommit = new CountDownLatch(1);
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var observation =
+          executor.submit(
+              () ->
+                  transaction.executeWithoutResult(
+                      ignored -> {
+                        observationPid.set(
+                            dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                        assertThat(
+                                repository.observeRetirement(
+                                    candidate, proof, policy(Duration.ofHours(1))))
+                            .isTrue();
+                        observed.countDown();
+                        await(allowCommit);
+                      }));
+      await(observed);
+      var delayed =
+          executor.submit(
+              () ->
+                  assertThatThrownBy(
+                          () ->
+                              transaction.executeWithoutResult(
+                                  ignored -> {
+                                    delayedPid.set(
+                                        dsl.fetchSingle("SELECT pg_backend_pid()")
+                                            .get(0, Integer.class));
+                                    delayedStarted.countDown();
+                                    repository.requireAdmission(local, nonce);
+                                    repository.bindOriginal(owner, snapshot);
+                                    repository.bindAdmission(
+                                        local.requestUuid(), nonce, snapshot.snapshotUuid());
+                                  }))
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED"));
+      await(delayedStarted);
+      try {
+        awaitBackendBlockedBy(delayedPid.get(), observationPid.get());
+      } finally {
+        allowCommit.countDown();
+      }
+      observation.get(15, TimeUnit.SECONDS);
+      delayed.get(15, TimeUnit.SECONDS);
+    } finally {
+      allowCommit.countDown();
+    }
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_original_selections")))
+        .isEqualTo(1);
+    assertThat(preparePage(2)).isEqualTo(1);
+    var transfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(transfer.acknowledgementRequest().getAdmissionUuid()).isEqualTo(nonce.toString());
+  }
+
+  private void awaitBackendBlockedBy(int waiter, int holder) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    boolean blocked = false;
+    while (System.nanoTime() < deadline) {
+      blocked =
+          Boolean.TRUE.equals(
+              dsl.fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", holder, waiter)
+                  .get(0, Boolean.class));
+      if (blocked) break;
+      TimeUnit.MILLISECONDS.sleep(10);
+    }
+    assertThat(blocked)
+        .as("Delayed admission waits on the exact retirement observation transaction")
+        .isTrue();
+  }
+
+  @Test
+  void transferGuardUsesDatabaseClockInsteadOfCallerBackdatedLifecycleTimes() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    transaction.executeWithoutResult(
+        ignored -> repository.closeAdmission(recovery, owner, policy(Duration.ofMillis(1))));
+    UUID observation = UUID.randomUUID();
+    dsl.execute(
+        "INSERT INTO entity_canonical_roster_retirement_transfers "
+            + "(observation_uuid, operation_uuid, original_request, admission_uuid, closed_admission_receipt, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, recorded_at) "
+            + "SELECT ?, operation_uuid, recovery_owner_request, admission_uuid, recovery_response, recovery_owner_fence, recovery_target_fence_uuid, minimum_retention_millis, 'WAITING_RETIREMENT', clock_timestamp() - interval '1 day' "
+            + "FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+        observation,
+        local.requestUuid());
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT recorded_at > clock_timestamp() - interval '1 minute' FROM entity_canonical_roster_retirement_transfers")
+                .get(0, Boolean.class))
+        .isTrue();
+    var waiting =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored -> repository.observeWaitingRetirement(waiting, retirement(owner, null)));
+    var pending =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    var acknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            pending.acknowledgementRequest(), UUID.randomUUID(), 2000);
+    dsl.execute(
+        "UPDATE entity_canonical_roster_retirement_transfers SET transfer_state = 'ACKNOWLEDGED', acknowledgement_response = ?, effective_minimum_retention_millis = ?, acknowledged_at = clock_timestamp() - interval '1 day' WHERE observation_uuid = ?",
+        acknowledgement.toByteArray(),
+        acknowledgement.getMinimumRetentionMillis(),
+        observation);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT acknowledged_at > clock_timestamp() - interval '1 minute' FROM entity_canonical_roster_retirement_transfers")
+                .get(0, Boolean.class))
+        .isTrue();
+    var confirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            pending.acknowledgementRequest(), acknowledgement);
+    dsl.execute(
+        "UPDATE entity_canonical_roster_retirement_transfers SET transfer_state = 'CONFIRMED', confirmation_response = ?, confirmed_at = clock_timestamp() - interval '1 day' WHERE observation_uuid = ?",
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation).toByteArray(),
+        observation);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT confirmed_at > clock_timestamp() - interval '1 minute' FROM entity_canonical_roster_retirement_transfers")
+                .get(0, Boolean.class))
+        .isTrue();
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeConfirmedRetirementTransfers(1)))
+        .isZero();
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM entity_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  private CanonicalGameplayRosterSnapshot retainedSnapshot() {
+    UUID actor =
+        dsl.fetchSingle(
+                "SELECT character_uuid FROM entity_canonical_gameplay_roster_snapshot_actors WHERE snapshot_uuid = ?",
+                binding.snapshot().snapshotUuid())
+            .get("character_uuid", UUID.class);
+    return new CanonicalGameplayRosterSnapshot(
+        binding.canonicalAccountUuid(),
+        binding.snapshot().snapshotUuid(),
+        binding.snapshot().snapshotDigest(),
+        binding.target(),
+        List.of(new CanonicalGameplayRosterActor(actor, "Retained Actor")));
+  }
+
+  private CanonicalGameplayRosterSnapshot insertSiblingSnapshot(
+      CanonicalGameplayRosterSnapshot source) {
+    var sibling =
+        new CanonicalGameplayRosterSnapshot(
+            source.canonicalAccountUuid(),
+            UUID.randomUUID(),
+            UUID.randomUUID().toString().replace("-", "")
+                + UUID.randomUUID().toString().replace("-", ""),
+            source.target(),
+            source.actors());
+    var target = source.target();
+    dsl.execute(
+        "INSERT INTO entity_canonical_gameplay_roster_snapshots "
+            + "(snapshot_uuid, snapshot_digest, canonical_account_uuid, tenant_uuid, realm_uuid, "
+            + "world_slug, realm_slug, game_instance_uuid, catalog_revision, canonical_version_uuid, "
+            + "pointer_version, active_world_epoch, published_policy_digest, published_release_bundle_ref, "
+            + "admission_pointer_snapshot_digest, published_owner_proof_digest, "
+            + "playable_state_namespace_uuid, playable_state_scope, entry_policy, roster_count) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        sibling.snapshotUuid(),
+        sibling.snapshotDigest(),
+        sibling.canonicalAccountUuid(),
+        target.tenantUuid(),
+        target.realmUuid(),
+        target.worldSlug(),
+        target.realmSlug(),
+        target.gameInstanceUuid(),
+        target.catalogRevision(),
+        target.canonicalVersionUuid(),
+        target.pointerVersion(),
+        target.activeWorldEpoch(),
+        target.publishedPolicyDigest(),
+        target.publishedReleaseBundleRef(),
+        target.admissionPointerSnapshotDigest(),
+        target.publishedOwnerProofDigest(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope().name(),
+        target.entryPolicy().name(),
+        sibling.actors().size());
+    for (int index = 0; index < sibling.actors().size(); index++) {
+      var actor = sibling.actors().get(index);
+      dsl.execute(
+          "INSERT INTO entity_canonical_gameplay_roster_snapshot_actors "
+              + "(snapshot_uuid, ordinal_position, character_uuid, display_name, actor_kind) "
+              + "VALUES (?, ?, ?, ?, ?)",
+          sibling.snapshotUuid(),
+          index,
+          actor.characterUuid(),
+          actor.displayName(),
+          "PLAYER");
+    }
+    dsl.execute(
+        "UPDATE entity_canonical_gameplay_roster_snapshots SET construction_state = 'SEALED' "
+            + "WHERE snapshot_uuid = ?",
+        sibling.snapshotUuid());
+    return sibling;
+  }
+
+  private int preparePage(int limit) {
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    return transaction.execute(ignored -> repository.prepareRetirement(candidate, limit));
+  }
+
+  private UUID bindSnapshot(
+      CanonicalGameplayRosterReadRequest local,
+      GetCanonicalGameplayRosterReferenceResponse owner,
+      CanonicalGameplayRosterSnapshot snapshot) {
+    return transaction.execute(
+        ignored -> {
+          UUID nonce = repository.reserveAdmission(local);
+          repository.requireAdmission(local, nonce);
+          repository.bindOriginal(owner, snapshot);
+          repository.bindAdmission(local.requestUuid(), nonce, snapshot.snapshotUuid());
+          return nonce;
+        });
+  }
+
+  private GetCanonicalGameplayRosterReferenceResponse retirement(
+      GetCanonicalGameplayRosterReferenceResponse owner, CanonicalGameplayRosterSnapshot snapshot) {
+    return retirement(owner, snapshot, UUID.randomUUID());
+  }
+
+  private GetCanonicalGameplayRosterReferenceResponse retirement(
+      GetCanonicalGameplayRosterReferenceResponse owner,
+      CanonicalGameplayRosterSnapshot snapshot,
+      UUID retirementUuid) {
+    var builder =
+        owner.toBuilder()
+            .setState(
+                net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                    .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+            .setTerminalOutcome("DENIED")
+            .setRetirementUuid(retirementUuid.toString())
+            .setSupersedingPointerDigest("f".repeat(64))
+            .setSupersedingPointerVersion(binding.target().pointerVersion() + 1)
+            .setSupersedingCatalogRevision(binding.target().catalogRevision())
+            .setSupersedingWorldEpoch(binding.target().activeWorldEpoch());
+    if (snapshot != null) builder.setCanonicalRosterReceipt(snapshot.toWire().toByteString());
+    return CanonicalGameplayRosterReferenceEvidence.sealRetirement(builder.build());
+  }
+
+  @Test
+  void orphanCleanupRevokesOnlyExpiredUnboundOpenNonces() {
+    var expired = localRequest();
+    var fresh = localRequest();
+    var bound = localRequest();
+    UUID expiredNonce = insertAgedAdmission(expired, Duration.ofHours(2));
+    UUID boundNonce = insertAgedAdmission(bound, Duration.ofHours(2));
+    UUID freshNonce = transaction.execute(ignored -> repository.reserveAdmission(fresh));
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.bindAdmission(
+                bound.requestUuid(), boundNonce, binding.snapshot().snapshotUuid()));
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_admissions SET admission_state = 'EXPIRED', minimum_retention_millis = 3600000 WHERE operation_uuid = ?",
+                    fresh.requestUuid()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_admissions SET admission_state = 'EXPIRED', minimum_retention_millis = 3600000 WHERE operation_uuid = ?",
+                    bound.requestUuid()))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.purgeOrphanOpenAdmissions(policy(Duration.ofHours(1)), 1)))
+        .isEqualTo(1);
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.requireAdmission(fresh, freshNonce);
+          repository.requireAdmission(bound, boundNonce);
+        });
+    UUID newNonce = transaction.execute(ignored -> repository.reserveAdmission(expired));
+    assertThat(newNonce).isNotEqualTo(expiredNonce);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.bindAdmission(
+                            expired.requestUuid(),
+                            expiredNonce,
+                            binding.snapshot().snapshotUuid())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(retainedRows()).hasSize(4);
+  }
+
+  @Test
+  void closeBeforeBindSerializesAndDeniesTheDelayedNonce() throws Exception {
+    raceClosureAndBind(true);
+  }
+
+  @Test
+  void bindBeforeCloseSerializesAndReturnsTheExactOriginalReceipt() throws Exception {
+    raceClosureAndBind(false);
+  }
+
+  @Test
+  void orphanCleanupBeforeBindRevokesTheDelayedNonce() throws Exception {
+    raceOrphanCleanupAndBind(true);
+  }
+
+  @Test
+  void bindingBeforeOrphanCleanupPreservesTheBoundNonce() throws Exception {
+    raceOrphanCleanupAndBind(false);
+  }
+
+  private void raceOrphanCleanupAndBind(boolean cleanupFirst) throws Exception {
+    var local = localRequest();
+    UUID nonce = insertAgedAdmission(local, Duration.ofHours(2));
+    CountDownLatch firstLocked = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    CountDownLatch allowCommit = new CountDownLatch(1);
+    Runnable bind =
+        () ->
+            transaction.executeWithoutResult(
+                ignored -> {
+                  repository.requireAdmission(local, nonce);
+                  repository.bindAdmission(
+                      local.requestUuid(), nonce, binding.snapshot().snapshotUuid());
+                  if (!cleanupFirst) {
+                    firstLocked.countDown();
+                    await(allowCommit);
+                  }
+                });
+    Runnable cleanup =
+        () ->
+            transaction.executeWithoutResult(
+                ignored -> {
+                  assertThat(repository.purgeOrphanOpenAdmissions(policy(Duration.ofHours(1)), 1))
+                      .isEqualTo(cleanupFirst ? 1 : 0);
+                  if (cleanupFirst) {
+                    firstLocked.countDown();
+                    await(allowCommit);
+                  }
+                });
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(cleanupFirst ? cleanup : bind);
+      await(firstLocked);
+      var second =
+          executor.submit(
+              () -> {
+                secondStarted.countDown();
+                if (cleanupFirst) {
+                  assertThatThrownBy(bind::run)
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+                } else {
+                  cleanup.run();
+                }
+              });
+      await(secondStarted);
+      allowCommit.countDown();
+      first.get(15, TimeUnit.SECONDS);
+      second.get(15, TimeUnit.SECONDS);
+    } finally {
+      allowCommit.countDown();
+    }
+    if (cleanupFirst) {
+      UUID freshNonce = transaction.execute(ignored -> repository.reserveAdmission(local));
+      assertThat(freshNonce).isNotEqualTo(nonce);
+    } else {
+      transaction.executeWithoutResult(ignored -> repository.requireAdmission(local, nonce));
+    }
+    assertThat(retainedRows()).hasSize(4);
+  }
+
+  private void raceClosureAndBind(boolean closeFirst) throws Exception {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery);
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(local));
+    var actor =
+        dsl.fetchSingle(
+                "SELECT character_uuid FROM entity_canonical_gameplay_roster_snapshot_actors WHERE snapshot_uuid = ?",
+                binding.snapshot().snapshotUuid())
+            .get("character_uuid", UUID.class);
+    var snapshot =
+        new CanonicalGameplayRosterSnapshot(
+            binding.canonicalAccountUuid(),
+            binding.snapshot().snapshotUuid(),
+            binding.snapshot().snapshotDigest(),
+            binding.target(),
+            List.of(new CanonicalGameplayRosterActor(actor, "Retained Actor")));
+    var expected = snapshot.toWire();
+    var response =
+        new java.util.concurrent.atomic.AtomicReference<
+            net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse>();
+    CountDownLatch firstLocked = new CountDownLatch(1);
+    CountDownLatch secondStarted = new CountDownLatch(1);
+    CountDownLatch allowCommit = new CountDownLatch(1);
+    Runnable bind =
+        () ->
+            transaction.executeWithoutResult(
+                ignored -> {
+                  repository.requireAdmission(local, nonce);
+                  repository.bindOriginal(owner, snapshot);
+                  repository.bindAdmission(local.requestUuid(), nonce, snapshot.snapshotUuid());
+                  if (!closeFirst) {
+                    firstLocked.countDown();
+                    await(allowCommit);
+                  }
+                });
+    Runnable close =
+        () ->
+            transaction.executeWithoutResult(
+                ignored -> {
+                  response.set(
+                      repository.closeAdmission(recovery, owner, policy(Duration.ofHours(1))));
+                  if (closeFirst) {
+                    firstLocked.countDown();
+                    await(allowCommit);
+                  }
+                });
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(closeFirst ? close : bind);
+      await(firstLocked);
+      var second =
+          executor.submit(
+              () -> {
+                secondStarted.countDown();
+                if (closeFirst) {
+                  assertThatThrownBy(bind::run)
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+                } else {
+                  close.run();
+                }
+              });
+      await(secondStarted);
+      allowCommit.countDown();
+      first.get(15, TimeUnit.SECONDS);
+      second.get(15, TimeUnit.SECONDS);
+    } finally {
+      allowCommit.countDown();
+    }
+    assertThat(response.get().getAdmissionUuid()).isEqualTo(nonce.toString());
+    if (closeFirst) {
+      assertThat(response.get().getCanonicalRosterReceipt()).isEmpty();
+      assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_original_selections"))).isZero();
+    } else {
+      assertThat(response.get().getCanonicalRosterReceipt()).isEqualTo(expected.toByteString());
+      transaction.executeWithoutResult(
+          ignored -> {
+            assertThat(repository.originalReceipt(owner)).contains(expected);
+            assertThat(repository.protection(binding).liveReferences()).isEqualTo(1);
+            assertThat(repository.protection(binding).disposalEligible()).isFalse();
+          });
+      assertThat(
+              transaction
+                  .<List<CanonicalGameplayRosterRetentionRepository.ClosedAdmissionCandidate>>
+                      execute(ignored -> repository.closedAdmissionCandidates(null, 2)))
+          .isEmpty();
+    }
+    assertThat(retainedRows()).hasSize(4);
+  }
+
+  private UUID insertAgedAdmission(CanonicalGameplayRosterReadRequest request, Duration age) {
+    UUID nonce = UUID.randomUUID();
+    byte[] bindingBytes =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest.newBuilder()
+            .setRequestUuid(request.requestUuid().toString())
+            .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
+            .setExpectedTarget(request.expectedTarget().toWire())
+            .setPlayerExecutionContext(
+                net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                    .setSessionId(request.playerExecutionContext().sessionUuid().toString()))
+            .build()
+            .toByteArray();
+    dsl.execute(
+        "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding, recorded_at) VALUES (?, ?, ?, clock_timestamp() - ? * interval '1 millisecond')",
+        request.requestUuid(),
+        nonce,
+        bindingBytes,
+        age.toMillis());
+    transaction.executeWithoutResult(ignored -> repository.classifyRetainedDependencies(2));
+    return nonce;
+  }
+
+  private CanonicalGameplayRosterReadRequest localRequest() {
+    return localRequest(binding.canonicalAccountUuid(), binding.target(), UUID.randomUUID());
+  }
+
+  private static CanonicalGameplayRosterReadRequest localRequest(
+      UUID canonicalAccount, CanonicalGameplayRosterTarget target, UUID operation) {
+    return new CanonicalGameplayRosterReadRequest(
+        operation,
+        canonicalAccount,
+        target,
+        new CanonicalGameplayRosterExecutionContext(
+            canonicalAccount,
+            target.tenantUuid(),
+            target.playableStateNamespaceId(),
+            target.gameInstanceUuid(),
+            null,
+            UUID.randomUUID(),
+            target.realmUuid(),
+            operation,
+            target.playableStateScope()));
+  }
+
+  private static CanonicalGameplayRosterRecoveryRequest recovery(
+      CanonicalGameplayRosterReadRequest local) {
+    return CanonicalGameplayRosterRecoveryRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setRecoveryUuid(UUID.randomUUID().toString())
+        .setOriginalSelection(
+            CanonicalGameplayRosterReferenceEvidence.request(
+                local.requestUuid(),
+                local.canonicalAccountUuid(),
+                local.playerExecutionContext().sessionUuid(),
+                "gameplay",
+                local.expectedTarget().toWire()))
+        .build();
+  }
+
+  private static GetCanonicalGameplayRosterReferenceResponse recoveryOwner(
+      CanonicalGameplayRosterRecoveryRequest request) {
+    return CanonicalGameplayRosterReferenceEvidence.response(
+            request.getOriginalSelection(), 1, UUID.randomUUID(), null)
+        .toBuilder()
+        .setRecoveryUuid(request.getRecoveryUuid())
+        .build();
+  }
+
+  private static CanonicalGameplayRosterRetentionPolicy policy(Duration duration) {
+    return new CanonicalGameplayRosterRetentionPolicy(
+        duration, duration, duration, Duration.ofMinutes(1), 2);
+  }
+
+  private void seedAssignedActorAndSnapshot() {
+    var target = binding.target();
+    UUID assignment = UUID.randomUUID();
+    var request =
+        new PreseededActorAssignmentRequest(
+            assignment,
+            binding.canonicalAccountUuid(),
+            new PreseededActorCorePayload(
+                PreseededActorCorePayload.ActorKind.PLAYER, "Retained Actor"),
+            new PreseededActorAssignmentExpectedTarget(
+                target.tenantUuid(),
+                target.realmUuid(),
+                target.worldSlug(),
+                target.realmSlug(),
+                target.gameInstanceUuid().toString(),
+                target.catalogRevision(),
+                target.canonicalVersionUuid(),
+                target.publishedPolicyDigest(),
+                target.playableStateNamespaceId(),
+                target.publishedReleaseBundleRef(),
+                target.playableStateScope()));
+    var evidence =
+        new PreseededActorAssignmentOwnerEvidence(
+            assignment,
+            binding.canonicalAccountUuid(),
+            PreseededActorAssignmentOwnerEvidence.Eligibility.ELIGIBLE,
+            Instant.now(),
+            4,
+            "1".repeat(64),
+            target.tenantUuid(),
+            target.realmUuid(),
+            target.worldSlug(),
+            target.realmSlug(),
+            target.gameInstanceUuid().toString(),
+            target.catalogRevision(),
+            target.canonicalVersionUuid(),
+            target.publishedPolicyDigest(),
+            target.playableStateNamespaceId(),
+            target.playableStateScope(),
+            PreseededActorAssignmentOwnerEvidence.PublishedEntryPolicy.PRESEEDED_ONLY,
+            PreseededActorAssignmentOwnerEvidence.AccountPurpose.PRESEEDED_ACTOR_STAGING,
+            PreseededActorAssignmentOwnerEvidence.AccountCurrentness.CURRENT_AT_REVALIDATION,
+            "2".repeat(64),
+            target.publishedOwnerProofDigest(),
+            target.publishedReleaseBundleRef());
+    UUID actor =
+        new CharacterRepository(dsl)
+            .assignPreseededActor(
+                request,
+                evidence,
+                new RuntimeAccountIdentityEvidence(
+                    1,
+                    "dev",
+                    assignment,
+                    binding.canonicalAccountUuid(),
+                    51L,
+                    "ACCOUNT_DATABASE_INSERT"),
+                request.mutationIntentDigest())
+            .characterUuid();
+    dsl.execute(
+        "INSERT INTO entity_canonical_gameplay_roster_snapshots "
+            + "(snapshot_uuid, snapshot_digest, canonical_account_uuid, tenant_uuid, realm_uuid, "
+            + "world_slug, realm_slug, game_instance_uuid, catalog_revision, canonical_version_uuid, "
+            + "pointer_version, active_world_epoch, published_policy_digest, published_release_bundle_ref, "
+            + "admission_pointer_snapshot_digest, published_owner_proof_digest, "
+            + "playable_state_namespace_uuid, playable_state_scope, entry_policy, roster_count) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+        binding.snapshot().snapshotUuid(),
+        binding.snapshot().snapshotDigest(),
+        binding.canonicalAccountUuid(),
+        target.tenantUuid(),
+        target.realmUuid(),
+        target.worldSlug(),
+        target.realmSlug(),
+        target.gameInstanceUuid(),
+        target.catalogRevision(),
+        target.canonicalVersionUuid(),
+        target.pointerVersion(),
+        target.activeWorldEpoch(),
+        target.publishedPolicyDigest(),
+        target.publishedReleaseBundleRef(),
+        target.admissionPointerSnapshotDigest(),
+        target.publishedOwnerProofDigest(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope().name(),
+        target.entryPolicy().name());
+    dsl.execute(
+        "INSERT INTO entity_canonical_gameplay_roster_snapshot_actors "
+            + "(snapshot_uuid, ordinal_position, character_uuid, display_name, actor_kind) "
+            + "VALUES (?, 0, ?, 'Retained Actor', 'PLAYER')",
+        binding.snapshot().snapshotUuid(),
+        actor);
+    dsl.execute(
+        "UPDATE entity_canonical_gameplay_roster_snapshots SET construction_state = 'SEALED' "
+            + "WHERE snapshot_uuid = ?",
+        binding.snapshot().snapshotUuid());
+  }
+
+  private static String predecessorRowProjection(String table) {
+    return switch (table) {
+      case "characters" ->
+          "to_jsonb(t) - ARRAY['creation_target_namespace', 'creation_operation_id', 'actor_entry_policy', 'authored_initial_core_json', 'creation_descriptor_json', 'creation_descriptor_digest']::TEXT[]";
+      case "entity_canonical_gameplay_roster_snapshots" ->
+          "to_jsonb(t) - 'canonical_player_created_source_identity'";
+      default -> "to_jsonb(t)";
+    };
+  }
+
+  private void assertInheritedNullableFieldsRemainNull() {
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM characters WHERE creation_target_namespace IS NOT NULL OR creation_operation_id IS NOT NULL "
+                        + "OR actor_entry_policy IS NOT NULL OR authored_initial_core_json IS NOT NULL "
+                        + "OR creation_descriptor_json IS NOT NULL OR creation_descriptor_digest IS NOT NULL")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE canonical_player_created_source_identity IS NOT NULL")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  private List<String> retainedRows() {
+    return List.of(
+            "characters", "entity_preseeded_actor_assignment_operations",
+            "entity_canonical_gameplay_roster_snapshots",
+                "entity_canonical_gameplay_roster_snapshot_actors")
+        .stream()
+        .flatMap(
+            table ->
+                dsl
+                    .fetch(
+                        "SELECT ("
+                            + predecessorRowProjection(table)
+                            + ")::TEXT || ':' || t.xmin::TEXT FROM "
+                            + table
+                            + " t ORDER BY ("
+                            + predecessorRowProjection(table)
+                            + ")::TEXT")
+                    .getValues(0, String.class)
+                    .stream())
+        .toList();
+  }
+
+  private static CanonicalGameplayRosterTarget target() {
+    return new CanonicalGameplayRosterTarget(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "world",
+        "realm",
+        UUID.randomUUID(),
+        7,
+        13,
+        19,
+        UUID.randomUUID(),
+        "3".repeat(64),
+        "release/retention-test",
+        "4".repeat(64),
+        "5".repeat(64),
+        UUID.randomUUID(),
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY);
+  }
+
+  private List<CanonicalGameplayRosterReadRequest> legacyRequests;
+  private Map<UUID, UUID> legacyNonces;
+  private GetCanonicalGameplayRosterReferenceResponse legacyProof;
+
+  private List<String> rebuildLegacyCohort(
+      boolean retired, int intents, boolean disposed, boolean purgeTombstones) {
+    return rebuildLegacyCohort(retired, intents, disposed, purgeTombstones, false);
+  }
+
+  private List<String> rebuildLegacyCohort(
+      boolean retired,
+      int intents,
+      boolean disposed,
+      boolean purgeTombstones,
+      boolean inconsistentRestore) {
+    dropOwnedFixture();
+    schema = "roster_retained_" + UUID.randomUUID().toString().replace("-", "");
+    var source = dataSource(schema);
+    migrate(source, "1011");
+    dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
+    transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+    migrate(source, "1017");
+    legacyRequests = new java.util.ArrayList<>();
+    legacyNonces = new java.util.HashMap<>();
+    var owners = new java.util.ArrayList<GetCanonicalGameplayRosterReferenceResponse>();
+    UUID fence = UUID.randomUUID();
+    var snapshot = retainedSnapshot();
+    transaction.executeWithoutResult(
+        ignored -> {
+          dsl.execute(
+              "INSERT INTO entity_canonical_roster_retention_lifecycle (snapshot_uuid, snapshot_digest) VALUES (?, ?)",
+              snapshot.snapshotUuid(),
+              snapshot.snapshotDigest());
+          for (int index = 0; index < (disposed ? 1 : 2); index++) {
+            var local = localRequest();
+            UUID nonce = UUID.randomUUID();
+            var owner =
+                CanonicalGameplayRosterReferenceEvidence.response(
+                    recovery(local).getOriginalSelection(), 1, fence, null);
+            legacyRequests.add(local);
+            legacyNonces.put(local.requestUuid(), nonce);
+            owners.add(owner);
+            dsl.execute(
+                "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding, snapshot_uuid) VALUES (?, ?, ?, ?)",
+                local.requestUuid(),
+                nonce,
+                legacyAdmissionBinding(local),
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "INSERT INTO entity_canonical_roster_retention_references (reference_uuid, acquire_operation_uuid, snapshot_uuid, snapshot_digest, reference_kind) VALUES (?, ?, ?, ?, 'ORIGINAL_SELECTION')",
+                local.requestUuid(),
+                local.requestUuid(),
+                snapshot.snapshotUuid(),
+                snapshot.snapshotDigest());
+            dsl.execute(
+                "INSERT INTO entity_canonical_roster_original_selections (operation_uuid, owner_request, owner_fence, owner_target_fence_uuid, snapshot_uuid, snapshot_digest, canonical_roster_receipt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                local.requestUuid(),
+                owner.getRequest().toByteArray(),
+                1,
+                fence,
+                snapshot.snapshotUuid(),
+                snapshot.snapshotDigest(),
+                snapshot.toWire().toByteArray());
+          }
+          UUID anchor =
+              dsl.fetchSingle(
+                      "SELECT operation_uuid FROM entity_canonical_roster_original_selections ORDER BY operation_uuid LIMIT 1")
+                  .get(0, UUID.class);
+          var owner =
+              owners.stream()
+                  .filter(value -> value.getRequest().getOperationUuid().equals(anchor.toString()))
+                  .findFirst()
+                  .orElseThrow();
+          legacyProof = retirement(owner, snapshot);
+          if (retired) {
+            for (var local : legacyRequests) {
+              UUID release =
+                  UUID.nameUUIDFromBytes(
+                      (legacyProof.getRetirementUuid() + ":" + local.requestUuid())
+                          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+              dsl.execute(
+                  "INSERT INTO entity_canonical_roster_retention_releases (release_operation_uuid, reference_uuid, snapshot_uuid, snapshot_digest) VALUES (?, ?, ?, ?)",
+                  release,
+                  local.requestUuid(),
+                  snapshot.snapshotUuid(),
+                  snapshot.snapshotDigest());
+            }
+            dsl.execute(
+                "UPDATE entity_canonical_roster_retention_lifecycle SET lifecycle_state = 'RETIRED', local_epoch = local_epoch + 1, owner_target_fence_uuid = ?, owner_retirement_uuid = ?, owner_retirement_proof_digest = ?, owner_retirement_proof = ?, retirement_observed_at = clock_timestamp(), minimum_retention_millis = 1 WHERE snapshot_uuid = ?",
+                fence,
+                UUID.fromString(legacyProof.getRetirementUuid()),
+                legacyProof.getRetirementProofDigest(),
+                legacyProof.toByteArray(),
+                snapshot.snapshotUuid());
+            for (int index = 0; index < intents; index++) {
+              var local = legacyRequests.get(index);
+              var original = owners.get(index).getRequest();
+              UUID observation = UUID.randomUUID();
+              var request =
+                  net.firedevops.firemud.gamesession.v1
+                      .CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+                      .setSchemaVersion(1)
+                      .setOriginalSelection(original)
+                      .setObservedRetirement(legacyProof)
+                      .setObservationUuid(observation.toString())
+                      .setAdmissionUuid(legacyNonces.get(local.requestUuid()).toString())
+                      .setSnapshotUuid(snapshot.snapshotUuid().toString())
+                      .setSnapshotDigest(snapshot.snapshotDigest())
+                      .setMinimumRetentionMillis(1)
+                      .build();
+              CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request);
+              dsl.execute(
+                  "INSERT INTO entity_canonical_roster_retirement_transfers (observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, observed_retirement, acknowledgement_request, request_digest) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1, 'PENDING_ACK', ?, ?, ?)",
+                  observation,
+                  local.requestUuid(),
+                  original.toByteArray(),
+                  legacyNonces.get(local.requestUuid()),
+                  snapshot.snapshotUuid(),
+                  snapshot.snapshotDigest(),
+                  fence,
+                  legacyProof.toByteArray(),
+                  request.toByteArray(),
+                  CanonicalGameplayRosterRetirementEvidence.requestDigest(request));
+            }
+          }
+        });
+    if (disposed) {
+      dsl.fetch("SELECT pg_sleep(0.02)");
+      transaction.executeWithoutResult(
+          ignored -> {
+            long epoch =
+                dsl.fetchSingle(
+                        "UPDATE entity_canonical_roster_retention_lifecycle SET lifecycle_state = 'DISPOSING', local_epoch = local_epoch + 1 WHERE snapshot_uuid = ? RETURNING local_epoch",
+                        snapshot.snapshotUuid())
+                    .get(0, Long.class);
+            dsl.execute(
+                "INSERT INTO entity_canonical_roster_disposal_receipts (snapshot_uuid, snapshot_digest, owner_target_fence_uuid, owner_retirement_uuid, owner_retirement_proof_digest, local_epoch, minimum_retention_millis) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                snapshot.snapshotUuid(),
+                snapshot.snapshotDigest(),
+                fence,
+                UUID.fromString(legacyProof.getRetirementUuid()),
+                legacyProof.getRetirementProofDigest(),
+                epoch);
+            dsl.execute(
+                "UPDATE entity_canonical_roster_admissions SET admission_state = 'DISPOSED', disposed_at = clock_timestamp(), minimum_retention_millis = 1 WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "DELETE FROM entity_canonical_gameplay_roster_snapshot_actors WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_original_selections WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_retention_references WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_retention_releases WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "DELETE FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_retention_lifecycle WHERE snapshot_uuid = ?",
+                snapshot.snapshotUuid());
+          });
+      if (purgeTombstones) {
+        dsl.fetch("SELECT pg_sleep(0.02)");
+        dsl.execute("DELETE FROM entity_canonical_roster_admissions");
+        dsl.execute("DELETE FROM entity_canonical_roster_disposal_receipts");
+      }
+    }
+    if (inconsistentRestore) {
+      // Explicit inconsistent-restore fixture only: production migration never disables guards.
+      transaction.executeWithoutResult(
+          ignored -> {
+            dsl.execute(
+                "ALTER TABLE entity_canonical_roster_original_selections DISABLE TRIGGER USER");
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+                UUID.fromString(legacyProof.getRequest().getOperationUuid()));
+            dsl.execute(
+                "ALTER TABLE entity_canonical_roster_original_selections ENABLE TRIGGER USER");
+          });
+    }
+    var rows = immutableRetentionRows();
+    var authority = retainedLifecycleAuthority();
+    migrate(source, "latest");
+    repository = new CanonicalGameplayRosterRetentionRepository(dsl);
+    assertThat(immutableRetentionRows()).containsExactlyElementsOf(rows);
+    assertThat(retainedLifecycleAuthority()).containsExactlyElementsOf(authority);
+    assertInheritedNullableFieldsRemainNull();
+    return rows;
+  }
+
+  private static byte[] legacyAdmissionBinding(CanonicalGameplayRosterReadRequest request) {
+    return net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest.newBuilder()
+        .setRequestUuid(request.requestUuid().toString())
+        .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
+        .setExpectedTarget(request.expectedTarget().toWire())
+        .setPlayerExecutionContext(
+            net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                .setSessionId(request.playerExecutionContext().sessionUuid().toString()))
+        .build()
+        .toByteArray();
+  }
+
+  private List<String> retainedLifecycleAuthority() {
+    return dsl.fetch(
+            "SELECT (to_jsonb(l) - ARRAY['local_epoch', 'original_selection_count', 'retirement_original_count', 'retirement_prepared_count', 'retirement_preparation_cursor']::text[])::text FROM entity_canonical_roster_retention_lifecycle l ORDER BY snapshot_uuid")
+        .getValues(0, String.class);
+  }
+
+  private List<String> immutableRetentionRows() {
+    return dsl.fetch(
+            "SELECT 'a:' || row_to_json(a)::text || ':' || a.xmin::text AS retained FROM entity_canonical_roster_admissions a "
+                + "UNION ALL SELECT 'o:' || row_to_json(o)::text || ':' || o.xmin::text FROM entity_canonical_roster_original_selections o "
+                + "UNION ALL SELECT 't:' || row_to_json(t)::text || ':' || t.xmin::text FROM entity_canonical_roster_retirement_transfers t ORDER BY retained")
+        .getValues(0, String.class);
+  }
+
+  private void classifyAllRetainedSources() {
+    while (transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(2))
+        != 0) {
+      // The fixture has a finite inventory; UNKNOWN rows are classified once and never starve it.
+    }
+  }
+
+  private void migrate(DriverManagerDataSource dataSource, String target) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(
+                "filesystem:"
+                    + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+                "classpath:db/migration/saga")
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .target(target);
+    configuration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    configuration.load().migrate();
+  }
+
+  private DriverManagerDataSource dataSource(String selectedSchema) {
+    var dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    String baseUrl = postgres.getJdbcUrl();
+    dataSource.setUrl(
+        selectedSchema == null
+            ? baseUrl
+            : baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + selectedSchema);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    return dataSource;
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      if (!latch.await(5, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("controlled concurrent fixture timed out");
+      }
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(exception);
+    }
+  }
+}

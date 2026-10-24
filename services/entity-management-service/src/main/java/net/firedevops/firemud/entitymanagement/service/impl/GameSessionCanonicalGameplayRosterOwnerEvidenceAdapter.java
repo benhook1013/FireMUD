@@ -40,6 +40,23 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
   }
 
   @Override
+  public net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+      readOriginalSelection(CanonicalGameplayRosterReadRequest request) {
+    var original =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.playerExecutionContext().sessionUuid(),
+            workloadNamespace,
+            request.expectedTarget().toWire());
+    try {
+      return gameSessionClient.getCanonicalGameplayRosterReference(original);
+    } catch (RuntimeException unavailable) {
+      throw new OwnerEvidenceUnavailableException(unavailable);
+    }
+  }
+
+  @Override
   public CanonicalGameplayRosterOwnerEvidence resolveCurrentTarget(
       CanonicalGameplayRosterReadRequest request) {
     Objects.requireNonNull(request, "request");

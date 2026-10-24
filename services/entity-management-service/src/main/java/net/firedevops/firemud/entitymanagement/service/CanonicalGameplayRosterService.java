@@ -24,6 +24,14 @@ public final class CanonicalGameplayRosterService {
       throw new IllegalArgumentException("Roster discovery must not select a character");
     }
 
+    var localAdmission = characterRepository.reserveOriginalRosterAdmission(request);
+    var original =
+        CanonicalGameplayRosterOwnerEvidencePort.requireOriginalSelection(
+            request, ownerEvidencePort.readOriginalSelection(request));
+    var retained = characterRepository.readOriginalRosterReceipt(request, original, localAdmission);
+    if (retained.isPresent()) {
+      return retained.orElseThrow();
+    }
     CanonicalGameplayRosterOwnerEvidence evidence = ownerEvidencePort.resolveCurrentTarget(request);
     if (evidence == null) {
       throw new CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException();
@@ -35,11 +43,15 @@ public final class CanonicalGameplayRosterService {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_OWNER_TARGET_MISMATCH");
     }
 
-    return characterRepository.captureCanonicalGameplayRosterSnapshot(request, evidence);
+    return characterRepository.captureAndBindCanonicalGameplayRosterSnapshot(
+        request, evidence, original, localAdmission);
   }
 
   private static void requirePreseededOnly(CanonicalGameplayRosterTarget target) {
-    if (target.entryPolicy() != CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY) {
+    if (target.entryPolicy() != CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY
+        || target.playableStateScope()
+            != net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED) {
       throw new UnsupportedOperationException("CANONICAL_GAMEPLAY_ROSTER_ENTRY_POLICY_UNSUPPORTED");
     }
   }
