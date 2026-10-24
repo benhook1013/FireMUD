@@ -177,6 +177,9 @@ public final class CanonicalGameplayRosterReferenceOwner {
     // The canonical route and OPEN readers require committed reads outside any transaction.
     // A second independent snapshot must agree with every owner-proof field in that route.
     var current = routeReader.readCurrentTarget(java.util.UUID.fromString(target.getTenantUuid()));
+    if (!CanonicalGameplayRosterReferenceRepository.isSupersedingTarget(request, current)) {
+      return false;
+    }
     var qualified =
         admissionRepository.readCurrentOpenSnapshotForRealm(
             request.getTargetNamespace(),

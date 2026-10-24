@@ -187,6 +187,7 @@ public final class CanonicalGameplayRosterClient
     var original =
         CanonicalGameplayRosterReferenceEvidence.requireResponse(
             originalRequest, referenceOwner.begin(originalRequest));
+    CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
     if (!original.getCanonicalRosterReceipt().isEmpty()) {
       return validateResponse(
           canonicalAccountUuid,
@@ -256,6 +257,7 @@ public final class CanonicalGameplayRosterClient
     var original =
         CanonicalGameplayRosterReferenceEvidence.requireResponse(
             originalRequest, referenceOwner.selectOriginal(originalRequest, selectedCharacterUuid));
+    CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
     var originalReceipt = CanonicalGameplayRosterReferenceEvidence.receipt(original);
     if (!selectedCharacterUuid.toString().equals(original.getSelectedCharacterUuid())
         || !roster.snapshotUuid().toString().equals(originalReceipt.getSnapshotUuid())

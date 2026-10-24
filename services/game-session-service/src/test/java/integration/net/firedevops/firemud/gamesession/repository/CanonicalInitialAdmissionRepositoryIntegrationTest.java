@@ -103,18 +103,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   @Test
   void rosterRetirementUsesRealCommittedAdmissionReaderAndLocksCurrentPointerUnderRosterFence()
       throws Exception {
-    // Retained pre1006 source is deliberately controlled original owner history, not a fresh
-    // protected Human admission or genuine upstream producer. All current route/owner reads and
-    // row locks below are real, with every current SQL guard enabled.
-    Fixture fixture = fixture("1005");
-    var predecessor = preparePre1006Admission(fixture);
-    var prepared = predecessor.prepared();
-    var admission =
-        initialAdmissionRequest(
-            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
-    reservePre1006Attempt(fixture, predecessor.launch(), admission);
-    seedPre1006Terminal(fixture, prepared, predecessor.launch(), admission, true);
-    migration(fixture, "1017").migrate();
+    // The current pointer is real CLOSED-v1 -> first-OPEN-v2 history, while this retained
+    // original-v1 selection is synthetic controlled evidence, not a fresh protected Human
+    // admission or genuine upstream producer. All current route/owner reads and row locks below
+    // are real, with every current SQL guard enabled.
+    var retainedV2 = prepareRetainedV2Admission();
+    Fixture fixture = retainedV2.fixture();
     var routes =
         new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
             NAMESPACE,
@@ -140,6 +134,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .isEqualTo(current.canonicalGameInstanceId());
     assertThat(sourcePointer.snapshot().admissionPointerSnapshotDigest())
         .isEqualTo(current.admissionPointerSnapshotDigest());
+    assertThat(current.pointerVersion()).isEqualTo(2L);
     var target =
         net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
             .setTenantUuid(TENANT.toString())
@@ -156,12 +151,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
                     .CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
             .setCatalogRevision(current.catalogRevision())
-            .setPointerVersion(current.pointerVersion())
+            .setPointerVersion(1L)
             .setActiveWorldEpoch(current.activeWorldEpoch())
-            .setAdmissionPointerSnapshotDigest(current.admissionPointerSnapshotDigest())
-            .setPublishedOwnerProofDigest(current.ownerProofDigest().substring("sha256:".length()))
+            .setAdmissionPointerSnapshotDigest("c".repeat(64))
+            .setPublishedOwnerProofDigest("b".repeat(64))
             .setPublishedPolicyDigest("a".repeat(64))
-            .setPublishedReleaseBundleRef("controlled:retained-fixture")
+            .setPublishedReleaseBundleRef("controlled:retained-original-v1")
             .build();
     var request =
         net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.request(
@@ -171,7 +166,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             .CanonicalGameplayRosterReferenceRepository(
             fixture.dsl,
             new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
-                java.time.Duration.ofMillis(1),
+                java.time.Duration.ofMinutes(1),
                 java.time.Duration.ofMillis(1),
                 java.time.Duration.ofMillis(1),
                 java.time.Duration.ofSeconds(1),
@@ -181,12 +176,19 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
           references.begin(request);
           references.completeUnissuedDenied(request);
         });
+    byte[] retainedResponseBytes = references.find(request).orElseThrow().toByteArray();
     String retained =
         fixture
             .dsl
             .fetchSingle(
                 "SELECT original_request, xmin::text FROM game_session_canonical_roster_selection")
             .formatJSON();
+    var retainedFenceAndSelectionCounts =
+        fixture.dsl.fetchSingle(
+            "SELECT (SELECT count(*) FROM game_session_canonical_roster_target_fences) AS fences, "
+                + "(SELECT count(*) FROM game_session_canonical_roster_selection) AS selections");
+    assertThat(retainedFenceAndSelectionCounts.get("fences", Long.class)).isEqualTo(1L);
+    assertThat(retainedFenceAndSelectionCounts.get("selections", Long.class)).isEqualTo(1L);
     String originalOwnerRows = pointerAndAuditProjection(fixture);
     var lockAttempted = new java.util.concurrent.CountDownLatch(1);
     var recoveryStarted = new java.util.concurrent.CountDownLatch(1);
@@ -266,7 +268,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
               throw new IllegalStateException(interrupted);
             }
           });
-      // The exact current pointer has not superseded this original target, so it cannot retire.
+      // Actual pointer supersession reaches the lock path; the stored minimum still protects it.
       assertThat(retirement.get().get(5L, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
       assertThatThrownBy(() -> recovery.get().get(5L, java.util.concurrent.TimeUnit.SECONDS))
           .isInstanceOf(java.util.concurrent.ExecutionException.class)
@@ -280,13 +282,23 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     "SELECT original_request, xmin::text FROM game_session_canonical_roster_selection")
                 .formatJSON())
         .isEqualTo(retained);
+    assertThat(references.find(request).orElseThrow().toByteArray())
+        .containsExactly(retainedResponseBytes);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT (SELECT count(*) FROM game_session_canonical_roster_target_fences) AS fences, "
+                        + "(SELECT count(*) FROM game_session_canonical_roster_selection) AS selections")
+                .formatJSON())
+        .isEqualTo(retainedFenceAndSelectionCounts.formatJSON());
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);
     assertThat(references.read(request).getState())
         .isEqualTo(
             net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
                 .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED);
     assertDistinctAccountSourceReadersShareAndExcludeWriters(
-        fixture, current, CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER);
+        fixture, current, CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED);
   }
 
   @Test
@@ -294,54 +306,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     // Controlled retained pre1006 CLOSED-v1 -> first-OPEN-v2 owner history. Original roster-v1
     // selections below are synthetic retained evidence: no genuine OPEN-v1 -> OPEN-v2 writer or
     // Human admission is activated by this proof. All current readers and row-lock guards are real.
-    Fixture fixture = fixture("1005");
-    var predecessor = preparePre1006Admission(fixture);
-    var prepared = predecessor.prepared();
-    var closeRequest =
-        new CreateCanonicalClosedAdmissionPointerRequest(
-            uuid(115),
-            NAMESPACE,
-            TENANT,
-            prepared.catalog().realmId(),
-            CATALOG_REQUEST,
-            prepared.catalog().catalogRevision(),
-            "canonical-roster-recovery-test",
-            "Controlled retained CLOSED origin");
-    // Current catalog mapping expects later fixture-policy columns absent at migration 1005.
-    // Only this historical catalog boundary is controlled; the real CLOSED writer, database
-    // catalog constraints, append-only event and original receipt readback remain in use.
-    var historicalCatalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
-    when(historicalCatalog.readByRequest(NAMESPACE, CATALOG_REQUEST))
-        .thenReturn(java.util.Optional.of(prepared.catalog()));
-    when(historicalCatalog.lockExactInitialPublicProduction(
-            NAMESPACE,
-            TENANT,
-            prepared.catalog().realmId(),
-            CATALOG_REQUEST,
-            prepared.catalog().catalogRevision()))
-        .thenReturn(prepared.catalog());
-    var historicalPointers =
-        new GameSessionCanonicalAdmissionPointerRepository(
-            fixture.dsl,
-            historicalCatalog,
-            new GameplayAdmissionPointerEventRepository(fixture.dsl));
-    var closed = historicalPointers.prepareInitialClosed(closeRequest);
-    fixture.transactions.executeWithoutResult(
-        status -> historicalPointers.createInitialClosed(closed));
-    var origin = historicalPointers.readOriginalClosedOrigin(NAMESPACE, uuid(115)).orElseThrow();
-    var admission =
-        initialAdmissionRequest(
-            prepared.catalog(),
-            prepared.binding(),
-            prepared.gameInstanceUuid(),
-            "controlled-recovery-open-v2",
-            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
-            1L,
-            uuid(121),
-            uuid(122));
-    reservePre1006Attempt(fixture, predecessor.launch(), admission);
-    seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
-    migration(fixture, "1017").migrate();
+    var retainedV2 = prepareRetainedV2Admission();
+    Fixture fixture = retainedV2.fixture();
+    var prepared = retainedV2.prepared();
+    var origin = retainedV2.origin();
     var routes =
         new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
             NAMESPACE,
@@ -595,7 +563,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(6))
         .lockExactCurrentOpenSnapshot(any());
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);
-    // The existing same-current-pointer and actual-row-lock race proof remains separate above.
+    // The actual superseding-pointer and original-fence row-lock race proof remains separate above.
     // Fresh Human allocation still refuses missing Account protection after the retained upgrade.
     var fresh =
         initialAdmissionRequest(
@@ -2630,6 +2598,58 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .isZero();
   }
 
+  private RetainedV2Admission prepareRetainedV2Admission() throws Exception {
+    Fixture fixture = fixture("1005");
+    var predecessor = preparePre1006Admission(fixture);
+    PreparedAdmission prepared = predecessor.prepared();
+    var closeRequest =
+        new CreateCanonicalClosedAdmissionPointerRequest(
+            uuid(115),
+            NAMESPACE,
+            TENANT,
+            prepared.catalog().realmId(),
+            CATALOG_REQUEST,
+            prepared.catalog().catalogRevision(),
+            "canonical-roster-recovery-test",
+            "Controlled retained CLOSED origin");
+    // Current catalog mapping expects later fixture-policy columns absent at migration 1005.
+    // Only this historical catalog boundary is controlled; the real CLOSED writer, database
+    // catalog constraints, append-only event and original receipt readback remain in use.
+    var historicalCatalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
+    when(historicalCatalog.readByRequest(NAMESPACE, CATALOG_REQUEST))
+        .thenReturn(java.util.Optional.of(prepared.catalog()));
+    when(historicalCatalog.lockExactInitialPublicProduction(
+            NAMESPACE,
+            TENANT,
+            prepared.catalog().realmId(),
+            CATALOG_REQUEST,
+            prepared.catalog().catalogRevision()))
+        .thenReturn(prepared.catalog());
+    var historicalPointers =
+        new GameSessionCanonicalAdmissionPointerRepository(
+            fixture.dsl,
+            historicalCatalog,
+            new GameplayAdmissionPointerEventRepository(fixture.dsl));
+    var closed = historicalPointers.prepareInitialClosed(closeRequest);
+    fixture.transactions.executeWithoutResult(
+        status -> historicalPointers.createInitialClosed(closed));
+    var origin = historicalPointers.readOriginalClosedOrigin(NAMESPACE, uuid(115)).orElseThrow();
+    var admission =
+        initialAdmissionRequest(
+            prepared.catalog(),
+            prepared.binding(),
+            prepared.gameInstanceUuid(),
+            "controlled-recovery-open-v2",
+            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+            1L,
+            uuid(121),
+            uuid(122));
+    reservePre1006Attempt(fixture, predecessor.launch(), admission);
+    seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
+    migration(fixture, "1017").migrate();
+    return new RetainedV2Admission(fixture, prepared, origin);
+  }
+
   private static PreparedAdmission prepareAdmission(Fixture fixture) {
     IntakeReceipt source = fixture.registerSource();
     CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
@@ -2704,6 +2724,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       CanonicalRealmCatalogSnapshot catalog,
       CompleteLaunchBindingEvidence binding,
       UUID gameInstanceUuid) {}
+
+  private record RetainedV2Admission(
+      Fixture fixture,
+      PreparedAdmission prepared,
+      net.firedevops.firemud.gamesession.dto.CanonicalClosedAdmissionPointerSnapshot origin) {}
 
   private record Fixture(
       DSLContext dsl,
