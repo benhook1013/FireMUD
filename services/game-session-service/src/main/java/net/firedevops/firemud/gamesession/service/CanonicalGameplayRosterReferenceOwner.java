@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -32,9 +31,6 @@ public final class CanonicalGameplayRosterReferenceOwner {
       recoveryClient;
   private final MeterRegistry metrics;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected MeterRegistry is an intentionally shared metrics collaborator.")
   public CanonicalGameplayRosterReferenceOwner(
       CanonicalGameplayRosterReferenceRepository repository,
       TransactionOperations transactions,
