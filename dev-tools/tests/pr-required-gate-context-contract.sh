@@ -2705,7 +2705,7 @@ elif endpoint.endswith("/pulls/123"):
     state["pr_reads"] = state.get("pr_reads", 0) + 1
     result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": repo}},
               "head": {"sha": head, "ref": "proof-branch", "repo": {"full_name": head_repo}}}
-    if scenario == "tuple-replaced" and state["pr_reads"] > 1:
+    if scenario in {"tuple-replaced", "durable-tuple-replaced"} and state["pr_reads"] > 1:
         result["base"]["sha"] = old_base
 elif endpoint.endswith(f"/commits/{head}/status") or endpoint.endswith(f"/statuses/{head}"):
     state["status_reads"] = state.get("status_reads", 0) + 1
@@ -2722,8 +2722,16 @@ elif endpoint.endswith(f"/commits/{head}/status") or endpoint.endswith(f"/status
         barrier["creator"] = {"id": 99, "login": "foreign", "type": "User"}
     if scenario == "status-replaced" and state["status_reads"] > 1:
         barrier["id"] = 999
+    if scenario == "durable-status-replaced" and state["status_reads"] > 1:
+        barrier["id"] = 999
+    if scenario in {"deferred-owned-current-pending", "status-arrived-current-pending", "status-arrived-current-foreign", "durable-current-wrong-app", "durable-current-missing-publisher", "durable-tuple-replaced", "durable-status-replaced"}:
+        barrier["target_url"] = f"{run_url}200/attempts/1"
+    if scenario == "status-arrived-current-foreign":
+        barrier["creator"] = {"id": 99, "login": "foreign", "type": "User"}
     absent = scenario in {"deferred-absent", "deferred-fork", "success-absent"} or scenario.startswith("ack-") or scenario.startswith("current-")
     rich = [] if absent else [barrier]
+    if scenario in {"status-arrived-current-pending", "status-arrived-stale-pending", "status-arrived-current-foreign"} and state["status_reads"] == 1:
+        rich = []
     combined = {"sha": head, "total_count": len(rich), "statuses": [{key: value for key, value in row.items() if key != "creator"} for row in rich]}
     assert all("creator" not in row for row in combined["statuses"])
     if endpoint.endswith("/status"):
@@ -2749,7 +2757,7 @@ elif "/actions/runs/" in endpoint and not endpoint.endswith("/jobs"):
     old = historical
     attempt = int(endpoint.rsplit("/", 1)[1]) if historical else current_attempt
     running = not old or scenario == "deferred-owned-running"
-    run_base = old_base if run_id == 200 else base
+    run_base = base if scenario in {"deferred-owned-current-pending", "status-arrived-current-pending", "status-arrived-current-foreign", "durable-current-wrong-app", "durable-current-missing-publisher", "durable-tuple-replaced", "durable-status-replaced"} else old_base if run_id == 200 else base
     result = {"id": run_id, "run_attempt": attempt, "run_number": 2 if run_id == 200 else 3, "workflow_id": 42, "event": "pull_request",
               "repository": {"full_name": repo}, "head_repository": {"full_name": head_repo},
               "head_sha": head, "head_branch": "proof-branch", "name": "CI — Validation",
@@ -2778,6 +2786,8 @@ elif endpoint.endswith("/jobs"):
     steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}, publisher]
     if old and running:
         steps = [publisher]
+    if not old and scenario == "durable-current-missing-publisher":
+        steps = steps[:1]
     job = {"id": native_id, "run_id": run_id, "name": "Validation Gate", "head_sha": head,
            "status": "in_progress" if running else "completed",
            "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success",
@@ -2792,7 +2802,7 @@ elif "/check-runs/" in endpoint:
     result = {"id": check_id, "name": "Validation Gate", "head_sha": head,
               "status": "in_progress" if running else "completed",
               "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success",
-              "app": {"id": 99 if scenario == "deferred-old-wrong-app" or (not old and scenario == "current-wrong-app") else 15368, "slug": "github-actions"}}
+              "app": {"id": 99 if scenario == "deferred-old-wrong-app" or (not old and scenario in {"current-wrong-app", "durable-current-wrong-app"}) else 15368, "slug": "github-actions"}}
 else:
     raise AssertionError(endpoint)
 state_path.write_text(json.dumps(state))
@@ -2824,7 +2834,7 @@ run_producer() {
     EXPECTED_WORKFLOW_FILE=ci.yml EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
     bash "$PUBLISH_SCRIPT" >"$tmp_dir/producer-log-$scenario" 2>&1
 }
-for scenario in deferred-absent deferred-fork deferred-owned-pending deferred-owned-earlier-attempt deferred-owned-newer deferred-old-equal-number deferred-old-missing-number deferred-owned-failure deferred-owned-error deferred-owned-success deferred-owned-running deferred-owned-cancelled deferred-owned-step-failed success-owned-pending success-owned-failure success-owned-error success-assessment-pending status-replaced tuple-replaced deferred-foreign deferred-old-wrong-app deferred-old-wrong-title deferred-old-skipped success-absent success-owned-success success-foreign; do
+for scenario in deferred-absent deferred-fork deferred-owned-pending deferred-owned-current-pending deferred-owned-earlier-attempt deferred-owned-newer deferred-old-equal-number deferred-old-missing-number deferred-owned-failure deferred-owned-error deferred-owned-success deferred-owned-running deferred-owned-cancelled deferred-owned-step-failed success-owned-pending success-owned-failure success-owned-error success-assessment-pending status-replaced status-arrived-current-pending status-arrived-stale-pending status-arrived-current-foreign tuple-replaced durable-tuple-replaced durable-status-replaced deferred-foreign deferred-old-wrong-app deferred-old-wrong-title deferred-old-skipped success-absent success-owned-success success-foreign; do
   assessment=dependency-deferred
   [[ "$scenario" != success-* ]] || assessment=success
   original=no-local-workflow-file
@@ -2838,11 +2848,12 @@ from pathlib import Path
 import sys
 state = json.loads(Path(sys.argv[1]).read_text())
 scenario = sys.argv[3]
-unchanged = scenario in {"status-replaced", "tuple-replaced", "deferred-owned-newer", "deferred-old-equal-number", "deferred-old-missing-number", "deferred-foreign", "deferred-old-wrong-app", "deferred-old-wrong-title", "deferred-old-skipped", "success-absent", "success-owned-success", "success-foreign"}
+unchanged = scenario in {"status-replaced", "status-arrived-stale-pending", "status-arrived-current-foreign", "tuple-replaced", "durable-tuple-replaced", "durable-status-replaced", "deferred-owned-newer", "deferred-old-equal-number", "deferred-old-missing-number", "deferred-foreign", "deferred-old-wrong-app", "deferred-old-wrong-title", "deferred-old-skipped", "success-absent", "success-owned-success", "success-foreign"}
 expected = "unchanged" if unchanged else "success-acknowledged" if scenario in {"success-owned-pending", "success-owned-failure", "success-owned-error"} else "pending-acknowledged"
 assert Path(sys.argv[2]).read_text().strip() == f"publication={expected}", (scenario, state)
-assert len(state.get("posts", [])) == (0 if unchanged else 1), state
-if not unchanged:
+already_durable = scenario in {"deferred-owned-current-pending", "deferred-owned-earlier-attempt", "status-arrived-current-pending"}
+assert len(state.get("posts", [])) == (0 if unchanged or already_durable else 1), state
+if not unchanged and not already_durable:
     assert state["posts"][0]["target_url"] == f"https://github.com/example/firemud/actions/runs/300/attempts/{2 if scenario == 'deferred-owned-earlier-attempt' else 1}", state
     assert state["posts"][0]["state"] == expected.split("-")[0], state
 PY_PUBLISH
@@ -2878,7 +2889,7 @@ if case == "budget": assert state["status_pages"] == list(range(1, 11)), state
 PY_HISTORY
 done
 
-for scenario in success-assessment-failed incomplete-status current-wrong-app current-wrong-tuple current-incomplete-jobs ack-denied ack-ambiguous ack-wrong-url ack-missing-creator ack-missing-id ack-bad-timestamp ack-wrong-state ack-multiple; do
+for scenario in success-assessment-failed incomplete-status current-wrong-app current-wrong-tuple current-incomplete-jobs durable-current-wrong-app durable-current-missing-publisher ack-denied ack-ambiguous ack-wrong-url ack-missing-creator ack-missing-id ack-bad-timestamp ack-wrong-state ack-multiple; do
   assessment=dependency-deferred
   original=no-local-workflow-file
   if [[ "$scenario" == success-assessment-failed ]]; then assessment=success; original=failed-predecessor; fi
