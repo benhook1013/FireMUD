@@ -526,13 +526,39 @@ class CanonicalGameplayRosterGrpcAdapterTest {
   }
 
   @Test
+  void createdOwnerDeadlineMapsToUnavailableWithoutInternalMetric() {
+    var createdService = mock(EntityPlayerCreatedRosterService.class);
+    var meterRegistry = new SimpleMeterRegistry();
+    var adapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            mock(CanonicalGameplayRosterService.class),
+            mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+            createdService,
+            meterRegistry);
+    var request = playerCreatedRequest();
+    when(createdService.list(request)).thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
+    var observer =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse>();
+
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+        () -> adapter.listPlayerCreatedRoster(request, observer));
+
+    assertOnlyStatus(observer, Status.Code.UNAVAILABLE);
+    verify(createdService).list(request);
+    assertThat(meterRegistry.counter("grpc.app_error", "code", "INTERNAL").count()).isZero();
+  }
+
+  @Test
   void expectedOwnerRejectionsReturnFailedPreconditionWithoutPartialResponse() {
     for (String reasonCode :
         java.util.List.of(
             "CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED",
             "CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT",
             "CANONICAL_ROSTER_LOCAL_ADMISSION_DISPOSED",
-            "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT")) {
+            "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT",
+            "CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED")) {
       var createdService = mock(EntityPlayerCreatedRosterService.class);
       when(createdService.list(any())).thenThrow(new IllegalStateException(reasonCode));
       var adapter =

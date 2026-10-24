@@ -252,6 +252,76 @@ class EntityCharacterCreatePostgresIntegrationTest {
   }
 
   @Test
+  void storedSourceMismatchReturnsDataLossWithCauseAndNoReadEffects() throws Exception {
+    UUID accountId = UUID.randomUUID();
+    var proof = proof(accountId, UUID.randomUUID());
+    var terminal = repository.settle(proof, null);
+    UUID characterId = UUID.fromString(terminal.getCharacterId());
+    byte[] corruptedTerminal =
+        terminal.toBuilder()
+            .setEntitySourceReceiptDigest(terminal.getEntitySourceReceiptDigest() + "x")
+            .build()
+            .toByteArray();
+
+    dsl.execute(
+        "ALTER TABLE entity_character_create_operations DISABLE TRIGGER trg_entity_character_create_operation_immutable");
+    try {
+      dsl.execute(
+          "UPDATE entity_character_create_operations SET terminal_bytes = ? WHERE target_namespace = ? AND operation_id = ?",
+          corruptedTerminal,
+          proof.action().scope().targetNamespace(),
+          UUID.fromString(proof.original().getOperationId()));
+    } finally {
+      dsl.execute(
+          "ALTER TABLE entity_character_create_operations ENABLE TRIGGER trg_entity_character_create_operation_immutable");
+    }
+
+    var actorBefore =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, to_jsonb(c)::text AS retained_row FROM characters c WHERE character_uuid = ?",
+                characterId));
+    var operationBefore =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, encode(terminal_bytes, 'hex') AS terminal_hex FROM entity_character_create_operations WHERE target_namespace = ? AND operation_id = ?",
+                proof.action().scope().targetNamespace(),
+                UUID.fromString(proof.original().getOperationId())));
+    int actorCountBefore = dsl.fetchCount(DSL.table("characters"));
+
+    assertThatThrownBy(
+            () ->
+                repository.readSelectedPlayerCreatedTerminal(
+                    new AuthenticatedAccountSelector(accountId), published(proof), characterId))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = (io.grpc.StatusRuntimeException) failure;
+              assertThat(status.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.DATA_LOSS);
+              assertThat(status.getStatus().getDescription())
+                  .isEqualTo("Stored creation terminal is invalid");
+              assertThat(status.getCause())
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessage("Corrupt creation source identity");
+            });
+
+    var actorAfter =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, to_jsonb(c)::text AS retained_row FROM characters c WHERE character_uuid = ?",
+                characterId));
+    var operationAfter =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text AS row_version, encode(terminal_bytes, 'hex') AS terminal_hex FROM entity_character_create_operations WHERE target_namespace = ? AND operation_id = ?",
+                proof.action().scope().targetNamespace(),
+                UUID.fromString(proof.original().getOperationId())));
+    assertThat(actorAfter.intoMap()).isEqualTo(actorBefore.intoMap());
+    assertThat(operationAfter.intoMap()).isEqualTo(operationBefore.intoMap());
+    assertThat(dsl.fetchCount(DSL.table("characters"))).isEqualTo(actorCountBefore);
+  }
+
+  @Test
   void selectedReadReturnsExactCommittedTerminalAndRejectsOutOfRosterActors() throws Exception {
     UUID accountId = UUID.randomUUID();
     var proof = proof(accountId, UUID.randomUUID());

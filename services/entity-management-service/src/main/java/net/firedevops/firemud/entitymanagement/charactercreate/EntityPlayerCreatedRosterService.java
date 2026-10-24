@@ -90,7 +90,7 @@ public final class EntityPlayerCreatedRosterService {
     var sourceIdentity = EntityPlayerCreatedRosterSnapshotRepository.sourceIdentity(source);
     if (!source.target().toWire().equals(request.getExpectedTarget())
         || !sourceIdentity.equals(request.getExpectedSource())) {
-      throw new IllegalArgumentException("Current PLAYER_CREATED source binding changed");
+      throw new IllegalStateException("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     }
     var published = EntityPlayerCreatedRosterReadService.PublishedIdentity.from(source);
     var expectedOriginal =

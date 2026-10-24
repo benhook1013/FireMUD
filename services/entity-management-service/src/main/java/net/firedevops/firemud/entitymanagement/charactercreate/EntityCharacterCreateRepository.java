@@ -552,9 +552,12 @@ public final class EntityCharacterCreateRepository {
           throw new IllegalStateException("Corrupt abort terminal");
       }
       return terminal;
-    } catch (InvalidProtocolBufferException | IllegalArgumentException corrupt) {
+    } catch (InvalidProtocolBufferException
+        | IllegalArgumentException
+        | IllegalStateException corrupt) {
       throw Status.DATA_LOSS
           .withDescription("Stored creation terminal is invalid")
+          .withCause(corrupt)
           .asRuntimeException();
     }
   }

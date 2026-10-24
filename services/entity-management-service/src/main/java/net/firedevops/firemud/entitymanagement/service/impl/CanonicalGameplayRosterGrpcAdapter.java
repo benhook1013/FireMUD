@@ -70,7 +70,8 @@ public final class CanonicalGameplayRosterGrpcAdapter
           "CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED",
           "CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT",
           "CANONICAL_ROSTER_LOCAL_ADMISSION_DISPOSED",
-          "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+          "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT",
+          "CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
 
   private final CanonicalGameplayRosterService rosterService;
   private final CanonicalGameplayRosterSelectedAssignmentService selectedAssignmentService;
@@ -407,6 +408,10 @@ public final class CanonicalGameplayRosterGrpcAdapter
                 .withDescription("Request precondition is not satisfied")
                 .asRuntimeException();
         case UNAVAILABLE ->
+            Status.UNAVAILABLE
+                .withDescription("Owner evidence is unavailable")
+                .asRuntimeException();
+        case DEADLINE_EXCEEDED ->
             Status.UNAVAILABLE
                 .withDescription("Owner evidence is unavailable")
                 .asRuntimeException();

@@ -9,7 +9,6 @@ import java.io.OutputStream;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -39,6 +38,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
   public static final int MAX_SELECTED_PLAYER_CREATED_BYTES =
       CanonicalPlayerCreatedRosterEvidence.MAX_SELECTED_RECEIPT_BYTES;
   public static final int MAX_PLAYER_CREATED_RESPONSE_BYTES = 194 * 1024 * 1024;
+  private static final int CANONICAL_COMPARISON_BUFFER_BYTES = 4096;
 
   private CanonicalGameplayRosterReferenceEvidence() {}
 
@@ -115,7 +115,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       CanonicalGameplayRosterTarget target =
           CanonicalGameplayRosterTarget.parseFrom(request.getCanonicalTarget());
       if (!target.getUnknownFields().asMap().isEmpty()
-          || !Arrays.equals(target.toByteArray(), request.getCanonicalTarget().toByteArray())
+          || !hasCanonicalEncoding(target, request.getCanonicalTarget())
           || target.getCatalogRevision() <= 0
           || target.getPointerVersion() <= 0
           || target.getActiveWorldEpoch() <= 0
@@ -207,7 +207,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       var source =
           CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
               CanonicalPlayerCreatedRosterSourceIdentity.parseFrom(bytes));
-      if (!bytes.equals(source.toByteString())) {
+      if (!hasCanonicalEncoding(source, bytes)) {
         throw new IllegalArgumentException(
             "PLAYER_CREATED source identity bytes are not canonical");
       }
@@ -231,7 +231,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
             "Complete bounded PLAYER_CREATED roster receipt required");
       }
       var roster = CanonicalPlayerCreatedRosterResponse.parseFrom(bytes);
-      if (!bytes.equals(roster.toByteString())) {
+      if (!hasCanonicalEncoding(roster, bytes)) {
         throw new IllegalArgumentException("PLAYER_CREATED roster receipt bytes are not canonical");
       }
       return CanonicalPlayerCreatedRosterEvidence.requireResponse(
@@ -266,7 +266,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
             "Complete bounded selected PLAYER_CREATED terminal required");
       }
       var selected = CanonicalSelectedPlayerCreatedCharacterResponse.parseFrom(bytes);
-      if (!bytes.equals(selected.toByteString())) {
+      if (!hasCanonicalEncoding(selected, bytes)) {
         throw new IllegalArgumentException(
             "Selected PLAYER_CREATED receipt bytes are not canonical");
       }
@@ -398,7 +398,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
               response.getCanonicalSelectedAssignmentReceipt());
       if (!selected.getUnknownFields().asMap().isEmpty()
           || !selected.getSnapshot().getUnknownFields().asMap().isEmpty()
-          || !selected.toByteString().equals(response.getCanonicalSelectedAssignmentReceipt())
+          || !hasCanonicalEncoding(selected, response.getCanonicalSelectedAssignmentReceipt())
           || !selected.getRequestUuid().equals(response.getRequest().getOperationUuid())
           || !selected
               .getCanonicalAccountUuid()
@@ -547,7 +547,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       }
       var receipt = CanonicalGameplayRosterResponse.parseFrom(bytes);
       if (!receipt.getUnknownFields().asMap().isEmpty()
-          || !bytes.equals(receipt.toByteString())
+          || !hasCanonicalEncoding(receipt, bytes)
           || !receipt
               .getCanonicalAccountUuid()
               .equals(response.getRequest().getCanonicalAccountUuid())
@@ -582,6 +582,49 @@ public final class CanonicalGameplayRosterReferenceEvidence {
         || !response.getCanonicalSelectedPlayerCreatedCharacterReceipt().isEmpty()) {
       throw new IllegalArgumentException(
           "PRESEEDED_ONLY original cannot carry PLAYER_CREATED receipts");
+    }
+  }
+
+  /** Compares canonical protobuf output byte-for-byte without materializing a second wire value. */
+  private static boolean hasCanonicalEncoding(MessageLite message, ByteString bytes) {
+    if (message.getSerializedSize() != bytes.size()) return false;
+    ByteString.ByteIterator expected = bytes.iterator();
+    final class ComparingOutputStream extends OutputStream {
+      private long offset;
+      private boolean matches = true;
+
+      @Override
+      public void write(int value) {
+        if (!expected.hasNext()) {
+          matches = false;
+        } else if (expected.nextByte() != (byte) value) {
+          matches = false;
+        }
+        offset++;
+      }
+
+      @Override
+      public void write(byte[] values, int start, int length) {
+        for (int index = 0; index < length; index++) {
+          if (!expected.hasNext()) {
+            matches = false;
+          } else if (expected.nextByte() != values[start + index]) {
+            matches = false;
+          }
+          offset++;
+        }
+      }
+    }
+
+    ComparingOutputStream comparison = new ComparingOutputStream();
+    try {
+      CodedOutputStream codedOutput =
+          CodedOutputStream.newInstance(comparison, CANONICAL_COMPARISON_BUFFER_BYTES);
+      message.writeTo(codedOutput);
+      codedOutput.flush();
+      return comparison.matches && comparison.offset == bytes.size() && !expected.hasNext();
+    } catch (IOException failure) {
+      throw new IllegalStateException("Unable to compare canonical protobuf", failure);
     }
   }
 

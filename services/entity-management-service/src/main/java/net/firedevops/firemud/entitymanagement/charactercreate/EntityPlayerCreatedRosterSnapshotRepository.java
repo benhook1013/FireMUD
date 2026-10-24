@@ -63,11 +63,11 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
 
     var target = request.getExpectedTarget();
     if (!source.target().toWire().equals(target)) {
-      throw new IllegalArgumentException("Current PLAYER_CREATED target changed");
+      throw new IllegalStateException("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     }
     var sourceIdentity = sourceIdentity(source);
     if (!request.getExpectedSource().equals(sourceIdentity)) {
-      throw new IllegalArgumentException("Current PLAYER_CREATED source identity changed");
+      throw new IllegalStateException("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     }
     var published = EntityPlayerCreatedRosterReadService.PublishedIdentity.from(source);
     var expectedOriginal =
@@ -173,11 +173,11 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
 
     var target = request.getExpectedTarget();
     if (!source.target().toWire().equals(target)) {
-      throw new IllegalArgumentException("Current PLAYER_CREATED target changed");
+      throw new IllegalStateException("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     }
     var sourceIdentity = sourceIdentity(source);
     if (!request.getExpectedSource().equals(sourceIdentity)) {
-      throw new IllegalArgumentException("Current PLAYER_CREATED source identity changed");
+      throw new IllegalStateException("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
     }
     var published = EntityPlayerCreatedRosterReadService.PublishedIdentity.from(source);
     var createdRequest =

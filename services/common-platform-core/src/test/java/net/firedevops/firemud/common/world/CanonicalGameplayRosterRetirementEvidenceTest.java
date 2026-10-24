@@ -4,7 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.UnknownFieldSet;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
@@ -243,6 +247,40 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
         CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(
             confirmation, confirmationResponse));
 
+    var duplicateRequestField =
+        new byte[CodedOutputStream.computeStringSize(1, fixture.selected().getRequestUuid())];
+    var codedOutput = CodedOutputStream.newInstance(duplicateRequestField);
+    codedOutput.writeString(1, fixture.selected().getRequestUuid());
+    codedOutput.checkNoSpaceLeft();
+    var observedRetirement = request.getObservedRetirement();
+    var noncanonicalRetirement =
+        observedRetirement.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                observedRetirement
+                    .getCanonicalSelectedPlayerCreatedCharacterReceipt()
+                    .concat(ByteString.copyFrom(duplicateRequestField)))
+            .build();
+    // Recompute the wire seal so ACK validation reaches the canonical receipt check. This is a
+    // controlled value fixture and does not establish the owner authority of the proof.
+    var unsignedNoncanonicalRetirement =
+        noncanonicalRetirement.toBuilder().clearRetirementProofDigest().build();
+    var sealedNoncanonicalRetirement =
+        unsignedNoncanonicalRetirement.toBuilder()
+            .setRetirementProofDigest(streamedDigest(unsignedNoncanonicalRetirement))
+            .build();
+    var noncanonicalFailure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                    request.toBuilder()
+                        .setObservedRetirement(sealedNoncanonicalRetirement)
+                        .build()));
+    assertTrue(
+        noncanonicalFailure
+            .getMessage()
+            .contains("Selected PLAYER_CREATED receipt bytes are not canonical"));
+
     var changedRetirement =
         request.toBuilder()
             .setObservedRetirement(
@@ -480,5 +518,17 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
 
   private static UUID uuid(long value) {
     return new UUID(0L, value);
+  }
+
+  private static String streamedDigest(GetCanonicalGameplayRosterReferenceResponse response)
+      throws Exception {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    try (DigestOutputStream digestOutput =
+        new DigestOutputStream(OutputStream.nullOutputStream(), digest)) {
+      CodedOutputStream codedOutput = CodedOutputStream.newInstance(digestOutput);
+      response.writeTo(codedOutput);
+      codedOutput.flush();
+    }
+    return HexFormat.of().formatHex(digest.digest());
   }
 }

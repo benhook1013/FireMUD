@@ -335,11 +335,14 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                 inputs.request().getExpectedSource().toBuilder()
                     .setDescriptorUuid(UUID.randomUUID().toString()))
             .build();
+    var beforeSelectedSourceMismatch = rosterRowCounts();
     assertThatThrownBy(
             () ->
                 snapshotRepository.readSelected(
                     substitutedSource, inputs.source(), selectedOriginal))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
+    assertThat(rosterRowCounts()).isEqualTo(beforeSelectedSourceMismatch);
     UUID otherAccount = UUID.randomUUID();
     var substitutedAccount =
         selectedRequest.toBuilder()
@@ -498,12 +501,14 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
             UUID.fromString(inputs.request().getCanonicalAccountUuid()),
             UUID.fromString(inputs.request().getPlayerExecutionContext().getSessionId()),
             changedSource);
+    var beforeSourceSubstitution = rosterRowCounts();
     assertThatThrownBy(
             () ->
                 repository.capture(
                     sourceSubstitution, inputs.source(), inputs.original(), admission))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("source identity changed");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
+    assertThat(rosterRowCounts()).isEqualTo(beforeSourceSubstitution);
 
     UUID otherAccount = UUID.randomUUID();
     var accountSubstitution =
@@ -615,6 +620,16 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
         "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, 'PLAYABLE_STATE_SCOPE_SHARED')",
         tenant,
         namespace);
+  }
+
+  private Map<String, Long> rosterRowCounts() {
+    var counts =
+        dsl.fetchSingle(
+            "SELECT (SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots) AS snapshots, (SELECT count(*) FROM entity_canonical_gameplay_roster_snapshot_actors) AS actors, (SELECT count(*) FROM entity_canonical_roster_original_selections) AS originals");
+    return Map.of(
+        "snapshots", counts.get("snapshots", Long.class),
+        "actors", counts.get("actors", Long.class),
+        "originals", counts.get("originals", Long.class));
   }
 
   private void insertBuildingSnapshot(UUID snapshot, UUID tenant, UUID namespace, byte[] source) {

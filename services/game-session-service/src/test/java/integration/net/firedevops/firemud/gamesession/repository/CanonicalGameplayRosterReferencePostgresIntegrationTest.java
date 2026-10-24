@@ -2212,12 +2212,14 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                   .intoMap()
                   .toString())
           .isEqualTo(retained);
+      var upgradedRow =
+          previous.fetchSingle(
+              "SELECT entry_policy,canonical_player_created_roster_receipt,canonical_selected_player_created_character_receipt FROM game_session_canonical_roster_selection");
+      assertThat(upgradedRow.get("entry_policy", String.class)).isEqualTo("PRESEEDED_ONLY");
+      assertThat(upgradedRow.get("canonical_player_created_roster_receipt", byte[].class)).isNull();
       assertThat(
-              previous
-                  .fetchSingle(
-                      "SELECT entry_policy,canonical_player_created_roster_receipt,canonical_selected_player_created_character_receipt FROM game_session_canonical_roster_selection")
-                  .get("entry_policy", String.class))
-          .isEqualTo("PRESEEDED_ONLY");
+              upgradedRow.get("canonical_selected_player_created_character_receipt", byte[].class))
+          .isNull();
       var upgradedRepository =
           new CanonicalGameplayRosterReferenceRepository(previous, policy(60000L, 60000L, 60000L));
       assertThat(upgradedRepository.read(original).getCanonicalRosterReceipt())
