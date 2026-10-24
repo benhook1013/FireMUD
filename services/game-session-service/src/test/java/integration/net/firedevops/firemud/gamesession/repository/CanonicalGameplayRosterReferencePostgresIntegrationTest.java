@@ -463,6 +463,31 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   @Test
+  void changedOriginalRequestConflictsOnLookupAndReadWithoutMutation() {
+    var original = request();
+    transaction.executeWithoutResult(ignored -> repository.begin(original));
+    var originalResponse = repository.read(original);
+    var retained = retainedRow(original);
+    var changed =
+        CanonicalGameplayRosterReferenceEvidence.requireRequest(
+            original.toBuilder().setSessionUuid(UUID.randomUUID().toString()).build());
+    assertThat(changed.getOperationUuid()).isEqualTo(original.getOperationUuid());
+    assertThat(changed.getSessionUuid()).isNotEqualTo(original.getSessionUuid());
+
+    assertThatThrownBy(() -> repository.find(changed))
+        .isInstanceOf(
+            CanonicalGameplayRosterReferenceRepository.OriginalRequestConflictException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+    assertThatThrownBy(() -> repository.read(changed))
+        .isInstanceOf(
+            CanonicalGameplayRosterReferenceRepository.OriginalRequestConflictException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+
+    assertThat(repository.read(original)).isEqualTo(originalResponse);
+    assertThat(retainedRow(original)).isEqualTo(retained);
+  }
+
+  @Test
   void terminalOriginalCannotBeMarkedAsRosterReadStarted() {
     repository = repository(policy(60_000L, 60_000L, 60_000L));
     var request = request();

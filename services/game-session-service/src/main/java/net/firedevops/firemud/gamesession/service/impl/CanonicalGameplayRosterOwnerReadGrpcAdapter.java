@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvide
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
 import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadEvidence;
 import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadGrpcCodec;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
@@ -225,6 +226,12 @@ public final class CanonicalGameplayRosterOwnerReadGrpcAdapter
       observer.onError(
           Status.UNAVAILABLE
               .withDescription("Original roster selection owner is unavailable")
+              .asRuntimeException());
+    } catch (CanonicalGameplayRosterReferenceRepository.OriginalRequestConflictException conflict) {
+      observer.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription(
+                  "Original roster selection request conflicts with retained operation")
               .asRuntimeException());
     } catch (RuntimeException unexpected) {
       observer.onError(
