@@ -25,7 +25,7 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation(testFixtures(project(":common-test-support")))
-    testImplementation("io.projectreactor:reactor-test:3.8.7")
+    testImplementation("io.projectreactor:reactor-test:3.8.8")
     testImplementation(libs.spring.boot.starter.websocket)
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation(libs.h2)
