@@ -8,6 +8,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Clock;
@@ -118,7 +119,7 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
     Objects.requireNonNull(supplied, "complete controlled publication fixture");
     this.dataSource = Objects.requireNonNull(dataSource);
     Objects.requireNonNull(clock);
-    migrations = Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+    migrations = resolveMigrationDirectory();
     schema = Objects.requireNonNull(dataSource.getSchema(), "caller-owned isolated schema");
     migrate("1005");
     var manager = new DataSourceTransactionManager(dataSource);
@@ -467,6 +468,23 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
         .target(MigrationVersion.fromVersion(version))
         .load()
         .migrate();
+  }
+
+  private static Path resolveMigrationDirectory() {
+    Path current = Path.of("").toAbsolutePath().normalize();
+    while (current != null) {
+      if (Files.isRegularFile(current.resolve("settings.gradle.kts"))) {
+        Path migrations =
+            current.resolve("services/game-session-service/src/main/resources/db/migration");
+        if (Files.isDirectory(migrations)) {
+          return migrations;
+        }
+        throw new IllegalStateException(
+            "Could not resolve Game Session migration directory from repository root " + current);
+      }
+      current = current.getParent();
+    }
+    throw new IllegalStateException("Could not locate repository root from the current directory");
   }
 
   private static StartSessionPostAuthorizationExecutionTuple freshControlledTuple(

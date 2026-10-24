@@ -411,7 +411,7 @@ class PreseededActorAssignmentIntegrationTest {
     assertThat(successorHistory)
         .extracting(AppliedMigration::version)
         .containsExactly(
-            "1006", "1007", "1008", "1009", "1010", "1011", "1012", "1014", "1015", "1016");
+            "1006", "1007", "1008", "1009", "1010", "1011", "1012", "1014", "1015", "1016", "1017");
     assertThat(successorHistory)
         .extracting(AppliedMigration::script)
         .containsExactly(
@@ -424,7 +424,8 @@ class PreseededActorAssignmentIntegrationTest {
             "V1012__canonical_roster_retention.sql",
             "V1014__canonical_roster_retirement_observation.sql",
             "V1015__entity_character_create_terminal.sql",
-            "V1016__player_created_roster_snapshot_receipts.sql");
+            "V1016__player_created_roster_snapshot_receipts.sql",
+            "V1017__player_created_actor_quarantine.sql");
     assertThat(successorHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
 
     try (Connection connection = connectToSchema(schema)) {

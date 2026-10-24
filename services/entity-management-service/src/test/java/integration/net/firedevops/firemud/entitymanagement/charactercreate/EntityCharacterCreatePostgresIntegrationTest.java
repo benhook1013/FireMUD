@@ -33,6 +33,7 @@ import net.firedevops.firemud.common.operator.CharacterCreateOperatorActionCodec
 import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterReadService.AuthenticatedAccountSelector;
 import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterReadService.PublishedIdentity;
 import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterSourceClient.AuthenticatedSource;
+import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.EntityEmptySelectedSourceIntakePostgresFixture;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.v1.CharacterCreateProtectionReference;
@@ -118,7 +119,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
       DSLContext upgradedDsl = DSL.using(parentDataSource, SQLDialect.POSTGRES);
       assertThat(migrationHistory(upgradedDsl).subList(0, parentHistory.size()))
           .containsExactlyElementsOf(parentHistory);
-      assertThat(migrationVersions(upgradedDsl)).last().isEqualTo("1016");
+      assertThat(migrationVersions(upgradedDsl)).last().isEqualTo("1017");
       assertThat(retainedParentRows(upgradedDsl, character, snapshot))
           .containsExactlyElementsOf(retainedRows);
       assertThat(
@@ -131,6 +132,55 @@ class EntityCharacterCreatePostgresIntegrationTest {
     } finally {
       DSL.using(dataSource(null), SQLDialect.POSTGRES)
           .execute("DROP SCHEMA IF EXISTS \"" + parentSchema + "\" CASCADE");
+    }
+  }
+
+  @Test
+  void quarantinesCreatedActorWithoutChangingProvenanceOrCurrentRosterAdmission() throws Exception {
+    UUID accountId = UUID.randomUUID();
+    var proof = proof(accountId, UUID.randomUUID());
+    EntityCharacterCreateTerminal terminal = repository.settle(proof, null);
+    assertCreatedActorQuarantineBoundary(dsl, repository, proof, terminal, accountId);
+  }
+
+  @Test
+  void upgradesRetainedV1016CreatedActorBeforeQuarantineWithoutChangingRows() throws Exception {
+    String retainedSchema =
+        "entity_create_quarantine_" + UUID.randomUUID().toString().replace("-", "");
+    try {
+      DriverManagerDataSource retainedDataSource = dataSource(retainedSchema);
+      migrate(retainedDataSource, retainedSchema, "1016");
+      DSLContext retainedDsl = DSL.using(retainedDataSource, SQLDialect.POSTGRES);
+      var retainedRepository =
+          new EntityCharacterCreateRepository(retainedDsl, Clock.fixed(NOW, ZoneOffset.UTC));
+      var retainedSource = retainControlledSource(retainedDsl);
+      UUID accountId = UUID.randomUUID();
+      var proof = proof(retainedSource, accountId, UUID.randomUUID(), false, null);
+      EntityCharacterCreateTerminal terminal = retainedRepository.settle(proof, null);
+      UUID characterId = UUID.fromString(terminal.getCharacterId());
+      String actorBefore = retainedRow(retainedDsl, "characters", "character_uuid", characterId);
+      String operationBefore =
+          retainedOperationRow(
+              retainedDsl,
+              proof.action().scope().targetNamespace(),
+              UUID.fromString(proof.original().getOperationId()));
+
+      migrate(retainedDataSource, retainedSchema, null);
+
+      assertThat(migrationVersions(retainedDsl)).last().isEqualTo("1017");
+      assertThat(retainedRow(retainedDsl, "characters", "character_uuid", characterId))
+          .isEqualTo(actorBefore);
+      assertThat(
+              retainedOperationRow(
+                  retainedDsl,
+                  proof.action().scope().targetNamespace(),
+                  UUID.fromString(proof.original().getOperationId())))
+          .isEqualTo(operationBefore);
+      assertCreatedActorQuarantineBoundary(
+          retainedDsl, retainedRepository, proof, terminal, accountId);
+    } finally {
+      DSL.using(dataSource(null), SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA IF EXISTS \"" + retainedSchema + "\" CASCADE");
     }
   }
 
@@ -1078,6 +1128,145 @@ class EntityCharacterCreatePostgresIntegrationTest {
     String url = postgres.getJdbcUrl();
     if (schema != null) url += (url.contains("?") ? "&" : "?") + "currentSchema=" + schema;
     return new DriverManagerDataSource(url, postgres.getUsername(), postgres.getPassword());
+  }
+
+  private static void assertCreatedActorQuarantineBoundary(
+      DSLContext ownerDsl,
+      EntityCharacterCreateRepository ownerRepository,
+      EntityCharacterCreateProofs proof,
+      EntityCharacterCreateTerminal terminal,
+      UUID accountId)
+      throws Exception {
+    UUID characterId = UUID.fromString(terminal.getCharacterId());
+    Long privateCharacterId =
+        ownerDsl
+            .fetchSingle("SELECT id FROM characters WHERE character_uuid = ?", characterId)
+            .get(0, Long.class);
+    Long privateTenantId =
+        ownerDsl
+            .fetchSingle("SELECT tenant_id FROM characters WHERE character_uuid = ?", characterId)
+            .get(0, Long.class);
+    String immutableActorBefore =
+        ownerDsl
+            .fetchSingle(
+                "SELECT (to_jsonb(c) - 'actor_identity_status' "
+                    + "- 'actor_identity_quarantine_reason')::text FROM characters c "
+                    + "WHERE character_uuid = ?",
+                characterId)
+            .get(0, String.class);
+    String operationBefore =
+        retainedOperationRow(
+            ownerDsl,
+            proof.action().scope().targetNamespace(),
+            UUID.fromString(proof.original().getOperationId()));
+
+    assertThat(
+            ownerDsl.execute(
+                "UPDATE characters SET actor_identity_status='QUARANTINED', "
+                    + "actor_identity_quarantine_reason='OWNER_PROVENANCE_REVOKED' "
+                    + "WHERE character_uuid=? AND actor_identity_status='OWNER_RESOLVED'",
+                characterId))
+        .isOne();
+
+    var quarantined =
+        ownerDsl.fetchSingle(
+            "SELECT actor_identity_status, actor_identity_quarantine_reason "
+                + "FROM characters WHERE character_uuid = ?",
+            characterId);
+    assertThat(quarantined.get("actor_identity_status", String.class)).isEqualTo("QUARANTINED");
+    assertThat(quarantined.get("actor_identity_quarantine_reason", String.class))
+        .isEqualTo("OWNER_PROVENANCE_REVOKED");
+
+    assertThat(
+            ownerDsl
+                .fetchSingle(
+                    "SELECT (to_jsonb(c) - 'actor_identity_status' "
+                        + "- 'actor_identity_quarantine_reason')::text FROM characters c "
+                        + "WHERE character_uuid = ?",
+                    characterId)
+                .get(0, String.class))
+        .isEqualTo(immutableActorBefore);
+    assertThat(
+            retainedOperationRow(
+                ownerDsl,
+                proof.action().scope().targetNamespace(),
+                UUID.fromString(proof.original().getOperationId())))
+        .isEqualTo(operationBefore);
+    assertThatThrownBy(
+            () ->
+                ownerDsl.execute(
+                    "UPDATE characters SET creation_descriptor_digest=? "
+                        + "WHERE character_uuid=?",
+                    "sha256:" + "f".repeat(64),
+                    characterId))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining("CHARACTER_CREATE authored identity/provenance is immutable");
+    var published = published(proof);
+    var account = new AuthenticatedAccountSelector(accountId);
+    assertThat(ownerRepository.readPlayerCreatedRoster(account, published)).isEmpty();
+    assertSelectedActorUnavailable(ownerRepository, account, published, characterId);
+    assertThat(ownerRepository.replay(proof.request()).orElseThrow().toByteArray())
+        .containsExactly(terminal.toByteArray());
+    assertThat(
+            ownerDsl.fetchCount(
+                DSL.table("characters"),
+                DSL.field("account_id")
+                    .isNotNull()
+                    .and(DSL.field("character_uuid").eq(characterId))))
+        .isZero();
+    assertThat(new CharacterRepository(ownerDsl).findById(privateCharacterId)).isEmpty();
+    assertThatThrownBy(
+            () ->
+                ownerDsl.execute(
+                    "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, "
+                        + "playable_state_namespace_id, playable_state_scope, account_id, "
+                        + "tenant_id, name) VALUES (?, ?, ?, ?, "
+                        + "'PLAYABLE_STATE_SCOPE_SHARED', 45, ?, 'unqualified quarantine')",
+                    UUID.randomUUID(),
+                    accountId,
+                    UUID.fromString(proof.action().scope().tenantId()),
+                    UUID.randomUUID(),
+                    privateTenantId))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining(
+            "Entity numeric source key is reserved by an immutable empty-source receipt");
+  }
+
+  private static void assertSelectedActorUnavailable(
+      EntityCharacterCreateRepository ownerRepository,
+      AuthenticatedAccountSelector account,
+      PublishedIdentity published,
+      UUID characterId) {
+    assertThatThrownBy(
+            () ->
+                ownerRepository.readSelectedPlayerCreatedTerminal(account, published, characterId))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("FAILED_PRECONDITION")
+        .hasMessageContaining("Selected PLAYER_CREATED character is unavailable");
+  }
+
+  private static String retainedRow(
+      DSLContext ownerDsl, String table, String identityColumn, UUID identity) {
+    if (!"characters".equals(table) || !"character_uuid".equals(identityColumn))
+      throw new IllegalArgumentException("Unsupported retained row selector");
+    return ownerDsl
+        .fetchSingle(
+            "SELECT xmin::text || ':' || to_jsonb(c)::text FROM characters c "
+                + "WHERE character_uuid = ?",
+            identity)
+        .get(0, String.class);
+  }
+
+  private static String retainedOperationRow(
+      DSLContext ownerDsl, String namespace, UUID operationId) {
+    return ownerDsl
+        .fetchSingle(
+            "SELECT xmin::text || ':' || to_jsonb(o)::text "
+                + "FROM entity_character_create_operations o "
+                + "WHERE target_namespace = ? AND operation_id = ?",
+            namespace,
+            operationId)
+        .get(0, String.class);
   }
 
   private static void migrate(DriverManagerDataSource dataSource, String schema, String target) {

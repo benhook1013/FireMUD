@@ -114,6 +114,9 @@ tasks.named<BootRun>("bootRun") {
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 
 tasks.withType<Test>().configureEach {
+    inputs.file(
+        rootProject.file("services/account-service/src/testFixtures/resources/charactercreate/public-action.json"),
+    )
     jvmArgumentProviders.add(
         objects.newInstance<MigrationDriverTestClasspathArgumentProvider>().apply {
             testClasspath.from(classpath)
