@@ -141,8 +141,7 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
               .build();
       assertThatThrownBy(() -> owners.roster.listPlayerCreatedRoster(source, foreignContext))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThat(owners.gs.retainedOriginalReferenceCount())
-          .isEqualTo(1);
+      assertThat(owners.gs.retainedOriginalReferenceCount()).isEqualTo(1);
       assertThat(
               owners.entityDsl.fetchCount(DSL.table("entity_canonical_roster_original_selections")))
           .isEqualTo(1);
