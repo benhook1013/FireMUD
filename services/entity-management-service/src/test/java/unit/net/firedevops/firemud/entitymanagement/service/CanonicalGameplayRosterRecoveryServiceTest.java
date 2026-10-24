@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEviden
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.RecoveryConflictException;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
@@ -86,10 +87,12 @@ class CanonicalGameplayRosterRecoveryServiceTest {
     doReturn(owner)
         .when(ownerClient)
         .getCanonicalGameplayRosterReference(request.getOriginalSelection());
-    assertThatThrownBy(() -> service.recover(request)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.recover(request))
+        .isInstanceOf(RecoveryConflictException.class);
     when(ownerClient.getCanonicalGameplayRosterReference(request.getOriginalSelection()))
         .thenReturn(owner.toBuilder().setRecoveryUuid(UUID.randomUUID().toString()).build());
-    assertThatThrownBy(() -> service.recover(request)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.recover(request))
+        .isInstanceOf(RecoveryConflictException.class);
     var otherOriginal =
         request.getOriginalSelection().toBuilder()
             .setSessionUuid(UUID.randomUUID().toString())
@@ -100,8 +103,59 @@ class CanonicalGameplayRosterRecoveryServiceTest {
                 .setRequest(otherOriginal)
                 .setRecoveryUuid(request.getRecoveryUuid())
                 .build());
-    assertThatThrownBy(() -> service.recover(request)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.recover(request))
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(RecoveryConflictException.class)
+        .hasCauseInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(repository, transactions);
+  }
+
+  @Test
+  void malformedOwnerShapeIsUnavailableBeforeRecoveryIdentityComparisonOrSql() {
+    var request = request();
+    var transactions = mock(TransactionOperations.class);
+    var service =
+        new CanonicalGameplayRosterRecoveryService(repository, ownerClient, transactions, policy);
+    var malformed =
+        CanonicalGameplayRosterReferenceEvidence.response(
+                request.getOriginalSelection(), 1, UUID.randomUUID(), null)
+            .toBuilder()
+            .setOwnerFence(0)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    when(ownerClient.getCanonicalGameplayRosterReference(request.getOriginalSelection()))
+        .thenReturn(malformed);
+
+    assertThatThrownBy(() -> service.recover(request))
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(RecoveryConflictException.class)
+        .hasMessage("CANONICAL_ROSTER_RECOVERY_OWNER_RESPONSE_INVALID")
+        .hasCauseInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(repository, transactions);
+  }
+
+  @Test
+  void postValidationPersistedReceiptArgumentFailureIsUnavailable() {
+    var request = request();
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.response(
+                request.getOriginalSelection(), 1, UUID.randomUUID(), null)
+            .toBuilder()
+            .setRecoveryUuid(request.getRecoveryUuid())
+            .build();
+    when(ownerClient.getCanonicalGameplayRosterReference(request.getOriginalSelection()))
+        .thenReturn(owner);
+    when(repository.closeAdmission(request, owner, policy))
+        .thenThrow(new IllegalArgumentException("Invalid retained original receipt"));
+    var service =
+        new CanonicalGameplayRosterRecoveryService(
+            repository, ownerClient, localTransactions(), policy);
+
+    assertThatThrownBy(() -> service.recover(request))
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(RecoveryConflictException.class)
+        .hasMessage("CANONICAL_ROSTER_RECOVERY_RECEIPT_INVALID")
+        .hasCauseInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

@@ -104,8 +104,13 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
         current
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .getCanonicalGameplayRosterReference(request);
-    return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-        .requireResponse(request, response);
+    try {
+      return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+          .requireResponse(request, response);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "Game Session original roster owner response is invalid", invalid);
+    }
   }
 
   public CanonicalGameplayRosterRetirementAcknowledgementResponse

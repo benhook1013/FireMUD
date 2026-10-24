@@ -292,6 +292,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
             response.toByteArray(), admission.get("recovery_response", byte[].class))) {
       return false;
     }
+    if (!Boolean.TRUE.equals(admission.get("horizon_passed", Boolean.class))) return false;
     queueRetirementTransfer(
         response.getRequest().getOriginalSelection(),
         candidate.admissionUuid(),
@@ -302,7 +303,6 @@ public final class CanonicalGameplayRosterRetentionRepository {
         UUID.fromString(owner.getTargetFenceUuid()),
         admission.get("minimum_retention_millis", Long.class),
         "RETIRED".equals(terminal) ? owner : null);
-    if (!Boolean.TRUE.equals(admission.get("horizon_passed", Boolean.class))) return false;
     dsl.execute(
         "UPDATE entity_canonical_roster_admissions SET recovery_acknowledgement = ?, recovery_acknowledgement_state = ?, "
             + "recovery_acknowledgement_uuid = ?, recovery_acknowledgement_owner_fence = ?, recovery_acknowledgement_target_fence_uuid = ? "

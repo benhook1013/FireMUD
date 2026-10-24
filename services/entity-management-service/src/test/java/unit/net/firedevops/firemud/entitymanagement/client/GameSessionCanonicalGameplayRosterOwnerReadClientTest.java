@@ -233,6 +233,39 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
   }
 
   @Test
+  void malformedReferenceOwnerResponseIsUnavailableWhileCallerGuardsStayInvalid() throws Exception {
+    var request = retirementRequest(NAMESPACE).getOriginalSelection();
+    var stub = mockStub();
+    var malformed =
+        CanonicalGameplayRosterReferenceEvidence.response(request, 1, UUID.randomUUID(), null)
+            .toBuilder()
+            .setOwnerFence(0)
+            .build();
+    when(stub.getCanonicalGameplayRosterReference(request)).thenReturn(malformed);
+    var client = newClient(stub);
+
+    assertThatThrownBy(() -> client.getCanonicalGameplayRosterReference(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Game Session original roster owner response is invalid")
+        .hasCauseInstanceOf(IllegalArgumentException.class);
+    verify(stub).getCanonicalGameplayRosterReference(request);
+    var guardedStub = mockStub();
+    var guardedClient = newClient(guardedStub);
+    assertThatThrownBy(
+            () ->
+                guardedClient.getCanonicalGameplayRosterReference(
+                    request.toBuilder().setSchemaVersion(0).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                guardedClient.getCanonicalGameplayRosterReference(
+                    retirementRequest("other").getOriginalSelection()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("namespace");
+    verifyNoInteractions(guardedStub);
+  }
+
+  @Test
   void retirementCallsUseExactRequestDeadlineAndActualResponseBinding() throws Exception {
     var request = retirementRequest(NAMESPACE);
     var acknowledgement =

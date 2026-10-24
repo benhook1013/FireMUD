@@ -123,8 +123,16 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
               "firemud.canonical.roster.reference.transfer_cleanup", "result", "health_failure")
           .increment();
     }
-    var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));
-    oldestBlocking.set(health.oldestBlockingSeconds());
-    cleanupLag.set(health.cleanupLagSeconds());
+    try {
+      var health = Objects.requireNonNull(transactions.execute(ignored -> repository.health()));
+      oldestBlocking.set(health.oldestBlockingSeconds());
+      cleanupLag.set(health.cleanupLagSeconds());
+    } catch (RuntimeException failure) {
+      oldestBlocking.set(-1L);
+      cleanupLag.set(-1L);
+      metrics
+          .counter("firemud.canonical.roster.reference.cleanup", "result", "health_failure")
+          .increment();
+    }
   }
 }

@@ -142,6 +142,41 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
   }
 
   @Test
+  void blockingHealthFailureInvalidatesHealthyGaugesAndLaterObservationRecoversThem() {
+    when(repository.targetCandidates(null, 2)).thenReturn(List.of());
+    when(repository.health())
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return new Health(0, 0);
+            })
+        .thenThrow(new IllegalStateException("blocking health unavailable"))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return new Health(13, 9);
+            });
+    var oldest = metrics.get("firemud.canonical.roster.reference.oldest_blocking_seconds").gauge();
+    var lag = metrics.get("firemud.canonical.roster.reference.cleanup_lag_seconds").gauge();
+
+    service.sweep();
+    assertThat(oldest.value()).isZero();
+    assertThat(lag.value()).isZero();
+
+    service.sweep();
+    assertThat(oldest.value()).isEqualTo(-1);
+    assertThat(lag.value()).isEqualTo(-1);
+    assertThat(outcomes("health_failure")).isEqualTo(1);
+
+    service.sweep();
+    assertThat(oldest.value()).isEqualTo(13);
+    assertThat(lag.value()).isEqualTo(9);
+    assertThat(outcomes("health_failure")).isEqualTo(1);
+    verify(repository, times(3)).health();
+    assertOutsideTransaction();
+  }
+
+  @Test
   void boundedPagesPassProtectedAndUnavailableTargetsAndResetOnlyAfterAnEmptyPage() {
     var protectedTarget = candidate(1, "ACTIVE");
     var unavailable = candidate(2, "ACTIVE");
