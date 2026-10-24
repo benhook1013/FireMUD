@@ -8,16 +8,30 @@ import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 
 /** Closed original-operation carrier. Neither RESERVED nor RECORDED is retirement authority. */
 public final class CanonicalGameplayRosterReferenceEvidence {
   public static final int MAX_REQUEST_BYTES = 4096;
   public static final int MAX_RECEIPT_BYTES = 64 * 1024;
+  public static final int MAX_SELECTED_ASSIGNMENT_BYTES = 8192;
+  public static final int MAX_RESPONSE_BYTES = 128 * 1024;
+  public static final int MAX_PLAYER_CREATED_RECEIPT_BYTES =
+      CanonicalPlayerCreatedRosterEvidence.MAX_ROSTER_RECEIPT_BYTES;
+  public static final int MAX_SELECTED_PLAYER_CREATED_BYTES =
+      CanonicalPlayerCreatedRosterEvidence.MAX_SELECTED_RECEIPT_BYTES;
+  public static final int MAX_PLAYER_CREATED_RESPONSE_BYTES = 194 * 1024 * 1024;
 
   private CanonicalGameplayRosterReferenceEvidence() {}
 
@@ -27,6 +41,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       UUID session,
       String namespace,
       CanonicalGameplayRosterTarget target) {
+    requirePreseeded(target);
     return requireRequest(
         GetCanonicalGameplayRosterReferenceRequest.newBuilder()
             .setSchemaVersion(1)
@@ -35,6 +50,27 @@ public final class CanonicalGameplayRosterReferenceEvidence {
             .setSessionUuid(session.toString())
             .setTargetNamespace(namespace)
             .setCanonicalTarget(target.toByteString())
+            .build());
+  }
+
+  public static GetCanonicalGameplayRosterReferenceRequest playerCreatedRequest(
+      UUID operation,
+      UUID account,
+      UUID session,
+      String namespace,
+      CanonicalGameplayRosterTarget target,
+      CanonicalPlayerCreatedRosterSourceIdentity source) {
+    requireCreated(target);
+    return requireRequest(
+        GetCanonicalGameplayRosterReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOperationUuid(operation.toString())
+            .setCanonicalAccountUuid(account.toString())
+            .setSessionUuid(session.toString())
+            .setTargetNamespace(namespace)
+            .setCanonicalTarget(target.toByteString())
+            .setCanonicalPlayerCreatedSourceIdentity(
+                CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(source).toByteString())
             .build());
   }
 
@@ -50,7 +86,13 @@ public final class CanonicalGameplayRosterReferenceEvidence {
     uuid(request.getOperationUuid());
     uuid(request.getCanonicalAccountUuid());
     uuid(request.getSessionUuid());
-    target(request);
+    var target = target(request);
+    if (isCreated(target)) {
+      playerCreatedSourceIdentity(request);
+    } else if (!request.getCanonicalPlayerCreatedSourceIdentity().isEmpty()) {
+      throw new IllegalArgumentException(
+          "PRESEEDED_ONLY original cannot carry PLAYER_CREATED source identity");
+    }
     return request;
   }
 
@@ -66,8 +108,11 @@ public final class CanonicalGameplayRosterReferenceEvidence {
           || target.getActiveWorldEpoch() <= 0
           || (target.getPlayableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
               && target.getPlayableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
-          || target.getEntryPolicy()
-              != CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY
+          || (target.getEntryPolicy()
+                  != CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY
+              && !isCreated(target))
+          || (isCreated(target)
+              && target.getPlayableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
           || !target.getWorldSlug().matches("[a-z0-9][a-z0-9-]{0,63}")
           || !target.getRealmSlug().matches("[a-z0-9][a-z0-9-]{0,63}")
           || !target.getPublishedPolicyDigest().matches("[0-9a-f]{64}")
@@ -97,6 +142,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       long fence,
       UUID targetFence,
       CanonicalGameplayRosterResponse receipt) {
+    requirePreseeded(target(requireRequest(request)));
     var response =
         GetCanonicalGameplayRosterReferenceResponse.newBuilder()
             .setRequest(requireRequest(request))
@@ -112,6 +158,173 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       response.setCanonicalRosterReceipt(receipt.toByteString());
     }
     return requireResponse(request, response.build());
+  }
+
+  public static GetCanonicalGameplayRosterReferenceResponse playerCreatedResponse(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      long fence,
+      UUID targetFence,
+      CanonicalPlayerCreatedRosterResponse receipt) {
+    requireCreated(target(requireRequest(request)));
+    var response =
+        GetCanonicalGameplayRosterReferenceResponse.newBuilder()
+            .setRequest(request)
+            .setOwnerFence(fence)
+            .setTargetFenceUuid(targetFence.toString())
+            .setState(
+                receipt == null
+                    ? CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED
+                    : CanonicalGameplayRosterReferenceState
+                        .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED);
+    if (receipt != null) response.setCanonicalPlayerCreatedRosterReceipt(receipt.toByteString());
+    return requireResponse(request, response.build());
+  }
+
+  public static CanonicalPlayerCreatedRosterSourceIdentity playerCreatedSourceIdentity(
+      GetCanonicalGameplayRosterReferenceRequest request) {
+    requireCreated(target(request));
+    try {
+      var bytes = request.getCanonicalPlayerCreatedSourceIdentity();
+      if (bytes.isEmpty()
+          || bytes.size() > CanonicalPlayerCreatedRosterEvidence.MAX_SOURCE_IDENTITY_BYTES) {
+        throw new IllegalArgumentException(
+            "Complete canonical PLAYER_CREATED source identity required");
+      }
+      var source =
+          CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
+              CanonicalPlayerCreatedRosterSourceIdentity.parseFrom(bytes));
+      if (!bytes.equals(source.toByteString())) {
+        throw new IllegalArgumentException(
+            "PLAYER_CREATED source identity bytes are not canonical");
+      }
+      return source;
+    } catch (InvalidProtocolBufferException invalid) {
+      throw new IllegalArgumentException("PLAYER_CREATED source identity is malformed", invalid);
+    }
+  }
+
+  public static CanonicalPlayerCreatedRosterResponse playerCreatedReceipt(
+      GetCanonicalGameplayRosterReferenceResponse response) {
+    requireCreated(target(requireRequest(response.getRequest())));
+    if (!response.getCanonicalRosterReceipt().isEmpty()
+        || !response.getCanonicalSelectedAssignmentReceipt().isEmpty()) {
+      throw new IllegalArgumentException("PLAYER_CREATED receipt cannot use PRESEEDED_ONLY fields");
+    }
+    try {
+      var bytes = response.getCanonicalPlayerCreatedRosterReceipt();
+      if (bytes.isEmpty() || bytes.size() > MAX_PLAYER_CREATED_RECEIPT_BYTES) {
+        throw new IllegalArgumentException(
+            "Complete bounded PLAYER_CREATED roster receipt required");
+      }
+      var roster = CanonicalPlayerCreatedRosterResponse.parseFrom(bytes);
+      if (!bytes.equals(roster.toByteString())) {
+        throw new IllegalArgumentException("PLAYER_CREATED roster receipt bytes are not canonical");
+      }
+      return CanonicalPlayerCreatedRosterEvidence.requireResponse(
+          createdRosterRequest(response.getRequest()), roster);
+    } catch (InvalidProtocolBufferException invalid) {
+      throw new IllegalArgumentException("PLAYER_CREATED roster receipt is malformed", invalid);
+    }
+  }
+
+  /** Exact validated generic snapshot projection; this does not authenticate its producer. */
+  public static CanonicalGameplayRosterResponse snapshotReceipt(
+      GetCanonicalGameplayRosterReferenceResponse response) {
+    return isCreated(target(response.getRequest()))
+        ? playerCreatedReceipt(response).getRoster()
+        : receipt(response);
+  }
+
+  public static CanonicalSelectedPlayerCreatedCharacterResponse
+      selectedPlayerCreatedCharacterReceipt(GetCanonicalGameplayRosterReferenceResponse response) {
+    var roster = playerCreatedReceipt(response).getRoster();
+    try {
+      var bytes = response.getCanonicalSelectedPlayerCreatedCharacterReceipt();
+      if (bytes.isEmpty() || bytes.size() > MAX_SELECTED_PLAYER_CREATED_BYTES) {
+        throw new IllegalArgumentException(
+            "Complete bounded selected PLAYER_CREATED terminal required");
+      }
+      var selected = CanonicalSelectedPlayerCreatedCharacterResponse.parseFrom(bytes);
+      if (!bytes.equals(selected.toByteString())) {
+        throw new IllegalArgumentException(
+            "Selected PLAYER_CREATED receipt bytes are not canonical");
+      }
+      var original = response.getRequest();
+      var expected =
+          CanonicalSelectedPlayerCreatedCharacterRequest.newBuilder()
+              .setRequestUuid(original.getOperationUuid())
+              .setCanonicalAccountUuid(original.getCanonicalAccountUuid())
+              .setSelectedCharacterUuid(response.getSelectedCharacterUuid())
+              .setExpectedTarget(target(original))
+              .setExpectedSource(playerCreatedSourceIdentity(original))
+              .setExpectedSnapshot(
+                  CanonicalGameplayRosterSnapshotReference.newBuilder()
+                      .setSnapshotUuid(roster.getSnapshotUuid())
+                      .setSnapshotDigest(roster.getSnapshotDigest()))
+              .setPlayerExecutionContext(
+                  comparisonContext(original).setCharacterId(response.getSelectedCharacterUuid()))
+              .build();
+      var validated =
+          CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(expected, selected);
+      if (!validated
+          .getTerminal()
+          .getOriginalRequest()
+          .getOriginal()
+          .getTargetNamespace()
+          .equals(original.getTargetNamespace())) {
+        throw new IllegalArgumentException(
+            "Selected creation terminal changed original workload namespace");
+      }
+      return validated;
+    } catch (InvalidProtocolBufferException invalid) {
+      throw new IllegalArgumentException("Selected PLAYER_CREATED terminal is malformed", invalid);
+    }
+  }
+
+  private static CanonicalPlayerCreatedRosterRequest createdRosterRequest(
+      GetCanonicalGameplayRosterReferenceRequest original) {
+    return CanonicalPlayerCreatedRosterRequest.newBuilder()
+        .setRequestUuid(original.getOperationUuid())
+        .setCanonicalAccountUuid(original.getCanonicalAccountUuid())
+        .setExpectedTarget(target(original))
+        .setExpectedSource(playerCreatedSourceIdentity(original))
+        .setPlayerExecutionContext(comparisonContext(original))
+        .build();
+  }
+
+  // Reconstruct comparison values only. This is never authenticated execution-context custody.
+  private static PlayerExecutionContext.Builder comparisonContext(
+      GetCanonicalGameplayRosterReferenceRequest original) {
+    var target = target(original);
+    return PlayerExecutionContext.newBuilder()
+        .setRequestId(original.getOperationUuid())
+        .setAccountId(original.getCanonicalAccountUuid())
+        .setSessionId(original.getSessionUuid())
+        .setTenantId(target.getTenantUuid())
+        .setRealmId(target.getRealmUuid())
+        .setPlayableStateNamespaceId(target.getPlayableStateNamespaceUuid())
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId(target.getGameInstanceUuid());
+  }
+
+  private static boolean isCreated(CanonicalGameplayRosterTarget target) {
+    return target.getEntryPolicy()
+        == CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED;
+  }
+
+  private static void requireCreated(CanonicalGameplayRosterTarget target) {
+    if (!isCreated(target)
+        || target.getPlayableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
+      throw new IllegalArgumentException("Distinct SHARED PLAYER_CREATED carrier required");
+    }
+  }
+
+  private static void requirePreseeded(CanonicalGameplayRosterTarget target) {
+    if (target.getEntryPolicy()
+        != CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY) {
+      throw new IllegalArgumentException("Distinct PRESEEDED_ONLY carrier required");
+    }
   }
 
   public static net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
@@ -137,9 +350,12 @@ public final class CanonicalGameplayRosterReferenceEvidence {
   public static net.firedevops.firemud.entitymanagement.v1
           .CanonicalGameplayRosterSelectedAssignmentResponse
       selectedAssignmentReceipt(GetCanonicalGameplayRosterReferenceResponse response) {
+    requirePreseeded(target(requireRequest(response.getRequest())));
+    rejectCreatedFields(response);
     try {
       if (response.getCanonicalSelectedAssignmentReceipt().isEmpty()
-          || response.getCanonicalSelectedAssignmentReceipt().size() > 8192) {
+          || response.getCanonicalSelectedAssignmentReceipt().size()
+              > MAX_SELECTED_ASSIGNMENT_BYTES) {
         throw new IllegalArgumentException(
             "Complete original selected assignment receipt required");
       }
@@ -175,20 +391,40 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       GetCanonicalGameplayRosterReferenceResponse response) {
     requireRequest(expected);
     Objects.requireNonNull(response, "response");
-    if (!response.getUnknownFields().asMap().isEmpty()
+    boolean created = isCreated(target(expected));
+    if (created) {
+      if (!response.getCanonicalRosterReceipt().isEmpty()
+          || !response.getCanonicalSelectedAssignmentReceipt().isEmpty()) {
+        throw new IllegalArgumentException(
+            "PLAYER_CREATED original cannot carry PRESEEDED_ONLY receipts");
+      }
+    } else {
+      rejectCreatedFields(response);
+    }
+    if (response.getSerializedSize()
+            > (created ? MAX_PLAYER_CREATED_RESPONSE_BYTES : MAX_RESPONSE_BYTES)
+        || response.getCanonicalPlayerCreatedRosterReceipt().size()
+            > MAX_PLAYER_CREATED_RECEIPT_BYTES
+        || response.getCanonicalSelectedPlayerCreatedCharacterReceipt().size()
+            > MAX_SELECTED_PLAYER_CREATED_BYTES
+        || !response.getUnknownFields().asMap().isEmpty()
         || !response.hasRequest()
         || !expected.equals(requireRequest(response.getRequest()))
         || response.getOwnerFence() <= 0
         || response.getCanonicalRosterReceipt().size() > MAX_RECEIPT_BYTES) {
       throw new IllegalArgumentException("Original roster selection owner binding is invalid");
     }
+    boolean hasRoster =
+        !response.getCanonicalRosterReceipt().isEmpty()
+            || !response.getCanonicalPlayerCreatedRosterReceipt().isEmpty();
+    if (hasRoster) snapshotReceipt(response);
     switch (response.getState()) {
       case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED -> {
-        if (!response.getCanonicalRosterReceipt().isEmpty()) {
+        if (hasRoster) {
           throw new IllegalArgumentException("Reserved original selection cannot carry a receipt");
         }
       }
-      case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED -> receipt(response);
+      case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED -> snapshotReceipt(response);
       case CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED -> {
         if (response.getTerminalOutcome().isEmpty()) {
           throw new IllegalArgumentException("Closed replay requires original terminal outcome");
@@ -222,7 +458,7 @@ public final class CanonicalGameplayRosterReferenceEvidence {
     if (!response.getSelectedCharacterUuid().isEmpty()) {
       uuid(response.getSelectedCharacterUuid());
       if (!response.hasSelectionInput()
-          || receipt(response).getActorsList().stream()
+          || snapshotReceipt(response).getActorsList().stream()
                   .filter(
                       actor -> actor.getCharacterUuid().equals(response.getSelectedCharacterUuid()))
                   .count()
@@ -231,18 +467,22 @@ public final class CanonicalGameplayRosterReferenceEvidence {
             "Original chosen actor must occur once in its recorded roster");
       }
     }
-    if (!response.getCanonicalSelectedAssignmentReceipt().isEmpty()) {
+    if (!response.getCanonicalSelectedAssignmentReceipt().isEmpty()
+        || !response.getCanonicalSelectedPlayerCreatedCharacterReceipt().isEmpty()) {
       if (response.getSelectedCharacterUuid().isEmpty()) {
         throw new IllegalArgumentException(
             "Original assignment receipt requires a frozen chosen actor");
       }
-      selectedAssignmentReceipt(response);
+      if (created) selectedPlayerCreatedCharacterReceipt(response);
+      else selectedAssignmentReceipt(response);
     }
     return response;
   }
 
   public static CanonicalGameplayRosterResponse receipt(
       GetCanonicalGameplayRosterReferenceResponse response) {
+    requirePreseeded(target(requireRequest(response.getRequest())));
+    rejectCreatedFields(response);
     try {
       ByteString bytes = response.getCanonicalRosterReceipt();
       if (bytes.isEmpty() || bytes.size() > MAX_RECEIPT_BYTES) {
@@ -277,6 +517,14 @@ public final class CanonicalGameplayRosterReferenceEvidence {
       return receipt;
     } catch (InvalidProtocolBufferException invalid) {
       throw new IllegalArgumentException("Roster receipt is malformed", invalid);
+    }
+  }
+
+  private static void rejectCreatedFields(GetCanonicalGameplayRosterReferenceResponse response) {
+    if (!response.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
+        || !response.getCanonicalSelectedPlayerCreatedCharacterReceipt().isEmpty()) {
+      throw new IllegalArgumentException(
+          "PRESEEDED_ONLY original cannot carry PLAYER_CREATED receipts");
     }
   }
 

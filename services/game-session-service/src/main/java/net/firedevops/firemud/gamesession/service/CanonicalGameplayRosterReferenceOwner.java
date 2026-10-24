@@ -1,7 +1,11 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.util.Objects;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
+import net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceService;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
@@ -19,6 +23,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
   private final CanonicalInitialAdmissionRepository admissionRepository;
   private final net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
       recoveryClient;
+  private final GameSessionCharacterCreatePublicSourceService playerCreatedSourceReader;
 
   public CanonicalGameplayRosterReferenceOwner(
       CanonicalGameplayRosterReferenceRepository repository,
@@ -28,12 +33,32 @@ public final class CanonicalGameplayRosterReferenceOwner {
       CanonicalInitialAdmissionRepository admissionRepository,
       net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
           recoveryClient) {
+    this(
+        repository,
+        transactions,
+        sourceReader,
+        routeReader,
+        admissionRepository,
+        recoveryClient,
+        null);
+  }
+
+  public CanonicalGameplayRosterReferenceOwner(
+      CanonicalGameplayRosterReferenceRepository repository,
+      TransactionOperations transactions,
+      CanonicalPublishedPlayerRouteReadService sourceReader,
+      CanonicalPlayerRouteReadService routeReader,
+      CanonicalInitialAdmissionRepository admissionRepository,
+      net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
+          recoveryClient,
+      GameSessionCharacterCreatePublicSourceService playerCreatedSourceReader) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.transactions = Objects.requireNonNull(transactions, "transactions");
     this.sourceReader = Objects.requireNonNull(sourceReader, "sourceReader");
     this.routeReader = Objects.requireNonNull(routeReader, "routeReader");
     this.admissionRepository = Objects.requireNonNull(admissionRepository, "admissionRepository");
     this.recoveryClient = Objects.requireNonNull(recoveryClient, "recoveryClient");
+    this.playerCreatedSourceReader = playerCreatedSourceReader;
   }
 
   public net.firedevops.firemud.gamesession.v1
@@ -69,7 +94,8 @@ public final class CanonicalGameplayRosterReferenceOwner {
     if (retained.isPresent()) {
       var original =
           Objects.requireNonNull(transactions.execute(ignored -> repository.replay(request)));
-      if (original.getCanonicalRosterReceipt().isEmpty()) {
+      if (original.getCanonicalRosterReceipt().isEmpty()
+          && original.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
         if (!original.getTerminalOutcome().isEmpty()) {
           throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_TERMINAL_UNISSUED");
         }
@@ -82,8 +108,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
       }
       return original;
     }
-    var source = requireCurrentTarget(request);
-    var qualified = qualifiedSnapshot(source);
+    var qualified = requireCurrentTarget(request);
     return Objects.requireNonNull(
         transactions.execute(
             ignored -> {
@@ -113,6 +138,22 @@ public final class CanonicalGameplayRosterReferenceOwner {
     requireOutsideTransaction();
     return Objects.requireNonNull(
         transactions.execute(ignored -> repository.record(request, receipt)));
+  }
+
+  public GetCanonicalGameplayRosterReferenceResponse recordPlayerCreated(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      CanonicalPlayerCreatedRosterResponse receipt) {
+    requireOutsideTransaction();
+    return Objects.requireNonNull(
+        transactions.execute(ignored -> repository.recordPlayerCreated(request, receipt)));
+  }
+
+  public void recordSelectedPlayerCreatedCharacter(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      CanonicalSelectedPlayerCreatedCharacterResponse receipt) {
+    requireOutsideTransaction();
+    transactions.executeWithoutResult(
+        ignored -> repository.recordSelectedPlayerCreatedCharacter(request, receipt));
   }
 
   public void reserveSelectionInput(
@@ -232,8 +273,99 @@ public final class CanonicalGameplayRosterReferenceOwner {
     }
   }
 
+  private CanonicalInitialAdmissionRepository.CurrentOpenSnapshot requireCurrentTarget(
+      GetCanonicalGameplayRosterReferenceRequest request) {
+    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
+        request);
+    var target =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.target(
+            request);
+    if (target.getEntryPolicy()
+        == CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED) {
+      return requireCurrentPlayerCreatedTarget(request, target);
+    }
+    return qualifiedSnapshot(requirePreseededCurrentTarget(request));
+  }
+
+  private CanonicalInitialAdmissionRepository.CurrentOpenSnapshot requireCurrentPlayerCreatedTarget(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget target) {
+    if (playerCreatedSourceReader == null) {
+      throw new CanonicalPublishedPlayerRouteReadService.StorageUnavailableException(
+          "Canonical PLAYER_CREATED source reader is unavailable");
+    }
+    var sourceRequest =
+        net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setReadRequestId(request.getOperationUuid())
+            .setTargetNamespace(request.getTargetNamespace())
+            .setCanonicalTenantId(target.getTenantUuid())
+            .setRealmId(target.getRealmUuid())
+            .setWorldSlug(target.getWorldSlug())
+            .setRealmSlug(target.getRealmSlug())
+            .setPlayableStateNamespaceId(target.getPlayableStateNamespaceUuid())
+            .setPlayableStateScope("SHARED")
+            .setCanonicalGameInstanceId(target.getGameInstanceUuid())
+            .setCatalogRevision(target.getCatalogRevision())
+            .setPointerVersion(target.getPointerVersion())
+            .setExpectedCanonicalVersionId(target.getCanonicalVersionUuid())
+            .setActiveWorldEpoch(target.getActiveWorldEpoch())
+            .build();
+    GameSessionCharacterCreatePublicSourceService.ResolvedPlayerCreatedRosterSource source;
+    try {
+      source = playerCreatedSourceReader.resolvePlayerCreatedRosterSource(sourceRequest);
+    } catch (
+        GameSessionCharacterCreatePublicSourceService.SourceDependencyUnavailableException
+            failure) {
+      throw new CanonicalPublishedPlayerRouteReadService.StorageUnavailableException(
+          "Canonical PLAYER_CREATED source is unavailable", failure);
+    } catch (io.grpc.StatusRuntimeException failure) {
+      switch (failure.getStatus().getCode()) {
+        case FAILED_PRECONDITION -> {
+          var stale =
+              new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+                  "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH");
+          stale.initCause(failure);
+          throw stale;
+        }
+        case UNAVAILABLE, DEADLINE_EXCEEDED ->
+            throw new CanonicalPublishedPlayerRouteReadService.StorageUnavailableException(
+                "Canonical PLAYER_CREATED source is unavailable", failure);
+        case INVALID_ARGUMENT ->
+            throw new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
+                "Canonical PLAYER_CREATED source selectors are invalid", failure);
+        default -> throw failure;
+      }
+    }
+    if (source == null
+        || !request.getCanonicalTarget().equals(source.target().toByteString())
+        || !request
+            .getCanonicalPlayerCreatedSourceIdentity()
+            .equals(source.sourceIdentity().toByteString())
+        || source.route() == null
+        || !request.getTargetNamespace().equals(source.route().targetNamespace())) {
+      throw new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+          "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH");
+    }
+    var qualified =
+        admissionRepository.readCurrentOpenSnapshotForRealm(
+            request.getTargetNamespace(),
+            java.util.UUID.fromString(target.getTenantUuid()),
+            java.util.UUID.fromString(target.getRealmUuid()));
+    try {
+      requireExactCurrentSnapshot(source.route(), qualified);
+    } catch (IllegalStateException mismatch) {
+      var stale =
+          new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+              "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH");
+      stale.initCause(mismatch);
+      throw stale;
+    }
+    return qualified;
+  }
+
   private net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-      requireCurrentTarget(GetCanonicalGameplayRosterReferenceRequest request) {
+      requirePreseededCurrentTarget(GetCanonicalGameplayRosterReferenceRequest request) {
     var target =
         net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.target(
             request);

@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
@@ -473,6 +474,56 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
     verifyNoInteractions(owner);
   }
 
+  @Test
+  void actualAdapterPreservesLargeCreatedOriginalAckAndConfirmationOverAuthenticatedSocket()
+      throws Exception {
+    // Complementary to Entity's actual-client fixture: real GS adapter, controlled durable owner.
+    var fixture =
+        ControlledPlayerCreatedRosterTerminalFixtures.withFiveMebibyteAccountProtection(NAMESPACE);
+    int defaultReceiveLimit = 4 * 1024 * 1024;
+    assertThat(fixture.original().getSerializedSize()).isGreaterThan(defaultReceiveLimit);
+    assertThat(fixture.acknowledgementRequest().getSerializedSize())
+        .isGreaterThan(defaultReceiveLimit);
+    assertThat(fixture.confirmation().getSerializedSize()).isGreaterThan(defaultReceiveLimit);
+    String principal = "spiffe://firemud/ns/gameplay/sa/entity-management-service";
+    var confirmed =
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(fixture.confirmation());
+    when(owner.read(fixture.originalRequest())).thenReturn(fixture.original());
+    when(owner.acknowledgeRetirement(fixture.acknowledgementRequest(), principal))
+        .thenReturn(fixture.acknowledgement());
+    when(owner.confirmRetirementAcknowledgement(fixture.confirmation(), principal))
+        .thenReturn(confirmed);
+    start(
+        "server",
+        true,
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+    try (var channel = channel("entity")) {
+      var createdStub =
+          stub(channel.channel())
+              .withMaxInboundMessageSize(
+                  CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES);
+      var original = createdStub.getCanonicalGameplayRosterReference(fixture.originalRequest());
+      assertThat(original).isEqualTo(fixture.original());
+      assertThat(
+              CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(
+                      original)
+                  .getTerminal()
+                  .toByteString())
+          .isEqualTo(fixture.selected().getTerminal().toByteString());
+      assertThat(
+              createdStub.acknowledgeCanonicalGameplayRosterRetirement(
+                  fixture.acknowledgementRequest()))
+          .isEqualTo(fixture.acknowledgement());
+      assertThat(
+              createdStub.confirmCanonicalGameplayRosterRetirementAcknowledgement(
+                  fixture.confirmation()))
+          .isEqualTo(confirmed);
+      verify(owner).read(fixture.originalRequest());
+      verify(owner).acknowledgeRetirement(fixture.acknowledgementRequest(), principal);
+      verify(owner).confirmRetirementAcknowledgement(fixture.confirmation(), principal);
+    }
+  }
+
   private static net.firedevops.firemud.gamesession.v1
           .CanonicalGameplayRosterRetirementAcknowledgementRequest
       retirementRequest() {
@@ -509,10 +560,20 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
   }
 
   private void start(String identity, boolean ownerPresent) throws Exception {
-    start(identity, ownerPresent ? owner : null);
+    start(identity, ownerPresent, 0);
+  }
+
+  private void start(String identity, boolean ownerPresent, int maxInboundBytes) throws Exception {
+    start(identity, ownerPresent ? owner : null, maxInboundBytes);
   }
 
   private void start(String identity, CanonicalGameplayRosterReferenceOwner availableOwner)
+      throws Exception {
+    start(identity, availableOwner, 0);
+  }
+
+  private void start(
+      String identity, CanonicalGameplayRosterReferenceOwner availableOwner, int maxInboundBytes)
       throws Exception {
     @SuppressWarnings("unchecked")
     ObjectProvider<CanonicalPublishedPlayerRouteReadService> route = mock(ObjectProvider.class);
@@ -520,8 +581,10 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
     ObjectProvider<CanonicalGameplayRosterReferenceOwner> provider = mock(ObjectProvider.class);
     when(provider.getIfAvailable()).thenReturn(availableOwner);
     var serverIdentity = pki.identity(identity);
+    var serverBuilder = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0));
+    if (maxInboundBytes > 0) serverBuilder.maxInboundMessageSize(maxInboundBytes);
     server =
-        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        serverBuilder
             .sslContext(
                 GrpcSslContexts.configure(
                         SslContextBuilder.forServer(

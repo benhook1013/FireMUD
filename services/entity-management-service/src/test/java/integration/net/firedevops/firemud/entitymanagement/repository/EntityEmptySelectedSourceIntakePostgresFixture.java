@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerEmptySourceInputs;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
@@ -78,7 +79,11 @@ public final class EntityEmptySelectedSourceIntakePostgresFixture {
   private EntityEmptySelectedSourceIntakePostgresFixture() {}
 
   public static Fixture create(String sourceEpoch) {
-    DraftCommitBinding selected = selected();
+    return create(sourceEpoch, selected(id("44444444-4444-4444-8444-444444444444")));
+  }
+
+  public static Fixture create(String sourceEpoch, DraftCommitBinding selected) {
+    Objects.requireNonNull(selected, "selected");
     var scope =
         new net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope(
             Owner.ENTITY_MANAGEMENT, NAMESPACE, OPERATION, FENCE, INTAKE_REQUEST, ACTOR, selected);
@@ -133,7 +138,7 @@ public final class EntityEmptySelectedSourceIntakePostgresFixture {
                 + "\"OTHER_ACTOR_TEMPLATE_ROOTS\":[]}}");
     String declarationPayload =
         TemplateConfigSourceValues.ownerInventoryPayload(Owner.ENTITY_MANAGEMENT, declaration);
-    DraftCommitBinding authored = authoredBinding(declarationPayload);
+    DraftCommitBinding authored = authoredBinding(declarationPayload, selected.target());
     TemplateConfigOwnerSourceInventoryDeclaration ownerDeclaration =
         TemplateConfigSourceValues.mutations(authored).stream()
             .filter(
@@ -152,9 +157,9 @@ public final class EntityEmptySelectedSourceIntakePostgresFixture {
         List.of(ownerDeclaration));
   }
 
-  private static DraftCommitBinding authoredBinding(String payload) {
+  private static DraftCommitBinding authoredBinding(String payload, TargetProof target) {
     return DraftCommitBinding.create(
-        target(),
+        target,
         id("51515151-5151-4151-8151-515151515151"),
         id("52525252-5252-4252-8252-525252525252"),
         "base-commit-0",
@@ -246,11 +251,11 @@ public final class EntityEmptySelectedSourceIntakePostgresFixture {
         kind, scope, null, "1", null, null, marker.getBytes(StandardCharsets.UTF_8));
   }
 
-  private static DraftCommitBinding selected() {
+  private static DraftCommitBinding selected(UUID selectedCommitId) {
     return DraftCommitBinding.create(
         target(),
         id("33333333-3333-4333-8333-333333333333"),
-        id("44444444-4444-4444-8444-444444444444"),
+        selectedCommitId,
         "base-commit-0",
         List.of(
             new RevisionPayload(

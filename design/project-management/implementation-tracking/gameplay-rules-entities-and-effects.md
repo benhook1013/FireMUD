@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for gameplay rules, entities, and
 
 ## Current Status
 
+### Player-created owner and roster candidate
+
+The local, unregistered candidate adds Entity's `CHARACTER_CREATE` terminal writer and source-bound created-roster capture/readback, together with Common evidence and the immediate Game Session receipt consumer. Entity V1015 and V1016 retain the creation terminal and created snapshot branch; Game Session V1020 retains the distinct created receipt without changing the preseeded branch. Canonical behavior belongs to the [Entity API](../../architecture/microservices/entity-management-service/api-contracts.md#player-created-roster-and-selected-character) and [sealed roster storage](../../architecture/microservices/entity-management-service/runtime-and-data.md#player-created-snapshot-storage).
+
+This candidate has not yet passed its own consolidated qualification. Earlier source and mixed-worktree results retain their original attribution and do not qualify this isolated composition. Game Session UUID runtime and creation-protection storage remain separate receiving work; actual original Game Session creation-owner → Entity capture → Game Session receipt composition, genuine source custody, runtime registration, Account protection and settlement, region/execution handoffs, public admission and activation remain open. Controlled upstream facts and component or socket fixtures cannot close those gaps.
+
 ### Canonical sealed roster retention prerequisite
 
 The unregistered passive composition implements Entity V1012 admission, sealed snapshot/reference/recovery and bounded disposal paths, Entity V1014 durable retirement-transfer retries, and Game Session V1015 selection/reference ownership plus V1017 acknowledgement inventory. Its supported consumers are PRESEEDED_ONLY roster/menu and selected-assignment readback. Required finite-horizon configuration, exact nonce/fence binding, reference/hold protection and fixed-label sweep metrics are implemented. Canonical contracts remain in [Entity sealed roster retention](../../architecture/microservices/entity-management-service/runtime-and-data.md#sealed-canonical-roster-retention), [Game Session runtime/data](../../architecture/microservices/game-session-service/runtime-and-data.md#canonical-roster-selection-and-reference-ownership) and the [original-reference API](../../architecture/microservices/game-session-service/api-contracts.md#original-canonical-roster-selection-reference).

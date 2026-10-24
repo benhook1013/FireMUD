@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for player access and session. Ca
 
 ## Current Status
 
+### Player-created roster consumer candidate
+
+The local, unregistered candidate consumes the independently resolved current published source through Entity's distinct created-roster and selected-character reads, preserving full original creation terminals, frozen menu/actor choice and the typed original-operation receipt/recovery/retirement branch. The [Entity API](../../architecture/microservices/entity-management-service/api-contracts.md#player-created-roster-and-selected-character) owns the created evidence contract; [Game Session runtime/data](../../architecture/microservices/game-session-service/runtime-and-data.md#player-created-original-roster-storage) records its local storage consequences. Consolidated proof of this isolated candidate is pending. Its V1020 receipt storage does not include the separate V1018 UUID runtime or V1019 creation-protection owners, and supplies no Account protection, admission, activation or genuine playable-journey proof. Qualified public source-read results below retain their original source attribution.
+
 ### Public character-creation and created-roster source preparation
 
 The review correction at `e6682785db8c4aa678ce730b1361f02525fff639` preserves the source boundary and distinguishes downstream transport unavailability, owner-evidence rejection and malformed caller input. R80 freshly passes all 2,528 Game Session unit cases, affected static analysis and formatting, links and Markdown. R81 rebuilds fresh service images from that correction and passes held Gateway/Telnet denial plus isolated backend WebSocket `WORLDS` / `LOGIN` / `PLAY` / `LOOK`; authenticated teardown succeeds and independent exact-project inspection confirms its containers, networks and volumes absent. This qualifies the correction within those controlled boundaries, without genuine production custody, created-roster consumption, registration, successful public admission or activation. The independently attributed source qualification follows.

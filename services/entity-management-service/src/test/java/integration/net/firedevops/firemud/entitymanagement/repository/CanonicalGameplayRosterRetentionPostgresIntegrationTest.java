@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository.ReferenceKind;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
@@ -30,6 +31,9 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentO
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -66,6 +70,8 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   private TransactionTemplate transaction;
   private CanonicalGameplayRosterRetentionRepository repository;
   private CanonicalGameplayRosterRetentionBinding binding;
+  private List<String> installed1015History;
+  private List<String> retained1015Rows;
 
   @BeforeEach
   void upgradeRetainedV1011ActorReceiptAndSealedSnapshot() {
@@ -84,6 +90,14 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
     List<String> retained = retainedRows();
     migrate(dataSource, "1014");
     assertThat(retainedRows()).containsExactlyElementsOf(retained);
+    migrate(dataSource, "1015");
+    dsl.execute(
+        "INSERT INTO entity_canonical_roster_retention_lifecycle (snapshot_uuid, snapshot_digest) VALUES (?, ?)",
+        binding.snapshot().snapshotUuid(),
+        binding.snapshot().snapshotDigest());
+    installed1015History = migrationHistory();
+    retained1015Rows = retainedBeforeCreatedExtension();
+    migrate(dataSource, "1016");
   }
 
   @AfterEach
@@ -92,6 +106,484 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
       DSL.using(dataSource(null), SQLDialect.POSTGRES)
           .execute("DROP SCHEMA \"" + schema.replaceAll("[^a-zA-Z0-9_]", "") + "\" CASCADE");
     }
+  }
+
+  @Test
+  void forward1015To1016PreservesInstalledHistoryRetainedRowsAndOldSnapshotGuards() {
+    var history = migrationHistory();
+    assertThat(history.subList(0, installed1015History.size()))
+        .containsExactlyElementsOf(installed1015History);
+    assertThat(history).hasSize(installed1015History.size() + 1);
+    assertThat(history.getLast())
+        .contains("1016", "V1016__player_created_roster_snapshot_receipts.sql");
+    assertThat(retainedBeforeCreatedExtension()).containsExactlyElementsOf(retained1015Rows);
+    var row =
+        dsl.fetchSingle(
+            "SELECT entry_policy, canonical_player_created_source_identity FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+            binding.snapshot().snapshotUuid());
+    assertThat(row.get("entry_policy", String.class)).isEqualTo("PRESEEDED_ONLY");
+    assertThat(row.get("canonical_player_created_source_identity", byte[].class)).isNull();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT entry_policy FROM entity_canonical_roster_retention_lifecycle WHERE snapshot_uuid = ?",
+                    binding.snapshot().snapshotUuid())
+                .get(0, String.class))
+        .isEqualTo("PRESEEDED_ONLY");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_gameplay_roster_snapshots SET canonical_player_created_source_identity = ? WHERE snapshot_uuid = ?",
+                    new byte[] {1},
+                    binding.snapshot().snapshotUuid()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                    binding.snapshot().snapshotUuid()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> dsl.execute("TRUNCATE entity_canonical_gameplay_roster_snapshots CASCADE"))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void createdAdmissionAndOriginalRecoveryKeepExactSourceAndDistinctReceiptBranch() {
+    var request = createdRequest();
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(request));
+    assertThat(transaction.<UUID>execute(ignored -> repository.reserveAdmission(request)))
+        .isEqualTo(nonce);
+    var changed =
+        request.toBuilder()
+            .setExpectedSource(
+                request.getExpectedSource().toBuilder()
+                    .setDescriptorRevisionUuid(UUID.randomUUID().toString()))
+            .build();
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(changed)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT");
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.requireAdmission(changed, nonce)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    var invalidPolicy = request.toBuilder().setExpectedTarget(binding.target().toWire()).build();
+    assertThatThrownBy(
+            () -> transaction.execute(ignored -> repository.reserveAdmission(invalidPolicy)))
+        .isInstanceOf(IllegalArgumentException.class);
+    var original = createdOriginal(request);
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            original, 1, UUID.randomUUID(), null);
+    var receipt = createdReceipt(request);
+    transaction.executeWithoutResult(
+        ignored -> {
+          assertThat(repository.originalPlayerCreatedReceipt(owner)).isEmpty();
+          seedCreatedSnapshot(receipt, 0);
+          repository.requireAdmission(request, nonce);
+          repository.bindPlayerCreatedOriginal(owner, receipt);
+          repository.bindAdmission(
+              UUID.fromString(request.getRequestUuid()),
+              nonce,
+              UUID.fromString(receipt.getRoster().getSnapshotUuid()));
+          assertThat(repository.originalPlayerCreatedReceipt(owner)).contains(receipt);
+        });
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.originalReceipt(owner)))
+        .isInstanceOf(IllegalArgumentException.class);
+    var wrongSourceOwner =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            createdOriginal(changed), 1, UUID.fromString(owner.getTargetFenceUuid()), null);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.originalPlayerCreatedReceipt(wrongSourceOwner)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+    var recovery =
+        CanonicalGameplayRosterRecoveryRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var recovering = owner.toBuilder().setRecoveryUuid(recovery.getRecoveryUuid()).build();
+    var closed =
+        transaction.execute(
+            ignored ->
+                repository.closeAdmission(recovery, recovering, policy(Duration.ofHours(1))));
+    assertThat(closed.getAdmissionUuid()).isEqualTo(nonce.toString());
+    assertThat(closed.getCanonicalRosterReceipt()).isEmpty();
+    assertThat(closed.getCanonicalPlayerCreatedRosterReceipt()).isEqualTo(receipt.toByteString());
+    var replay =
+        transaction.execute(
+            ignored ->
+                repository.closeAdmission(recovery, recovering, policy(Duration.ofHours(2))));
+    assertThat(replay).isEqualTo(closed);
+    var stored =
+        dsl.fetchSingle(
+            "SELECT entry_policy, canonical_roster_receipt, canonical_player_created_roster_receipt FROM entity_canonical_roster_original_selections WHERE operation_uuid = ?",
+            UUID.fromString(request.getRequestUuid()));
+    assertThat(stored.get("entry_policy", String.class)).isEqualTo("PLAYER_CREATED");
+    assertThat(stored.get("canonical_roster_receipt", byte[].class)).isNull();
+    assertThat(stored.get("canonical_player_created_roster_receipt", byte[].class))
+        .isEqualTo(receipt.toByteArray());
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_gameplay_roster_snapshots SET canonical_player_created_source_identity = ? WHERE snapshot_uuid = ?",
+                    changed.getExpectedSource().toByteArray(),
+                    UUID.fromString(receipt.getRoster().getSnapshotUuid())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_admissions SET entry_policy = 'PRESEEDED_ONLY' WHERE operation_uuid = ?",
+                    UUID.fromString(request.getRequestUuid())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_roster_original_selections SET canonical_roster_receipt = ? WHERE operation_uuid = ?",
+                    receipt.getRoster().toByteArray(),
+                    UUID.fromString(request.getRequestUuid())))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void createdSnapshotRequiresSharedSourceAndRejectsPreseededActorSubstitution() {
+    var request = createdRequest();
+    var receipt = createdReceipt(request);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        seedCreatedSnapshot(receipt.toBuilder().clearSourceIdentity().build(), 0)))
+        .isInstanceOf(DataAccessException.class);
+    var oversized =
+        receipt.toBuilder()
+            .setSourceIdentity(
+                receipt.getSourceIdentity().toBuilder().setDescriptorDigest("x".repeat(4097)))
+            .build();
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(ignored -> seedCreatedSnapshot(oversized, 0)))
+        .isInstanceOf(DataAccessException.class);
+    var isolated =
+        receipt.toBuilder()
+            .setRoster(
+                receipt.getRoster().toBuilder()
+                    .setTarget(
+                        request.getExpectedTarget().toBuilder()
+                            .setPlayableStateScope(
+                                PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)))
+            .build();
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(ignored -> seedCreatedSnapshot(isolated, 0)))
+        .isInstanceOf(DataAccessException.class);
+    transaction.executeWithoutResult(ignored -> seedCreatedSnapshot(receipt, 1));
+    UUID actor =
+        dsl.fetchSingle(
+                "SELECT character_uuid FROM entity_canonical_gameplay_roster_snapshot_actors WHERE snapshot_uuid = ?",
+                binding.snapshot().snapshotUuid())
+            .get(0, UUID.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO entity_canonical_gameplay_roster_snapshot_actors (snapshot_uuid, ordinal_position, character_uuid, display_name, actor_kind) VALUES (?, 0, ?, 'Retained Actor', 'PLAYER')",
+                    UUID.fromString(receipt.getRoster().getSnapshotUuid()),
+                    actor))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE entity_canonical_gameplay_roster_snapshots SET construction_state = 'SEALED' WHERE snapshot_uuid = ?",
+                    UUID.fromString(receipt.getRoster().getSnapshotUuid())))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void createdRetirementPreservesFullSourceThroughOutboxAndKeepsPreseededFamilyProtected() {
+    var request = createdRequest();
+    var original = createdOriginal(request);
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            original, 1, UUID.randomUUID(), null);
+    var receipt = createdReceipt(request);
+    UUID nonce = transaction.execute(ignored -> repository.reserveAdmission(request));
+    transaction.executeWithoutResult(
+        ignored -> {
+          seedCreatedSnapshot(receipt, 0);
+          repository.requireAdmission(request, nonce);
+          repository.bindPlayerCreatedOriginal(owner, receipt);
+          repository.bindAdmission(
+              UUID.fromString(request.getRequestUuid()),
+              nonce,
+              UUID.fromString(receipt.getRoster().getSnapshotUuid()));
+        });
+    var recorded =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            original, 1, UUID.fromString(owner.getTargetFenceUuid()), receipt);
+    var proof = retirement(recorded, null);
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(repository.observeRetirement(candidate, proof, policy(Duration.ofMillis(1))))
+                .isTrue());
+    var transfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(transfer.acknowledgementRequest().getObservedRetirement()).isEqualTo(proof);
+    assertThat(
+            transfer.acknowledgementRequest().getObservedRetirement().getCanonicalRosterReceipt())
+        .isEmpty();
+    assertThat(
+            transfer
+                .acknowledgementRequest()
+                .getObservedRetirement()
+                .getCanonicalPlayerCreatedRosterReceipt())
+        .isEqualTo(receipt.toByteString());
+    assertThat(
+            transfer
+                .acknowledgementRequest()
+                .getOriginalSelection()
+                .getCanonicalPlayerCreatedSourceIdentity())
+        .isEqualTo(request.getExpectedSource().toByteString());
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT entry_policy FROM entity_canonical_roster_retirement_transfers WHERE observation_uuid = ?",
+                    transfer.observationUuid())
+                .get(0, String.class))
+        .isEqualTo("PLAYER_CREATED");
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.reserveAdmission(request)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThatThrownBy(
+            () -> dsl.execute("DELETE FROM entity_canonical_roster_retirement_transfers"))
+        .isInstanceOf(DataAccessException.class);
+    transaction.executeWithoutResult(
+        ignored -> assertThat(repository.protection(binding).disposalEligible()).isFalse());
+    dsl.fetch("SELECT pg_sleep(0.02)");
+    var retiredCandidate =
+        transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    assertThat(transaction.<Boolean>execute(ignored -> repository.dispose(retiredCandidate)))
+        .isTrue();
+    var retainedTransfer =
+        transaction.execute(ignored -> repository.retirementTransfers(null, 1)).getFirst();
+    assertThat(retainedTransfer).isEqualTo(transfer);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_gameplay_roster_snapshots")))
+        .isEqualTo(1);
+    assertThat(
+            dsl.fetchSingle("SELECT snapshot_uuid FROM entity_canonical_gameplay_roster_snapshots")
+                .get(0, UUID.class))
+        .isEqualTo(binding.snapshot().snapshotUuid());
+  }
+
+  @Test
+  void createdOutboxStorageBudgetDoesNotWidenPreseededOrAuthenticateOpaqueBytes() {
+    var created = createdRequest();
+    var createdOriginal = createdOriginal(created);
+    var createdRecovery =
+        CanonicalGameplayRosterRecoveryRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(createdOriginal)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var createdOwner =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                createdOriginal, 1, UUID.randomUUID(), null)
+            .toBuilder()
+            .setRecoveryUuid(createdRecovery.getRecoveryUuid())
+            .build();
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.closeAdmission(createdRecovery, createdOwner, policy(Duration.ofHours(1))));
+    var preseeded = localRequest();
+    var preseededRecovery = recovery(preseeded);
+    var preseededOwner = recoveryOwner(preseededRecovery);
+    transaction.executeWithoutResult(
+        ignored ->
+            repository.closeAdmission(
+                preseededRecovery, preseededOwner, policy(Duration.ofHours(1))));
+    byte[] rawRequest = new byte[128 * 1024 + 1];
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        insertRawTransferForBudget(
+                            preseeded.requestUuid(), retirement(preseededOwner, null), rawRequest)))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_entity_roster_transfer_policy_request");
+    // Raw SQL tests only the policy-specific byte budget. Opaque request bytes remain invalid
+    // to the repository's value parser and never become authenticated acknowledgement authority.
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> {
+                      insertRawTransferForBudget(
+                          UUID.fromString(created.getRequestUuid()),
+                          retirement(createdOwner, null),
+                          rawRequest);
+                      assertThat(
+                              dsl.fetchCount(
+                                  DSL.table("entity_canonical_roster_retirement_transfers")))
+                          .isEqualTo(1);
+                      assertThatThrownBy(() -> repository.retirementTransfers(null, 1))
+                          .isInstanceOf(IllegalStateException.class);
+                      throw new IllegalStateException("controlled byte-budget rollback");
+                    }))
+        .hasMessage("controlled byte-budget rollback");
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers"))).isZero();
+  }
+
+  private void insertRawTransferForBudget(
+      UUID operation, GetCanonicalGameplayRosterReferenceResponse proof, byte[] request) {
+    dsl.execute(
+        "INSERT INTO entity_canonical_roster_retirement_transfers "
+            + "(observation_uuid, operation_uuid, original_request, admission_uuid, closed_admission_receipt, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, observed_retirement, acknowledgement_request, request_digest, entry_policy) "
+            + "SELECT ?, operation_uuid, recovery_owner_request, admission_uuid, recovery_response, recovery_owner_fence, recovery_target_fence_uuid, minimum_retention_millis, 'PENDING_ACK', ?, ?, ?, entry_policy FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+        UUID.randomUUID(),
+        proof.toByteArray(),
+        request,
+        "a".repeat(64),
+        operation);
+  }
+
+  private List<String> migrationHistory() {
+    return dsl.fetch(
+            "SELECT to_jsonb(t)::TEXT || ':' || xmin::TEXT FROM flyway_schema_history t ORDER BY installed_rank")
+        .getValues(0, String.class);
+  }
+
+  private List<String> retainedBeforeCreatedExtension() {
+    return List.of(
+            "characters",
+            "entity_preseeded_actor_assignment_operations",
+            "entity_canonical_gameplay_roster_snapshots",
+            "entity_canonical_gameplay_roster_snapshot_actors",
+            "entity_canonical_roster_retention_lifecycle")
+        .stream()
+        .flatMap(
+            table -> {
+              String projection =
+                  table.equals("entity_canonical_gameplay_roster_snapshots")
+                      ? "to_jsonb(t) - 'canonical_player_created_source_identity'"
+                      : table.equals("entity_canonical_roster_retention_lifecycle")
+                          ? "to_jsonb(t) - 'entry_policy'"
+                          : "to_jsonb(t)";
+              return dsl
+                  .fetch(
+                      "SELECT ("
+                          + projection
+                          + ")::TEXT || ':' || xmin::TEXT FROM "
+                          + table
+                          + " t ORDER BY ("
+                          + projection
+                          + ")::TEXT")
+                  .getValues(0, String.class)
+                  .stream();
+            })
+        .toList();
+  }
+
+  // Pure source values and empty persisted snapshots are controlled storage fixtures, not
+  // authority.
+  private CanonicalPlayerCreatedRosterRequest createdRequest() {
+    var target =
+        binding.target().toWire().toBuilder()
+            .setEntryPolicy(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                    .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED)
+            .build();
+    var source =
+        CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
+            .setSchemaVersion(1)
+            .setDescriptorUuid(UUID.randomUUID().toString())
+            .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+            .setDescriptorDigest("sha256:" + "a".repeat(64))
+            .setAuthoredBindingUuid(UUID.randomUUID().toString())
+            .setAuthoredBindingDigest("sha256:" + "b".repeat(64))
+            .build();
+    UUID operation = UUID.randomUUID();
+    return CanonicalPlayerCreatedRosterEvidence.requireRequest(
+        CanonicalPlayerCreatedRosterRequest.newBuilder()
+            .setRequestUuid(operation.toString())
+            .setCanonicalAccountUuid(binding.canonicalAccountUuid().toString())
+            .setExpectedTarget(target)
+            .setExpectedSource(source)
+            .setPlayerExecutionContext(
+                net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                    .setRequestId(operation.toString())
+                    .setAccountId(binding.canonicalAccountUuid().toString())
+                    .setSessionId(UUID.randomUUID().toString())
+                    .setTenantId(target.getTenantUuid())
+                    .setRealmId(target.getRealmUuid())
+                    .setPlayableStateNamespaceId(target.getPlayableStateNamespaceUuid())
+                    .setGameInstanceId(target.getGameInstanceUuid())
+                    .setPlayableStateScope("SHARED"))
+            .build());
+  }
+
+  private static net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+      createdOriginal(CanonicalPlayerCreatedRosterRequest request) {
+    return CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
+        UUID.fromString(request.getRequestUuid()),
+        UUID.fromString(request.getCanonicalAccountUuid()),
+        UUID.fromString(request.getPlayerExecutionContext().getSessionId()),
+        "gameplay",
+        request.getExpectedTarget(),
+        request.getExpectedSource());
+  }
+
+  private static CanonicalPlayerCreatedRosterResponse createdReceipt(
+      CanonicalPlayerCreatedRosterRequest request) {
+    return CanonicalPlayerCreatedRosterEvidence.requireResponse(
+        request,
+        CanonicalPlayerCreatedRosterResponse.newBuilder()
+            .setSourceIdentity(request.getExpectedSource())
+            .setRoster(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse
+                    .newBuilder()
+                    .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+                    .setTarget(request.getExpectedTarget())
+                    .setSnapshotUuid(UUID.randomUUID().toString())
+                    .setSnapshotDigest(
+                        CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
+                            request.getCanonicalAccountUuid(),
+                            request.getExpectedTarget(),
+                            request.getExpectedSource(),
+                            List.of())))
+            .build());
+  }
+
+  private void seedCreatedSnapshot(CanonicalPlayerCreatedRosterResponse receipt, int count) {
+    var roster = receipt.getRoster();
+    var target = roster.getTarget();
+    dsl.execute(
+        "INSERT INTO entity_canonical_gameplay_roster_snapshots "
+            + "(snapshot_uuid, snapshot_digest, canonical_account_uuid, tenant_uuid, realm_uuid, world_slug, realm_slug, game_instance_uuid, catalog_revision, canonical_version_uuid, pointer_version, active_world_epoch, published_policy_digest, published_release_bundle_ref, admission_pointer_snapshot_digest, published_owner_proof_digest, playable_state_namespace_uuid, playable_state_scope, entry_policy, canonical_player_created_source_identity, roster_count) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PLAYER_CREATED', ?, ?)",
+        UUID.fromString(roster.getSnapshotUuid()),
+        roster.getSnapshotDigest(),
+        UUID.fromString(roster.getCanonicalAccountUuid()),
+        UUID.fromString(target.getTenantUuid()),
+        UUID.fromString(target.getRealmUuid()),
+        target.getWorldSlug(),
+        target.getRealmSlug(),
+        UUID.fromString(target.getGameInstanceUuid()),
+        target.getCatalogRevision(),
+        UUID.fromString(target.getCanonicalVersionUuid()),
+        target.getPointerVersion(),
+        target.getActiveWorldEpoch(),
+        target.getPublishedPolicyDigest(),
+        target.getPublishedReleaseBundleRef(),
+        target.getAdmissionPointerSnapshotDigest(),
+        target.getPublishedOwnerProofDigest(),
+        UUID.fromString(target.getPlayableStateNamespaceUuid()),
+        target.getPlayableStateScope().name(),
+        receipt.hasSourceIdentity() ? receipt.getSourceIdentity().toByteArray() : null,
+        count);
+    if (count == 0)
+      dsl.execute(
+          "UPDATE entity_canonical_gameplay_roster_snapshots SET construction_state = 'SEALED' WHERE snapshot_uuid = ?",
+          UUID.fromString(roster.getSnapshotUuid()));
   }
 
   @Test

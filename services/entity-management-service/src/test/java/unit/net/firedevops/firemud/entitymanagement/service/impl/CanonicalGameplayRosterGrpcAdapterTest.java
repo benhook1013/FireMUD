@@ -27,6 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
+import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterService;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
@@ -41,6 +43,9 @@ import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSn
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -423,6 +428,71 @@ class CanonicalGameplayRosterGrpcAdapterTest {
   }
 
   @Test
+  void legacyConstructorReturnsUnavailableForBothUnregisteredCreatedMethods() {
+    var adapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            mock(CanonicalGameplayRosterService.class),
+            mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+            new SimpleMeterRegistry());
+    var listObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse>();
+    withTrustedPeer(
+        "entity_management.v1.CanonicalGameplayRosterService/ListPlayerCreatedRoster",
+        () -> adapter.listPlayerCreatedRoster(playerCreatedRequest(), listObserver));
+    assertOnlyStatus(listObserver, Status.Code.UNAVAILABLE);
+
+    var selectedObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1
+                .CanonicalSelectedPlayerCreatedCharacterResponse>();
+    withTrustedPeer(
+        "entity_management.v1.CanonicalGameplayRosterService/ReadSelectedPlayerCreatedCharacter",
+        () ->
+            adapter.readSelectedPlayerCreatedCharacter(selectedCreatedRequest(), selectedObserver));
+    assertOnlyStatus(selectedObserver, Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void createdMethodsValidateFullServiceResponsesBeforeReturningThem() {
+    var createdService = mock(EntityPlayerCreatedRosterService.class);
+    var adapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            mock(CanonicalGameplayRosterService.class),
+            mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+            createdService,
+            new SimpleMeterRegistry());
+    var request = playerCreatedRequest();
+    when(createdService.list(request))
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse
+                .getDefaultInstance());
+    var listObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse>();
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+        () -> adapter.listPlayerCreatedRoster(request, listObserver));
+    assertOnlyStatus(listObserver, Status.Code.INVALID_ARGUMENT);
+    verify(createdService).list(request);
+
+    var selectedRequest = selectedCreatedRequest();
+    when(createdService.selected(selectedRequest))
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1
+                .CanonicalSelectedPlayerCreatedCharacterResponse.getDefaultInstance());
+    var selectedObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1
+                .CanonicalSelectedPlayerCreatedCharacterResponse>();
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME,
+        () -> adapter.readSelectedPlayerCreatedCharacter(selectedRequest, selectedObserver));
+    assertOnlyStatus(selectedObserver, Status.Code.INVALID_ARGUMENT);
+    verify(createdService).selected(selectedRequest);
+  }
+
+  @Test
   void unexpectedIllegalStateExceptionReturnsInternalAndRecordsInternalMetric() {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     AtomicInteger failures = new AtomicInteger();
@@ -577,6 +647,60 @@ class CanonicalGameplayRosterGrpcAdapterTest {
         .setExpectedTarget(target)
         .setPlayerExecutionContext(executionContext(target, requestUuid, accountUuid, null))
         .build();
+  }
+
+  private static CanonicalPlayerCreatedRosterRequest playerCreatedRequest() {
+    UUID requestUuid = UUID.randomUUID();
+    UUID accountUuid = UUID.randomUUID();
+    var target = playerCreatedTarget();
+    return CanonicalPlayerCreatedRosterEvidence.requireRequest(
+        CanonicalPlayerCreatedRosterRequest.newBuilder()
+            .setRequestUuid(requestUuid.toString())
+            .setCanonicalAccountUuid(accountUuid.toString())
+            .setExpectedTarget(target)
+            .setExpectedSource(playerCreatedSource())
+            .setPlayerExecutionContext(executionContext(target, requestUuid, accountUuid, null))
+            .build());
+  }
+
+  private static CanonicalSelectedPlayerCreatedCharacterRequest selectedCreatedRequest() {
+    var list = playerCreatedRequest();
+    UUID selected = UUID.randomUUID();
+    return CanonicalPlayerCreatedRosterEvidence.requireSelectedRequest(
+        CanonicalSelectedPlayerCreatedCharacterRequest.newBuilder()
+            .setRequestUuid(list.getRequestUuid())
+            .setCanonicalAccountUuid(list.getCanonicalAccountUuid())
+            .setSelectedCharacterUuid(selected.toString())
+            .setExpectedTarget(list.getExpectedTarget())
+            .setExpectedSnapshot(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference
+                    .newBuilder()
+                    .setSnapshotUuid(UUID.randomUUID().toString())
+                    .setSnapshotDigest("a".repeat(64)))
+            .setExpectedSource(list.getExpectedSource())
+            .setPlayerExecutionContext(
+                list.getPlayerExecutionContext().toBuilder().setCharacterId(selected.toString()))
+            .build());
+  }
+
+  private static CanonicalGameplayRosterTarget playerCreatedTarget() {
+    return target().toBuilder()
+        .setEntryPolicy(
+            net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED)
+        .build();
+  }
+
+  private static CanonicalPlayerCreatedRosterSourceIdentity playerCreatedSource() {
+    return CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
+        CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
+            .setSchemaVersion(1)
+            .setDescriptorUuid(UUID.randomUUID().toString())
+            .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+            .setDescriptorDigest("sha256:" + "1".repeat(64))
+            .setAuthoredBindingUuid(UUID.randomUUID().toString())
+            .setAuthoredBindingDigest("sha256:" + "2".repeat(64))
+            .build());
   }
 
   private static CanonicalGameplayRosterSelectedAssignmentRequest selectedAssignmentRequest(

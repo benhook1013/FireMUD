@@ -99,13 +99,22 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     flywayConfiguration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     assertThat(retainedParentRows(dsl)).isEqualTo(parentRows);
+    assertThat(
+            dsl.fetch(
+                "SELECT creation_target_namespace, creation_operation_id, actor_entry_policy, "
+                    + "authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters"))
+        .allSatisfy(row -> assertThat(row.intoArray()).containsOnlyNulls());
+    assertThat(
+            dsl.fetch(
+                "SELECT canonical_player_created_source_identity FROM entity_canonical_gameplay_roster_snapshots WHERE entry_policy = 'PRESEEDED_ONLY'"))
+        .allSatisfy(row -> assertThat(row.get(0, byte[].class)).isNull());
     assertThat(history(dsl).subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     assertThat(
             dsl.fetchSingle(
                     "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
                 .get(0, String.class))
-        .isEqualTo("1014");
+        .isEqualTo("1016");
   }
 
   @AfterEach
@@ -236,13 +245,26 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
             "entity_canonical_gameplay_roster_snapshot_actors",
             "saga_instance",
             "saga_step")) {
+      String retainedProjection =
+          switch (table) {
+            case "characters" ->
+                "to_jsonb(t) - 'creation_target_namespace' - 'creation_operation_id' - 'actor_entry_policy' "
+                    + "- 'authored_initial_core_json' - 'creation_descriptor_json' - 'creation_descriptor_digest'";
+            case "entity_canonical_gameplay_roster_snapshots" ->
+                "to_jsonb(t) - 'canonical_player_created_source_identity'";
+            default -> "to_jsonb(t)";
+          };
       rows.put(
           table,
           source
               .fetch(
-                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                  "SELECT jsonb_build_object('row', "
+                      + retainedProjection
+                      + ", 'xmin', t.xmin::TEXT)::TEXT FROM "
                       + table
-                      + " t ORDER BY to_jsonb(t)::TEXT")
+                      + " t ORDER BY ("
+                      + retainedProjection
+                      + ")::TEXT")
               .getValues(0, String.class));
     }
     return rows;

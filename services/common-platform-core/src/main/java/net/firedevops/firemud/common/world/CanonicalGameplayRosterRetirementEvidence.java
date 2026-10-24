@@ -5,6 +5,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
@@ -17,6 +18,10 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReference
 public final class CanonicalGameplayRosterRetirementEvidence {
   public static final int MAX_REQUEST_BYTES = 128 * 1024;
   public static final int MAX_RESPONSE_BYTES = 4096;
+  public static final int MAX_PLAYER_CREATED_REQUEST_BYTES = 195 * 1024 * 1024;
+  public static final int MAX_CONFIRMATION_BYTES = MAX_REQUEST_BYTES + MAX_RESPONSE_BYTES + 64;
+  public static final int MAX_PLAYER_CREATED_CONFIRMATION_BYTES =
+      MAX_PLAYER_CREATED_REQUEST_BYTES + MAX_RESPONSE_BYTES + 64;
 
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
 
@@ -27,7 +32,7 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     Objects.requireNonNull(request, "request");
     if (request.getSchemaVersion() != 1
         || !request.getUnknownFields().asMap().isEmpty()
-        || request.getSerializedSize() > MAX_REQUEST_BYTES
+        || request.getSerializedSize() > MAX_PLAYER_CREATED_REQUEST_BYTES
         || !request.hasOriginalSelection()
         || !request.hasObservedRetirement()
         || request.getMinimumRetentionMillis() <= 0) {
@@ -36,6 +41,10 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     }
     GetCanonicalGameplayRosterReferenceRequest original =
         CanonicalGameplayRosterReferenceEvidence.requireRequest(request.getOriginalSelection());
+    if (request.getSerializedSize() > acknowledgementLimit(original)) {
+      throw new IllegalArgumentException(
+          "Retirement acknowledgement exceeds its policy-specific bound");
+    }
     GetCanonicalGameplayRosterReferenceResponse observed = request.getObservedRetirement();
     if (!observed.hasRequest()) {
       throw new IllegalArgumentException("Complete observed retirement proof required");
@@ -49,7 +58,10 @@ public final class CanonicalGameplayRosterRetirementEvidence {
 
     if (!original.getTargetNamespace().equals(observedRequest.getTargetNamespace())
         || !original.getCanonicalAccountUuid().equals(observedRequest.getCanonicalAccountUuid())
-        || !original.getCanonicalTarget().equals(observedRequest.getCanonicalTarget())) {
+        || !original.getCanonicalTarget().equals(observedRequest.getCanonicalTarget())
+        || !original
+            .getCanonicalPlayerCreatedSourceIdentity()
+            .equals(observedRequest.getCanonicalPlayerCreatedSourceIdentity())) {
       throw new IllegalArgumentException("Retirement proof changed exact account or target fence");
     }
     boolean sameOperation = original.getOperationUuid().equals(observedRequest.getOperationUuid());
@@ -67,7 +79,7 @@ public final class CanonicalGameplayRosterRetirementEvidence {
       CanonicalGameplayRosterReferenceEvidence.uuid(request.getSnapshotUuid());
       requireDigest(request.getSnapshotDigest());
       CanonicalGameplayRosterResponse roster =
-          CanonicalGameplayRosterReferenceEvidence.receipt(observed);
+          CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(observed);
       if (!roster.getSnapshotUuid().equals(request.getSnapshotUuid())
           || !roster.getSnapshotDigest().equals(request.getSnapshotDigest())
           || !roster.getCanonicalAccountUuid().equals(original.getCanonicalAccountUuid())
@@ -81,7 +93,8 @@ public final class CanonicalGameplayRosterRetirementEvidence {
       // the already validated sealed account/target fence above.
     } else if (!sameOperation
         || !original.equals(observedRequest)
-        || !observed.getCanonicalRosterReceipt().isEmpty()) {
+        || !observed.getCanonicalRosterReceipt().isEmpty()
+        || !observed.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
       throw new IllegalArgumentException(
           "Unbound retirement acknowledgement requires its own original proof and no roster receipt");
     }
@@ -151,13 +164,20 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     Objects.requireNonNull(confirmation, "confirmation");
     if (confirmation.getSchemaVersion() != 1
         || !confirmation.getUnknownFields().asMap().isEmpty()
-        || confirmation.getSerializedSize() > MAX_REQUEST_BYTES + MAX_RESPONSE_BYTES + 64
+        || confirmation.getSerializedSize() > MAX_PLAYER_CREATED_CONFIRMATION_BYTES
         || !confirmation.hasAcknowledgementRequest()
         || !confirmation.hasAcknowledgement()) {
       throw new IllegalArgumentException("Closed bounded roster-retirement confirmation required");
     }
     requireAcknowledgementResponse(
         confirmation.getAcknowledgementRequest(), confirmation.getAcknowledgement());
+    if (confirmation.getSerializedSize()
+        > acknowledgementLimit(confirmation.getAcknowledgementRequest().getOriginalSelection())
+            + MAX_RESPONSE_BYTES
+            + 64) {
+      throw new IllegalArgumentException(
+          "Retirement confirmation exceeds its policy-specific bound");
+    }
     return confirmation;
   }
 
@@ -185,6 +205,13 @@ public final class CanonicalGameplayRosterRetirementEvidence {
     }
     requireDigest(response.getRequestDigest());
     return response;
+  }
+
+  private static int acknowledgementLimit(GetCanonicalGameplayRosterReferenceRequest original) {
+    return CanonicalGameplayRosterReferenceEvidence.target(original).getEntryPolicy()
+            == CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED
+        ? MAX_PLAYER_CREATED_REQUEST_BYTES
+        : MAX_REQUEST_BYTES;
   }
 
   private static UUID uuid(String value) {

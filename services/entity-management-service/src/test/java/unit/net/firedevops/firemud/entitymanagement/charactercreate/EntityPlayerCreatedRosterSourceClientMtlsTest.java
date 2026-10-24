@@ -2,26 +2,18 @@ package net.firedevops.firemud.entitymanagement.charactercreate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
-import io.grpc.Server;
-import io.grpc.ServerInterceptors;
 import io.grpc.StatusRuntimeException;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
-import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
-import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
-import io.grpc.stub.StreamObserver;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
@@ -31,10 +23,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjecti
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
-import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
@@ -49,35 +38,20 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Visibility;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
-import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
-import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
-import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
-import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
-import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.testing.PlayerCreatedPublishedPolicyFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.testing.ControlledPlayerCreatedRosterSourceFixture;
+import net.firedevops.firemud.entitymanagement.testing.ControlledPlayerCreatedRosterSourceFixture.WireFixture;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
-import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
-import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
-import net.firedevops.firemud.gamesession.v1.CharacterCreatePublicCatalog;
-import net.firedevops.firemud.gamesession.v1.CharacterCreatePublicPointer;
-import net.firedevops.firemud.gamesession.v1.CharacterCreatePublicSourceServiceGrpc;
-import net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceRequest;
-import net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceResponse;
-import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
-import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -96,34 +70,23 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
   private static final UUID FIXTURE_ID = UUID.fromString("01111111-1111-4111-8111-111111111111");
   private static final String NAMESPACE = "test";
   @TempDir static Path directory;
-  private static LoopbackMtlsTestPki.Pki pki;
-  private static Fixture fixture;
+  private static ControlledPlayerCreatedRosterSourceFixture controlled;
+  private static WireFixture fixture;
 
   @BeforeAll
   static void setUp() throws Exception {
-    pki =
-        LoopbackMtlsTestPki.create(
-            directory,
-            "Entity roster source test CA",
-            new LoopbackMtlsTestPki.IdentitySpec(
-                "entity", "spiffe://firemud/ns/test/sa/entity-management-service", false),
-            new LoopbackMtlsTestPki.IdentitySpec(
-                "server", "spiffe://firemud/ns/test/sa/game-session-service", true),
-            new LoopbackMtlsTestPki.IdentitySpec(
-                "wrong-service", "spiffe://firemud/ns/test/sa/social-groups-service", true),
-            new LoopbackMtlsTestPki.IdentitySpec(
-                "wrong-namespace", "spiffe://firemud/ns/other/sa/game-session-service", true));
-    fixture = fixture();
+    controlled = new ControlledPlayerCreatedRosterSourceFixture(directory);
+    fixture = controlled.wireFixture();
   }
 
   @Test
   void actualInitializedClientPreservesExactRequestAndCompleteTypedOwnerSources() throws Exception {
-    try (var owner = owner("server");
-        var client = client(owner)) {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
       client.init();
       var result = client.read(fixture.request());
-      assertThat(owner.received).containsExactly(fixture.request());
-      assertThat(owner.observedPeer.get())
+      assertThat(owner.receivedRequests()).containsExactly(fixture.request());
+      assertThat(owner.observedPeerUri())
           .isEqualTo("spiffe://firemud/ns/test/sa/entity-management-service");
       assertThat(result.publishedPolicySet().canonicalBytes())
           .containsExactly(fixture.policySet().canonicalBytes());
@@ -161,6 +124,37 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
   }
 
   @Test
+  void actualClientSourceComposesBeforeTheLocalRosterRead() throws Exception {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
+      client.init();
+      var repository = mock(EntityCharacterCreateRepository.class);
+      when(repository.readPlayerCreatedRoster(any(), any()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(owner.receivedRequests()).containsExactly(fixture.request());
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                var published =
+                    invocation.getArgument(
+                        1, EntityPlayerCreatedRosterReadService.PublishedIdentity.class);
+                assertThat(published.tenantId())
+                    .isEqualTo(fixture.world().request().canonicalTenantId());
+                assertThat(published.projection().canonicalBytes())
+                    .containsExactly(fixture.authored().projections().getFirst().canonicalBytes());
+                return List.of();
+              });
+      var service = new EntityPlayerCreatedRosterReadService(repository, client);
+
+      assertThat(
+              service.read(
+                  new EntityPlayerCreatedRosterReadService.AuthenticatedAccountSelector(
+                      UUID.randomUUID()),
+                  fixture.request()))
+          .isEmpty();
+    }
+  }
+
+  @Test
   void constructionRequiresFileBackedMtlsAndCanonicalNamespace() throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     var channels = new GrpcChannelFactory();
@@ -169,7 +163,7 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                 new EntityPlayerCreatedRosterSourceClient(
                     endpoints, new CommonGrpcClientProperties(), channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    var plaintext = pki.clientProperties(directory, pki.identity("entity"));
+    var plaintext = controlled.clientProperties("entity");
     plaintext.setPlaintext(true);
     assertThatThrownBy(
             () ->
@@ -179,30 +173,27 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
     assertThatThrownBy(
             () ->
                 new EntityPlayerCreatedRosterSourceClient(
-                    endpoints,
-                    pki.clientProperties(directory, pki.identity("entity")),
-                    channels,
-                    "Other"))
+                    endpoints, controlled.clientProperties("entity"), channels, "Other"))
         .isInstanceOf(RuntimeException.class);
   }
 
   @Test
   void wrongServerServiceAndNamespaceAreRejectedBeforeAnyReceivedRpc() throws Exception {
     for (String identity : List.of("wrong-service", "wrong-namespace")) {
-      try (var owner = owner(identity);
-          var client = client(owner)) {
+      try (var owner = controlled.owner(identity);
+          var client = controlled.client(owner)) {
         client.init();
         assertThatThrownBy(() -> client.read(fixture.request()))
             .isInstanceOf(StatusRuntimeException.class);
-        assertThat(owner.received).isEmpty();
+        assertThat(owner.receivedRequests()).isEmpty();
       }
     }
   }
 
   @Test
   void absentInitializationAndAmbientSqlRefuseBeforeAnyReceivedRpc() throws Exception {
-    try (var owner = owner("server");
-        var client = client(owner)) {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
       assertThatThrownBy(() -> client.read(fixture.request()))
           .isInstanceOf(IllegalStateException.class);
       client.init();
@@ -220,15 +211,15 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
       } finally {
         TransactionSynchronizationManager.setActualTransactionActive(false);
       }
-      assertThat(owner.received).isEmpty();
+      assertThat(owner.receivedRequests()).isEmpty();
     }
   }
 
   @Test
   void malformedAndChangedRequestSelectorsRefuseBeforeAnyReceivedRpc() throws Exception {
     var request = fixture.request();
-    try (var owner = owner("server");
-        var client = client(owner)) {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
       client.init();
       for (var changed :
           List.of(
@@ -246,7 +237,7 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               request.toBuilder().setPointerVersion(0).build())) {
         assertThatThrownBy(() -> client.read(changed)).isInstanceOf(RuntimeException.class);
       }
-      assertThat(owner.received).isEmpty();
+      assertThat(owner.receivedRequests()).isEmpty();
     }
   }
 
@@ -267,7 +258,7 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
             world.graphSha256(),
             world.preparationInputDigest(),
             world.operationalRegionAssignments());
-    var otherLaunch = fixture("other-authored-launch-descriptor").world();
+    var otherLaunch = controlled.wireFixture("other-authored-launch-descriptor").world();
     var authored = fixture.authored();
     var noProjections =
         AuthoredInitialActorCoreReadGrpcCodec.toResponse(
@@ -356,8 +347,8 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                   authored.descriptor(),
                   List.of(changedProjection))));
     }
-    try (var owner = owner("server");
-        var client = client(owner)) {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
       client.init();
       for (var changed :
           List.of(
@@ -484,22 +475,22 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               good.toBuilder().clearPointer().build(),
               good.toBuilder().setOriginalControlPlaneRequestId("x".repeat(129)).build(),
               good.toBuilder().setUnknownFields(unknown()).build())) {
-        owner.response.set(changed);
+        owner.respondWith(changed);
         assertThatThrownBy(() -> client.read(fixture.request()))
             .isInstanceOf(RuntimeException.class);
       }
-      assertThat(owner.received).isNotEmpty().allMatch(fixture.request()::equals);
-      owner.response.set(good);
+      assertThat(owner.receivedRequests()).isNotEmpty().allMatch(fixture.request()::equals);
+      owner.respondWith(good);
       assertThat(client.read(fixture.request()).response()).isEqualTo(good);
     }
   }
 
   @Test
   void inboundTransportRejectsResponseBeyond32MiBBeforeSourceDecoding() throws Exception {
-    try (var owner = owner("server");
-        var client = client(owner)) {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
       client.init();
-      owner.response.set(
+      owner.respondWith(
           fixture.response().toBuilder()
               .setWorldLifecycleEvidence(
                   ByteString.copyFrom(
@@ -511,7 +502,7 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               failure ->
                   assertThat(failure.getStatus().getCode())
                       .isEqualTo(io.grpc.Status.Code.RESOURCE_EXHAUSTED));
-      assertThat(owner.received).containsExactly(fixture.request());
+      assertThat(owner.receivedRequests()).containsExactly(fixture.request());
     }
   }
 
@@ -519,383 +510,6 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
     return UnknownFieldSet.newBuilder()
         .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
         .build();
-  }
-
-  private static EntityPlayerCreatedRosterSourceClient client(Owner owner) throws Exception {
-    var endpoints = new ServiceEndpointsProperties();
-    endpoints.setGameSessionService("127.0.0.1:" + owner.server.getPort());
-    return new EntityPlayerCreatedRosterSourceClient(
-        endpoints,
-        pki.clientProperties(directory, pki.identity("entity")),
-        new GrpcChannelFactory(),
-        NAMESPACE);
-  }
-
-  private static Owner owner(String name) throws Exception {
-    var response = new AtomicReference<>(fixture.response());
-    var received = new CopyOnWriteArrayList<ReadPlayerCreatedRosterSourceRequest>();
-    var observedPeer = new AtomicReference<String>();
-    var identity = pki.identity(name);
-    Server server =
-        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-            .sslContext(
-                GrpcSslContexts.configure(
-                        SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
-                    .trustManager(pki.caCertificate())
-                    .clientAuth(ClientAuth.REQUIRE)
-                    .build())
-            .addService(
-                ServerInterceptors.intercept(
-                    new CharacterCreatePublicSourceServiceGrpc
-                        .CharacterCreatePublicSourceServiceImplBase() {
-                      @Override
-                      public void readPlayerCreatedRosterSource(
-                          ReadPlayerCreatedRosterSourceRequest request,
-                          StreamObserver<ReadPlayerCreatedRosterSourceResponse> observer) {
-                        observedPeer.set(GrpcPeerIdentity.current().uri());
-                        received.add(request);
-                        observer.onNext(response.get());
-                        observer.onCompleted();
-                      }
-                    },
-                    new GrpcPeerIdentityInterceptor()))
-            .build()
-            .start();
-    return new Owner(server, response, received, observedPeer);
-  }
-
-  private record Owner(
-      Server server,
-      AtomicReference<ReadPlayerCreatedRosterSourceResponse> response,
-      List<ReadPlayerCreatedRosterSourceRequest> received,
-      AtomicReference<String> observedPeer)
-      implements AutoCloseable {
-    @Override
-    public void close() throws InterruptedException {
-      server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
-    }
-  }
-
-  private record Fixture(
-      ReadPlayerCreatedRosterSourceRequest request,
-      ReadPlayerCreatedRosterSourceResponse response,
-      AuthoredInitialActorCoreReadEvidence.ReadResult authored,
-      WorldCanonicalInstanceLifecycleEvidence world,
-      PublishedRealmEntryPolicySetEvidence policySet) {}
-
-  // Common's authored-core fixture lives in its private unit-test source and is not exported.
-  // Build only the owner-shaped values needed here, using the exported World fixture and real
-  // codecs.
-  private static Fixture fixture() throws Exception {
-    return fixture("canonical-instance-launch-descriptor");
-  }
-
-  private static Fixture fixture(String descriptorId) throws Exception {
-    var originalWorld = AuthoringFixtures.lifecycleEvidence("ACTIVE", 7L);
-    var originalDescriptor = originalWorld.launchBinding().descriptor();
-    var selector = originalWorld.launchBinding().releaseAttestation().worldStartLocationEvidence();
-    var tenant = originalWorld.request().canonicalTenantId();
-    var version = originalWorld.request().canonicalVersionId();
-    var intakeId = UUID.randomUUID();
-    var operationId = UUID.randomUUID();
-    String requestDigest =
-        AuthoredWorldSourceDigest.requestDigest(
-            NAMESPACE, intakeId, tenant, "tenant-key", "synthetic-world", "Synthetic World");
-    String evidenceDigest =
-        AuthoredWorldSourceDigest.evidenceDigest(
-            NAMESPACE,
-            intakeId,
-            originalDescriptor.authoredWorldSourceOperationId(),
-            requestDigest,
-            tenant,
-            "tenant-key",
-            "synthetic-world",
-            "Synthetic World",
-            42L,
-            "tenant-key",
-            "NEW_GAME_ROW");
-    var source =
-        new AuthoredWorldSourceEvidence(
-            1,
-            NAMESPACE,
-            intakeId,
-            originalDescriptor.authoredWorldSourceOperationId(),
-            requestDigest,
-            tenant,
-            "tenant-key",
-            "synthetic-world",
-            "Synthetic World",
-            42L,
-            "tenant-key",
-            "NEW_GAME_ROW",
-            evidenceDigest);
-    var intake =
-        new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
-            1,
-            NAMESPACE,
-            intakeId,
-            tenant,
-            "synthetic-world",
-            source.operationId(),
-            evidenceDigest);
-    var receipt =
-        new WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(
-            1,
-            NAMESPACE,
-            intakeId,
-            operationId,
-            tenant,
-            "synthetic-world",
-            source.operationId(),
-            evidenceDigest,
-            WorldAuthoredSourceIntakeGrpcCodec.requestDigest(intake),
-            digest('e'),
-            source);
-    var descriptorRequest =
-        new AuthoredWorldLaunchDescriptorEvidence.Request(
-            NAMESPACE,
-            "world-lifecycle-control-request",
-            tenant,
-            "synthetic-world",
-            source.operationId(),
-            evidenceDigest,
-            19L,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null,
-            true,
-            "{}");
-    var descriptor =
-        AuthoredWorldLaunchDescriptorEvidence.create(
-            descriptorRequest,
-            descriptorId,
-            42L,
-            false,
-            null,
-            "{}",
-            originalDescriptor.generationConfigRevision(),
-            9L,
-            7L,
-            originalDescriptor.publishedReleaseBundleRef(),
-            false,
-            null);
-    var oldRelease = originalWorld.launchBinding().releaseAttestation();
-    var association =
-        new StartSessionTemplateAssociationReadEvidence.Association(
-            tenant,
-            19L,
-            version,
-            UUID.fromString(selector.request().appliedCommitId()),
-            selector.request().publishWorkflowId(),
-            digest('c'),
-            digest('a'),
-            NAMESPACE,
-            intakeId,
-            operationId,
-            source.operationId(),
-            descriptor.worldSlug(),
-            evidenceDigest,
-            new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
-                1, NAMESPACE, FIXTURE_ID, intakeId, tenant),
-            receipt);
-    var prepared =
-        PlayerCreatedPublishedPolicyFixtures.prepare(
-            sourceBinding(association, association.sourceOperationId()).selectedCommit());
-    selector = prepared.world();
-    var release =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            NAMESPACE,
-            descriptor.resultDigest(),
-            tenant,
-            version,
-            descriptor.worldSlug(),
-            source.operationId(),
-            evidenceDigest,
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            selector.request().publishWorkflowId(),
-            selector.request().appliedCommitId(),
-            oldRelease.participantDigests(),
-            oldRelease.manifestHash(),
-            oldRelease.manifestSchemaVersion(),
-            oldRelease.requiredManifestAssetKeys(),
-            oldRelease.artifactDigests(),
-            oldRelease.commandDefinitions(),
-            oldRelease.generationConfigRevision(),
-            selector);
-    var lifecycleRequest =
-        new WorldCanonicalInstanceLifecycleEvidence.Request(
-            1,
-            FIXTURE_ID,
-            NAMESPACE,
-            tenant,
-            descriptor.worldSlug(),
-            originalWorld.request().canonicalGameInstanceId(),
-            originalWorld.request().playableStateNamespaceId(),
-            "SHARED",
-            true,
-            descriptor.controlPlaneRequestId(),
-            version,
-            descriptor.requestDigest(),
-            descriptor.resultDigest(),
-            release.evidenceDigest());
-    var world =
-        new WorldCanonicalInstanceLifecycleEvidence(
-            lifecycleRequest,
-            new CompleteLaunchBindingEvidence(descriptor, release),
-            originalWorld.startLocation(),
-            originalWorld.runtimeRoomInstanceId(),
-            "ACTIVE",
-            7L,
-            originalWorld.rowVersion(),
-            originalWorld.captureId(),
-            WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes())
-                .graphDigest()
-                .substring(7),
-            originalWorld.preparationInputDigest(),
-            originalWorld.operationalRegionAssignments());
-    association =
-        new StartSessionTemplateAssociationReadEvidence.Association(
-            tenant,
-            19L,
-            version,
-            UUID.fromString(selector.request().appliedCommitId()),
-            selector.request().publishWorkflowId(),
-            digest('c'),
-            digest('a'),
-            NAMESPACE,
-            intakeId,
-            operationId,
-            source.operationId(),
-            descriptor.worldSlug(),
-            evidenceDigest,
-            new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
-                1, NAMESPACE, FIXTURE_ID, intakeId, tenant),
-            receipt);
-    var readRequest =
-        new StartSessionTemplateAssociationReadEvidence.Request(
-            1,
-            NAMESPACE,
-            FIXTURE_ID,
-            postTuple(tenant, NAMESPACE).canonicalBytes(),
-            FIXTURE_ID,
-            8L,
-            new StartSessionTemplateAssociationReadEvidence.ExactReplay(
-                version,
-                association.selectedCommitId(),
-                association.publishWorkflowId(),
-                association.associationDigest()));
-    var bundle =
-        PublishedReleaseBundle.newBuilder()
-            .setId(7L)
-            .setVersionId(42L)
-            .setVersionNumber(1)
-            .setAttestationSchemaVersion("v2")
-            .setPublishWorkflowId(release.publishWorkflowId())
-            .setManifestHash(release.manifestHash())
-            .setManifestSchemaVersion(release.manifestSchemaVersion())
-            .addAllRequiredManifestAssetKeys(release.requiredManifestAssetKeys())
-            .setGenerationConfigRevision(release.generationConfigRevision())
-            .setPublishedReleaseBundleRef(release.publishedReleaseBundleRef())
-            .setCanonicalTenantId(tenant.toString())
-            .setCanonicalVersionId(version.toString())
-            .addAllCommandDefinitions(release.commandDefinitions());
-    for (var participant : release.participantDigests()) {
-      var item =
-          ParticipantDigest.newBuilder()
-              .setParticipantKey(participant.participantKey())
-              .setScopeValue(participant.scopeValue())
-              .setAppliedCommitId(participant.appliedCommitId())
-              .setContentDigest(participant.contentDigest())
-              .setDigestSchemaVersion(participant.digestSchemaVersion());
-      if (participant.abilitySchemaDigestPresent())
-        item.setAbilitySchemaDigest(participant.abilitySchemaDigest());
-      bundle.addParticipantDigests(item);
-    }
-    var authored =
-        new AuthoredInitialActorCoreReadEvidence.ReadResult(
-            readRequest,
-            new StartSessionTemplateAssociationReadEvidence.Result(
-                readRequest, association, bundle.build(), selector, 23L),
-            descriptor,
-            List.of(
-                AuthoredInitialActorCoreProjection.fromValidatedBinding(
-                    FIXTURE_ID, sourceBinding(association, association.sourceOperationId()))));
-    var releaseContent =
-        StartSessionTemplateAssociationReadEvidence.releaseContent(bundle.build(), selector);
-    var policySet =
-        PlayerCreatedPublishedPolicyFixtures.seal(
-            prepared,
-            IsolatedWorldPublicationInventoryFixtures.stipulated(
-                prepared.account(), prepared.world()),
-            releaseContent,
-            authored.projections().getFirst());
-    var request =
-        ReadPlayerCreatedRosterSourceRequest.newBuilder()
-            .setSchemaVersion(1)
-            .setReadRequestId(FIXTURE_ID.toString())
-            .setTargetNamespace(NAMESPACE)
-            .setCanonicalTenantId(tenant.toString())
-            .setRealmId(FIXTURE_ID.toString())
-            .setWorldSlug(descriptor.worldSlug())
-            .setRealmSlug("realm")
-            .setPlayableStateNamespaceId(lifecycleRequest.playableStateNamespaceId().toString())
-            .setPlayableStateScope("SHARED")
-            .setCanonicalGameInstanceId(lifecycleRequest.canonicalGameInstanceId().toString())
-            .setCatalogRevision(3L)
-            .setPointerVersion(5L)
-            .setExpectedCanonicalVersionId(version.toString())
-            .setActiveWorldEpoch(7L)
-            .build();
-    var response =
-        ReadPlayerCreatedRosterSourceResponse.newBuilder()
-            .setSchemaVersion(1)
-            .setRequest(request)
-            .setCatalog(
-                CharacterCreatePublicCatalog.newBuilder()
-                    .setTenantId(tenant.toString())
-                    .setTenantSlug("tenant")
-                    .setWorldSlug(request.getWorldSlug())
-                    .setWorldDisplayName("Synthetic World")
-                    .setRealmId(request.getRealmId())
-                    .setRealmSlug("realm")
-                    .setRealmDisplayName("Realm")
-                    .setVisible(true)
-                    .setPublicProduction(true)
-                    .setStateScope("SHARED")
-                    .setPlayableStateNamespaceId(request.getPlayableStateNamespaceId())
-                    .setCharacterCreationPolicy("PLAYER_CREATED")
-                    .setCatalogRevision(3L)
-                    .setCreationRequestId(FIXTURE_ID.toString())
-                    .setReceiptDigest(digest('a')))
-            .setPointer(
-                CharacterCreatePublicPointer.newBuilder()
-                    .setTenantId(tenant.toString())
-                    .setRealmId(request.getRealmId())
-                    .setWorldSlug(request.getWorldSlug())
-                    .setRealmSlug("realm")
-                    .setAdmissionState("OPEN")
-                    .setAdmissibleGameInstanceId(request.getCanonicalGameInstanceId())
-                    .setPointerVersion(5L)
-                    .setCatalogRevision(3L)
-                    .setUpdatedAt("2026-10-24T00:00:00.123456789Z")
-                    .setInitialAdmissionRequestId("initial-admission")
-                    .setInitialAdmissionOwnerProofDigest(digest('b'))
-                    .setAdmissionPointerSnapshotDigest("c".repeat(64)))
-            .setCanonicalVersionId(version.toString())
-            .setActiveLifecycleEpoch(7L)
-            .setOriginalControlPlaneRequestId(descriptor.controlPlaneRequestId())
-            .setOriginalOwnerAttemptId(FIXTURE_ID.toString())
-            .setOriginalOwnerFence(8L)
-            .setAuthoredSource(AuthoredInitialActorCoreReadGrpcCodec.toResponse(authored))
-            .setPublishedPolicySetEvidence(ByteString.copyFrom(policySet.canonicalBytes()))
-            .setWorldLifecycleEvidence(ByteString.copyFrom(world.canonicalBytes()))
-            .build();
-    return new Fixture(request, response, authored, world, policySet);
   }
 
   private static StartSessionPostAuthorizationExecutionTuple postTuple(

@@ -189,6 +189,144 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
                     .build()));
   }
 
+  @Test
+  void createdRetirementCarriesTheCompleteSelectedTerminalAndBindsCrossOriginalSourceIdentity() {
+    var fixture = CanonicalGameplayRosterReferenceEvidenceTest.createdFixture();
+    var original = fixture.original();
+    var menu =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            original, 17L, TARGET_FENCE, fixture.roster());
+    var selected = CanonicalGameplayRosterReferenceEvidenceTest.selectedOriginal(fixture, menu);
+    var target = CanonicalGameplayRosterReferenceEvidence.target(original);
+    var proof = createdRetirement(selected);
+    var roster = fixture.roster().getRoster();
+    var request =
+        acknowledgement(original, proof, roster.getSnapshotUuid(), roster.getSnapshotDigest());
+    assertEquals(
+        request, CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request));
+    assertEquals(
+        fixture.selected().toByteString(),
+        request.getObservedRetirement().getCanonicalSelectedPlayerCreatedCharacterReceipt());
+    var ack = CanonicalGameplayRosterRetirementEvidence.response(request, uuid(12), 20_000L);
+    var confirmation = CanonicalGameplayRosterRetirementEvidence.confirmation(request, ack);
+    assertEquals(
+        confirmation, CanonicalGameplayRosterRetirementEvidence.requireConfirmation(confirmation));
+    var otherOriginal =
+        original.toBuilder()
+            .setOperationUuid(uuid(80).toString())
+            .setSessionUuid(uuid(81).toString())
+            .build();
+    var anchored =
+        acknowledgement(otherOriginal, proof, roster.getSnapshotUuid(), roster.getSnapshotDigest());
+    assertEquals(
+        anchored, CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(anchored));
+    var changedSource =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedSourceIdentity(otherOriginal)
+            .toBuilder()
+            .setAuthoredBindingUuid(uuid(82).toString())
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                anchored.toBuilder()
+                    .setOriginalSelection(
+                        otherOriginal.toBuilder()
+                            .setCanonicalPlayerCreatedSourceIdentity(changedSource.toByteString()))
+                    .build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                anchored.toBuilder().clearSnapshotUuid().clearSnapshotDigest().build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                request.toBuilder().setSnapshotDigest("0".repeat(64)).build()));
+    var unboundProof =
+        createdRetirement(
+            CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                    original, 17L, TARGET_FENCE, null)
+                .toBuilder()
+                .setTerminalOutcome("DENIED")
+                .build());
+    var unbound = acknowledgement(original, unboundProof, "", "");
+    assertEquals(
+        unbound, CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(unbound));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                acknowledgement(otherOriginal, unboundProof, "", "")));
+    assertEquals(
+        target,
+        CanonicalGameplayRosterReferenceEvidence.target(
+            anchored.getObservedRetirement().getRequest()));
+  }
+
+  @Test
+  void acknowledgementPurposeBoundsKeepOldCapsAndFitCompleteCreatedOriginalWithoutHugeArrays() {
+    assertEquals(128 * 1024, CanonicalGameplayRosterRetirementEvidence.MAX_REQUEST_BYTES);
+    assertEquals(4096, CanonicalGameplayRosterRetirementEvidence.MAX_RESPONSE_BYTES);
+    assertEquals(
+        195 * 1024 * 1024,
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES);
+    assertEquals(
+        CanonicalGameplayRosterRetirementEvidence.MAX_REQUEST_BYTES + 4096 + 64,
+        CanonicalGameplayRosterRetirementEvidence.MAX_CONFIRMATION_BYTES);
+    assertEquals(
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES + 4096 + 64,
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+    int original = CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES;
+    int encodedOriginal =
+        com.google.protobuf.CodedOutputStream.computeTagSize(3)
+            + com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(original)
+            + original;
+    assertTrue(
+        encodedOriginal + 4096 + 512
+            <= CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES);
+    var fixture = CanonicalGameplayRosterReferenceEvidenceTest.createdFixture();
+    var request =
+        acknowledgement(
+            fixture.original(),
+            createdRetirement(
+                CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                    fixture.original(), 17L, TARGET_FENCE, fixture.roster())),
+            fixture.roster().getRoster().getSnapshotUuid(),
+            fixture.roster().getRoster().getSnapshotDigest());
+    var oversized =
+        request.toBuilder()
+            .setObservedRetirement(
+                request.getObservedRetirement().toBuilder()
+                    .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                        CanonicalGameplayRosterReferenceEvidenceTest.logicalBytes(
+                            CanonicalGameplayRosterRetirementEvidence
+                                    .MAX_PLAYER_CREATED_REQUEST_BYTES
+                                + 1)))
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(oversized));
+  }
+
+  private static GetCanonicalGameplayRosterReferenceResponse createdRetirement(
+      GetCanonicalGameplayRosterReferenceResponse original) {
+    var target = CanonicalGameplayRosterReferenceEvidence.target(original.getRequest());
+    return CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+        original.toBuilder()
+            .setState(
+                CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+            .setTerminalOutcome(
+                original.getTerminalOutcome().isEmpty() ? "MENU" : original.getTerminalOutcome())
+            .setRetirementUuid(uuid(18).toString())
+            .setSupersedingPointerDigest("9".repeat(64))
+            .setSupersedingPointerVersion(target.getPointerVersion() + 1L)
+            .setSupersedingCatalogRevision(target.getCatalogRevision())
+            .setSupersedingWorldEpoch(target.getActiveWorldEpoch())
+            .build());
+  }
+
   private static CanonicalGameplayRosterRetirementAcknowledgementRequest acknowledgement(
       GetCanonicalGameplayRosterReferenceRequest original,
       GetCanonicalGameplayRosterReferenceResponse observed,

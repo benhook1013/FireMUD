@@ -8,11 +8,14 @@ import java.util.UUID;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionBinding;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse;
@@ -43,20 +46,31 @@ public final class CanonicalGameplayRosterRetentionRepository {
 
   public UUID reserveAdmission(
       net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest request) {
+    return reserveAdmission(request.requestUuid(), admissionBinding(request), "PRESEEDED_ONLY");
+  }
+
+  public UUID reserveAdmission(CanonicalPlayerCreatedRosterRequest request) {
+    CanonicalPlayerCreatedRosterEvidence.requireRequest(request);
+    return reserveAdmission(
+        UUID.fromString(request.getRequestUuid()), admissionBinding(request), "PLAYER_CREATED");
+  }
+
+  private UUID reserveAdmission(UUID operation, byte[] binding, String policy) {
     requireOwnerTransaction();
-    requireNoRetirementTransfer(request.requestUuid());
-    byte[] binding = admissionBinding(request);
+    requireNoRetirementTransfer(operation);
     dsl.execute(
-        "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-        request.requestUuid(),
+        "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding, entry_policy) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        operation,
         UUID.randomUUID(),
-        binding);
+        binding,
+        policy);
     Record original =
         dsl.fetchSingle(
-            "SELECT admission_uuid, request_binding, admission_state FROM entity_canonical_roster_admissions WHERE operation_uuid = ? FOR UPDATE",
-            request.requestUuid());
-    requireNoRetirementTransfer(request.requestUuid());
-    if (!Arrays.equals(binding, original.get("request_binding", byte[].class))) {
+            "SELECT admission_uuid, request_binding, admission_state, entry_policy FROM entity_canonical_roster_admissions WHERE operation_uuid = ? FOR UPDATE",
+            operation);
+    requireNoRetirementTransfer(operation);
+    if (!Arrays.equals(binding, original.get("request_binding", byte[].class))
+        || !policy.equals(original.get("entry_policy", String.class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT");
     }
     if (!"OPEN".equals(original.get("admission_state", String.class))) {
@@ -68,17 +82,29 @@ public final class CanonicalGameplayRosterRetentionRepository {
   public void requireAdmission(
       net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest request,
       UUID nonce) {
+    requireAdmission(request.requestUuid(), nonce, admissionBinding(request), "PRESEEDED_ONLY");
+  }
+
+  public void requireAdmission(CanonicalPlayerCreatedRosterRequest request, UUID nonce) {
+    CanonicalPlayerCreatedRosterEvidence.requireRequest(request);
+    requireAdmission(
+        UUID.fromString(request.getRequestUuid()),
+        nonce,
+        admissionBinding(request),
+        "PLAYER_CREATED");
+  }
+
+  private void requireAdmission(UUID operation, UUID nonce, byte[] binding, String policy) {
     requireOwnerTransaction();
     Record original =
         dsl.fetchOne(
-            "SELECT request_binding FROM entity_canonical_roster_admissions WHERE operation_uuid = ? "
-                + "AND admission_uuid = ? AND admission_state = 'OPEN' FOR UPDATE",
-            request.requestUuid(),
+            "SELECT request_binding, entry_policy FROM entity_canonical_roster_admissions WHERE operation_uuid = ? AND admission_uuid = ? AND admission_state = 'OPEN' FOR UPDATE",
+            operation,
             nonce);
-    requireNoRetirementTransfer(request.requestUuid());
+    requireNoRetirementTransfer(operation);
     if (original == null
-        || !Arrays.equals(
-            admissionBinding(request), original.get("request_binding", byte[].class))) {
+        || !Arrays.equals(binding, original.get("request_binding", byte[].class))
+        || !policy.equals(original.get("entry_policy", String.class))) {
       throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
     }
   }
@@ -101,6 +127,11 @@ public final class CanonicalGameplayRosterRetentionRepository {
 
   private static byte[] admissionBinding(
       net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest request) {
+    if (request.expectedTarget().entryPolicy()
+        != net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy
+            .PRESEEDED_ONLY) {
+      throw new IllegalArgumentException("PRESEEDED_ONLY admission request required");
+    }
     return net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest.newBuilder()
         .setRequestUuid(request.requestUuid().toString())
         .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
@@ -112,8 +143,44 @@ public final class CanonicalGameplayRosterRetentionRepository {
         .toByteArray();
   }
 
+  private static byte[] admissionBinding(CanonicalPlayerCreatedRosterRequest request) {
+    return CanonicalPlayerCreatedRosterRequest.newBuilder()
+        .setRequestUuid(request.getRequestUuid())
+        .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+        .setExpectedTarget(request.getExpectedTarget())
+        .setExpectedSource(request.getExpectedSource())
+        .setPlayerExecutionContext(
+            net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                .setSessionId(request.getPlayerExecutionContext().getSessionId()))
+        .build()
+        .toByteArray();
+  }
+
+  private static boolean playerCreated(GetCanonicalGameplayRosterReferenceRequest request) {
+    return CanonicalGameplayRosterReferenceEvidence.target(request).getEntryPolicy()
+        == net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+            .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED;
+  }
+
+  private static String entryPolicy(GetCanonicalGameplayRosterReferenceRequest request) {
+    return playerCreated(request) ? "PLAYER_CREATED" : "PRESEEDED_ONLY";
+  }
+
   private static byte[] admissionBinding(GetCanonicalGameplayRosterReferenceRequest request) {
     CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
+    if (playerCreated(request)) {
+      return admissionBinding(
+          CanonicalPlayerCreatedRosterRequest.newBuilder()
+              .setRequestUuid(request.getOperationUuid())
+              .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+              .setExpectedTarget(CanonicalGameplayRosterReferenceEvidence.target(request))
+              .setExpectedSource(
+                  CanonicalGameplayRosterReferenceEvidence.playerCreatedSourceIdentity(request))
+              .setPlayerExecutionContext(
+                  net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                      .setSessionId(request.getSessionUuid()))
+              .build());
+    }
     return net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest.newBuilder()
         .setRequestUuid(request.getOperationUuid())
         .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
@@ -142,15 +209,17 @@ public final class CanonicalGameplayRosterRetentionRepository {
     // The provisional insert and closure commit together. Normal handlers can never observe an
     // OPEN admission created by this transaction; conflict paths lock the existing nonce first.
     dsl.execute(
-        "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+        "INSERT INTO entity_canonical_roster_admissions (operation_uuid, admission_uuid, request_binding, entry_policy) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         operation,
         UUID.randomUUID(),
-        binding);
+        binding,
+        entryPolicy(original));
     Record admission =
         dsl.fetchSingle(
             "SELECT * FROM entity_canonical_roster_admissions WHERE operation_uuid = ? FOR UPDATE",
             operation);
-    if (!Arrays.equals(binding, admission.get("request_binding", byte[].class))) {
+    if (!Arrays.equals(binding, admission.get("request_binding", byte[].class))
+        || !entryPolicy(original).equals(admission.get("entry_policy", String.class))) {
       throw new RecoveryConflictException("CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT");
     }
     String state = admission.get("admission_state", String.class);
@@ -169,8 +238,12 @@ public final class CanonicalGameplayRosterRetentionRepository {
                 request,
                 CanonicalGameplayRosterRecoveryResponse.parseFrom(
                     admission.get("recovery_response", byte[].class)));
-        if (!owner.getCanonicalRosterReceipt().isEmpty()
-            && !owner.getCanonicalRosterReceipt().equals(retained.getCanonicalRosterReceipt())) {
+        if ((!owner.getCanonicalRosterReceipt().isEmpty()
+                && !owner.getCanonicalRosterReceipt().equals(retained.getCanonicalRosterReceipt()))
+            || (!owner.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
+                && !owner
+                    .getCanonicalPlayerCreatedRosterReceipt()
+                    .equals(retained.getCanonicalPlayerCreatedRosterReceipt()))) {
           throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_LOCAL_RECEIPT_MISMATCH");
         }
         return retained;
@@ -182,19 +255,31 @@ public final class CanonicalGameplayRosterRetentionRepository {
     if (!"OPEN".equals(state)) {
       throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
     }
-    var receipt = originalReceipt(owner).orElse(null);
+    var createdReceipt =
+        playerCreated(original) ? originalPlayerCreatedReceipt(owner).orElse(null) : null;
+    var receipt =
+        playerCreated(original)
+            ? (createdReceipt == null ? null : createdReceipt.getRoster())
+            : originalReceipt(owner).orElse(null);
     UUID snapshot = admission.get("snapshot_uuid", UUID.class);
     if ((snapshot == null) != (receipt == null)
         || (snapshot != null && !snapshot.toString().equals(receipt.getSnapshotUuid()))) {
       throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_LOCAL_RECEIPT_MISMATCH");
     }
     var response =
-        CanonicalGameplayRosterRecoveryEvidence.response(
-            request,
-            admission.get("admission_uuid", UUID.class),
-            owner.getOwnerFence(),
-            UUID.fromString(owner.getTargetFenceUuid()),
-            receipt);
+        playerCreated(original)
+            ? CanonicalGameplayRosterRecoveryEvidence.playerCreatedResponse(
+                request,
+                admission.get("admission_uuid", UUID.class),
+                owner.getOwnerFence(),
+                UUID.fromString(owner.getTargetFenceUuid()),
+                createdReceipt)
+            : CanonicalGameplayRosterRecoveryEvidence.response(
+                request,
+                admission.get("admission_uuid", UUID.class),
+                owner.getOwnerFence(),
+                UUID.fromString(owner.getTargetFenceUuid()),
+                receipt);
     dsl.execute(
         "UPDATE entity_canonical_roster_admissions SET admission_state = 'CLOSED', closed_at = clock_timestamp(), "
             + "minimum_retention_millis = ?, recovery_uuid = ?, recovery_request = ?, recovery_response = ?, "
@@ -356,6 +441,8 @@ public final class CanonicalGameplayRosterRetentionRepository {
     requireOwnerTransaction();
     var request = owner.getRequest();
     CanonicalGameplayRosterReferenceEvidence.requireResponse(request, owner);
+    if (playerCreated(request))
+      throw new IllegalArgumentException("PRESEEDED_ONLY original receipt required");
     UUID operation = CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid());
     dsl.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
@@ -392,6 +479,107 @@ public final class CanonicalGameplayRosterRetentionRepository {
     } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_INVALID", invalid);
     }
+  }
+
+  public Optional<CanonicalPlayerCreatedRosterResponse> originalPlayerCreatedReceipt(
+      GetCanonicalGameplayRosterReferenceResponse owner) {
+    requireOwnerTransaction();
+    var request = owner.getRequest();
+    CanonicalGameplayRosterReferenceEvidence.requireResponse(request, owner);
+    if (!playerCreated(request))
+      throw new IllegalArgumentException("PLAYER_CREATED original receipt required");
+    UUID operation = UUID.fromString(request.getOperationUuid());
+    dsl.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+        "entity-roster-original:" + operation);
+    Record retained =
+        dsl.fetchOne(
+            "SELECT * FROM entity_canonical_roster_original_selections WHERE operation_uuid = ? FOR UPDATE",
+            operation);
+    if (retained == null) return Optional.empty();
+    if (!Arrays.equals(request.toByteArray(), retained.get("owner_request", byte[].class))
+        || owner.getOwnerFence() != retained.get("owner_fence", Long.class)
+        || !owner
+            .getTargetFenceUuid()
+            .equals(retained.get("owner_target_fence_uuid", UUID.class).toString())
+        || !"PLAYER_CREATED".equals(retained.get("entry_policy", String.class))) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+    }
+    try {
+      var receipt =
+          CanonicalPlayerCreatedRosterResponse.parseFrom(
+              retained.get("canonical_player_created_roster_receipt", byte[].class));
+      CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+          request, owner.getOwnerFence(), UUID.fromString(owner.getTargetFenceUuid()), receipt);
+      if (!owner.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
+          && !owner.getCanonicalPlayerCreatedRosterReceipt().equals(receipt.toByteString())) {
+        throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
+      }
+      return Optional.of(receipt);
+    } catch (com.google.protobuf.InvalidProtocolBufferException
+        | IllegalArgumentException invalid) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_INVALID", invalid);
+    }
+  }
+
+  /**
+   * Joins capture's owner transaction and retains the full created source, never a preseeded
+   * receipt.
+   */
+  public void bindPlayerCreatedOriginal(
+      GetCanonicalGameplayRosterReferenceResponse owner,
+      CanonicalPlayerCreatedRosterResponse receipt) {
+    requireOwnerTransaction();
+    var request = owner.getRequest();
+    CanonicalGameplayRosterReferenceEvidence.requireResponse(request, owner);
+    CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+        request, owner.getOwnerFence(), UUID.fromString(owner.getTargetFenceUuid()), receipt);
+    UUID operation = UUID.fromString(request.getOperationUuid());
+    Record admission =
+        dsl.fetchOne(
+            "SELECT * FROM entity_canonical_roster_admissions WHERE operation_uuid = ? AND admission_state = 'OPEN' FOR UPDATE",
+            operation);
+    requireNoRetirementTransfer(operation);
+    if (admission == null
+        || !"PLAYER_CREATED".equals(admission.get("entry_policy", String.class))
+        || !Arrays.equals(admissionBinding(request), admission.get("request_binding", byte[].class))
+        || (admission.get("snapshot_uuid", UUID.class) != null
+            && !admission
+                .get("snapshot_uuid", UUID.class)
+                .toString()
+                .equals(receipt.getRoster().getSnapshotUuid()))) {
+      throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    }
+    var roster = receipt.getRoster();
+    var binding =
+        new CanonicalGameplayRosterRetentionBinding(
+            UUID.fromString(roster.getCanonicalAccountUuid()),
+            new net.firedevops.firemud.entitymanagement.service
+                .CanonicalGameplayRosterSnapshotReference(
+                UUID.fromString(roster.getSnapshotUuid()), roster.getSnapshotDigest()),
+            net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget.fromWire(
+                roster.getTarget()));
+    lock(binding);
+    var source =
+        dsl.fetchSingle(
+            "SELECT canonical_player_created_source_identity FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+            binding.snapshot().snapshotUuid());
+    if (!Arrays.equals(
+        request.getCanonicalPlayerCreatedSourceIdentity().toByteArray(),
+        source.get(0, byte[].class))) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT");
+    }
+    acquire(binding, operation, operation, ReferenceKind.ORIGINAL_SELECTION);
+    dsl.execute(
+        "INSERT INTO entity_canonical_roster_original_selections "
+            + "(operation_uuid, owner_request, owner_fence, owner_target_fence_uuid, snapshot_uuid, snapshot_digest, canonical_player_created_roster_receipt, entry_policy) VALUES (?, ?, ?, ?, ?, ?, ?, 'PLAYER_CREATED')",
+        operation,
+        request.toByteArray(),
+        owner.getOwnerFence(),
+        UUID.fromString(owner.getTargetFenceUuid()),
+        binding.snapshot().snapshotUuid(),
+        binding.snapshot().snapshotDigest(),
+        receipt.toByteArray());
   }
 
   /** Must join snapshot capture's transaction; a failed reference bind rolls the capture back. */
@@ -493,7 +681,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
           policy) {
     CanonicalGameplayRosterReferenceEvidence.requireResponse(candidate.ownerRequest(), proof);
     CanonicalGameplayRosterReferenceEvidence.requireRetirement(proof);
-    var receipt = CanonicalGameplayRosterReferenceEvidence.receipt(proof);
+    var receipt = CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(proof);
     if (!candidate.binding().snapshot().snapshotUuid().toString().equals(receipt.getSnapshotUuid())
         || !candidate.binding().snapshot().snapshotDigest().equals(receipt.getSnapshotDigest())) {
       throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_SNAPSHOT_MISMATCH");
@@ -549,7 +737,10 @@ public final class CanonicalGameplayRosterRetentionRepository {
                 .parseFrom(original.get("owner_request", byte[].class));
         if (!request.getCanonicalAccountUuid().equals(proof.getRequest().getCanonicalAccountUuid())
             || !request.getTargetNamespace().equals(proof.getRequest().getTargetNamespace())
-            || !request.getCanonicalTarget().equals(proof.getRequest().getCanonicalTarget())) {
+            || !request.getCanonicalTarget().equals(proof.getRequest().getCanonicalTarget())
+            || !request
+                .getCanonicalPlayerCreatedSourceIdentity()
+                .equals(proof.getRequest().getCanonicalPlayerCreatedSourceIdentity())) {
           return false;
         }
       } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
@@ -696,7 +887,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
   private void queueBoundRetirementTransfers(
       UUID snapshot, GetCanonicalGameplayRosterReferenceResponse proof, long minimum) {
     CanonicalGameplayRosterReferenceEvidence.requireRetirement(proof);
-    var roster = CanonicalGameplayRosterReferenceEvidence.receipt(proof);
+    var roster = CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(proof);
     if (!snapshot.toString().equals(roster.getSnapshotUuid())) {
       throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_SNAPSHOT_MISMATCH");
     }
@@ -748,6 +939,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
       if (!closed.getRequest().getOriginalSelection().equals(original)
           || !closed.getAdmissionUuid().equals(admission.toString())
           || !closed.getCanonicalRosterReceipt().isEmpty()
+          || !closed.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
           || closed.getOwnerFence() != ownerFence
           || !closed.getTargetFenceUuid().equals(targetFence.toString())) {
         throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_CLOSURE_MISMATCH");
@@ -762,6 +954,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
           || !admission.equals(retained.get("admission_uuid", UUID.class))
           || !Objects.equals(snapshot, retained.get("snapshot_uuid", UUID.class))
           || !Objects.equals(snapshotDigest, retained.get("snapshot_digest", String.class))
+          || !entryPolicy(original).equals(retained.get("entry_policy", String.class))
           || ownerFence != retained.get("owner_fence", Long.class)
           || !targetFence.equals(retained.get("target_fence_uuid", UUID.class))
           || !Arrays.equals(
@@ -791,8 +984,8 @@ public final class CanonicalGameplayRosterRetentionRepository {
                 proof);
     dsl.execute(
         "INSERT INTO entity_canonical_roster_retirement_transfers "
-            + "(observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, closed_admission_receipt, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, observed_retirement, acknowledgement_request, request_digest) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "(observation_uuid, operation_uuid, original_request, admission_uuid, snapshot_uuid, snapshot_digest, closed_admission_receipt, owner_fence, target_fence_uuid, minimum_retention_millis, transfer_state, observed_retirement, acknowledgement_request, request_digest, entry_policy) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         observation,
         UUID.fromString(original.getOperationUuid()),
         original.toByteArray(),
@@ -806,7 +999,8 @@ public final class CanonicalGameplayRosterRetentionRepository {
         proof == null ? "WAITING_RETIREMENT" : "PENDING_ACK",
         proof == null ? null : proof.toByteArray(),
         request == null ? null : request.toByteArray(),
-        request == null ? null : CanonicalGameplayRosterRetirementEvidence.requestDigest(request));
+        request == null ? null : CanonicalGameplayRosterRetirementEvidence.requestDigest(request),
+        entryPolicy(original));
   }
 
   private static CanonicalGameplayRosterRetirementAcknowledgementRequest acknowledgementRequest(
@@ -874,6 +1068,9 @@ public final class CanonicalGameplayRosterRetentionRepository {
                     GetCanonicalGameplayRosterReferenceRequest.parseFrom(
                         row.get("original_request", byte[].class));
                 CanonicalGameplayRosterReferenceEvidence.requireRequest(original);
+                if (!entryPolicy(original).equals(row.get("entry_policy", String.class))) {
+                  throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
+                }
                 if (!original
                     .getOperationUuid()
                     .equals(row.get("operation_uuid", UUID.class).toString())) {
@@ -890,6 +1087,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
                           .getAdmissionUuid()
                           .equals(row.get("admission_uuid", UUID.class).toString())
                       || !closed.getCanonicalRosterReceipt().isEmpty()
+                      || !closed.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
                       || closed.getOwnerFence() != row.get("owner_fence", Long.class)
                       || !closed
                           .getTargetFenceUuid()
@@ -1274,9 +1472,10 @@ public final class CanonicalGameplayRosterRetentionRepository {
     }
     dsl.execute(
         "INSERT INTO entity_canonical_roster_retention_lifecycle "
-            + "(snapshot_uuid, snapshot_digest) VALUES (?, ?) ON CONFLICT DO NOTHING",
+            + "(snapshot_uuid, snapshot_digest, entry_policy) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
         binding.snapshot().snapshotUuid(),
-        binding.snapshot().snapshotDigest());
+        binding.snapshot().snapshotDigest(),
+        target.entryPolicy().name());
     dsl.fetchSingle(
         "SELECT snapshot_uuid FROM entity_canonical_roster_retention_lifecycle "
             + "WHERE snapshot_uuid = ? AND snapshot_digest = ? FOR UPDATE",

@@ -113,7 +113,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
     reservePre1006Attempt(fixture, predecessor.launch(), admission);
     seedPre1006Terminal(fixture, prepared, predecessor.launch(), admission, true);
-    migration(fixture, "1017").migrate();
+    migration(fixture, "1020").migrate();
     var routes =
         new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
             NAMESPACE,
@@ -339,7 +339,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             uuid(122));
     reservePre1006Attempt(fixture, predecessor.launch(), admission);
     seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
-    migration(fixture, "1017").migrate();
+    migration(fixture, "1020").migrate();
     var routes =
         new net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService(
             NAMESPACE,

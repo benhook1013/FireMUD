@@ -33,4 +33,6 @@ dependencies {
     testFixturesApi(platform(libs.spring.boot.dependencies))
     testFixturesApi("tools.jackson.core:jackson-databind")
     testFixturesApi(libs.grpc.stub)
+    testFixturesApi(libs.protobuf.java)
+    testFixturesCompileOnly(libs.spotbugs.annotations)
 }
