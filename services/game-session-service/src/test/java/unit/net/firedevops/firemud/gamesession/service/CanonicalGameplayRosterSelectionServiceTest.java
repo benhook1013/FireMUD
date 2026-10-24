@@ -32,8 +32,6 @@ import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvi
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
-import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
-import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest;
@@ -42,10 +40,6 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelecte
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
-import net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateTerminal;
 import net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceService;
 import net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceService.ResolvedPlayerCreatedRosterSource;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
@@ -68,6 +62,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.testing.ControlledPlayerCreatedRosterValues;
 import net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceRequest;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
@@ -1114,59 +1109,17 @@ class CanonicalGameplayRosterSelectionServiceTest {
   // genuine source issuance or SQL. The complete terminal values use the existing controlled
   // CHARACTER_CREATE vector; actual Common/client grammar and physical owner proofs are separate.
   private static CreatedHarness createdHarness(int actorCount) throws Exception {
-    java.nio.file.Path root = java.nio.file.Path.of("").toAbsolutePath();
-    while (root != null && !java.nio.file.Files.exists(root.resolve("settings.gradle.kts")))
-      root = root.getParent();
-    if (root == null)
-      throw new IllegalStateException("Controlled CHARACTER_CREATE fixture unavailable");
-    byte[] bytes =
-        java.nio.file.Files.readString(
-                root.resolve(
-                    "services/account-service/src/testFixtures/resources/charactercreate/public-action.json"))
-            .strip()
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    var action =
-        net.firedevops.firemud.common.operator.CharacterCreateOperatorActionCodec.decode(bytes);
-    var authored = action.mutation().authoredSource();
-    var descriptor =
-        net.firedevops.firemud.common.publication.PlayerCreationDescriptor.parse(
-            authored.descriptor().canonicalJson());
-    var identity =
-        CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
-            .setSchemaVersion(1)
-            .setDescriptorUuid(descriptor.descriptorId())
-            .setDescriptorRevisionUuid(descriptor.descriptorRevisionId())
-            .setDescriptorDigest(descriptor.digest())
-            .setAuthoredBindingUuid(authored.bindingId())
-            .setAuthoredBindingDigest(authored.bindingDigest())
-            .build();
-    var target =
-        CanonicalGameplayRosterTarget.newBuilder()
-            .setTenantUuid(action.scope().tenantId())
-            .setRealmUuid(action.target().realmId())
-            .setWorldSlug(action.target().worldSlug())
-            .setRealmSlug(action.target().realmSlug())
-            .setGameInstanceUuid(action.target().gameInstanceId())
-            .setCanonicalVersionUuid(action.target().versionId())
-            .setPlayableStateNamespaceUuid(action.scope().playableStateNamespaceId())
-            .setPlayableStateScope(
-                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                    .PLAYABLE_STATE_SCOPE_SHARED)
-            .setEntryPolicy(
-                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
-                    .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED)
-            .setCatalogRevision(Long.parseLong(action.expectedVersion().catalogRevision()))
-            .setPointerVersion(Long.parseLong(action.expectedVersion().pointerVersion()))
-            .setActiveWorldEpoch(Long.parseLong(action.expectedVersion().activeLifecycleEpoch()))
-            .setPublishedPolicyDigest(authored.policy().contentDigest().substring(7))
-            .setPublishedReleaseBundleRef("controlled-created-release")
-            .setAdmissionPointerSnapshotDigest("b".repeat(64))
-            .setPublishedOwnerProofDigest("c".repeat(64))
-            .build();
+    var values =
+        ControlledPlayerCreatedRosterValues.forSelection(
+            actorCount, SNAPSHOT, FIRST_ACTOR, SECOND_ACTOR);
+    var target = values.target();
+    var identity = values.source();
+    var actors = values.actors();
+    String digest = values.roster().getRoster().getSnapshotDigest();
     var r = PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute().route();
     var route =
         new CanonicalPlayableTarget(
-            action.scope().targetNamespace(),
+            values.namespace(),
             r.tenantSlug(),
             UUID.fromString(target.getTenantUuid()),
             target.getWorldSlug(),
@@ -1199,146 +1152,38 @@ class CanonicalGameplayRosterSelectionServiceTest {
             r.ownerProofTerminalAt(),
             "PLAYER_CREATED");
     var context =
-        context(route, UUID.randomUUID().toString()).toBuilder()
-            .setAccountId(action.target().accountId())
+        context(route, values.context().getRequestId()).toBuilder()
+            .setAccountId(values.context().getAccountId())
+            .setSessionId(values.context().getSessionId())
             .build();
     var source = mock(ResolvedPlayerCreatedRosterSource.class);
     when(source.route()).thenReturn(route);
     when(source.target()).thenReturn(target);
     when(source.sourceIdentity()).thenReturn(identity);
-    var actors =
-        java.util.stream.IntStream.range(0, actorCount)
-            .mapToObj(
-                i ->
-                    CanonicalGameplayRosterActor.newBuilder()
-                        .setCharacterUuid((i == 0 ? FIRST_ACTOR : SECOND_ACTOR).toString())
-                        .setDisplayName(i == 0 ? "Created One" : "Created Two")
-                        .setActorKind(
-                            CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
-                        .build())
-            .toList();
-    String digest =
-        CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
-            context.getAccountId(), target, identity, actors);
-    var receipt =
-        CanonicalPlayerCreatedRosterResponse.newBuilder()
-            .setSourceIdentity(identity)
-            .setRoster(
-                CanonicalGameplayRosterResponse.newBuilder()
-                    .setCanonicalAccountUuid(context.getAccountId())
-                    .setTarget(target)
-                    .setSnapshotUuid(SNAPSHOT.toString())
-                    .setSnapshotDigest(digest)
-                    .addAllActors(actors))
-            .build();
     var roster = mock(VerifiedPlayerCreatedRoster.class);
-    when(roster.response()).thenReturn(receipt);
+    when(roster.response()).thenReturn(values.roster());
     when(roster.resolvedSource()).thenReturn(source);
-    when(roster.originalSelection())
-        .thenReturn(
-            CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
-                UUID.fromString(context.getRequestId()),
-                UUID.fromString(context.getAccountId()),
-                UUID.fromString(context.getSessionId()),
-                route.targetNamespace(),
-                target,
-                identity));
+    when(roster.originalSelection()).thenReturn(values.original());
     when(roster.canonicalAccountUuid()).thenReturn(UUID.fromString(context.getAccountId()));
     when(roster.target()).thenReturn(target);
     when(roster.sourceIdentity()).thenReturn(identity);
-    when(roster.snapshotUuid()).thenReturn(SNAPSHOT);
+    when(roster.snapshotUuid())
+        .thenReturn(UUID.fromString(values.roster().getRoster().getSnapshotUuid()));
     when(roster.snapshotDigest()).thenReturn(digest);
     when(roster.actors()).thenReturn(actors);
-    String operation = UUID.randomUUID().toString();
-    String mutation =
-        net.firedevops.firemud.common.operator.CharacterCreateOperatorActionCodec.mutationDigest(
-            action);
-    var original =
-        net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateRequest.newBuilder()
-            .setTargetNamespace(route.targetNamespace())
-            .setOperationId(operation)
-            .setMutationDigest(mutation)
-            .build();
-    var account =
-        net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateResponse.newBuilder()
-            .setTargetNamespace(route.targetNamespace())
-            .setOperationId(operation)
-            .setMutationDigest(mutation)
-            .setCreateCharacterRequestId(UUID.randomUUID().toString())
-            .setConnectScopeId("controlled-created-scope")
-            .setAuthenticatedAccountId(context.getAccountId())
-            .setPurpose("CHARACTER_CREATE")
-            .setOriginalAction(com.google.protobuf.ByteString.copyFrom(bytes))
-            .setOriginalSourceReadback(
-                com.google.protobuf.ByteString.copyFromUtf8("controlled-source-readback"))
-            .build();
-    var protection =
-        net.firedevops.firemud.entitymanagement.v1.CharacterCreateProtectionReference.newBuilder()
-            .setProtectionId(UUID.randomUUID().toString())
-            .setProtectionFence(1)
-            .build();
-    var terminal =
-        EntityCharacterCreateTerminal.newBuilder()
-            .setOriginalRequest(
-                net.firedevops.firemud.entitymanagement.v1.CommitProtectedCharacterCreateRequest
-                    .newBuilder()
-                    .setOriginal(original)
-                    .setAccountProtection(protection)
-                    .setGameSessionProtection(
-                        protection.toBuilder().setProtectionId(UUID.randomUUID().toString()))
-                    .setWorldProtection(
-                        protection.toBuilder().setProtectionId(UUID.randomUUID().toString())))
-            .setAccountOriginal(account)
-            .setOriginalAccountProtection(
-                com.google.protobuf.ByteString.copyFromUtf8("controlled-account-protection"))
-            .setOriginalGameSessionProtection(
-                com.google.protobuf.ByteString.copyFromUtf8("controlled-game-session-protection"))
-            .setOriginalWorldProtection(
-                com.google.protobuf.ByteString.copyFromUtf8("controlled-world-protection"))
-            .setEntityIntakeRequestId(UUID.randomUUID().toString())
-            .setOutcome(
-                net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateOutcome
-                    .ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
-            .setTerminalId(UUID.randomUUID().toString())
-            .setTerminalFence(1)
-            .setCompletedAt("2026-10-23T00:00:00Z")
-            .setEntitySourceReceiptDigest("sha256:" + "d".repeat(64));
     var references = new java.util.HashMap<UUID, VerifiedPlayerCreatedCharacter>();
     for (var actor : actors) {
-      String actorOperation = UUID.randomUUID().toString();
-      var actorTerminal =
-          terminal
-              .clone()
-              .setCharacterId(actor.getCharacterUuid())
-              .setTerminalId(UUID.randomUUID().toString())
-              .setOriginalRequest(
-                  terminal.getOriginalRequest().toBuilder()
-                      .setOriginal(original.toBuilder().setOperationId(actorOperation)))
-              .setAccountOriginal(account.toBuilder().setOperationId(actorOperation));
-      var response =
-          CanonicalSelectedPlayerCreatedCharacterResponse.newBuilder()
-              .setRequestUuid(context.getRequestId())
-              .setCanonicalAccountUuid(context.getAccountId())
-              .setSelectedCharacterUuid(actor.getCharacterUuid())
-              .setTarget(target)
-              .setSourceIdentity(identity)
-              .setSnapshot(
-                  net.firedevops.firemud.entitymanagement.v1
-                      .CanonicalGameplayRosterSnapshotReference.newBuilder()
-                      .setSnapshotUuid(SNAPSHOT.toString())
-                      .setSnapshotDigest(digest))
-              .setCreationOperationUuid(actorOperation)
-              .setMutationDigest(mutation)
-              .setTerminal(actorTerminal)
-              .build();
+      UUID actorUuid = UUID.fromString(actor.getCharacterUuid());
+      var response = values.selected().get(actorUuid);
       var verified = mock(VerifiedPlayerCreatedCharacter.class);
       when(verified.roster()).thenReturn(roster);
       when(verified.response()).thenReturn(response);
-      when(verified.selectedCharacterUuid()).thenReturn(UUID.fromString(actor.getCharacterUuid()));
-      when(verified.creationOperationUuid()).thenReturn(UUID.fromString(actorOperation));
-      when(verified.mutationDigest()).thenReturn(mutation);
+      when(verified.selectedCharacterUuid()).thenReturn(actorUuid);
+      when(verified.creationOperationUuid())
+          .thenReturn(UUID.fromString(response.getCreationOperationUuid()));
+      when(verified.mutationDigest()).thenReturn(response.getMutationDigest());
       when(verified.terminal()).thenReturn(response.getTerminal());
-      references.put(UUID.fromString(actor.getCharacterUuid()), verified);
+      references.put(actorUuid, verified);
     }
     var routes = mock(CanonicalPlayerRouteReadService.class);
     var publications = mock(CanonicalPublishedPlayerRouteReadService.class);

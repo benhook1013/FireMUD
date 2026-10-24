@@ -178,7 +178,15 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
       try (var fixture = new Fixture()) {
         invalidate.accept(fixture);
         assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
-            .isInstanceOf(RuntimeException.class);
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure -> {
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                  assertThat(Status.fromThrowable(failure).getDescription())
+                      .isEqualTo(
+                          "Exact original public CHARACTER_CREATE source is unavailable or changed");
+                });
       }
     }
   }

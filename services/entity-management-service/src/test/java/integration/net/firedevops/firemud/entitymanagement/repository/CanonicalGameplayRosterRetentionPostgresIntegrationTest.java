@@ -905,6 +905,69 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   }
 
   @Test
+  void typedOnlySnapshotRecognitionReportsEveryBoundedPageBeforeDrainingToZero() {
+    int pageSize = 2;
+    int snapshotCount = 5;
+    transaction.executeWithoutResult(
+        ignored -> {
+          for (int index = 0; index < snapshotCount; index++) {
+            seedCreatedSnapshot(createdReceipt(createdRequest()), 0);
+          }
+        });
+    // Sealing captures V1 inventory through the existing SQL trigger; only typed recognition is
+    // pending.
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_snapshot_targets "
+                        + "WHERE source_kind = 'SNAPSHOT' AND recognition_version = 1 "
+                        + "AND source_snapshot_projection->>'entry_policy' = 'PLAYER_CREATED'")
+                .get(0, Long.class))
+        .isEqualTo((long) snapshotCount);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers"))).isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_roster_snapshot_targets WHERE recognition_version = 2")
+                .get(0, Long.class))
+        .isZero();
+    String retainedEvidenceSql =
+        "SELECT row_to_json(s)::text || ':' || s.xmin::text FROM entity_canonical_gameplay_roster_snapshots s "
+            + "UNION ALL SELECT row_to_json(m)::text || ':' || m.xmin::text FROM entity_canonical_roster_snapshot_targets m "
+            + "WHERE recognition_version = 1 ORDER BY 1";
+    List<String> retainedEvidence =
+        dsl.fetch(retainedEvidenceSql).map(row -> row.get(0, String.class));
+
+    for (int recognized = 0; recognized < snapshotCount; ) {
+      int expectedPage = Math.min(pageSize, snapshotCount - recognized);
+      assertThat(
+              transaction.<Integer>execute(
+                  ignored -> repository.classifyRetainedDependencies(pageSize)))
+          .isEqualTo(expectedPage);
+      recognized += expectedPage;
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) FROM entity_canonical_roster_snapshot_targets "
+                          + "WHERE source_kind = 'SNAPSHOT' AND recognition_version = 2 AND classification_state = 'KNOWN'")
+                  .get(0, Long.class))
+          .isEqualTo((long) recognized);
+      assertThat(
+              dsl.fetchSingle("SELECT entity_roster_target_classification_pending()")
+                  .get(0, Boolean.class))
+          .isEqualTo(recognized < snapshotCount);
+      assertThat(dsl.fetch(retainedEvidenceSql).map(row -> row.get(0, String.class)))
+          .containsExactlyElementsOf(retainedEvidence);
+    }
+    assertThat(
+            transaction.<Integer>execute(
+                ignored -> repository.classifyRetainedDependencies(pageSize)))
+        .isZero();
+    assertThat(dsl.fetch(retainedEvidenceSql).map(row -> row.get(0, String.class)))
+        .containsExactlyElementsOf(retainedEvidence);
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_admissions"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_canonical_roster_retirement_transfers"))).isZero();
+  }
+
+  @Test
   void boundedTargetClassificationPassesTrueUnknownAndKeepsEveryAdmissionBoundaryClosed() {
     assertThat(transaction.<Integer>execute(ignored -> repository.classifyRetainedDependencies(1)))
         .isZero();

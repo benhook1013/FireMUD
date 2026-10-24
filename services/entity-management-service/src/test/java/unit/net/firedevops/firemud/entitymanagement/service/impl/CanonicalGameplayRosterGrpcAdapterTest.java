@@ -526,6 +526,47 @@ class CanonicalGameplayRosterGrpcAdapterTest {
   }
 
   @Test
+  void createdServiceEvidenceValidationFailuresMapToUnavailableForBothMethods() {
+    var createdService = mock(EntityPlayerCreatedRosterService.class);
+    var meterRegistry = new SimpleMeterRegistry();
+    var adapter =
+        new CanonicalGameplayRosterGrpcAdapter(
+            mock(CanonicalGameplayRosterService.class),
+            mock(CanonicalGameplayRosterSelectedAssignmentService.class),
+            createdService,
+            meterRegistry);
+    var listRequest = playerCreatedRequest();
+    when(createdService.list(listRequest))
+        .thenThrow(new IllegalArgumentException("retained owner evidence is invalid"));
+    var listObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse>();
+
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+        () -> adapter.listPlayerCreatedRoster(listRequest, listObserver));
+
+    assertOnlyStatus(listObserver, Status.Code.UNAVAILABLE);
+    verify(createdService).list(listRequest);
+
+    var selectedRequest = selectedCreatedRequest();
+    when(createdService.selected(selectedRequest))
+        .thenThrow(new IllegalArgumentException("retained selected evidence is invalid"));
+    var selectedObserver =
+        new RecordingObserver<
+            net.firedevops.firemud.entitymanagement.v1
+                .CanonicalSelectedPlayerCreatedCharacterResponse>();
+
+    withTrustedPeer(
+        CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME,
+        () -> adapter.readSelectedPlayerCreatedCharacter(selectedRequest, selectedObserver));
+
+    assertOnlyStatus(selectedObserver, Status.Code.UNAVAILABLE);
+    verify(createdService).selected(selectedRequest);
+    assertThat(meterRegistry.counter("grpc.app_error", "code", "INTERNAL").count()).isZero();
+  }
+
+  @Test
   void createdOwnerDeadlineMapsToUnavailableWithoutInternalMetric() {
     var createdService = mock(EntityPlayerCreatedRosterService.class);
     var meterRegistry = new SimpleMeterRegistry();

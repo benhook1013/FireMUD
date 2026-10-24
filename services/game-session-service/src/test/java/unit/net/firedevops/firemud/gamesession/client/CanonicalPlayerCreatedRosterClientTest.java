@@ -16,12 +16,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Modifier;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -29,32 +27,18 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateRequest;
-import net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.operator.CharacterCreateOperatorActionCodec;
-import net.firedevops.firemud.common.publication.PlayerCreationDescriptor;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
-import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
-import net.firedevops.firemud.entitymanagement.v1.CharacterCreateProtectionReference;
-import net.firedevops.firemud.entitymanagement.v1.CommitProtectedCharacterCreateRequest;
-import net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateOutcome;
-import net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateTerminal;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceService.ResolvedPlayerCreatedRosterSource;
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient.VerifiedPlayerCreatedCharacter;
@@ -63,6 +47,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository.SelectionOutcome;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.testing.ControlledPlayerCreatedRosterValues;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
@@ -597,155 +582,14 @@ class CanonicalPlayerCreatedRosterClientTest {
       CanonicalSelectedPlayerCreatedCharacterResponse selected) {}
 
   private static Fixture fixture() throws Exception {
-    Path root = Path.of("").toAbsolutePath();
-    while (root != null && !Files.exists(root.resolve("settings.gradle.kts")))
-      root = root.getParent();
-    if (root == null)
-      throw new IllegalStateException("Controlled CHARACTER_CREATE fixture unavailable");
-    byte[] bytes =
-        Files.readString(
-                root.resolve(
-                    "services/account-service/src/testFixtures/resources/charactercreate/public-action.json"))
-            .strip()
-            .getBytes(StandardCharsets.UTF_8);
-    var action = CharacterCreateOperatorActionCodec.decode(bytes);
-    var authored = action.mutation().authoredSource();
-    var descriptor = PlayerCreationDescriptor.parse(authored.descriptor().canonicalJson());
-    var source =
-        CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
-            .setSchemaVersion(1)
-            .setDescriptorUuid(descriptor.descriptorId())
-            .setDescriptorRevisionUuid(descriptor.descriptorRevisionId())
-            .setDescriptorDigest(descriptor.digest())
-            .setAuthoredBindingUuid(authored.bindingId())
-            .setAuthoredBindingDigest(authored.bindingDigest())
-            .build();
-    var target =
-        CanonicalGameplayRosterTarget.newBuilder()
-            .setTenantUuid(action.scope().tenantId())
-            .setRealmUuid(action.target().realmId())
-            .setWorldSlug(action.target().worldSlug())
-            .setRealmSlug(action.target().realmSlug())
-            .setGameInstanceUuid(action.target().gameInstanceId())
-            .setCanonicalVersionUuid(action.target().versionId())
-            .setPlayableStateNamespaceUuid(action.scope().playableStateNamespaceId())
-            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-            .setEntryPolicy(
-                CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED)
-            .setCatalogRevision(Long.parseLong(action.expectedVersion().catalogRevision()))
-            .setPointerVersion(Long.parseLong(action.expectedVersion().pointerVersion()))
-            .setActiveWorldEpoch(Long.parseLong(action.expectedVersion().activeLifecycleEpoch()))
-            .setPublishedPolicyDigest(authored.policy().contentDigest().substring(7))
-            .setPublishedReleaseBundleRef("controlled-created-release")
-            .setAdmissionPointerSnapshotDigest("b".repeat(64))
-            .setPublishedOwnerProofDigest("c".repeat(64))
-            .build();
-    var context =
-        PlayerExecutionContext.newBuilder()
-            .setRequestId(UUID.randomUUID().toString())
-            .setSessionId(UUID.randomUUID().toString())
-            .setAccountId(action.target().accountId())
-            .setTenantId(target.getTenantUuid())
-            .setRealmId(target.getRealmUuid())
-            .setGameInstanceId(target.getGameInstanceUuid())
-            .setPlayableStateNamespaceId(target.getPlayableStateNamespaceUuid())
-            .setPlayableStateScope("SHARED")
-            .build();
-    var original =
-        CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
-            UUID.fromString(context.getRequestId()),
-            UUID.fromString(context.getAccountId()),
-            UUID.fromString(context.getSessionId()),
-            action.scope().targetNamespace(),
-            target,
-            source);
-    String character = UUID.randomUUID().toString();
-    var actors =
-        List.of(
-            CanonicalGameplayRosterActor.newBuilder()
-                .setCharacterUuid(character)
-                .setDisplayName("Controlled persisted actor")
-                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
-                .build());
-    String snapshot = UUID.randomUUID().toString();
-    String digest =
-        CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
-            context.getAccountId(), target, source, actors);
-    var roster =
-        CanonicalPlayerCreatedRosterResponse.newBuilder()
-            .setSourceIdentity(source)
-            .setRoster(
-                CanonicalGameplayRosterResponse.newBuilder()
-                    .setCanonicalAccountUuid(context.getAccountId())
-                    .setTarget(target)
-                    .setSnapshotUuid(snapshot)
-                    .setSnapshotDigest(digest)
-                    .addAllActors(actors))
-            .build();
-    String operation = UUID.randomUUID().toString();
-    String mutation = CharacterCreateOperatorActionCodec.mutationDigest(action);
-    var accountRequest =
-        ReadOriginalCharacterCreateRequest.newBuilder()
-            .setTargetNamespace(action.scope().targetNamespace())
-            .setOperationId(operation)
-            .setMutationDigest(mutation)
-            .build();
-    var account =
-        ReadOriginalCharacterCreateResponse.newBuilder()
-            .setTargetNamespace(action.scope().targetNamespace())
-            .setOperationId(operation)
-            .setMutationDigest(mutation)
-            .setCreateCharacterRequestId(UUID.randomUUID().toString())
-            .setConnectScopeId("controlled-create-scope")
-            .setAuthenticatedAccountId(action.target().accountId())
-            .setPurpose("CHARACTER_CREATE")
-            .setOriginalAction(ByteString.copyFrom(bytes))
-            .setOriginalSourceReadback(ByteString.copyFromUtf8("controlled-source-readback"))
-            .build();
-    var protection =
-        CharacterCreateProtectionReference.newBuilder()
-            .setProtectionId(UUID.randomUUID().toString())
-            .setProtectionFence(1)
-            .build();
-    var terminal =
-        EntityCharacterCreateTerminal.newBuilder()
-            .setOriginalRequest(
-                CommitProtectedCharacterCreateRequest.newBuilder()
-                    .setOriginal(accountRequest)
-                    .setAccountProtection(protection)
-                    .setGameSessionProtection(
-                        protection.toBuilder().setProtectionId(UUID.randomUUID().toString()))
-                    .setWorldProtection(
-                        protection.toBuilder().setProtectionId(UUID.randomUUID().toString())))
-            .setAccountOriginal(account)
-            .setOriginalAccountProtection(ByteString.copyFromUtf8("controlled-account-protection"))
-            .setOriginalGameSessionProtection(
-                ByteString.copyFromUtf8("controlled-game-session-protection"))
-            .setOriginalWorldProtection(ByteString.copyFromUtf8("controlled-world-protection"))
-            .setEntityIntakeRequestId(UUID.randomUUID().toString())
-            .setOutcome(EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
-            .setCharacterId(character)
-            .setTerminalId(UUID.randomUUID().toString())
-            .setTerminalFence(1)
-            .setCompletedAt("2026-10-23T00:00:00Z")
-            .setEntitySourceReceiptDigest("sha256:" + "d".repeat(64))
-            .build();
-    var selected =
-        CanonicalSelectedPlayerCreatedCharacterResponse.newBuilder()
-            .setRequestUuid(context.getRequestId())
-            .setCanonicalAccountUuid(context.getAccountId())
-            .setSelectedCharacterUuid(character)
-            .setTarget(target)
-            .setSourceIdentity(source)
-            .setSnapshot(
-                CanonicalGameplayRosterSnapshotReference.newBuilder()
-                    .setSnapshotUuid(snapshot)
-                    .setSnapshotDigest(digest))
-            .setCreationOperationUuid(operation)
-            .setMutationDigest(mutation)
-            .setTerminal(terminal)
-            .build();
+    var values = ControlledPlayerCreatedRosterValues.forClient();
     return new Fixture(
-        action.scope().targetNamespace(), target, source, context, original, roster, selected);
+        values.namespace(),
+        values.target(),
+        values.source(),
+        values.context(),
+        values.original(),
+        values.roster(),
+        values.selected().values().iterator().next());
   }
 }

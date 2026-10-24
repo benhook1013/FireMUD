@@ -109,7 +109,13 @@ public final class CanonicalGameplayRosterGrpcAdapter
       requireTrustedPeer();
       CanonicalPlayerCreatedRosterEvidence.requireRequest(request);
       if (playerCreatedRosterService == null) throw new PlayerCreatedRosterUnavailableException();
-      var serviceResponse = playerCreatedRosterService.list(request);
+      CanonicalPlayerCreatedRosterResponse serviceResponse;
+      try {
+        serviceResponse = playerCreatedRosterService.list(request);
+      } catch (IllegalArgumentException invalidOwnerEvidence) {
+        throw new CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException(
+            invalidOwnerEvidence);
+      }
       try {
         response = CanonicalPlayerCreatedRosterEvidence.requireResponse(request, serviceResponse);
       } catch (IllegalArgumentException invalidOutput) {
@@ -135,7 +141,13 @@ public final class CanonicalGameplayRosterGrpcAdapter
       requireTrustedPeer();
       CanonicalPlayerCreatedRosterEvidence.requireSelectedRequest(request);
       if (playerCreatedRosterService == null) throw new PlayerCreatedRosterUnavailableException();
-      var serviceResponse = playerCreatedRosterService.selected(request);
+      CanonicalSelectedPlayerCreatedCharacterResponse serviceResponse;
+      try {
+        serviceResponse = playerCreatedRosterService.selected(request);
+      } catch (IllegalArgumentException invalidOwnerEvidence) {
+        throw new CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException(
+            invalidOwnerEvidence);
+      }
       try {
         response =
             CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(request, serviceResponse);

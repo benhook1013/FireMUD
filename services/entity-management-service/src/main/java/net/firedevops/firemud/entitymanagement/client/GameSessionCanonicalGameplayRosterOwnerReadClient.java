@@ -28,6 +28,7 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
         CanonicalGameplayRosterOwnerReadServiceGrpc
             .CanonicalGameplayRosterOwnerReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final long PLAYER_CREATED_CALL_DEADLINE_SECONDS = 10L;
 
   private final String workloadNamespace;
   private final GrpcServerPeerIdentityClientInterceptor serverPeerIdentityInterceptor;
@@ -113,7 +114,12 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
     }
     var response =
         current
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(
+                callDeadlineSeconds(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .target(checkedRequest)
+                        .getEntryPolicy()),
+                TimeUnit.SECONDS)
             .getCanonicalGameplayRosterReference(request);
     try {
       return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
@@ -132,7 +138,12 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
     requireRetirementNamespace(request);
     var response =
         requireInitializedStub("Game Session retirement owner client is not initialized")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(
+                callDeadlineSeconds(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .target(request.getOriginalSelection())
+                        .getEntryPolicy()),
+                TimeUnit.SECONDS)
             .acknowledgeCanonicalGameplayRosterRetirement(request);
     return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
         request, response);
@@ -146,9 +157,23 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
     requireRetirementNamespace(request.getAcknowledgementRequest());
     var response =
         requireInitializedStub("Game Session retirement owner client is not initialized")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(
+                callDeadlineSeconds(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .target(request.getAcknowledgementRequest().getOriginalSelection())
+                        .getEntryPolicy()),
+                TimeUnit.SECONDS)
             .confirmCanonicalGameplayRosterRetirementAcknowledgement(request);
     return CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(request, response);
+  }
+
+  private static long callDeadlineSeconds(
+      net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy entryPolicy) {
+    return entryPolicy
+            == net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED
+        ? PLAYER_CREATED_CALL_DEADLINE_SECONDS
+        : CALL_DEADLINE_SECONDS;
   }
 
   private static void requireRetirementTransport() {

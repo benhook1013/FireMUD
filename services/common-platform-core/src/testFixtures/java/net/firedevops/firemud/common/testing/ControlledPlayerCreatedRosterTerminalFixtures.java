@@ -63,7 +63,18 @@ public final class ControlledPlayerCreatedRosterTerminalFixtures {
 
   /** One real canonical action/terminal with a controlled 5 MiB opaque Account protection. */
   public static Bundle withFiveMebibyteAccountProtection(String namespace) {
-    var action = action(namespace);
+    return build(namespace, false, false);
+  }
+
+  /**
+   * Controlled known-field vector: saturates every opaque byte field and the authored projection.
+   */
+  public static Bundle withMaximumOpaqueProtections(String namespace, boolean highEntropy) {
+    return build(namespace, true, highEntropy);
+  }
+
+  private static Bundle build(String namespace, boolean maximum, boolean highEntropy) {
+    var action = maximum ? largestFeedbackAction(action(namespace)) : action(namespace);
     var target = target(action);
     var source = source(action);
     var account = action.target().accountId();
@@ -125,7 +136,8 @@ public final class ControlledPlayerCreatedRosterTerminalFixtures {
             .build();
     var selected =
         CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(
-            selectedRequest, selectedCreatedResponse(action, target, source, selectedRequest));
+            selectedRequest,
+            selectedCreatedResponse(action, target, source, selectedRequest, maximum, highEntropy));
     var originalRequest =
         CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
             UUID.fromString(operation),
@@ -230,7 +242,9 @@ public final class ControlledPlayerCreatedRosterTerminalFixtures {
       CharacterCreateOperatorAction action,
       CanonicalGameplayRosterTarget target,
       CanonicalPlayerCreatedRosterSourceIdentity source,
-      CanonicalSelectedPlayerCreatedCharacterRequest request) {
+      CanonicalSelectedPlayerCreatedCharacterRequest request,
+      boolean maximum,
+      boolean highEntropy) {
     byte[] originalAction = CharacterCreateOperatorActionCodec.encode(action);
     String mutationDigest = CharacterCreateOperatorActionCodec.mutationDigest(originalAction);
     ReadOriginalCharacterCreateRequest originalRequest =
@@ -256,16 +270,28 @@ public final class ControlledPlayerCreatedRosterTerminalFixtures {
             .setPurpose("CHARACTER_CREATE")
             .setOriginalAction(ByteString.copyFrom(originalAction))
             // This opaque fixture is preserved as bytes and is not treated as remote authority.
-            .setOriginalSourceReadback(ByteString.copyFromUtf8("controlled-source-readback"))
+            .setOriginalSourceReadback(
+                maximum
+                    ? opaque(32 * 1024 * 1024, 301, highEntropy)
+                    : ByteString.copyFromUtf8("controlled-source-readback"))
             .setMutationDigest(mutationDigest)
             .build();
     EntityCharacterCreateTerminal terminal =
         EntityCharacterCreateTerminal.newBuilder()
             .setOriginalRequest(terminalRequest)
             .setAccountOriginal(accountOriginal)
-            .setOriginalAccountProtection(ByteString.copyFrom(new byte[5 * 1024 * 1024]))
-            .setOriginalGameSessionProtection(ByteString.copyFromUtf8("game-session-protection"))
-            .setOriginalWorldProtection(ByteString.copyFromUtf8("world-protection"))
+            .setOriginalAccountProtection(
+                maximum
+                    ? opaque(40 * 1024 * 1024, 302, highEntropy)
+                    : ByteString.copyFrom(new byte[5 * 1024 * 1024]))
+            .setOriginalGameSessionProtection(
+                maximum
+                    ? opaque(48 * 1024 * 1024, 303, highEntropy)
+                    : ByteString.copyFromUtf8("game-session-protection"))
+            .setOriginalWorldProtection(
+                maximum
+                    ? opaque(48 * 1024 * 1024, 304, highEntropy)
+                    : ByteString.copyFromUtf8("world-protection"))
             .setEntityIntakeRequestId(uuid(125))
             .setOutcome(EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
             .setCharacterId(request.getSelectedCharacterUuid())
@@ -285,6 +311,97 @@ public final class ControlledPlayerCreatedRosterTerminalFixtures {
         .setMutationDigest(mutationDigest)
         .setTerminal(terminal)
         .build();
+  }
+
+  private static ByteString opaque(int size, long seed, boolean highEntropy) {
+    var random = new java.util.Random(seed);
+    byte[] chunk = new byte[64 * 1024];
+    var output = ByteString.newOutput(chunk.length);
+    for (int remaining = size; remaining > 0; ) {
+      int count = Math.min(remaining, chunk.length);
+      if (highEntropy) random.nextBytes(chunk);
+      output.write(chunk, 0, count);
+      remaining -= count;
+    }
+    return output.toByteString();
+  }
+
+  private static CharacterCreateOperatorAction largestFeedbackAction(
+      CharacterCreateOperatorAction base) {
+    CharacterCreateOperatorActionCodec.encode(base);
+    CharacterCreateOperatorAction best = base;
+    int low = 1;
+    int high = CharacterCreateOperatorActionCodec.MAX_EXACT_UTF8_SOURCE_BYTES;
+    while (low <= high) {
+      int count = low + (high - low) / 2;
+      var candidate = withFeedbackText(base, "x".repeat(count));
+      try {
+        CharacterCreateOperatorActionCodec.encode(candidate);
+        best = candidate;
+        low = count + 1;
+      } catch (IllegalArgumentException beyondKnownFieldLimit) {
+        high = count - 1;
+      }
+    }
+    return best;
+  }
+
+  private static CharacterCreateOperatorAction withFeedbackText(
+      CharacterCreateOperatorAction base, String text) {
+    var mutation = base.mutation();
+    var source = mutation.authoredSource();
+    var prior = source.safeFeedback();
+    String definition = prior.definitionJson().replace("Welcome, traveler.", text);
+    final String digest;
+    try {
+      digest =
+          "sha256:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256")
+                          .digest(definition.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException(impossible);
+    }
+    var feedback =
+        new CharacterCreateOperatorAction.Rule(
+            prior.key(),
+            definition,
+            digest,
+            prior.sourceCommitId(),
+            prior.sourceCommitDigest(),
+            prior.revisionId(),
+            prior.revisionOrder());
+    var authored =
+        new CharacterCreateOperatorAction.AuthoredSource(
+            source.schema(),
+            source.bindingId(),
+            source.bindingDigest(),
+            source.canonicalTenantId(),
+            source.canonicalVersionId(),
+            source.worldSourceOperationId(),
+            source.worldSourceEvidenceDigest(),
+            source.worldSlug(),
+            source.publicationWorkflowId(),
+            source.selectedCommitId(),
+            source.selectedCommitDigest(),
+            source.policy(),
+            source.core(),
+            source.descriptor(),
+            source.disposition(),
+            feedback);
+    return new CharacterCreateOperatorAction(
+        base.scope(),
+        base.target(),
+        base.expectedVersion(),
+        new CharacterCreateOperatorAction.Mutation(
+            mutation.purpose(),
+            mutation.entryPolicy(),
+            mutation.catalog(),
+            mutation.pointer(),
+            authored,
+            mutation.canonicalCreationInput()),
+        base.auditReason());
   }
 
   private static CharacterCreateProtectionReference protectionReference(int value) {

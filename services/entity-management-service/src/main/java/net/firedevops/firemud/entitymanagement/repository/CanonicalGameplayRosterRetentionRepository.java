@@ -976,7 +976,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
     if (limit <= 0)
       throw new IllegalArgumentException("Bounded retained classification page required");
     dsl.fetchSingle("SELECT entity_roster_initialize_snapshot_targets(?)", limit);
-    initializeCreatedSnapshotTargets(null, limit);
+    int createdSnapshots = initializeCreatedSnapshotTargets(null, limit);
     initializeDisposedSealTargets(limit);
     var pending =
         dsl.fetch(
@@ -993,7 +993,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
           source.get("source_kind", String.class),
           source.get("operation_uuid", UUID.class),
           source.get("admission_uuid", UUID.class));
-    return pending.size();
+    return createdSnapshots + pending.size();
   }
 
   private void initializeSnapshotTarget(UUID snapshot) {
@@ -1006,7 +1006,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
     initializeCreatedSnapshotTargets(snapshot, 1);
   }
 
-  private void initializeCreatedSnapshotTargets(UUID snapshot, int limit) {
+  private int initializeCreatedSnapshotTargets(UUID snapshot, int limit) {
     var pending =
         dsl.fetch(
             "SELECT m.*, (jsonb_populate_record(NULL::entity_canonical_gameplay_roster_snapshots, m.source_snapshot_projection)).canonical_player_created_source_identity AS retained_source "
@@ -1041,6 +1041,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
           known ? source.get("target_projection", org.jooq.JSONB.class) : null,
           source.get("source_snapshot_projection", org.jooq.JSONB.class));
     }
+    return pending.size();
   }
 
   /** Missing payload supplies no authority: only an already guarded positive disposed seal does. */

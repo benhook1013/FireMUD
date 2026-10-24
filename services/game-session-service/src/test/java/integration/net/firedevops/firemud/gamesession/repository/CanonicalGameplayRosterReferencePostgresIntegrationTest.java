@@ -903,6 +903,44 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         .isTrue();
   }
 
+  private static net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget
+      currentCreatedTarget(GetCanonicalGameplayRosterReferenceRequest request) {
+    var target = current(request);
+    return new net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget(
+        target.targetNamespace(),
+        target.tenantSlug(),
+        target.canonicalTenantId(),
+        target.worldSlug(),
+        target.worldDisplayName(),
+        target.realmId(),
+        target.realmSlug(),
+        target.realmDisplayName(),
+        target.gameSessionTenantId(),
+        target.gameInstanceId(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope(),
+        target.canonicalGameInstanceId(),
+        target.canonicalVersionId(),
+        target.runtimeVersionId(),
+        target.catalogRevision(),
+        target.pointerVersion(),
+        target.admissionPointerSnapshotDigest(),
+        target.activeWorldEpoch(),
+        target.initialAdmissionRequestId(),
+        target.initialAdmissionRequestDigest(),
+        target.initialAdmissionOriginKind(),
+        target.expectedPriorPointerVersion(),
+        target.holdId(),
+        target.holdFence(),
+        target.holdBindingDigest(),
+        target.auditEventId(),
+        target.ownerProofDigest(),
+        target.ownerProofOutcome(),
+        target.positiveDurableAbort(),
+        target.ownerProofTerminalAt(),
+        "PLAYER_CREATED");
+  }
+
   private static CanonicalInitialAdmissionRepository.CurrentOpenSnapshot currentSnapshot(
       GetCanonicalGameplayRosterReferenceRequest request) {
     var target = CanonicalGameplayRosterReferenceEvidence.target(request);
@@ -2454,6 +2492,279 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           .setSnapshotDigest(roster.getSnapshotDigest());
     }
     return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request.build());
+  }
+
+  @org.junit.jupiter.api.io.TempDir Path ownerReadDirectory;
+
+  @Test
+  void createdOriginalSurvivesSqlAndProductionMtlsOwnerReadAcknowledgementAndConfirmation()
+      throws Exception {
+    // Controlled historical creation and superseding source values; real GS SQL and handlers.
+    // This does not prove genuine source issuance, a current supersession writer or production PKI.
+    repository = repository(policy(1L, 1L, 1L));
+    boolean maximum = Boolean.getBoolean("firemud.test.created-retirement.maximum-payload");
+    boolean highEntropy =
+        Boolean.parseBoolean(
+            System.getProperty("firemud.test.created-retirement.high-entropy", "true"));
+    var fixture =
+        maximum
+            ? net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures
+                .withMaximumOpaqueProtections("gameplay", highEntropy)
+            : net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures
+                .withFiveMebibyteAccountProtection("gameplay");
+    var original = fixture.originalRequest();
+    var roster = CanonicalGameplayRosterReferenceEvidence.playerCreatedReceipt(fixture.original());
+    var selected = fixture.selected();
+    assertThat(selected.getTerminal().getOriginalAccountProtection().size())
+        .isEqualTo((maximum ? 40 : 5) * 1024 * 1024);
+    if (maximum) {
+      assertThat(selected.getTerminal().getAccountOriginal().getOriginalSourceReadback().size())
+          .isEqualTo(32 * 1024 * 1024);
+      assertThat(selected.getTerminal().getOriginalGameSessionProtection().size())
+          .isEqualTo(48 * 1024 * 1024);
+      assertThat(selected.getTerminal().getOriginalWorldProtection().size())
+          .isEqualTo(48 * 1024 * 1024);
+      System.out.println(
+          "created-sql-purpose-bytes terminal="
+              + selected.getTerminal().getSerializedSize()
+              + " selected="
+              + selected.getSerializedSize()
+              + " original="
+              + fixture.original().getSerializedSize()
+              + " highEntropy="
+              + highEntropy);
+    }
+    var input =
+        net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()
+            .setSchemaVersion(1)
+            .setSelector("1")
+            .setMenuSnapshotUuid(roster.getRoster().getSnapshotUuid())
+            .setMenuSnapshotDigest(roster.getRoster().getSnapshotDigest())
+            .build();
+
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, input);
+          repository.markRosterReadStarted(original);
+          repository.recordPlayerCreated(original, roster);
+          repository.selectOriginal(original, UUID.fromString(selected.getSelectedCharacterUuid()));
+          repository.recordSelectedPlayerCreatedCharacter(original, selected);
+          repository.completeSelection(
+              original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.SELECTED);
+        });
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT canonical_player_created_roster_receipt FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                    UUID.fromString(original.getOperationUuid()))
+                .get("canonical_player_created_roster_receipt", byte[].class))
+        .containsExactly(roster.toByteArray());
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT canonical_selected_player_created_character_receipt FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                    UUID.fromString(original.getOperationUuid()))
+                .get("canonical_selected_player_created_character_receipt", byte[].class))
+        .containsExactly(selected.toByteArray());
+
+    Awaitility.await()
+        .atMost(java.time.Duration.ofSeconds(5))
+        .untilAsserted(
+            () ->
+                assertThat(
+                        dsl.fetchSingle(
+                                "SELECT s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() FROM game_session_canonical_roster_selection s JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) WHERE s.operation_uuid = ?",
+                                UUID.fromString(original.getOperationUuid()))
+                            .get(0, Boolean.class))
+                    .isTrue());
+
+    var routes =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class);
+    var current = currentCreatedTarget(original);
+    org.mockito.Mockito.when(
+            routes.readCurrentTarget(
+                UUID.fromString(
+                    CanonicalGameplayRosterReferenceEvidence.target(original).getTenantUuid())))
+        .thenReturn(current);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var snapshot = currentSnapshot(original);
+    org.mockito.Mockito.when(
+            admissions.readCurrentOpenSnapshotForRealm(
+                original.getTargetNamespace(), current.canonicalTenantId(), current.realmId()))
+        .thenReturn(snapshot);
+    org.mockito.Mockito.when(admissions.lockExactCurrentOpenSnapshot(snapshot))
+        .thenReturn(snapshot);
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class),
+            new SimpleMeterRegistry());
+
+    var pkiDirectory = java.nio.file.Files.createDirectories(ownerReadDirectory.resolve("pki"));
+    var pki =
+        net.firedevops.firemud.test.LoopbackMtlsTestPki.create(
+            pkiDirectory,
+            "Maximum created roster owner-read test CA",
+            new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
+                "gs-server", "spiffe://firemud/ns/gameplay/sa/game-session-service", true),
+            new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
+                "entity-client",
+                "spiffe://firemud/ns/gameplay/sa/entity-management-service",
+                false));
+    var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+    beans.addBean(
+        "source",
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                .class));
+    beans.addBean("reference", owner);
+    var adapter =
+        new net.firedevops.firemud.gamesession.service.impl
+            .CanonicalGameplayRosterOwnerReadGrpcAdapter(
+            beans.getBeanProvider(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            "gameplay",
+            beans.getBeanProvider(
+                net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+                    .class));
+    var serverIdentity = pki.identity("gs-server");
+    var server =
+        io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder.forAddress(
+                new java.net.InetSocketAddress("127.0.0.1", 0))
+            .maxInboundMessageSize(
+                CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES)
+            .sslContext(
+                io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts.configure(
+                        io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder.forServer(
+                            serverIdentity.privateKey(), serverIdentity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth.REQUIRE)
+                    .build())
+            .addService(
+                io.grpc.ServerInterceptors.intercept(
+                    adapter, new net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+    var endpoints = new net.firedevops.firemud.common.config.ServiceEndpointsProperties();
+    endpoints.setGameSessionService("127.0.0.1:" + server.getPort());
+    var client =
+        new net.firedevops.firemud.entitymanagement.client
+            .GameSessionCanonicalGameplayRosterOwnerReadClient(
+            endpoints,
+            pki.clientProperties(pkiDirectory, pki.identity("entity-client")),
+            new net.firedevops.firemud.common.grpc.GrpcChannelFactory(),
+            "gameplay");
+    try {
+      client.init();
+      var retained = repository.read(original);
+      long started = System.nanoTime();
+      var transported = client.getCanonicalGameplayRosterReference(original);
+      if (maximum) {
+        System.out.println(
+            "created-sql-purpose-call purpose=initial-read elapsedNanos="
+                + (System.nanoTime() - started)
+                + " requestBytes="
+                + original.getSerializedSize()
+                + " responseBytes="
+                + transported.getSerializedSize()
+                + " highEntropy="
+                + highEntropy);
+      }
+      assertThat(transported).isEqualTo(retained);
+      assertThat(CanonicalGameplayRosterReferenceEvidence.playerCreatedReceipt(transported))
+          .isEqualTo(roster);
+      assertThat(
+              CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(
+                  transported))
+          .isEqualTo(selected);
+      // Let the initial full-size decoded responses go before the retirement exchange.
+      transported = null;
+      retained = null;
+
+      assertThat(owner.retireTarget(original)).isTrue();
+      var retired = repository.read(original);
+      started = System.nanoTime();
+      var retiredTransport = client.getCanonicalGameplayRosterReference(original);
+      if (maximum) {
+        System.out.println(
+            "created-sql-purpose-call purpose=retired-read elapsedNanos="
+                + (System.nanoTime() - started)
+                + " requestBytes="
+                + original.getSerializedSize()
+                + " responseBytes="
+                + retiredTransport.getSerializedSize()
+                + " highEntropy="
+                + highEntropy);
+      }
+      assertThat(retiredTransport).isEqualTo(retired);
+      retiredTransport = null;
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT canonical_player_created_roster_receipt FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(original.getOperationUuid()))
+                  .get("canonical_player_created_roster_receipt", byte[].class))
+          .containsExactly(roster.toByteArray());
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT canonical_selected_player_created_character_receipt FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                      UUID.fromString(original.getOperationUuid()))
+                  .get("canonical_selected_player_created_character_receipt", byte[].class))
+          .containsExactly(selected.toByteArray());
+
+      var acknowledgementRequest =
+          createdAcknowledgement(original, retired, UUID.randomUUID().toString());
+      started = System.nanoTime();
+      var acknowledgement =
+          client.acknowledgeCanonicalGameplayRosterRetirement(acknowledgementRequest);
+      if (maximum) {
+        System.out.println(
+            "created-sql-purpose-call purpose=acknowledgement elapsedNanos="
+                + (System.nanoTime() - started)
+                + " requestBytes="
+                + acknowledgementRequest.getSerializedSize()
+                + " responseBytes="
+                + acknowledgement.getSerializedSize()
+                + " highEntropy="
+                + highEntropy);
+      }
+      assertThat(acknowledgement)
+          .isEqualTo(
+              CanonicalGameplayRosterRetirementEvidence.response(
+                  acknowledgementRequest,
+                  UUID.fromString(acknowledgement.getAcknowledgementUuid()),
+                  acknowledgement.getMinimumRetentionMillis()));
+      var confirmationRequest =
+          CanonicalGameplayRosterRetirementEvidence.confirmation(
+              acknowledgementRequest, acknowledgement);
+      started = System.nanoTime();
+      var confirmation =
+          client.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmationRequest);
+      if (maximum) {
+        System.out.println(
+            "created-sql-purpose-call purpose=confirmation elapsedNanos="
+                + (System.nanoTime() - started)
+                + " requestBytes="
+                + confirmationRequest.getSerializedSize()
+                + " responseBytes="
+                + confirmation.getSerializedSize()
+                + " highEntropy="
+                + highEntropy);
+      }
+      assertThat(confirmation)
+          .isEqualTo(
+              CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmationRequest));
+      assertThat(repository.read(original)).isEqualTo(retired);
+    } finally {
+      client.close();
+      server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    }
   }
 
   @Test

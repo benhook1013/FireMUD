@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamesession.service;
+package unit.net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,6 +35,9 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository.CurrentOpenSnapshot;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner;
+import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
