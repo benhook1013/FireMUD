@@ -220,7 +220,7 @@ class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
   }
 
   @Test
-  void referenceSourceMismatchAloneUsesStaleAuthorityStatusWithoutLeakingOwnerReason() {
+  void referenceStaleAuthorityUsesItsTypeWithoutMessageCouplingOrLeakingOwnerReason() {
     var sources = provider();
     @SuppressWarnings("unchecked")
     ObjectProvider<net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
@@ -242,8 +242,16 @@ class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
     var failures =
         List.of(
             Map.entry(
-                new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
+                new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+                    "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: current pointer differs"),
                 Status.Code.FAILED_PRECONDITION),
+            Map.entry(
+                new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+                    "independent current authority changed"),
+                Status.Code.FAILED_PRECONDITION),
+            Map.entry(
+                new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
+                Status.Code.INTERNAL),
             Map.entry(
                 new IllegalStateException(
                     "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: unexpected detail"),

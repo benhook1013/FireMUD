@@ -123,7 +123,7 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
         List.of(
             java.util.Map.entry(
                 new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
-                    "target superseded"),
+                    "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: current pointer differs"),
                 Status.Code.FAILED_PRECONDITION),
             java.util.Map.entry(
                 new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
@@ -157,13 +157,16 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
                 Status.Code.UNAVAILABLE),
             java.util.Map.entry(
                 new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
-                Status.Code.FAILED_PRECONDITION),
+                Status.Code.INTERNAL),
             java.util.Map.entry(
                 new IllegalStateException(
                     "CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH: unrelated detail"),
                 Status.Code.INTERNAL),
             java.util.Map.entry(
                 new IllegalStateException("unexpected retained fence invariant"),
+                Status.Code.INTERNAL),
+            java.util.Map.entry(
+                new RuntimeException("CANONICAL_ROSTER_ORIGINAL_SOURCE_MISMATCH"),
                 Status.Code.INTERNAL));
     try (var channel = channel("entity")) {
       for (var failure : cases) {

@@ -177,6 +177,114 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
   }
 
   @Test
+  void candidateReadFailureRetriesTheSameCursorAndContinuesCleanupAndBothHealthStages() {
+    var first = candidate(1, "ACTIVE");
+    var last = candidate(2, "ACTIVE");
+    var retired = candidate(3, "RETIRED");
+    when(repository.targetCandidates(null, 2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return List.of(first, last);
+            });
+    when(repository.targetCandidates(last.fenceUuid(), 2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              throw new IllegalStateException("candidate storage unavailable");
+            })
+        .thenThrow(new IllegalStateException("candidate storage still unavailable"))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return List.of(retired);
+            });
+    when(repository.purgeRetiredTarget(retired)).thenReturn(true);
+    when(repository.purgeConfirmedRetirementAcknowledgements(2))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return 1;
+            });
+    when(repository.transferHealth())
+        .thenReturn(new CanonicalGameplayRosterReferenceRepository.TransferHealth(0, 0))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return new CanonicalGameplayRosterReferenceRepository.TransferHealth(19, 7);
+            })
+        .thenThrow(new IllegalStateException("transfer health unavailable"))
+        .thenReturn(new CanonicalGameplayRosterReferenceRepository.TransferHealth(23, 11));
+    when(repository.health())
+        .thenReturn(new Health(0, 0))
+        .thenAnswer(
+            ignored -> {
+              assertSqlTransaction();
+              return new Health(13, 9);
+            })
+        .thenThrow(new IllegalStateException("blocking health unavailable"))
+        .thenReturn(new Health(17, 12));
+    var blocking =
+        metrics.get("firemud.canonical.roster.reference.oldest_blocking_seconds").gauge();
+    var lag = metrics.get("firemud.canonical.roster.reference.cleanup_lag_seconds").gauge();
+    var pending =
+        metrics.get("firemud.canonical.roster.reference.oldest_pending_transfer_seconds").gauge();
+    var transferLag =
+        metrics.get("firemud.canonical.roster.reference.transfer_cleanup_lag_seconds").gauge();
+
+    service.sweep();
+    assertThat(blocking.value()).isZero();
+    assertThat(lag.value()).isZero();
+    assertThat(pending.value()).isZero();
+    assertThat(transferLag.value()).isZero();
+
+    service.sweep();
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertThat(blocking.value()).isEqualTo(13);
+    assertThat(lag.value()).isEqualTo(9);
+    assertThat(pending.value()).isEqualTo(19);
+    assertThat(transferLag.value()).isEqualTo(7);
+
+    service.sweep();
+    assertThat(outcomes("failure")).isEqualTo(2);
+    assertThat(blocking.value()).isEqualTo(-1);
+    assertThat(lag.value()).isEqualTo(-1);
+    assertThat(pending.value()).isEqualTo(-1);
+    assertThat(transferLag.value()).isEqualTo(-1);
+    assertThat(outcomes("health_failure")).isEqualTo(1);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup")
+                .tag("result", "health_failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
+
+    service.sweep();
+    assertThat(outcomes("failure")).isEqualTo(2);
+    assertThat(outcomes("purged")).isEqualTo(1);
+    assertThat(blocking.value()).isEqualTo(17);
+    assertThat(lag.value()).isEqualTo(12);
+    assertThat(pending.value()).isEqualTo(23);
+    assertThat(transferLag.value()).isEqualTo(11);
+    assertThat(
+            metrics
+                .get("firemud.canonical.roster.reference.transfer_cleanup")
+                .tag("result", "purged")
+                .counter()
+                .count())
+        .isEqualTo(4);
+    var pages = inOrder(repository);
+    pages.verify(repository).targetCandidates(null, 2);
+    pages.verify(repository, times(3)).targetCandidates(last.fenceUuid(), 2);
+    verify(repository, times(4)).purgeConfirmedRetirementAcknowledgements(2);
+    verify(repository, times(4)).transferHealth();
+    verify(repository, times(4)).health();
+    verify(repository).purgeRetiredTarget(retired);
+    assertOutsideTransaction();
+  }
+
+  @Test
   void boundedPagesPassProtectedAndUnavailableTargetsAndResetOnlyAfterAnEmptyPage() {
     var protectedTarget = candidate(1, "ACTIVE");
     var unavailable = candidate(2, "ACTIVE");
