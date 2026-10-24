@@ -20,6 +20,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.List;
@@ -229,7 +230,8 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
                     .class),
             mock(
                 net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
-                    .class));
+                    .class),
+            new SimpleMeterRegistry());
     start("server", actualOwner);
     try (var channel = channel("entity")) {
       assertThatThrownBy(() -> stub(channel.channel()).getCanonicalGameplayRosterReference(request))

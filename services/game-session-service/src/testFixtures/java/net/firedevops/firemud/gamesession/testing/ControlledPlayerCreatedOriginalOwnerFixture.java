@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -424,6 +425,7 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
             routeReader,
             admissions,
             Objects.requireNonNull(recovery),
+            new SimpleMeterRegistry(),
             sourceReader);
   }
 

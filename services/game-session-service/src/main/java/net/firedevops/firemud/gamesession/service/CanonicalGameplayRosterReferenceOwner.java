@@ -1,5 +1,8 @@
 package net.firedevops.firemud.gamesession.service;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Objects;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
@@ -11,11 +14,18 @@ import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterRefe
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Unregistered exact selection owner. Short local transactions never contain an RPC. */
 public final class CanonicalGameplayRosterReferenceOwner {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(CanonicalGameplayRosterReferenceOwner.class);
+  private static final String RECOVERY_FAILURE_METRIC =
+      "firemud.canonical.roster.reference.recovery.failure";
+
   private final CanonicalGameplayRosterReferenceRepository repository;
   private final TransactionOperations transactions;
   private final CanonicalPublishedPlayerRouteReadService sourceReader;
@@ -24,6 +34,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
   private final net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
       recoveryClient;
   private final GameSessionCharacterCreatePublicSourceService playerCreatedSourceReader;
+  private final MeterRegistry metrics;
 
   public CanonicalGameplayRosterReferenceOwner(
       CanonicalGameplayRosterReferenceRepository repository,
@@ -32,7 +43,8 @@ public final class CanonicalGameplayRosterReferenceOwner {
       CanonicalPlayerRouteReadService routeReader,
       CanonicalInitialAdmissionRepository admissionRepository,
       net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
-          recoveryClient) {
+          recoveryClient,
+      MeterRegistry metrics) {
     this(
         repository,
         transactions,
@@ -40,6 +52,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
         routeReader,
         admissionRepository,
         recoveryClient,
+        metrics,
         null);
   }
 
@@ -51,6 +64,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
       CanonicalInitialAdmissionRepository admissionRepository,
       net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient
           recoveryClient,
+      MeterRegistry metrics,
       GameSessionCharacterCreatePublicSourceService playerCreatedSourceReader) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.transactions = Objects.requireNonNull(transactions, "transactions");
@@ -58,6 +72,7 @@ public final class CanonicalGameplayRosterReferenceOwner {
     this.routeReader = Objects.requireNonNull(routeReader, "routeReader");
     this.admissionRepository = Objects.requireNonNull(admissionRepository, "admissionRepository");
     this.recoveryClient = Objects.requireNonNull(recoveryClient, "recoveryClient");
+    this.metrics = Objects.requireNonNull(metrics, "metrics");
     this.playerCreatedSourceReader = playerCreatedSourceReader;
   }
 
@@ -223,8 +238,13 @@ public final class CanonicalGameplayRosterReferenceOwner {
       try {
         var verified = recoveryClient.read(recovery);
         transactions.executeWithoutResult(ignored -> repository.finishRecovery(verified));
-      } catch (RuntimeException unavailableOrConflicting) {
+      } catch (RuntimeException recoveryFailure) {
         // The durable recovery marker remains protected for an exact later retry.
+        var kind = recoveryFailureKind(recoveryFailure);
+        metrics.counter(RECOVERY_FAILURE_METRIC, "kind", kind).increment();
+        LOGGER.warn(
+            "Canonical roster Entity recovery failed; original remains protected for retry (kind={})",
+            kind);
       }
     }
     return Boolean.TRUE.equals(
@@ -237,6 +257,24 @@ public final class CanonicalGameplayRosterReferenceOwner {
               admissionRepository.lockExactCurrentOpenSnapshot(qualified);
               return repository.sealTargetRetirement(request, current);
             }));
+  }
+
+  private static String recoveryFailureKind(RuntimeException failure) {
+    if (failure instanceof StatusRuntimeException statusFailure) {
+      var code = Status.fromThrowable(statusFailure).getCode();
+      if (code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED) {
+        return "unavailable";
+      }
+      if (code == Status.Code.FAILED_PRECONDITION
+          || code == Status.Code.ABORTED
+          || code == Status.Code.ALREADY_EXISTS) {
+        return "conflict";
+      }
+    }
+    if (failure instanceof IllegalArgumentException) {
+      return "conflict";
+    }
+    return "unexpected";
   }
 
   private static void requireExactCurrentSnapshot(
