@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -47,6 +48,7 @@ import net.firedevops.firemud.common.publication.GameDesignPublicationOperationB
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.testing.PlayerCreatedPublishedPolicyFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterSourceClient.InvalidOwnerEvidenceException;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.testing.ControlledPlayerCreatedRosterSourceFixture;
@@ -174,7 +176,10 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
             () ->
                 new EntityPlayerCreatedRosterSourceClient(
                     endpoints, controlled.clientProperties("entity"), channels, "Other"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
   }
 
   @Test
@@ -235,7 +240,12 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               request.toBuilder().setReadRequestId(new UUID(0, 0).toString()).build(),
               request.toBuilder().setCatalogRevision(0).build(),
               request.toBuilder().setPointerVersion(0).build())) {
-        assertThatThrownBy(() -> client.read(changed)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> client.read(changed))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.INVALID_ARGUMENT));
       }
       assertThat(owner.receivedRequests()).isEmpty();
     }
@@ -477,11 +487,58 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
               good.toBuilder().setUnknownFields(unknown()).build())) {
         owner.respondWith(changed);
         assertThatThrownBy(() -> client.read(fixture.request()))
-            .isInstanceOf(RuntimeException.class);
+            .isInstanceOfSatisfying(
+                InvalidOwnerEvidenceException.class,
+                failure -> assertThat(failure.getCause()).isNotNull());
       }
       assertThat(owner.receivedRequests()).isNotEmpty().allMatch(fixture.request()::equals);
       owner.respondWith(good);
       assertThat(client.read(fixture.request()).response()).isEqualTo(good);
+    }
+  }
+
+  @Test
+  void authenticatedMalformedOwnerResponseKeepsGuardAndCodecCausesDistinctFromCallerInput()
+      throws Exception {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
+      client.init();
+      owner.respondWith(fixture.response().toBuilder().setSchemaVersion(2).build());
+      assertThatThrownBy(() -> client.read(fixture.request()))
+          .isInstanceOfSatisfying(
+              InvalidOwnerEvidenceException.class,
+              failure ->
+                  assertThat(failure.getCause())
+                      .isInstanceOfSatisfying(
+                          StatusRuntimeException.class,
+                          guard ->
+                              assertThat(guard.getStatus().getCode())
+                                  .isEqualTo(Status.Code.INVALID_ARGUMENT)));
+      owner.respondWith(
+          fixture.response().toBuilder()
+              .setWorldLifecycleEvidence(ByteString.copyFromUtf8("not-json-world-evidence"))
+              .build());
+      assertThatThrownBy(() -> client.read(fixture.request()))
+          .isInstanceOf(InvalidOwnerEvidenceException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class);
+      assertThat(owner.receivedRequests()).containsExactly(fixture.request(), fixture.request());
+      owner.respondWith(fixture.response());
+      assertThat(client.read(fixture.request()).response()).isEqualTo(fixture.response());
+    }
+  }
+
+  @Test
+  void unavailableTransportIsNotReclassifiedAsInvalidOwnerEvidence() throws Exception {
+    try (var owner = controlled.owner("server");
+        var client = controlled.client(owner)) {
+      client.init();
+      owner.close();
+      assertThatThrownBy(() -> client.read(fixture.request()))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+      assertThat(owner.receivedRequests()).isEmpty();
     }
   }
 
