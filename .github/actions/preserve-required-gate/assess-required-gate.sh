@@ -68,70 +68,34 @@ is_github_timestamp() {
 }
 
 recover_validation_job_from_attempt() {
-  local attempt attempt_run_json jobs_json attempt_job check_json
+  local attempt attempt_snapshot cache_key expected_branch expected_head_repository
+  attempt_recovered_job_json=''
   [[ "${EXPECTED_WORKFLOW_PATH}" == ".github/workflows/ci.yml" &&
     "${EXPECTED_WORKFLOW_NAME}" == "CI — Validation" &&
     "${REQUIRED_GATE_NAME}" == "Validation Gate" ]] || return 1
   attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and . == floor)' <<<"${job_json}")" || return 1
-  attempt_run_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/attempts/${attempt}")" || return 1
-  jq -e --argjson attempt "${attempt}" --argjson original "${workflow_run_json}" \
-    --arg expected_title "${expected_display_title}" '
-    . as $run
-    | $run.run_attempt == $attempt and $run.status == "completed" and
-      all(["id", "workflow_id", "name", "path", "head_sha", "display_title", "repository", "event", "pull_requests"][];
-        . as $key | $run[$key] == $original[$key]) and
-      $run.display_title == $expected_title
-  ' <<<"${attempt_run_json}" >/dev/null || return 1
-
-  jobs_json="$(gh api --method GET \
-    "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/attempts/${attempt}/jobs" \
-    -f per_page=100)" || return 1
-  attempt_job="$(jq -cer \
-    --argjson run_id "${workflow_run_id}" --argjson attempt "${attempt}" \
-    --arg head "${HEAD_SHA}" --arg check_prefix "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/" \
-    --arg expected_name "${EXPECTED_WORKFLOW_NAME}" --arg expected_title "${expected_display_title}" \
-    --argjson job_id "${job_id}" --arg check_url "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${check_run_id}" \
-    --arg details_url "${details_url}" --arg status "${check_status}" \
-    --arg conclusion "${conclusion}" --arg started_at "${started_at}" --arg completed_at "${completed_at}" '
-      if type != "object" or (.jobs | type) != "array" then
-        error("malformed attempt job pages")
-      else
-        .total_count as $total
-        | .jobs as $jobs
-        | if ($total | type) != "number" or $total < 1 or $total > 100 or $total != ($total | floor) or
-             ($jobs | length) != $total or
-             any($jobs[]; type != "object" or (.id | type) != "number" or .id < 1 or .id != (.id | floor)) or
-             ([$jobs[].id] | unique | length) != $total or
-             any($jobs[]; .run_id != $run_id or .run_attempt != $attempt or .head_sha != $head or
-               (.workflow_name != $expected_name and .workflow_name != $expected_title) or
-               ((.check_run_url // "") | startswith($check_prefix) | not) or
-               (((.check_run_url // "") | ltrimstr($check_prefix)) | test("^[1-9][0-9]*$") | not)) then
-            error("incomplete or unbound attempt job pages")
-          else
-            [$jobs[] | select(.id == $job_id)] as $matches
-            | if ($matches | length) != 1 then error("attempt job identity is not unique") else $matches[0] end
-            | if .name != "Validation Gate" or .run_id != $run_id or .run_attempt != $attempt or
-                 .head_sha != $head or (.workflow_name != $expected_name and .workflow_name != $expected_title) or
-                 .check_run_url != $check_url or .html_url != $details_url or
-                 .status != $status or (.conclusion // "") != $conclusion or
-                 (.started_at // "") != $started_at or (.completed_at // "") != $completed_at or
-                 (.steps | type) != "array" then error("attempt gate identity differs") else . end
-          end
-      end
-    ' <<<"${jobs_json}")" || return 1
-  check_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/check-runs/${check_run_id}")" || return 1
-  jq -e --argjson job "${attempt_job}" --argjson id "${check_run_id}" \
-    --arg head "${HEAD_SHA}" --arg name "${REQUIRED_GATE_NAME}" \
-    --arg status "${check_status}" --arg conclusion "${conclusion}" \
-    --arg details_url "${details_url}" --arg started_at "${started_at}" --arg completed_at "${completed_at}" '
-    .id == $id and .app.id == 15368 and .app.slug == "github-actions" and
-    .head_sha == $head and .name == $name and .status == $status and
-    (.conclusion // "") == $conclusion and .details_url == $details_url and
-    (.started_at // "") == $started_at and (.completed_at // "") == $completed_at and
-    .details_url == $job.html_url and .name == $job.name and .status == $job.status and
-    (.conclusion // "") == ($job.conclusion // "")
-  ' <<<"${check_json}" >/dev/null || return 1
-  printf '%s' "${attempt_job}"
+  cache_key="${workflow_run_id}:${attempt}:${job_id}:${check_run_id}"
+  if [[ -n "${attempt_snapshot_cache[${cache_key}]:-}" ]]; then
+    attempt_recovered_job_json="$(jq -cer '.job' <<<"${attempt_snapshot_cache[${cache_key}]}")" || return 1
+    return 0
+  fi
+  if (( attempt_recovery_reads >= attempt_recovery_read_limit )); then
+    echo "Exact-attempt historical sparse-candidate recovery exhausted its ${attempt_recovery_read_limit}-snapshot budget; refusing to assess." >&2
+    return 3
+  fi
+  attempt_recovery_reads=$((attempt_recovery_reads + 1))
+  expected_branch="$(jq -er '.head_branch | select(type == "string" and length > 0)' <<<"${workflow_run_json}")" || return 1
+  expected_head_repository="$(jq -er '.head_repository.full_name | select(type == "string" and length > 0)' <<<"${workflow_run_json}")" || return 1
+  attempt_snapshot="$(bash "$(dirname "${BASH_SOURCE[0]}")/validate-exact-attempt-gate.sh" \
+    "${workflow_run_id}" "${attempt}" "${job_id}" "${check_run_id}" \
+    "${REQUIRED_GATE_NAME}" "${expected_workflow_id}" "${EXPECTED_WORKFLOW_NAME}" \
+    "${EXPECTED_WORKFLOW_PATH}" "${expected_display_title}" "${PR_NUMBER}" \
+    "${BASE_SHA}" "${HEAD_SHA}" "${expected_branch}" "${GITHUB_REPOSITORY}" \
+    "${expected_head_repository}" "${check_status}" "${conclusion}" \
+    "${details_url}" "${started_at}" "${completed_at}" false)" || return 1
+  attempt_snapshot_cache["${cache_key}"]="${attempt_snapshot}"
+  attempt_recovered_job_json="$(jq -cer '.job' <<<"${attempt_snapshot}")" || return 1
+  return 0
 }
 
 api_error_file="$(mktemp)"
@@ -139,6 +103,10 @@ trap 'rm -f "$api_error_file"' EXIT
 expected_workflow_id=""
 declare -A workflow_run_cache=()
 declare -A job_cache=()
+declare -A attempt_snapshot_cache=()
+attempt_recovery_reads=0
+attempt_recovery_read_limit=3
+attempt_recovered_job_json=''
 
 # Recognize only the observed pre-execution Validation cancellation shape. A
 # cancelled workflow may still contain genuine failures; its conclusion alone
@@ -511,8 +479,8 @@ while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_statu
           continue
         fi
         if [[ "${preserve_step_state}" == "absent" ]]; then
-          if recovered_job_json="$(recover_validation_job_from_attempt 2>>"${api_error_file}")"; then
-            job_json="${recovered_job_json}"
+          if recover_validation_job_from_attempt; then
+            job_json="${attempt_recovered_job_json}"
             job_cache["${job_id}"]="${job_json}"
             preserve_step_state="$(jq -r '
               if (.steps | type) != "array" or any(.steps[]; type != "object" or (.name | type) != "string") then "invalid"
@@ -540,6 +508,9 @@ while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_statu
               candidate_ambiguous=true
               continue
             }
+          else
+            recovery_status=$?
+            if [[ "${recovery_status}" -eq 3 ]]; then exit 1; fi
           fi
         fi
         ;;
