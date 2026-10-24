@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyReadGrpcCodec;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
@@ -20,6 +21,7 @@ public final class GameDesignPublishedRealmPolicyClient
     extends AbstractReloadingBlockingGrpcClient<
         PublishedRealmEntryPolicyServiceGrpc.PublishedRealmEntryPolicyServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final int MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final String workloadNamespace;
@@ -59,10 +61,14 @@ public final class GameDesignPublishedRealmPolicyClient
   protected PublishedRealmEntryPolicyServiceGrpc.PublishedRealmEntryPolicyServiceBlockingStub
       buildStub(ManagedChannel channel) {
     return PublishedRealmEntryPolicyServiceGrpc.newBlockingStub(channel)
+        .withCallCredentials(
+            new GrpcServerPeerIdentityCallCredentials(
+                "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service"))
         .withInterceptors(
             new GrpcServerPeerIdentityClientInterceptor(
                 "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service"))
-        .withCompression("gzip");
+        .withCompression("gzip")
+        .withMaxInboundMessageSize(MAX_RESPONSE_BYTES);
   }
 
   /** Reads and verifies the complete bounded owner set for an exact published tenant version. */
@@ -85,6 +91,9 @@ public final class GameDesignPublishedRealmPolicyClient
             .listPublishedRealmEntryPolicies(
                 PublishedRealmEntryPolicyReadGrpcCodec.toRequest(request));
     try {
+      if (response.getSerializedSize() > MAX_RESPONSE_BYTES) {
+        throw new IllegalArgumentException("Complete published policy response exceeds its bound");
+      }
       return PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
       throw new InvalidResponseException(

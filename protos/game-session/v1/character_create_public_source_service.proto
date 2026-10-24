@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "game-design/v1/authored_initial_actor_core_read.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Unregistered same-namespace workload reads with method-specific Account or Entity peers.
+// Selectors are comparison inputs, never Account, launch, protection or admission authority.
+service CharacterCreatePublicSourceService {
+  // Pre-scope discovery: canonical identities come only from actual Game Session owner rows.
+  rpc ResolveCharacterCreatePublicTarget(ResolveCharacterCreatePublicTargetRequest)
+      returns (ResolveCharacterCreatePublicTargetResponse);
+  rpc ReadCharacterCreatePublicSource(ReadCharacterCreatePublicSourceRequest)
+      returns (ReadCharacterCreatePublicSourceResponse);
+  // Entity-only published PLAYER_CREATED roster input; carries no Account-issued scope or clock.
+  rpc ReadPlayerCreatedRosterSource(ReadPlayerCreatedRosterSourceRequest)
+      returns (ReadPlayerCreatedRosterSourceResponse);
+}
+
+message ReadPlayerCreatedRosterSourceRequest {
+  uint32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string canonical_tenant_id = 4;
+  string realm_id = 5;
+  string world_slug = 6;
+  string realm_slug = 7;
+  string playable_state_namespace_id = 8;
+  string playable_state_scope = 9;
+  string canonical_game_instance_id = 10;
+  int64 catalog_revision = 11;
+  int64 pointer_version = 12;
+  string expected_canonical_version_id = 13;
+  int64 active_world_epoch = 14;
+}
+
+message ReadPlayerCreatedRosterSourceResponse {
+  uint32 schema_version = 1;
+  ReadPlayerCreatedRosterSourceRequest request = 2;
+  CharacterCreatePublicCatalog catalog = 3;
+  CharacterCreatePublicPointer pointer = 4;
+  string canonical_version_id = 5;
+  int64 active_lifecycle_epoch = 6;
+  string original_control_plane_request_id = 7;
+  string original_owner_attempt_id = 8;
+  int64 original_owner_fence = 9;
+  game_design.v1.ReadAuthoredInitialActorCoreResponse authored_source = 10;
+  bytes world_lifecycle_evidence = 11;
+  // Actual owner-sealed policy identities and digests, not authored-projection content digests.
+  bytes published_policy_set_evidence = 12;
+}
+
+message ResolveCharacterCreatePublicTargetRequest {
+  uint32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string world_slug = 4;
+  string realm_slug = 5;
+}
+
+message ResolveCharacterCreatePublicTargetResponse {
+  uint32 schema_version = 1;
+  ResolveCharacterCreatePublicTargetRequest request = 2;
+  CharacterCreatePublicCatalog catalog = 3;
+  CharacterCreatePublicPointer pointer = 4;
+  string canonical_game_instance_id = 5;
+  string canonical_version_id = 6;
+  int64 active_lifecycle_epoch = 7;
+}
+
+message ReadCharacterCreatePublicSourceRequest {
+  uint32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string canonical_tenant_id = 4;
+  string realm_id = 5;
+  string world_slug = 6;
+  string realm_slug = 7;
+  string playable_state_namespace_id = 8;
+  string playable_state_scope = 9;
+  string canonical_game_instance_id = 10;
+  int64 catalog_revision = 11;
+  int64 pointer_version = 12;
+  string evaluated_at = 13;
+  string connect_scope_expires_at = 14;
+}
+
+message CharacterCreatePublicCatalog {
+  string tenant_id = 1;
+  string tenant_slug = 2;
+  string world_slug = 3;
+  string world_display_name = 4;
+  string realm_id = 5;
+  string realm_slug = 6;
+  string realm_display_name = 7;
+  bool visible = 8;
+  bool public_production = 9;
+  string state_scope = 10;
+  string playable_state_namespace_id = 11;
+  string character_creation_policy = 12;
+  int64 catalog_revision = 13;
+  string creation_request_id = 14;
+  string receipt_digest = 15;
+}
+
+message CharacterCreatePublicPointer {
+  string tenant_id = 1;
+  string realm_id = 2;
+  string world_slug = 3;
+  string realm_slug = 4;
+  string admission_state = 5;
+  string admissible_game_instance_id = 6;
+  int64 pointer_version = 7;
+  int64 catalog_revision = 8;
+  string updated_at = 9;
+  string initial_admission_request_id = 10;
+  string initial_admission_owner_proof_digest = 11;
+  string admission_pointer_snapshot_digest = 12;
+}
+
+message ReadCharacterCreatePublicSourceResponse {
+  uint32 schema_version = 1;
+  ReadCharacterCreatePublicSourceRequest request = 2;
+  CharacterCreatePublicCatalog catalog = 3;
+  CharacterCreatePublicPointer pointer = 4;
+  string canonical_version_id = 5;
+  int64 active_lifecycle_epoch = 6;
+  string original_control_plane_request_id = 7;
+  string original_owner_attempt_id = 8;
+  int64 original_owner_fence = 9;
+  // Existing closed owner codec; request preserves the exact original association/launch selectors.
+  game_design.v1.ReadAuthoredInitialActorCoreResponse authored_source = 10;
+  // Existing WorldCanonicalInstanceLifecycleEvidence canonical bytes, including its exact request.
+  bytes world_lifecycle_evidence = 11;
+}
