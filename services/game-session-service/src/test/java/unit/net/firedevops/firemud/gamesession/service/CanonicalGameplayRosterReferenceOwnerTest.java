@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import io.grpc.Status;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -89,7 +90,14 @@ class CanonicalGameplayRosterReferenceOwnerTest {
           request, 1, UUID.randomUUID(), null);
   private final CanonicalGameplayRosterReferenceOwner owner =
       new CanonicalGameplayRosterReferenceOwner(
-          repository, transactions(), published, routes, admissions, recovery, created);
+          repository,
+          transactions(),
+          published,
+          routes,
+          admissions,
+          recovery,
+          new SimpleMeterRegistry(),
+          created);
 
   @BeforeEach
   void controlledSource() {
@@ -143,7 +151,13 @@ class CanonicalGameplayRosterReferenceOwnerTest {
   void missingCreatedCollaboratorFailsClosedWhileSixArgumentCompositionStillExists() {
     var preseededComposition =
         new CanonicalGameplayRosterReferenceOwner(
-            repository, transactions(), published, routes, admissions, recovery);
+            repository,
+            transactions(),
+            published,
+            routes,
+            admissions,
+            recovery,
+            new SimpleMeterRegistry());
     assertThatThrownBy(() -> preseededComposition.begin(request))
         .isInstanceOf(CanonicalPublishedPlayerRouteReadService.StorageUnavailableException.class);
     verify(repository, never()).begin(any());
