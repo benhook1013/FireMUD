@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.charactercreate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.BindableService;
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
@@ -377,12 +378,20 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
           }
 
           @Override
+          @SuppressFBWarnings(
+              value = "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT",
+              justification =
+                  "ManagedChannel.shutdown initiates shutdown; returning this preserves the wrapper's fluent identity.")
           public ManagedChannel shutdown() {
             transport.shutdown();
             return this;
           }
 
           @Override
+          @SuppressFBWarnings(
+              value = "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT",
+              justification =
+                  "ManagedChannel.shutdownNow initiates shutdown; returning this preserves the wrapper's fluent identity.")
           public ManagedChannel shutdownNow() {
             transport.shutdownNow();
             return this;
