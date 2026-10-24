@@ -93,13 +93,24 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
       throw new IllegalStateException(
           "Original roster owner transport requires no ambient transaction");
     }
-    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
-        request);
+    var checkedRequest =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
+            request);
     if (!workloadNamespace.equals(request.getTargetNamespace())) {
       throw new IllegalArgumentException("Original roster selection belongs to another namespace");
     }
     var current =
         requireInitializedStub("Game Session original roster owner client is not initialized");
+    if (net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.target(
+                checkedRequest)
+            .getEntryPolicy()
+        == net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+            .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED) {
+      current =
+          current.withMaxInboundMessageSize(
+              net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .MAX_PLAYER_CREATED_RESPONSE_BYTES);
+    }
     var response =
         current
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)

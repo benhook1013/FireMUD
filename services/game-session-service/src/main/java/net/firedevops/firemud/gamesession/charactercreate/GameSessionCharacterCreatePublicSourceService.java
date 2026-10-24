@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.charactercreate;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.time.Instant;
@@ -9,6 +10,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadGrpcCodec;
@@ -19,10 +21,17 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAsso
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.PlayerCreationDescriptor;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.ReadStartSessionTemplateAssociationRequest;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
@@ -176,6 +185,12 @@ public final class GameSessionCharacterCreatePublicSourceService {
   /** Exact current published PLAYER_CREATED input for Entity roster policy resolution only. */
   public ReadPlayerCreatedRosterSourceResponse readPlayerCreatedRosterSource(
       ReadPlayerCreatedRosterSourceRequest request) {
+    return resolvePlayerCreatedRosterSource(request).response();
+  }
+
+  /** Owner-constructed source view, available only after complete current-source revalidation. */
+  public ResolvedPlayerCreatedRosterSource resolvePlayerCreatedRosterSource(
+      ReadPlayerCreatedRosterSourceRequest request) {
     outsideSql();
     requireRosterRequest(request, namespace);
     var facts =
@@ -200,7 +215,92 @@ public final class GameSessionCharacterCreatePublicSourceService {
             .setPublishedPolicySetEvidence(ByteString.copyFrom(facts.policySet().canonicalBytes()))
             .build();
     if (response.getSerializedSize() > MAX_RESPONSE_BYTES) throw missing();
-    return response;
+    final PlayerCreationDescriptor descriptor;
+    final CanonicalPlayerCreatedRosterSourceIdentity sourceIdentity;
+    try {
+      descriptor = PlayerCreationDescriptor.parse(facts.projection().descriptor().canonicalJson());
+      sourceIdentity =
+          CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
+              CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
+                  .setSchemaVersion(1)
+                  .setDescriptorUuid(descriptor.descriptorId())
+                  .setDescriptorRevisionUuid(descriptor.descriptorRevisionId())
+                  .setDescriptorDigest(descriptor.digest())
+                  .setAuthoredBindingUuid(facts.projection().bindingId().toString())
+                  .setAuthoredBindingDigest(facts.projection().bindingDigest())
+                  .build());
+    } catch (IllegalArgumentException malformedSourceIdentity) {
+      throw missing();
+    }
+    var route = facts.route();
+    var target =
+        CanonicalGameplayRosterTarget.newBuilder()
+            .setTenantUuid(route.canonicalTenantId().toString())
+            .setRealmUuid(route.realmId().toString())
+            .setWorldSlug(route.worldSlug())
+            .setRealmSlug(route.realmSlug())
+            .setGameInstanceUuid(route.canonicalGameInstanceId().toString())
+            .setCanonicalVersionUuid(route.canonicalVersionId().toString())
+            .setPlayableStateNamespaceUuid(route.playableStateNamespaceId().toString())
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEntryPolicy(
+                CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED)
+            .setCatalogRevision(route.catalogRevision())
+            .setPointerVersion(route.pointerVersion())
+            .setActiveWorldEpoch(route.activeWorldEpoch())
+            .setPublishedPolicyDigest(rawSourceDigest(facts.selectedPolicy().policyDigest()))
+            .setPublishedReleaseBundleRef(facts.policySet().publishedReleaseBundleRef())
+            .setAdmissionPointerSnapshotDigest(
+                facts.pointer().snapshot().admissionPointerSnapshotDigest())
+            .setPublishedOwnerProofDigest(
+                rawSourceDigest(facts.pointer().snapshot().ownerProof().proofDigest()))
+            .build();
+    return new ResolvedPlayerCreatedRosterSource(response, route, target, sourceIdentity);
+  }
+
+  private static String rawSourceDigest(String value) {
+    if (value == null || !value.matches("sha256:[0-9a-f]{64}")) throw missing();
+    return value.substring(7);
+  }
+
+  /**
+   * Immutable source facts; no public factory can turn an arbitrary wire response into this view.
+   */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The route and protobuf source values are immutable")
+  public static final class ResolvedPlayerCreatedRosterSource {
+    private final ReadPlayerCreatedRosterSourceResponse response;
+    private final CanonicalPlayableTarget route;
+    private final CanonicalGameplayRosterTarget target;
+    private final CanonicalPlayerCreatedRosterSourceIdentity sourceIdentity;
+
+    private ResolvedPlayerCreatedRosterSource(
+        ReadPlayerCreatedRosterSourceResponse response,
+        CanonicalPlayableTarget route,
+        CanonicalGameplayRosterTarget target,
+        CanonicalPlayerCreatedRosterSourceIdentity sourceIdentity) {
+      this.response = response;
+      this.route = route;
+      this.target = target;
+      this.sourceIdentity = sourceIdentity;
+    }
+
+    public ReadPlayerCreatedRosterSourceResponse response() {
+      return response;
+    }
+
+    public CanonicalPlayableTarget route() {
+      return route;
+    }
+
+    public CanonicalGameplayRosterTarget target() {
+      return target;
+    }
+
+    public CanonicalPlayerCreatedRosterSourceIdentity sourceIdentity() {
+      return sourceIdentity;
+    }
   }
 
   private SourceFacts readSource(
@@ -248,7 +348,7 @@ public final class GameSessionCharacterCreatePublicSourceService {
         || !sourceRequest.associationRequest().equals(authored.request())
         || !launch.launchBindingEvidence().descriptor().equals(authored.descriptor()))
       throw missing();
-    requireProjection(before, catalog, retained, authored);
+    var projection = requireProjection(before, catalog, retained, authored);
     var descriptor = launch.launchBindingEvidence().descriptor();
     var lifecycleRequest =
         new WorldCanonicalInstanceLifecycleEvidence.Request(
@@ -278,8 +378,10 @@ public final class GameSessionCharacterCreatePublicSourceService {
         || lifecycle.lifecycleEpoch() != before.activeWorldEpoch()
         || !launch.launchBindingEvidence().equals(lifecycle.launchBinding())) throw missing();
 
-    var policySet =
-        includePublishedPolicies ? readPublishedPolicies(before, authored, lifecycle) : null;
+    var policies =
+        includePublishedPolicies
+            ? readPublishedPolicies(before, authored, lifecycle, projection)
+            : null;
 
     // Re-read every complete local source after all remote calls; never select a newer target.
     CanonicalPlayableTarget after = routes.readCurrentTarget(tenant);
@@ -297,7 +399,16 @@ public final class GameSessionCharacterCreatePublicSourceService {
     if (!Arrays.equals(confirmed.canonicalSourceResultBytes(), authored.canonicalBytes())
         || !confirmed.sourceResultDigest().equals(authored.digest())) throw missing();
     return new SourceFacts(
-        before, catalog, pointer, launch, retained, authored, lifecycle, policySet);
+        before,
+        catalog,
+        pointer,
+        launch,
+        retained,
+        authored,
+        lifecycle,
+        policies == null ? null : policies.set(),
+        projection,
+        policies == null ? null : policies.selected());
   }
 
   private record SourceFacts(
@@ -308,12 +419,18 @@ public final class GameSessionCharacterCreatePublicSourceService {
       Candidate retained,
       AuthoredInitialActorCoreReadEvidence.ReadResult authored,
       WorldCanonicalInstanceLifecycleEvidence lifecycle,
-      PublishedRealmEntryPolicySetEvidence policySet) {}
+      PublishedRealmEntryPolicySetEvidence policySet,
+      AuthoredInitialActorCoreProjection projection,
+      PublishedRealmEntryPolicyEvidence selectedPolicy) {}
 
-  private PublishedRealmEntryPolicySetEvidence readPublishedPolicies(
+  private record PublishedPolicies(
+      PublishedRealmEntryPolicySetEvidence set, PublishedRealmEntryPolicyEvidence selected) {}
+
+  private PublishedPolicies readPublishedPolicies(
       CanonicalPlayableTarget route,
       AuthoredInitialActorCoreReadEvidence.ReadResult authored,
-      WorldCanonicalInstanceLifecycleEvidence lifecycle) {
+      WorldCanonicalInstanceLifecycleEvidence lifecycle,
+      AuthoredInitialActorCoreProjection projection) {
     outsideSql();
     PublishedRealmEntryPolicySetEvidence set;
     try {
@@ -379,16 +496,6 @@ public final class GameSessionCharacterCreatePublicSourceService {
             worldRelease.worldStartLocationEvidence().canonicalBytes(),
             operation.world().canonicalBytes())
         || set.versionNumber() != bundle.getVersionNumber()) throw missing();
-    var projections =
-        authored.projections().stream()
-            .filter(
-                projection ->
-                    RealmEntryPolicy.parseCanonical(projection.policy().canonicalJson(), JSON)
-                        .realmSlug()
-                        .equals(route.realmSlug()))
-            .toList();
-    if (projections.size() != 1) throw missing();
-    var projection = projections.getFirst();
     var matches =
         set.policies().stream()
             .filter(
@@ -415,7 +522,7 @@ public final class GameSessionCharacterCreatePublicSourceService {
             .selectedCommit()
             .digest()
             .equals(projection.selectedCommitDigest())) throw missing();
-    return set;
+    return new PublishedPolicies(set, evidence);
   }
 
   static void requireRosterRequest(ReadPlayerCreatedRosterSourceRequest request, String namespace) {
@@ -607,7 +714,7 @@ public final class GameSessionCharacterCreatePublicSourceService {
       throw missing();
   }
 
-  private static void requireProjection(
+  private static AuthoredInitialActorCoreProjection requireProjection(
       CanonicalPlayableTarget route,
       CanonicalRealmCatalogSnapshot catalog,
       Candidate retained,
@@ -642,6 +749,7 @@ public final class GameSessionCharacterCreatePublicSourceService {
         || !projection.selectedCommitId().equals(retained.selectedCommitId())
         || !projection.publicationWorkflowId().equals(retained.publishWorkflowId()))
       throw missing();
+    return projection;
   }
 
   static void requireRequest(ReadCharacterCreatePublicSourceRequest request, String namespace) {

@@ -36,12 +36,16 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.PlayerCreationDescriptor;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
@@ -76,6 +80,108 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
   private static final UUID INSTANCE = UUID.randomUUID();
   private static final UUID PLAYABLE = UUID.randomUUID();
   private static final UUID VERSION = UUID.randomUUID();
+  private static final UUID DESCRIPTOR = UUID.randomUUID();
+  private static final UUID DESCRIPTOR_REVISION = UUID.randomUUID();
+  private static final UUID AUTHORED_BINDING = UUID.randomUUID();
+  private static final String DESCRIPTOR_JSON =
+      "{\"schemaVersion\":1,\"descriptorId\":\""
+          + DESCRIPTOR
+          + "\",\"descriptorRevisionId\":\""
+          + DESCRIPTOR_REVISION
+          + "\",\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]}";
+
+  @Test
+  void resolvedCreatedSourceBindsActualSelectedTargetDescriptorAndAuthoredIdentity() {
+    try (var fixture = new Fixture()) {
+      var resolved = fixture.service.resolvePlayerCreatedRosterSource(rosterRequest());
+      assertThat(resolved.route()).isSameAs(fixture.route);
+      var target = resolved.target();
+      assertThat(target.getTenantUuid()).isEqualTo(TENANT.toString());
+      assertThat(target.getRealmUuid()).isEqualTo(REALM.toString());
+      assertThat(target.getWorldSlug()).isEqualTo("world");
+      assertThat(target.getRealmSlug()).isEqualTo("realm");
+      assertThat(target.getGameInstanceUuid()).isEqualTo(INSTANCE.toString());
+      assertThat(target.getCanonicalVersionUuid()).isEqualTo(VERSION.toString());
+      assertThat(target.getPlayableStateNamespaceUuid()).isEqualTo(PLAYABLE.toString());
+      assertThat(target.getPlayableStateScope())
+          .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+      assertThat(target.getEntryPolicy())
+          .isEqualTo(
+              CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED);
+      assertThat(target.getCatalogRevision()).isEqualTo(1L);
+      assertThat(target.getPointerVersion()).isEqualTo(3L);
+      assertThat(target.getActiveWorldEpoch()).isEqualTo(7L);
+      assertThat(target.getPublishedPolicyDigest()).isEqualTo("c".repeat(64));
+      assertThat(target.getPublishedReleaseBundleRef()).isEqualTo("original-release");
+      assertThat(target.getAdmissionPointerSnapshotDigest()).isEqualTo("b".repeat(64));
+      assertThat(target.getPublishedOwnerProofDigest()).isEqualTo("a".repeat(64));
+      var identity = resolved.sourceIdentity();
+      assertThat(CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(identity))
+          .isSameAs(identity);
+      assertThat(identity.getSchemaVersion()).isEqualTo(1);
+      assertThat(identity.getDescriptorUuid()).isEqualTo(DESCRIPTOR.toString());
+      assertThat(identity.getDescriptorRevisionUuid()).isEqualTo(DESCRIPTOR_REVISION.toString());
+      assertThat(identity.getDescriptorDigest())
+          .isEqualTo(PlayerCreationDescriptor.parse(DESCRIPTOR_JSON).digest());
+      assertThat(identity.getAuthoredBindingUuid()).isEqualTo(AUTHORED_BINDING.toString());
+      assertThat(identity.getAuthoredBindingDigest()).isEqualTo("sha256:" + "d".repeat(64));
+      assertThat(resolved.response().getRequest()).isEqualTo(rosterRequest());
+      assertThat(resolved.response().getAuthoredSource().toByteArray())
+          .containsExactly(
+              AuthoredInitialActorCoreReadGrpcCodec.toResponse(fixture.authored).toByteArray());
+      assertThat(resolved.response().getPublishedPolicySetEvidence().toByteArray())
+          .containsExactly(fixture.policySet.canonicalBytes());
+      assertThat(fixture.service.readPlayerCreatedRosterSource(rosterRequest()))
+          .isEqualTo(resolved.response());
+      verify(fixture.gameDesign, org.mockito.Mockito.times(2)).read(any());
+      verify(fixture.world, org.mockito.Mockito.times(2)).read(any());
+      assertThat(
+              GameSessionCharacterCreatePublicSourceService.ResolvedPlayerCreatedRosterSource.class
+                  .getDeclaredConstructors())
+          .allSatisfy(
+              constructor ->
+                  assertThat(java.lang.reflect.Modifier.isPrivate(constructor.getModifiers()))
+                      .isTrue());
+    }
+  }
+
+  @Test
+  void resolvedCreatedSourceRejectsMalformedDescriptorBindingAndChangedAuthoredReadback() {
+    List<java.util.function.Consumer<Fixture>> malformedSourceIdentities =
+        List.of(
+            fixture -> when(fixture.projection.descriptor().canonicalJson()).thenReturn("{}"),
+            fixture -> when(fixture.projection.bindingDigest()).thenReturn("d".repeat(64)));
+    for (var invalidate : malformedSourceIdentities) {
+      try (var fixture = new Fixture()) {
+        invalidate.accept(fixture);
+        assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure -> {
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                  assertThat(Status.fromThrowable(failure).getDescription())
+                      .isEqualTo(
+                          "Exact original public CHARACTER_CREATE source is unavailable or changed");
+                });
+      }
+    }
+
+    List<java.util.function.Consumer<Fixture>> invalidations =
+        List.of(
+            fixture -> when(fixture.projection.bindingId()).thenReturn(new UUID(0L, 0L)),
+            fixture -> when(fixture.policyEvidence.policyDigest()).thenReturn("c".repeat(64)),
+            fixture -> when(fixture.authored.canonicalBytes()).thenReturn(new byte[] {9}),
+            fixture -> when(fixture.projection.canonicalTenantId()).thenReturn(UUID.randomUUID()),
+            fixture -> when(fixture.projection.canonicalVersionId()).thenReturn(UUID.randomUUID()));
+    for (var invalidate : invalidations) {
+      try (var fixture = new Fixture()) {
+        invalidate.accept(fixture);
+        assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
+            .isInstanceOf(RuntimeException.class);
+      }
+    }
+  }
 
   @Test
   void actualSourceCompositionClassifiesOutboundStatusesAsDependencyUnavailable() {
@@ -379,7 +485,7 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
                 when(fixture.routes.readCurrentTarget(TENANT)).thenReturn(changed);
                 return fixture.policySet;
               });
-      assertThatThrownBy(() -> fixture.service.readPlayerCreatedRosterSource(rosterRequest()))
+      assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
           .isInstanceOf(StatusRuntimeException.class);
       verify(fixture.gameDesign).read(any());
       verify(fixture.world).read(any());
@@ -1078,6 +1184,11 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         when(authored.digest()).thenReturn("source-result-digest");
         when(authored.descriptor()).thenReturn(launchDescriptor);
         when(projection.policy().canonicalJson()).thenReturn("controlled-policy");
+        when(projection.bindingId()).thenReturn(AUTHORED_BINDING);
+        when(projection.bindingDigest()).thenReturn("sha256:" + "d".repeat(64));
+        when(projection.descriptor().canonicalJson()).thenReturn(DESCRIPTOR_JSON);
+        when(projection.descriptor().digest())
+            .thenReturn(PlayerCreationDescriptor.parse(DESCRIPTOR_JSON).digest());
         when(projection.canonicalTenantId()).thenReturn(TENANT);
         when(projection.canonicalVersionId()).thenReturn(VERSION);
         when(projection.worldSourceOperationId()).thenReturn(sourceOperation);
@@ -1188,6 +1299,7 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         when(policySet.terminalEvidenceBytes()).thenReturn(new byte[] {7});
         when(policySet.policies()).thenReturn(List.of(policyEvidence));
         when(policyEvidence.policy()).thenReturn(policy);
+        when(policyEvidence.policyDigest()).thenReturn("sha256:" + "c".repeat(64));
         when(policyEvidence.requireValidDigest(policySet)).thenReturn(policyEvidence);
         when(policyEvidence.sourceCommitId()).thenReturn(commit);
         when(policyEvidence.sourceRevisionId()).thenReturn(policyRevision);

@@ -14,11 +14,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient.VerifiedRecovery;
@@ -26,6 +29,7 @@ import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAc
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationResponse;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
+import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.awaitility.Awaitility;
 import org.flywaydb.core.Flyway;
@@ -82,6 +86,11 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         .containsExactlyElementsOf(beforeObservation);
     assertThat(history().get(history().size() - 1))
         .contains("1017", "V1017__canonical_roster_retirement_observation.sql");
+    var beforeCreated = history();
+    migrate("1020");
+    assertThat(history().subList(0, beforeCreated.size())).containsExactlyElementsOf(beforeCreated);
+    assertThat(history()).hasSize(beforeCreated.size() + 1);
+    assertThat(history().getLast()).contains("1020", "V1020__player_created_roster_reference.sql");
     transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     repository =
         new CanonicalGameplayRosterReferenceRepository(
@@ -1961,6 +1970,658 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request.build());
   }
 
+  @Test
+  void createdEmptyMenuReplaysExactTypedReceiptWithoutInventingASelection() throws Exception {
+    repository = repository(policy(60000L, 60000L, 60000L));
+    var fixture = createdFixture(false);
+    var original = fixture.original();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.markRosterReadStarted(original);
+          repository.recordPlayerCreated(original, fixture.roster());
+          repository.completeSelection(
+              original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.MENU);
+        });
+    var recorded = repository.read(original);
+    var retained = createdRow(original);
+    assertThat(
+            CanonicalGameplayRosterReferenceEvidence.playerCreatedReceipt(recorded)
+                .getRoster()
+                .getActorsList())
+        .isEmpty();
+    assertThat(recorded.getSelectedCharacterUuid()).isEmpty();
+    assertThat(recorded.getCanonicalRosterReceipt()).isEmpty();
+    assertThat(
+            transaction.<GetCanonicalGameplayRosterReferenceResponse>execute(
+                ignored -> repository.replay(original)))
+        .isEqualTo(recorded);
+    assertThat(
+            transaction.<GetCanonicalGameplayRosterReferenceResponse>execute(
+                ignored -> repository.recordPlayerCreated(original, fixture.roster())))
+        .isEqualTo(recorded);
+    assertThat(createdRow(original)).isEqualTo(retained);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.selectOriginal(original, UUID.randomUUID())))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void createdOneActorAndCompleteSelectedTerminalReplayWithExactBytesAndPolicyIsolation()
+      throws Exception {
+    repository = repository(policy(60000L, 60000L, 60000L));
+    var fixture = createdFixture(true);
+    var original = fixture.original();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.markRosterReadStarted(original);
+          repository.recordPlayerCreated(original, fixture.roster());
+          repository.selectOriginal(
+              original, UUID.fromString(fixture.selected().getSelectedCharacterUuid()));
+          repository.recordSelectedPlayerCreatedCharacter(original, fixture.selected());
+          repository.completeSelection(
+              original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.SELECTED);
+        });
+    var selected = repository.read(original);
+    assertThat(
+            CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(
+                selected))
+        .isEqualTo(fixture.selected());
+    assertThat(selected.getCanonicalSelectedPlayerCreatedCharacterReceipt())
+        .isEqualTo(fixture.selected().toByteString());
+    assertThat(selected.getCanonicalSelectedAssignmentReceipt()).isEmpty();
+    var retained = createdRow(original);
+    transaction.executeWithoutResult(
+        ignored -> repository.recordSelectedPlayerCreatedCharacter(original, fixture.selected()));
+    assertThat(
+            transaction.<GetCanonicalGameplayRosterReferenceResponse>execute(
+                ignored -> repository.replay(original)))
+        .isEqualTo(selected);
+    assertThat(createdRow(original)).isEqualTo(retained);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.record(original, fixture.roster().getRoster())))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.recordSelectedAssignment(
+                            original,
+                            net.firedevops.firemud.entitymanagement.v1
+                                .CanonicalGameplayRosterSelectedAssignmentResponse
+                                .getDefaultInstance())))
+        .isInstanceOf(IllegalArgumentException.class);
+    var changed =
+        fixture.selected().toBuilder()
+            .setTerminal(
+                fixture.selected().getTerminal().toBuilder()
+                    .setTerminalId(UUID.randomUUID().toString()))
+            .build();
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored -> repository.recordSelectedPlayerCreatedCharacter(original, changed)))
+        .hasMessageContaining("CREATED_RECEIPT_CONFLICT");
+    assertThat(createdRow(original)).isEqualTo(retained);
+  }
+
+  @Test
+  void createdSourceIdentityOwnsItsFenceAndSqlRefusesMixedMutableAndIncompleteReceipts()
+      throws Exception {
+    repository = repository(policy(60000L, 60000L, 60000L));
+    var fixture = createdFixture(true);
+    var original = fixture.original();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.recordPlayerCreated(original, fixture.roster());
+        });
+    var initial = repository.read(original);
+    var alteredRoster =
+        fixture.roster().toBuilder()
+            .setRoster(
+                fixture.roster().getRoster().toBuilder()
+                    .setSnapshotUuid(UUID.randomUUID().toString()))
+            .build();
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.recordPlayerCreated(original, alteredRoster)))
+        .hasMessageContaining("RECEIPT_CONFLICT");
+    var source = CanonicalGameplayRosterReferenceEvidence.playerCreatedSourceIdentity(original);
+    var changedSource =
+        original.toBuilder()
+            .setCanonicalPlayerCreatedSourceIdentity(
+                source.toBuilder()
+                    .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+                    .build()
+                    .toByteString())
+            .build();
+    assertThatThrownBy(() -> transaction.execute(ignored -> repository.begin(changedSource)))
+        .hasMessageContaining("REQUEST_CONFLICT");
+    assertThat(
+            dsl.fetchSingle("SELECT count(*) FROM game_session_canonical_roster_target_fences")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    var otherOperation =
+        changedSource.toBuilder().setOperationUuid(UUID.randomUUID().toString()).build();
+    var other = transaction.execute(ignored -> repository.begin(otherOperation));
+    assertThat(other.getTargetFenceUuid()).isNotEqualTo(initial.getTargetFenceUuid());
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET entry_policy='PRESEEDED_ONLY' WHERE operation_uuid=?",
+                    UUID.fromString(original.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET canonical_roster_receipt=? WHERE operation_uuid=?",
+                    new byte[] {1},
+                    UUID.fromString(original.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET canonical_player_created_roster_receipt=? WHERE operation_uuid=?",
+                    alteredRoster.toByteArray(),
+                    UUID.fromString(original.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    transaction.execute(
+        ignored ->
+            repository.selectOriginal(
+                original, UUID.fromString(fixture.selected().getSelectedCharacterUuid())));
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.completeSelection(
+                            original,
+                            CanonicalGameplayRosterReferenceRepository.SelectionOutcome.SELECTED)))
+        .hasMessageContaining("RECOVERY_REQUIRED");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET terminal_outcome='SELECTED', terminal_at=clock_timestamp() WHERE operation_uuid=?",
+                    UUID.fromString(original.getOperationUuid())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> dsl.execute("TRUNCATE game_session_canonical_roster_selection CASCADE"))
+        .isInstanceOf(DataAccessException.class);
+    var definitions =
+        dsl.fetch(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='game_session_canonical_roster_selection'::regclass")
+            .getValues(0, String.class);
+    assertThat(definitions)
+        .anyMatch(value -> value.contains("202375168"))
+        .anyMatch(value -> value.contains("67584"))
+        .anyMatch(value -> value.contains("65536"))
+        .anyMatch(value -> value.contains("8192"));
+    assertThat(repository.read(original).getTerminalOutcome()).isEmpty();
+  }
+
+  @Test
+  void createdRecoveryClosesMissingSelectedReceiptAndRequiresEveryExactEntityAck()
+      throws Exception {
+    var fixture = createdFixture(true);
+    var original = fixture.original();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.markRosterReadStarted(original);
+          repository.recordPlayerCreated(original, fixture.roster());
+          repository.selectOriginal(
+              original, UUID.fromString(fixture.selected().getSelectedCharacterUuid()));
+        });
+    Thread.sleep(5L);
+    var recovery =
+        transaction
+            .execute(ignored -> repository.beginRecoveries(original, current(original)))
+            .getFirst();
+    var owner = repository.read(original);
+    var response =
+        CanonicalGameplayRosterRecoveryEvidence.playerCreatedResponse(
+            recovery,
+            UUID.randomUUID(),
+            owner.getOwnerFence(),
+            UUID.fromString(owner.getTargetFenceUuid()),
+            fixture.roster());
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    ignored ->
+                        repository.recordSelectedPlayerCreatedCharacter(
+                            original, fixture.selected())))
+        .hasMessageContaining("RECOVERY_FENCED");
+    transaction.executeWithoutResult(
+        ignored -> repository.finishRecovery(verifiedRecovery(recovery, response)));
+    var closed = repository.read(original);
+    assertThat(closed.getTerminalOutcome()).isEqualTo("DENIED");
+    assertThat(closed.getCanonicalSelectedPlayerCreatedCharacterReceipt()).isEmpty();
+    assertThat(closed.getCanonicalPlayerCreatedRosterReceipt())
+        .isEqualTo(fixture.roster().toByteString());
+    assertThat(closed.getSelectedCharacterUuid())
+        .isEqualTo(fixture.selected().getSelectedCharacterUuid());
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(original, current(original))))
+        .isTrue();
+    var proof = repository.read(original);
+    var candidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(proof.getTargetFenceUuid()), original, "RETIRED");
+    Thread.sleep(5L);
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isFalse();
+    var acknowledgement = createdAcknowledgement(original, proof, response.getAdmissionUuid());
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.acknowledgeRetirement(
+                            acknowledgement.toBuilder()
+                                .setAdmissionUuid(UUID.randomUUID().toString())
+                                .build(),
+                            createdPrincipal(original))))
+        .hasMessageContaining("ADMISSION_CONFLICT");
+    var ack =
+        transaction.execute(
+            ignored ->
+                repository.acknowledgeRetirement(acknowledgement, createdPrincipal(original)));
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+    assertThat(
+            transaction.<CanonicalGameplayRosterRetirementAcknowledgementResponse>execute(
+                ignored ->
+                    repository.acknowledgeRetirement(acknowledgement, createdPrincipal(original))))
+        .isEqualTo(ack);
+  }
+
+  @Test
+  void createdNoCaptureRecoveryRetainsPositiveClosureWithoutInventingEitherRosterReceipt()
+      throws Exception {
+    repository = repository(policy(500L, 500L, 500L));
+    var fixture = createdFixture(false);
+    var original = fixture.original();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.markRosterReadStarted(original);
+        });
+    Thread.sleep(550L);
+    var recovery =
+        transaction
+            .execute(ignored -> repository.beginRecoveries(original, current(original)))
+            .getFirst();
+    var owner = repository.read(original);
+    var response =
+        CanonicalGameplayRosterRecoveryEvidence.playerCreatedResponse(
+            recovery,
+            UUID.randomUUID(),
+            owner.getOwnerFence(),
+            UUID.fromString(owner.getTargetFenceUuid()),
+            null);
+    transaction.executeWithoutResult(
+        ignored -> repository.finishRecovery(verifiedRecovery(recovery, response)));
+    var closed = repository.read(original);
+    assertThat(closed.getTerminalOutcome()).isEqualTo("DENIED");
+    assertThat(closed.getRecoveryUuid()).isEqualTo(recovery.getRecoveryUuid());
+    assertThat(closed.getCanonicalRosterReceipt()).isEmpty();
+    assertThat(closed.getCanonicalPlayerCreatedRosterReceipt()).isEmpty();
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored -> repository.recordPlayerCreated(original, fixture.roster())))
+        .hasMessageContaining("RECOVERY_FENCED");
+    Thread.sleep(550L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(original, current(original))))
+        .isTrue();
+    var proof = repository.read(original);
+    var acknowledgement = createdAcknowledgement(original, proof, response.getAdmissionUuid());
+    assertThat(acknowledgement.getSnapshotUuid()).isEmpty();
+    transaction.execute(
+        ignored -> repository.acknowledgeRetirement(acknowledgement, createdPrincipal(original)));
+    Thread.sleep(550L);
+    var candidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(proof.getTargetFenceUuid()), original, "RETIRED");
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+  }
+
+  @Test
+  void completeCreatedSelectedRetirementFreezesInventoryEvenWithoutDispatchFlag() throws Exception {
+    var fixture = createdFixture(true);
+    var original = fixture.original();
+    transaction.executeWithoutResult(
+        ignored -> {
+          repository.begin(original);
+          repository.reserveSelectionInput(original, selectionInput());
+          repository.recordPlayerCreated(original, fixture.roster());
+          repository.selectOriginal(
+              original, UUID.fromString(fixture.selected().getSelectedCharacterUuid()));
+          repository.recordSelectedPlayerCreatedCharacter(original, fixture.selected());
+          repository.completeSelection(
+              original, CanonicalGameplayRosterReferenceRepository.SelectionOutcome.SELECTED);
+        });
+    Thread.sleep(5L);
+    assertThat(
+            transaction.<Boolean>execute(
+                ignored -> repository.sealTargetRetirement(original, current(original))))
+        .isTrue();
+    var proof = repository.read(original);
+    assertThat(proof.getCanonicalSelectedPlayerCreatedCharacterReceipt())
+        .isEqualTo(fixture.selected().toByteString());
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM game_session_canonical_roster_selection"))
+        .isInstanceOf(DataAccessException.class);
+    var request = createdAcknowledgement(original, proof, UUID.randomUUID().toString());
+    var ack =
+        transaction.execute(
+            ignored -> repository.acknowledgeRetirement(request, createdPrincipal(original)));
+    Thread.sleep(5L);
+    var candidate =
+        new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(proof.getTargetFenceUuid()), original, "RETIRED");
+    assertThat(transaction.<Boolean>execute(ignored -> repository.purgeRetiredTarget(candidate)))
+        .isTrue();
+    assertThat(
+            transaction.<CanonicalGameplayRosterRetirementAcknowledgementResponse>execute(
+                ignored -> repository.acknowledgeRetirement(request, createdPrincipal(original))))
+        .isEqualTo(ack);
+  }
+
+  @Test
+  void actual1017To1020UpgradePreservesPriorHistoryOriginalBytesAndXmin() throws Exception {
+    String previousSchema = "gs_created_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+    var previousSource =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    previousSource.setSchema(previousSchema);
+    var previous = DSL.using(previousSource, SQLDialect.POSTGRES);
+    try {
+      migrate(previousSource, previousSchema, "1017");
+      var original = request();
+      var roster = receipt(original);
+      var fence = UUID.randomUUID();
+      var binding =
+          original.toBuilder().clearOperationUuid().clearSessionUuid().build().toByteArray();
+      String digest =
+          java.util.HexFormat.of()
+              .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(binding));
+      // Controlled predecessor writer through all installed guards; no current owner RPC or Human
+      // admission.
+      previous.execute(
+          "INSERT INTO game_session_canonical_roster_target_fences(target_fence_uuid,target_binding_digest,target_binding,minimum_retention_millis,replay_horizon_millis) VALUES(?,?,?,60000,60000)",
+          fence,
+          digest,
+          binding);
+      previous.execute(
+          "INSERT INTO game_session_canonical_roster_selection(operation_uuid,original_request,target_fence_uuid) VALUES(?,?,?)",
+          UUID.fromString(original.getOperationUuid()),
+          original.toByteArray(),
+          fence);
+      previous.execute(
+          "UPDATE game_session_canonical_roster_selection SET canonical_roster_receipt=?,receipt_recorded_at=clock_timestamp() WHERE operation_uuid=?",
+          roster.toByteArray(),
+          UUID.fromString(original.getOperationUuid()));
+      var before =
+          previous.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
+      String retained =
+          previous
+              .fetchSingle(
+                  "SELECT encode(original_request,'hex') AS original_request_hex,encode(canonical_roster_receipt,'hex') AS roster_receipt_hex,recorded_at,receipt_recorded_at,xmin::text AS row_version FROM game_session_canonical_roster_selection")
+              .intoMap()
+              .toString();
+      var upgraded = migrate(previousSource, previousSchema, "1020");
+      assertThat(upgraded.getConfiguration().isOutOfOrder()).isFalse();
+      assertThat(upgraded.info().applied())
+          .allSatisfy(
+              info ->
+                  assertThat(info.getState())
+                      .isNotEqualTo(org.flywaydb.core.api.MigrationState.OUT_OF_ORDER));
+      var after =
+          previous.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
+      assertThat(after.subList(0, before.size())).containsExactlyElementsOf(before);
+      assertThat(after).hasSize(before.size() + 1);
+      assertThat(after.getLast().get("version")).isEqualTo("1020");
+      assertThat(
+              previous
+                  .fetchSingle(
+                      "SELECT encode(original_request,'hex') AS original_request_hex,encode(canonical_roster_receipt,'hex') AS roster_receipt_hex,recorded_at,receipt_recorded_at,xmin::text AS row_version FROM game_session_canonical_roster_selection")
+                  .intoMap()
+                  .toString())
+          .isEqualTo(retained);
+      var upgradedRow =
+          previous.fetchSingle(
+              "SELECT entry_policy,canonical_player_created_roster_receipt,canonical_selected_player_created_character_receipt FROM game_session_canonical_roster_selection");
+      assertThat(upgradedRow.get("entry_policy", String.class)).isEqualTo("PRESEEDED_ONLY");
+      assertThat(upgradedRow.get("canonical_player_created_roster_receipt", byte[].class)).isNull();
+      assertThat(
+              upgradedRow.get("canonical_selected_player_created_character_receipt", byte[].class))
+          .isNull();
+      var upgradedRepository =
+          new CanonicalGameplayRosterReferenceRepository(previous, policy(60000L, 60000L, 60000L));
+      assertThat(upgradedRepository.read(original).getCanonicalRosterReceipt())
+          .isEqualTo(roster.toByteString());
+    } finally {
+      previous.execute("DROP SCHEMA IF EXISTS " + previousSchema + " CASCADE");
+    }
+  }
+
+  private String createdRow(GetCanonicalGameplayRosterReferenceRequest original) {
+    return dsl.fetchSingle(
+            "SELECT row_to_json(s)::text, xmin::text FROM game_session_canonical_roster_selection s WHERE operation_uuid=?",
+            UUID.fromString(original.getOperationUuid()))
+        .intoMap()
+        .toString();
+  }
+
+  private static String createdPrincipal(GetCanonicalGameplayRosterReferenceRequest original) {
+    return "spiffe://firemud/ns/" + original.getTargetNamespace() + "/sa/entity-management-service";
+  }
+
+  private static CanonicalGameplayRosterRetirementAcknowledgementRequest createdAcknowledgement(
+      GetCanonicalGameplayRosterReferenceRequest original,
+      GetCanonicalGameplayRosterReferenceResponse proof,
+      String admission) {
+    var request =
+        CanonicalGameplayRosterRetirementAcknowledgementRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setObservedRetirement(proof)
+            .setObservationUuid(UUID.randomUUID().toString())
+            .setAdmissionUuid(admission)
+            .setMinimumRetentionMillis(1L);
+    if (!proof.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
+      var roster = CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(proof);
+      request
+          .setSnapshotUuid(roster.getSnapshotUuid())
+          .setSnapshotDigest(roster.getSnapshotDigest());
+    }
+    return request.build();
+  }
+
+  private record CreatedFixture(
+      GetCanonicalGameplayRosterReferenceRequest original,
+      CanonicalPlayerCreatedRosterResponse roster,
+      CanonicalSelectedPlayerCreatedCharacterResponse selected) {}
+
+  private static CreatedFixture createdFixture(boolean oneActor) throws Exception {
+    Path root = Path.of("").toAbsolutePath();
+    while (root != null && !java.nio.file.Files.exists(root.resolve("settings.gradle.kts")))
+      root = root.getParent();
+    if (root == null)
+      throw new IllegalStateException("Controlled CHARACTER_CREATE fixture unavailable");
+    byte[] bytes =
+        java.nio.file.Files.readString(
+                root.resolve(
+                    "services/account-service/src/testFixtures/resources/charactercreate/public-action.json"))
+            .strip()
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    var action =
+        net.firedevops.firemud.common.operator.CharacterCreateOperatorActionCodec.decode(bytes);
+    var authored = action.mutation().authoredSource();
+    var descriptor =
+        net.firedevops.firemud.common.publication.PlayerCreationDescriptor.parse(
+            authored.descriptor().canonicalJson());
+    var source =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setDescriptorUuid(descriptor.descriptorId())
+            .setDescriptorRevisionUuid(descriptor.descriptorRevisionId())
+            .setDescriptorDigest(descriptor.digest())
+            .setAuthoredBindingUuid(authored.bindingId())
+            .setAuthoredBindingDigest(authored.bindingDigest())
+            .build();
+    var target =
+        CanonicalGameplayRosterTarget.newBuilder()
+            .setTenantUuid(action.scope().tenantId())
+            .setRealmUuid(action.target().realmId())
+            .setWorldSlug(action.target().worldSlug())
+            .setRealmSlug(action.target().realmSlug())
+            .setGameInstanceUuid(action.target().gameInstanceId())
+            .setCanonicalVersionUuid(action.target().versionId())
+            .setPlayableStateNamespaceUuid(action.scope().playableStateNamespaceId())
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEntryPolicy(
+                CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED)
+            .setCatalogRevision(Long.parseLong(action.expectedVersion().catalogRevision()))
+            .setPointerVersion(Long.parseLong(action.expectedVersion().pointerVersion()))
+            .setActiveWorldEpoch(Long.parseLong(action.expectedVersion().activeLifecycleEpoch()))
+            .setPublishedPolicyDigest(authored.policy().contentDigest().substring(7))
+            .setPublishedReleaseBundleRef("controlled-created-release")
+            .setAdmissionPointerSnapshotDigest("b".repeat(64))
+            .setPublishedOwnerProofDigest("c".repeat(64))
+            .build();
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
+            UUID.randomUUID(),
+            UUID.fromString(action.target().accountId()),
+            UUID.randomUUID(),
+            action.scope().targetNamespace(),
+            target,
+            source);
+    String character = UUID.randomUUID().toString();
+    var actors =
+        oneActor
+            ? List.of(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor.newBuilder()
+                    .setCharacterUuid(character)
+                    .setDisplayName("Persisted fixture actor")
+                    .setActorKind(
+                        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
+                            .CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                    .build())
+            : List.<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor>of();
+    String snapshot = UUID.randomUUID().toString();
+    String snapshotDigest =
+        CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
+            original.getCanonicalAccountUuid(), target, source, actors);
+    var roster =
+        CanonicalPlayerCreatedRosterResponse.newBuilder()
+            .setSourceIdentity(source)
+            .setRoster(
+                CanonicalGameplayRosterResponse.newBuilder()
+                    .setCanonicalAccountUuid(original.getCanonicalAccountUuid())
+                    .setTarget(target)
+                    .setSnapshotUuid(snapshot)
+                    .setSnapshotDigest(snapshotDigest)
+                    .addAllActors(actors))
+            .build();
+    String creationOperation = UUID.randomUUID().toString();
+    String mutationDigest =
+        net.firedevops.firemud.common.operator.CharacterCreateOperatorActionCodec.mutationDigest(
+            action);
+    var creationRequest =
+        net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateRequest.newBuilder()
+            .setTargetNamespace(action.scope().targetNamespace())
+            .setOperationId(creationOperation)
+            .setMutationDigest(mutationDigest)
+            .build();
+    var account =
+        net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateResponse.newBuilder()
+            .setTargetNamespace(action.scope().targetNamespace())
+            .setOperationId(creationOperation)
+            .setMutationDigest(mutationDigest)
+            .setCreateCharacterRequestId(UUID.randomUUID().toString())
+            .setConnectScopeId("controlled-create-scope")
+            .setAuthenticatedAccountId(action.target().accountId())
+            .setPurpose("CHARACTER_CREATE")
+            .setOriginalAction(com.google.protobuf.ByteString.copyFrom(bytes))
+            .setOriginalSourceReadback(
+                com.google.protobuf.ByteString.copyFromUtf8("controlled-source-readback"))
+            .build();
+    var protection =
+        net.firedevops.firemud.entitymanagement.v1.CharacterCreateProtectionReference.newBuilder()
+            .setProtectionId(UUID.randomUUID().toString())
+            .setProtectionFence(1L)
+            .build();
+    var terminal =
+        net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateTerminal.newBuilder()
+            .setOriginalRequest(
+                net.firedevops.firemud.entitymanagement.v1.CommitProtectedCharacterCreateRequest
+                    .newBuilder()
+                    .setOriginal(creationRequest)
+                    .setAccountProtection(protection)
+                    .setGameSessionProtection(
+                        protection.toBuilder().setProtectionId(UUID.randomUUID().toString()))
+                    .setWorldProtection(
+                        protection.toBuilder().setProtectionId(UUID.randomUUID().toString())))
+            .setAccountOriginal(account)
+            .setOriginalAccountProtection(
+                com.google.protobuf.ByteString.copyFromUtf8("controlled-account-protection"))
+            .setOriginalGameSessionProtection(
+                com.google.protobuf.ByteString.copyFromUtf8("controlled-game-session-protection"))
+            .setOriginalWorldProtection(
+                com.google.protobuf.ByteString.copyFromUtf8("controlled-world-protection"))
+            .setEntityIntakeRequestId(UUID.randomUUID().toString())
+            .setOutcome(
+                net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateOutcome
+                    .ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
+            .setCharacterId(character)
+            .setTerminalId(UUID.randomUUID().toString())
+            .setTerminalFence(1L)
+            .setCompletedAt("2026-10-23T00:00:00Z")
+            .setEntitySourceReceiptDigest("sha256:" + "d".repeat(64))
+            .build();
+    var selected =
+        CanonicalSelectedPlayerCreatedCharacterResponse.newBuilder()
+            .setRequestUuid(original.getOperationUuid())
+            .setCanonicalAccountUuid(original.getCanonicalAccountUuid())
+            .setSelectedCharacterUuid(character)
+            .setTarget(target)
+            .setSourceIdentity(source)
+            .setSnapshot(
+                net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference
+                    .newBuilder()
+                    .setSnapshotUuid(snapshot)
+                    .setSnapshotDigest(snapshotDigest))
+            .setCreationOperationUuid(creationOperation)
+            .setMutationDigest(mutationDigest)
+            .setTerminal(terminal)
+            .build();
+    return new CreatedFixture(original, roster, selected);
+  }
+
   private CanonicalGameplayRosterReferenceRepository.TargetCandidate retireOriginal(
       GetCanonicalGameplayRosterReferenceRequest request) throws Exception {
     transaction.executeWithoutResult(
@@ -2123,23 +2784,30 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   private void migrate(String target) {
+    migrate(dataSource, schema, target);
+  }
+
+  private static Flyway migrate(
+      DriverManagerDataSource selectedSource, String selectedSchema, String target) {
     var configuration =
         Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
+            .dataSource(selectedSource)
+            .schemas(selectedSchema)
+            .defaultSchema(selectedSchema)
             .locations(
                 "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath(),
                 "filesystem:"
                     + Path.of("../common-saga/src/main/resources/db/migration/saga")
                         .toAbsolutePath())
-            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .placeholders(java.util.Map.of("serviceSchema", selectedSchema))
             .target(target);
     configuration
         .getPluginRegister()
         .getPlugin(PostgreSQLConfigurationExtension.class)
         .setTransactionalLock(false);
-    configuration.load().migrate();
+    var flyway = configuration.load();
+    flyway.migrate();
+    return flyway;
   }
 
   private static CanonicalGameplayRosterResponse receipt(

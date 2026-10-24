@@ -70,12 +70,16 @@ dependencies {
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
     testFixturesImplementation(project(":entity-management-service"))
+    testFixturesApi(testFixtures(project(":entity-management-service")))
     testFixturesImplementation(project(":game-logic-service"))
     testFixturesImplementation(project(":social-groups-service"))
     testFixturesImplementation(project(":world-management-service"))
     testFixturesImplementation(testFixtures(project(":common-test-support")))
+    testFixturesImplementation(testFixtures(project(":common-platform-core")))
     testFixturesImplementation(project(":common-security"))
     testFixturesImplementation(project(":common-data-runtime"))
+    testFixturesImplementation(libs.jooq)
+    testFixturesImplementation(libs.flyway.core)
     testFixturesImplementation(platform(libs.spring.boot.dependencies))
     testFixturesImplementation("com.fasterxml.jackson.core:jackson-databind")
     testFixturesImplementation(libs.spring.boot.starter.actuator)
@@ -110,6 +114,9 @@ tasks.named<BootRun>("bootRun") {
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 
 tasks.withType<Test>().configureEach {
+    inputs.file(
+        rootProject.file("services/account-service/src/testFixtures/resources/charactercreate/public-action.json"),
+    )
     jvmArgumentProviders.add(
         objects.newInstance<MigrationDriverTestClasspathArgumentProvider>().apply {
             testClasspath.from(classpath)

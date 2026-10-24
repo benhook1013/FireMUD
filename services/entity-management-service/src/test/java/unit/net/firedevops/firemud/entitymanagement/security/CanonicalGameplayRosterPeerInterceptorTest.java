@@ -123,6 +123,52 @@ class CanonicalGameplayRosterPeerInterceptorTest {
   }
 
   @Test
+  void bothCreatedRosterMethodsUseTheSameCertificateNamespaceAndEndUserGuard() {
+    var interceptor = new CanonicalGameplayRosterPeerInterceptor(WORKLOAD_NAMESPACE);
+    for (String method :
+        List.of(
+            CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+            CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME)) {
+      var trusted =
+          callFor(method, peerSession("spiffe://firemud/ns/gameplay/sa/game-session-service"));
+      ServerCallHandler<String, String> trustedNext = mock(ServerCallHandler.class);
+      when(trustedNext.startCall(any(), any()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer())
+                    .isNotNull();
+                return new ServerCall.Listener<>() {};
+              });
+      interceptor.interceptCall(trusted, new Metadata(), trustedNext);
+      verify(trustedNext).startCall(any(), any());
+
+      var foreign =
+          callFor(method, peerSession("spiffe://firemud/ns/other/sa/game-session-service"));
+      ServerCallHandler<String, String> foreignNext = mock(ServerCallHandler.class);
+      interceptor.interceptCall(foreign, new Metadata(), foreignNext);
+      verify(foreign)
+          .close(
+              org.mockito.ArgumentMatchers.argThat(
+                  status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+              any(Metadata.class));
+      verify(foreignNext, never()).startCall(any(), any());
+
+      SessionContext.setContext("player-claim", List.of(), java.util.Map.of());
+      var endUser =
+          callFor(method, peerSession("spiffe://firemud/ns/gameplay/sa/game-session-service"));
+      ServerCallHandler<String, String> endUserNext = mock(ServerCallHandler.class);
+      interceptor.interceptCall(endUser, new Metadata(), endUserNext);
+      verify(endUser)
+          .close(
+              org.mockito.ArgumentMatchers.argThat(
+                  status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+              any(Metadata.class));
+      verify(endUserNext, never()).startCall(any(), any());
+      SessionContext.clear();
+    }
+  }
+
+  @Test
   void recoveryMethodRequiresTheExactGameSessionCertificateAndNoEndUserContext() {
     var interceptor = new CanonicalGameplayRosterPeerInterceptor(WORKLOAD_NAMESPACE);
     for (SSLSession session :
@@ -177,6 +223,8 @@ class CanonicalGameplayRosterPeerInterceptorTest {
         .doesNotContain(
             CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
             CanonicalGameplayRosterPeerInterceptor.SELECTED_ASSIGNMENT_METHOD_NAME,
+            CanonicalGameplayRosterPeerInterceptor.PLAYER_CREATED_METHOD_NAME,
+            CanonicalGameplayRosterPeerInterceptor.SELECTED_PLAYER_CREATED_METHOD_NAME,
             CanonicalGameplayRosterPeerInterceptor.RECOVERY_METHOD_NAME);
     assertThat(publicMethods).noneMatch(method -> method.contains("*"));
   }
