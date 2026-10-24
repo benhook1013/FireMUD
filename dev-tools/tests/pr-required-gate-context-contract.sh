@@ -702,6 +702,150 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ "${GH_SCENARIO:-}" == attempt-fallback-* ]]; then
+  python3 - "${GH_SCENARIO}" "$@" <<'ATTEMPT_FALLBACK_FIXTURE'
+import json
+import os
+import sys
+
+scenario = sys.argv[1]
+args = sys.argv[2:]
+endpoint = next(argument for argument in args if argument.startswith("/repos/"))
+if os.environ.get("GH_CALL_COUNT_DIR"):
+    from pathlib import Path
+    Path(os.environ["GH_CALL_COUNT_DIR"]).mkdir(parents=True, exist_ok=True)
+    if "/actions/runs/" in endpoint and "/attempts/" in endpoint:
+        with (Path(os.environ["GH_CALL_COUNT_DIR"]) / "attempt-endpoints").open("a") as stream:
+            stream.write(endpoint + "\n")
+    if scenario == "attempt-fallback-recovery-limit" and "/actions/jobs/" in endpoint:
+        with (Path(os.environ["GH_CALL_COUNT_DIR"]) / "candidate-direct-jobs").open("a") as stream:
+            stream.write(endpoint + "\n")
+repo = "example/firemud"
+head = "a" * 40
+base = "b" * 40
+title = f"CI — Validation pr-123 base-{base} head-{head}"
+attempt = 2 if "attempt-two" in scenario else 1
+if scenario == "attempt-fallback-newer-failure":
+    ids = [100, 101]
+elif scenario == "attempt-fallback-recovery-limit":
+    ids = [100, 101, 102, 103]
+else:
+    ids = [100]
+rows = []
+for index, identity in enumerate(ids):
+    conclusion = "failure" if identity == 101 else "success"
+    start = f"2026-07-30T0{index + 1}:00:00Z"
+    finish = f"2026-07-30T0{index + 1}:30:00Z"
+    rows.append({"app": {"slug": "github-actions"}, "name": "Validation Gate", "id": identity,
+                 "details_url": f"https://github.com/{repo}/actions/runs/{identity}/job/{identity}",
+                 "status": "completed", "conclusion": conclusion, "completed_at": finish,
+                 "started_at": start, "created_at": start})
+if endpoint.endswith("/actions/workflows/ci.yml"):
+    result = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
+elif endpoint.endswith(f"/commits/{head}/check-runs"):
+    result = [{"total_count": len(rows), "check_runs": rows}]
+elif "/actions/runs/" in endpoint and endpoint.endswith(f"/attempts/{attempt}/jobs"):
+    call_number = 1
+    if os.environ.get("GH_CALL_COUNT_DIR"):
+        from pathlib import Path
+        Path(os.environ["GH_CALL_COUNT_DIR"]).mkdir(parents=True, exist_ok=True)
+        call_file = Path(os.environ["GH_CALL_COUNT_DIR"]) / f"attempt-jobs-{endpoint.split('/actions/runs/')[1].split('/')[0]}-{attempt}"
+        call_number = int(call_file.read_text()) + 1 if call_file.exists() else 1
+        call_file.write_text(str(call_number))
+    assert "per_page=100" in args and "--paginate" not in args and "--slurp" not in args, args
+    assert scenario != "attempt-fallback-known-skipped", "known preservation evidence must stay on the ordinary path"
+    identity = int(endpoint.split("/actions/runs/")[1].split("/")[0])
+    candidate = next(row for row in rows if row["id"] == identity)
+    index = ids.index(identity)
+    steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed",
+              "conclusion": "skipped" if scenario != "attempt-fallback-metadata" else "success"}]
+    job = {"id": identity, "run_id": identity,
+           "run_attempt": 1 if scenario == "attempt-fallback-attempt-two-mismatch" else attempt, "head_sha": head, "head_branch": "proof-branch",
+           "workflow_name": "CI — Validation", "name": "Validation Gate", "status": "completed",
+           "conclusion": candidate["conclusion"], "created_at": candidate["created_at"],
+           "started_at": candidate["started_at"], "completed_at": candidate["completed_at"],
+           "html_url": candidate["details_url"], "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{identity}",
+           "steps": steps}
+    if scenario == "attempt-fallback-empty":
+        job["steps"] = []
+    if scenario == "attempt-fallback-no-steps":
+        job.pop("steps")
+    if scenario == "attempt-fallback-wrong-check-url":
+        job["check_run_url"] = f"https://api.github.com/repos/{repo}/check-runs/999"
+    if scenario == "attempt-fallback-duplicate":
+        result = {"total_count": 2, "jobs": [job, dict(job)]}
+    elif scenario == "attempt-fallback-malformed":
+        result = {"total_count": "1", "jobs": [job]}
+    elif scenario == "attempt-fallback-oversized":
+        others = [{"id": 1000 + index, "run_id": identity, "run_attempt": 1, "head_sha": head, "head_branch": "proof-branch",
+                   "workflow_name": "CI — Validation", "name": f"Build and Test (module-{index:03d})",
+                   "status": "completed", "conclusion": "success",
+                   "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{1000 + index}"}
+                  for index in range(100)]
+        result = {"total_count": 101, "jobs": [job, *others]}
+    elif scenario == "attempt-fallback-incomplete":
+        result = {"total_count": 2, "jobs": [job]}
+    else:
+        if scenario == "attempt-fallback-wrong-attempt":
+            job["run_attempt"] = 2
+        if scenario == "attempt-fallback-wrong-head":
+            job["head_sha"] = "d" * 40
+        if scenario == "attempt-fallback-wrong-workflow":
+            job["workflow_name"] = "Security Checks"
+        result = {"total_count": 1, "jobs": [job]}
+elif "/actions/runs/" in endpoint and "/attempts/" in endpoint:
+    identity = int(endpoint.split("/actions/runs/")[1].split("/")[0])
+    if scenario == "attempt-fallback-attempt-two-api-error":
+        raise SystemExit(31)
+    result = {"id": identity, "workflow_id": 42,
+              "run_attempt": 1 if scenario == "attempt-fallback-attempt-two-mismatch" else attempt, "name": "CI — Validation",
+              "path": ".github/workflows/ci.yml", "head_sha": head, "head_branch": "proof-branch", "display_title": title,
+              "repository": {"full_name": repo}, "head_repository": {"full_name": repo}, "event": "pull_request",
+              "status": "completed",
+              "pull_requests": [{"number": 123, "base": {"sha": base}, "head": {"sha": head}}]}
+    if scenario == "attempt-fallback-stale-tuple":
+        result["display_title"] = result["display_title"].replace(base, "c" * 40)
+elif "/actions/runs/" in endpoint:
+    identity = int(endpoint.rsplit("/", 1)[1])
+    result = {"id": identity, "workflow_id": 42, "run_attempt": attempt, "name": "CI — Validation",
+              "path": ".github/workflows/ci.yml", "head_sha": head, "head_branch": "proof-branch", "display_title": title,
+              "repository": {"full_name": repo}, "head_repository": {"full_name": repo}, "event": "pull_request",
+              "pull_requests": [{"number": 123, "base": {"sha": base}, "head": {"sha": head}}]}
+elif "/actions/jobs/" in endpoint:
+    identity = int(endpoint.rsplit("/", 1)[1])
+    candidate = next(row for row in rows if row["id"] == identity)
+    result = {"id": identity, "run_id": identity, "run_attempt": attempt, "head_sha": head,
+              "workflow_name": "CI — Validation", "name": "Validation Gate", "status": "completed",
+              "conclusion": candidate["conclusion"], "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{identity}",
+              "steps": []}
+    if scenario == "attempt-fallback-known-skipped":
+        result["steps"] = [
+            {"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"},
+        ]
+    if scenario == "attempt-fallback-duplicate-direct":
+        result["steps"] = [
+            {"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"},
+            {"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "failure"},
+        ]
+    if scenario == "attempt-fallback-malformed-direct":
+        result["steps"] = "unavailable"
+elif "/check-runs/" in endpoint:
+    identity = int(endpoint.rsplit("/", 1)[1])
+    candidate = next(row for row in rows if row["id"] == identity)
+    result = {"id": identity, "app": {"id": 15368, "slug": "github-actions"}, "head_sha": head,
+              "name": "Validation Gate", "status": "completed", "conclusion": candidate["conclusion"],
+              "details_url": candidate["details_url"], "started_at": candidate["started_at"],
+              "completed_at": candidate["completed_at"]}
+    if scenario == "attempt-fallback-wrong-app":
+        result["app"]["id"] = 1
+    if scenario == "attempt-fallback-wrong-check-details":
+        result["details_url"] += "?changed=true"
+else:
+    raise AssertionError(endpoint)
+print(json.dumps(result))
+ATTEMPT_FALLBACK_FIXTURE
+  exit 0
+fi
 if [[ "${GH_SCENARIO:-}" == cancellation-* ]]; then
   python3 - "$GH_SCENARIO" "$@" <<'CANCELLATION_FIXTURE'
 import copy
@@ -1427,6 +1571,108 @@ run_action "$tmp_dir/$coverage_mode-complete-multi-count" none check-coverage-mu
   exit 1
 }
 
+attempt_fallback_output="$tmp_dir/attempt-fallback-success-output"
+if ! run_action "$tmp_dir/attempt-fallback-success-count" none attempt-fallback-success "" "$attempt_fallback_output" >"$tmp_dir/attempt-fallback-success-log" 2>&1; then
+  cat "$tmp_dir/attempt-fallback-success-log" >&2
+  echo "complete exact-attempt job snapshot did not recover the ordinary skipped preservation step" >&2
+  exit 1
+fi
+[[ "$(<"$attempt_fallback_output")" == assessment=success ]] || {
+  echo "complete exact-attempt job snapshot did not recover the ordinary skipped preservation step" >&2
+  exit 1
+}
+attempt_two_output="$tmp_dir/attempt-fallback-attempt-two-output"
+attempt_two_calls="$tmp_dir/attempt-fallback-attempt-two-calls"
+REQUIRED_GATE_INCLUDE_SOURCE=true run_action "$tmp_dir/attempt-fallback-attempt-two-count" none \
+  attempt-fallback-attempt-two "$attempt_two_calls" "$attempt_two_output"
+[[ "$(<"$attempt_two_output")" == $'source_run_id=100\nsource_job_id=100\nsource_check_run_id=100\nsource_run_attempt=2\nassessment=success' ]] || {
+  echo "successful exact-attempt recovery did not preserve attempt-2 source provenance" >&2
+  exit 1
+}
+python3 - "$attempt_two_calls/attempt-endpoints" <<'PY_ATTEMPT_TWO'
+from pathlib import Path
+import sys
+endpoints = Path(sys.argv[1]).read_text().splitlines()
+assert any(path.endswith("/actions/runs/100/attempts/2") for path in endpoints), endpoints
+assert not any("/attempts/1" in path for path in endpoints), endpoints
+PY_ATTEMPT_TWO
+for scenario in attempt-fallback-attempt-two-mismatch attempt-fallback-attempt-two-api-error; do
+  output_file="$tmp_dir/$scenario-output"
+  call_dir="$tmp_dir/$scenario-calls"
+  if run_action "$tmp_dir/$scenario-count" none "$scenario" "$call_dir" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
+    echo "unbound exact-attempt source was accepted: $scenario" >&2; exit 1
+  fi
+  [[ ! -s "$output_file" ]] || { echo "invalid exact-attempt source emitted proof: $scenario" >&2; exit 1; }
+  if [[ "$scenario" == *api-error ]]; then
+    grep -Fq 'GitHub API error while reading exact-attempt workflow run.' "$tmp_dir/$scenario-log" || {
+      echo "exact-attempt API failure lost its distinct diagnostic" >&2; exit 1;
+    }
+  else
+    grep -Fq 'Malformed or unbound exact-attempt evidence:' "$tmp_dir/$scenario-log" || {
+      echo "mismatched attempt identity lost its evidence diagnostic" >&2; exit 1;
+    }
+  fi
+  ! grep -Fq 'test-token' "$tmp_dir/$scenario-log" || {
+    echo "exact-attempt diagnostic exposed credentials" >&2; exit 1;
+  }
+  python3 - "$call_dir/attempt-endpoints" <<'PY_ATTEMPT_FAILURE'
+from pathlib import Path
+import sys
+endpoints = Path(sys.argv[1]).read_text().splitlines()
+assert len(endpoints) == 1 and endpoints[0].endswith("/actions/runs/100/attempts/2"), endpoints
+PY_ATTEMPT_FAILURE
+done
+attempt_recovery_limit_calls="$tmp_dir/attempt-fallback-recovery-limit-calls"
+if run_action "$tmp_dir/attempt-fallback-recovery-limit-count" none attempt-fallback-recovery-limit \
+  "$attempt_recovery_limit_calls" "$tmp_dir/attempt-fallback-recovery-limit-output" \
+  >"$tmp_dir/attempt-fallback-recovery-limit-log" 2>&1; then
+  echo "historical sparse-candidate recovery exceeded its fixed budget" >&2; exit 1
+fi
+[[ ! -s "$tmp_dir/attempt-fallback-recovery-limit-output" ]] || {
+  echo "recovery-budget exhaustion emitted proof" >&2; exit 1;
+}
+grep -Fq 'exhausted its 3-snapshot budget' "$tmp_dir/attempt-fallback-recovery-limit-log" || {
+  echo "historical sparse-candidate exhaustion lost its explicit fail-closed diagnostic" >&2; exit 1;
+}
+python3 - "$attempt_recovery_limit_calls" <<'PY_RECOVERY_LIMIT'
+from pathlib import Path
+import sys
+calls = list(Path(sys.argv[1]).glob("attempt-jobs-*"))
+assert len(calls) == 3, calls
+assert all(path.read_text() == "1" for path in calls), calls
+candidate_jobs = Path(sys.argv[1], "candidate-direct-jobs").read_text().splitlines()
+assert [path.rsplit("/", 1)[1] for path in candidate_jobs] == ["100", "101", "102", "103"], candidate_jobs
+PY_RECOVERY_LIMIT
+attempt_fallback_known_output="$tmp_dir/attempt-fallback-known-skipped-output"
+run_action "$tmp_dir/attempt-fallback-known-skipped-count" none attempt-fallback-known-skipped "" "$attempt_fallback_known_output"
+[[ "$(<"$attempt_fallback_known_output")" == assessment=success ]] || {
+  echo "known skipped preservation with sparse unrelated step metadata lost the ordinary assessment path" >&2
+  exit 1
+}
+attempt_fallback_metadata_output="$tmp_dir/attempt-fallback-metadata-output"
+run_action "$tmp_dir/attempt-fallback-metadata-count" none attempt-fallback-metadata "" "$attempt_fallback_metadata_output"
+[[ "$(<"$attempt_fallback_metadata_output")" == assessment=dependency-deferred ]] || {
+  echo "complete exact-attempt metadata preservation was treated as substantive proof" >&2
+  exit 1
+}
+attempt_fallback_failure_output="$tmp_dir/attempt-fallback-newer-failure-output"
+if run_action "$tmp_dir/attempt-fallback-newer-failure-count" none attempt-fallback-newer-failure "" "$attempt_fallback_failure_output" >"$tmp_dir/attempt-fallback-newer-failure-log" 2>&1; then
+  echo "complete exact-attempt fallback allowed newer substantive failure over older success" >&2
+  exit 1
+fi
+[[ ! -s "$attempt_fallback_failure_output" ]] || {
+  echo "newer exact-attempt failure emitted successful proof" >&2
+  exit 1
+}
+for scenario in attempt-fallback-empty attempt-fallback-no-steps attempt-fallback-duplicate attempt-fallback-malformed attempt-fallback-oversized attempt-fallback-incomplete attempt-fallback-stale-tuple attempt-fallback-wrong-attempt attempt-fallback-wrong-head attempt-fallback-wrong-workflow attempt-fallback-wrong-app attempt-fallback-wrong-check-url attempt-fallback-wrong-check-details attempt-fallback-duplicate-direct attempt-fallback-malformed-direct; do
+  output_file="$tmp_dir/$scenario-output"
+  if run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
+    echo "exact-attempt fallback accepted missing or unbound gate evidence: $scenario" >&2
+    exit 1
+  fi
+  [[ ! -s "$output_file" ]] || { echo "invalid exact-attempt fallback emitted proof: $scenario" >&2; exit 1; }
+done
+
 # API uncertainty is an error, never dependency deferral or a retry.
 for failure_mode in transient network rate-limit permanent permission; do
   count_file="$tmp_dir/failure-$failure_mode"
@@ -1583,6 +1829,7 @@ repository = "other-owner/firemud" if scenario in {"fork-empty", "bridge-fork"} 
 # The existing fork predecessor fixture is run 200. Keep its resolver target
 # distinct so the shared selector correctly excludes only the target itself.
 target_id = 300 if scenario == "fork-empty" else 200
+metadata_attempt = 2 if scenario in {"bridge-cross-attempt-two", "bridge-cross-metadata-attempt-mismatch"} else 1
 admission_scenario = scenario.startswith("admission-") or scenario == "partial-admission" or scenario.startswith("window-")
 if scenario == "admission-distinct" and state.get("posts", 0):
     target_id = 201
@@ -1628,13 +1875,14 @@ def rich_history_case(scenario, barrier, page):
     raise AssertionError(case)
 
 
-def run(run_id):
+def run(run_id, attempt=None):
     return {"id": run_id, "workflow_id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml",
             "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
             "display_title": title.replace(base, "c" * 40) if scenario.startswith("bridge-cross-") and run_id == 200 else title, "head_sha": head, "head_branch": "proof-branch",
             "repository": {"full_name": "example/firemud"}, "head_repository": {"full_name": repository},
             "event": "pull_request", "status": "completed", "conclusion": "cancelled" if scenario == "publisher-cancelled" and run_id == target_id else "failure" if run_id in {target_id, 200, 201} else "success",
-            "run_attempt": state.get("attempt", 1), "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
+            "run_attempt": state.get("attempt", 1) if attempt is None else attempt,
+            "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
 
 def resolver_run(run_id):
     source = source_id if run_id == current_id else 100
@@ -1685,7 +1933,7 @@ elif scenario.startswith("bridge-") and (endpoint.endswith(f"/commits/{head}/sta
     state["status_reads"] = state.get("status_reads", 0) + 1
     barrier = {"id": 500, "url": f"https://api.github.com/repos/example/firemud/statuses/{head}",
                "created_at": "2026-10-15T00:00:00Z", "context": "Validation Gate", "state": state.get("barrier_state", "pending"),
-               "target_url": "https://github.com/example/firemud/actions/runs/200/attempts/1",
+               "target_url": f"https://github.com/example/firemud/actions/runs/200/attempts/{metadata_attempt}",
                "creator": {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}}
     if scenario in {"bridge-foreign", "bridge-cross-foreign"}:
         barrier["creator"]["id"] = 99
@@ -1714,33 +1962,64 @@ elif scenario.startswith("bridge-") and (endpoint.endswith(f"/commits/{head}/sta
                 exit_status = 1
         if scenario == "bridge-incomplete-status":
             result = combined # Wrong endpoint shape must never qualify.
-elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/runs/{identity}/attempts/1") for identity in (99, 100, 101)):
+elif (scenario.startswith("bridge-") and "/attempts/" in endpoint and not endpoint.endswith("/jobs") and
+      endpoint.split("/actions/runs/")[1].split("/")[0] in {"99", "100", "101"}):
     identity = int(endpoint.split("/")[-3])
-    result = run(identity)
+    attempt = int(endpoint.rsplit("/", 1)[1])
+    result = run(identity, attempt)
     result["conclusion"] = "success"
     if scenario == "bridge-cross-source-wrong-title":
         result["display_title"] = title.replace(base, "c" * 40)
+elif (scenario.startswith("bridge-") and "/actions/runs/" in endpoint and
+      "/attempts/" in endpoint and endpoint.endswith("/jobs") and
+      endpoint.split("/actions/runs/")[1].split("/")[0] in {"99", "100", "101"}):
+    identity = int(endpoint.split("/actions/runs/")[1].split("/")[0])
+    attempt = int(endpoint.split("/attempts/")[1].split("/", 1)[0])
+    row_attempt = 1 if scenario == "bridge-cross-source-attempt-mismatch" else attempt
+    job = {"id": identity, "run_id": identity, "run_attempt": row_attempt, "head_sha": head,
+           "head_branch": "proof-branch", "workflow_name": "CI — Validation", "name": "Validation Gate",
+           "status": "completed", "conclusion": "success",
+           "html_url": f"https://github.com/example/firemud/actions/runs/{identity}/job/{identity}",
+           "check_run_url": f"https://api.github.com/repos/example/firemud/check-runs/{identity}",
+           "started_at": "2026-07-30T01:00:00Z", "completed_at": "2026-07-30T01:30:00Z",
+           "steps": [{"name": "Preserve successful required gate on metadata-only edit",
+                      "status": "completed", "conclusion": "skipped"}]}
+    if scenario == "bridge-cross-source-metadata":
+        job["steps"][0]["conclusion"] = "success"
+    if scenario == "bridge-cross-source-attempt-changed":
+        reads = state.get("selected_attempt_jobs_reads", 0) + 1
+        state["selected_attempt_jobs_reads"] = reads
+        if reads > 1:
+            job["steps"][0]["conclusion"] = "success"
+    result = {"total_count": 1, "jobs": [job]}
 elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/jobs/{identity}") for identity in (99, 100, 101)):
     identity = int(endpoint.rsplit("/", 1)[1])
-    result = {"id": identity, "run_id": identity, "run_attempt": 1, "head_sha": head, "name": "Validation Gate",
+    result = {"id": identity, "run_id": identity, "run_attempt": 2 if scenario in {"bridge-cross-attempt-two", "bridge-cross-source-attempt-mismatch"} else 1, "head_sha": head, "name": "Validation Gate",
               "status": "completed", "conclusion": "success",
               "check_run_url": f"https://api.github.com/repos/example/firemud/check-runs/{identity}",
               "steps": [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"}]}
     if scenario == "bridge-cross-source-metadata":
         result["steps"][0]["conclusion"] = "success"
+    if scenario in {"bridge-cross-attempt-two", "bridge-cross-source-attempt-mismatch", "bridge-cross-source-attempt-changed"}:
+        result["steps"] = []
+    if scenario == "bridge-cross-source-null-steps":
+        result["steps"] = None
 elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/check-runs/{identity}") for identity in (99, 100, 101)):
     identity = int(endpoint.rsplit("/", 1)[1])
     state["selected_check_reads"] = state.get("selected_check_reads", 0) + 1
     result = {"id": identity, "head_sha": head, "name": "Validation Gate", "status": "completed", "conclusion": "success",
+              "details_url": f"https://github.com/example/firemud/actions/runs/{identity}/job/{identity}",
+              "started_at": "2026-07-30T01:00:00Z", "completed_at": "2026-07-30T01:30:00Z",
               "app": {"id": 99 if scenario == "bridge-cross-source-wrong-app" else 15368, "slug": "github-actions"}}
     if scenario == "bridge-cross-source-changed" and state["selected_check_reads"] > 1:
         result["conclusion"] = "failure"
 elif scenario == "bridge-retry" and endpoint.endswith("/actions/runs/101"):
     result = run(101)
-elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/attempts/1/jobs"):
-    job = {"id": 2000, "run_id": 200, "head_sha": head, "name": "Validation Gate", "status": "completed",
+elif scenario.startswith("bridge-") and endpoint.endswith(f"/actions/runs/200/attempts/{metadata_attempt}/jobs"):
+    job = {"id": 2000 + metadata_attempt - 1, "run_id": 200, "run_attempt": 1 if scenario == "bridge-cross-metadata-attempt-mismatch" else metadata_attempt,
+           "head_sha": head, "workflow_name": "CI — Validation", "name": "Validation Gate", "status": "completed",
            "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
-           "check_run_url": "https://api.github.com/repos/example/firemud/check-runs/3000",
+           "check_run_url": f"https://api.github.com/repos/example/firemud/check-runs/{3000 + metadata_attempt - 1}",
            "steps": [{"name": name, "status": "completed", "conclusion": "success"} for name in
                      ("Preserve successful required gate on metadata-only edit", "Publish pending required gate status")]}
     if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
@@ -1755,14 +2034,17 @@ elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/att
     if scenario == "bridge-no-producer":
         job["steps"].pop()
     result = [{"total_count": 2 if scenario == "bridge-incomplete-jobs" else 1, "jobs": [job]}]
-elif scenario.startswith("bridge-") and endpoint.endswith("/check-runs/3000"):
-    result = {"id": 3000, "head_sha": head, "name": "Validation Gate", "status": "completed",
+elif scenario.startswith("bridge-") and endpoint.endswith(f"/check-runs/{3000 + metadata_attempt - 1}"):
+    result = {"id": 3000 + metadata_attempt - 1, "head_sha": head, "name": "Validation Gate", "status": "completed",
               "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
               "app": {"id": 99 if scenario in {"bridge-wrong-app", "bridge-running-wrong-app"} else 15368, "slug": "github-actions"}}
     if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
         result.update(status="in_progress", conclusion=None)
-elif scenario.startswith("bridge-") and (endpoint.endswith("/actions/runs/200") or endpoint.endswith("/actions/runs/200/attempts/1")):
-    result = run(200)
+elif scenario.startswith("bridge-") and (endpoint.endswith("/actions/runs/200") or endpoint.endswith(f"/actions/runs/200/attempts/{metadata_attempt}")):
+    requested_attempt = metadata_attempt if "/attempts/" in endpoint else 1
+    result = run(200, requested_attempt)
+    if scenario == "bridge-cross-metadata-attempt-mismatch" and "/attempts/" in endpoint:
+        result["run_attempt"] = 1
     result["conclusion"] = "cancelled" if scenario == "bridge-cancelled" else "success"
     if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
         result.update(status="in_progress", conclusion=None)
@@ -2058,7 +2340,8 @@ run_resolver() {
     GITHUB_EVENT_NAME=workflow_run GITHUB_EVENT_PATH="$event_file" GITHUB_RUN_ID="$resolver_id" \
     GITHUB_OUTPUT="$tmp_dir/resolver-output-$scenario" \
     GITHUB_REPOSITORY=example/firemud GH_TOKEN=test-token \
-    GH_RETRY_COUNT_FILE="$tmp_dir/resolver-proof-count-$scenario" GH_SCENARIO="$original_scenario" \
+    GH_RETRY_COUNT_FILE="$tmp_dir/resolver-proof-count-$scenario" \
+    GH_CALL_COUNT_DIR="$tmp_dir/resolver-proof-calls-$scenario" GH_SCENARIO="$original_scenario" \
     GH_FAILURE_MODE=none bash "$RESOLVER" "$phase" >"$tmp_dir/resolver-log-$scenario" 2>&1 || result_status=$?
   if [[ "$phase" == admit ]]; then
     python3 - "$tmp_dir/resolver-state-$scenario" "$tmp_dir/resolver-output-$scenario" "$resolver_id" "$result_status" <<'PY'
@@ -2162,7 +2445,7 @@ if expected:
 assert not state.get("posts"), "bridge entered legacy rerun admission"
 PY_BRIDGE
 done
-for scenario in bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
+for scenario in bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-cross-metadata-attempt-mismatch bridge-write-denied; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
   if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
     echo "unproved bridge settlement succeeded: $scenario" >&2; exit 1
@@ -2205,12 +2488,13 @@ PY_HISTORY
 done
 
 # Same-head base advancement uses historical ownership and CURRENT proof.
-for scenario in bridge-cross-success bridge-cross-running bridge-cross-earlier-attempt bridge-cross-no-proof bridge-cross-failure bridge-cross-foreign bridge-cross-replaced bridge-cross-obsolete bridge-cross-cancelled-selection; do
+for scenario in bridge-cross-success bridge-cross-attempt-two bridge-cross-source-null-steps bridge-cross-running bridge-cross-earlier-attempt bridge-cross-no-proof bridge-cross-failure bridge-cross-foreign bridge-cross-replaced bridge-cross-obsolete bridge-cross-cancelled-selection; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
   original=no-local-workflow-file
   [[ "$scenario" != bridge-cross-no-proof ]] || original=no-prior
   [[ "$scenario" != bridge-cross-failure ]] || original=failed-predecessor
   [[ "$scenario" != bridge-cross-cancelled-selection ]] || original=completed-cancelled-missing-step
+  [[ "$scenario" != bridge-cross-attempt-two ]] || original=attempt-fallback-attempt-two
   if ! run_resolver "$scenario" 100 "$original" reconcile; then
     cat "$tmp_dir/resolver-log-$scenario" >&2; exit 1
   fi
@@ -2225,20 +2509,43 @@ import json
 from pathlib import Path
 import sys
 state = json.loads(Path(sys.argv[1]).read_text())
-expected = "success" if sys.argv[2] in {"bridge-cross-success", "bridge-cross-running", "bridge-cross-earlier-attempt", "bridge-cross-cancelled-selection"} else "failure" if sys.argv[2] == "bridge-cross-failure" else None
+expected = "success" if sys.argv[2] in {"bridge-cross-success", "bridge-cross-attempt-two", "bridge-cross-source-null-steps", "bridge-cross-running", "bridge-cross-earlier-attempt", "bridge-cross-cancelled-selection"} else "failure" if sys.argv[2] == "bridge-cross-failure" else None
 posts = state.get("status_posts", [])
 assert len(posts) == (1 if expected else 0), state
 if expected:
     assert posts[0]["state"] == expected, state
-    assert posts[0]["target_url"].endswith("/200/attempts/1"), state
+    if sys.argv[2] == "bridge-cross-attempt-two":
+        assert posts[0]["target_url"].endswith("/200/attempts/2"), state
+        calls = state["calls"]
+        for path in ("/actions/runs/100/attempts/2/jobs", "/actions/runs/200/attempts/2",
+                     "/actions/runs/200/attempts/2/jobs"):
+            assert any(path in call for call in calls), (path, calls)
+        assert sum("/actions/runs/100/attempts/2/jobs" in call for call in calls) == 2, state
+        assert sum("/actions/runs/200/attempts/2/jobs" in call for call in calls) == 2, state
+    elif sys.argv[2] == "bridge-cross-success":
+        assert posts[0]["target_url"].endswith("/200/attempts/1"), state
+        assert not any("/actions/runs/100/attempts/1/jobs" in call for call in state["calls"]), state
+    elif sys.argv[2] == "bridge-cross-source-null-steps":
+        assert posts[0]["target_url"].endswith("/200/attempts/1"), state
+        assert sum("/actions/runs/100/attempts/1/jobs" in call for call in state["calls"]) == 2, state
+        assert sum("/actions/runs/200/attempts/1/jobs" in call for call in state["calls"]) == 2, state
+    else:
+        assert posts[0]["target_url"].endswith("/200/attempts/1"), state
 PY_RECOVERY
 done
-for scenario in bridge-cross-source-wrong-app bridge-cross-source-wrong-title bridge-cross-source-metadata bridge-cross-source-changed; do
+for scenario in bridge-cross-source-wrong-app bridge-cross-source-wrong-title bridge-cross-source-metadata bridge-cross-source-changed bridge-cross-source-attempt-mismatch bridge-cross-source-attempt-changed; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
-  if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+  original=no-local-workflow-file
+  [[ "$scenario" != bridge-cross-source-attempt-mismatch ]] || original=attempt-fallback-attempt-two
+  if run_resolver "$scenario" 100 "$original" reconcile; then
     echo "invalid independent current-base source accepted: $scenario" >&2; exit 1
   fi
   [[ "$(jq '.status_posts // [] | length' "$tmp_dir/resolver-state-$scenario")" == 0 ]] || exit 1
+  if [[ "$scenario" == bridge-cross-source-attempt-changed ]]; then
+    [[ "$(jq '.selected_attempt_jobs_reads // 0' "$tmp_dir/resolver-state-$scenario")" == 2 ]] || {
+      echo "selected sparse source was not independently revalidated before publication" >&2; exit 1;
+    }
+  fi
 done
 printf '{"scenario":"bridge-retry"}\n' >"$tmp_dir/resolver-state-bridge-retry"
 run_resolver bridge-retry 100 failed-predecessor reconcile
