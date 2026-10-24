@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.BindableService;
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.ManagedChannel;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -17,9 +21,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
@@ -28,6 +35,7 @@ import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreat
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterRetentionPolicy;
 import net.firedevops.firemud.entitymanagement.testing.ControlledPlayerCreatedRosterSourceFixture;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateOutcome;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient;
@@ -35,6 +43,8 @@ import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterRefe
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayRosterOwnerReadGrpcAdapter;
 import net.firedevops.firemud.gamesession.testing.ControlledPlayerCreatedOriginalOwnerFixture;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.CharacterCreatePublicSourceServiceGrpc;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -55,13 +65,21 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * Real owner stores and authenticated transports with explicitly controlled upstream authority.
  * This does not establish genuine Account ingress, production PKI, registration or player
- * admission.
+ * admission, nor the production five-second RPC latency budget.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class PlayerCreatedRosterOwnerCompositionIntegrationTest {
   private static final String NAMESPACE = "test";
   private static final Duration RETENTION = Duration.ofSeconds(20);
+  private static final long COUPLED_OWNER_TEST_RPC_SECONDS = 30L;
+  private static final Set<String> COUPLED_OWNER_TEST_RPCS =
+      Set.of(
+          CanonicalGameplayRosterServiceGrpc.SERVICE_NAME + "/ListPlayerCreatedRoster",
+          CanonicalGameplayRosterServiceGrpc.SERVICE_NAME + "/ReadSelectedPlayerCreatedCharacter",
+          CharacterCreatePublicSourceServiceGrpc.SERVICE_NAME + "/ReadPlayerCreatedRosterSource",
+          CanonicalGameplayRosterOwnerReadServiceGrpc.SERVICE_NAME
+              + "/GetCanonicalGameplayRosterReference");
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -213,12 +231,12 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
         var sourceClient =
             own(
                 new EntityPlayerCreatedRosterSourceClient(
-                    endpoints, entityTls, new GrpcChannelFactory(), NAMESPACE));
+                    endpoints, entityTls, coupledOwnerTestChannels(), NAMESPACE));
         sourceClient.init();
         var originalClient =
             own(
                 new GameSessionCanonicalGameplayRosterOwnerReadClient(
-                    endpoints, entityTls, new GrpcChannelFactory(), NAMESPACE));
+                    endpoints, entityTls, coupledOwnerTestChannels(), NAMESPACE));
         originalClient.init();
         var migration =
             Flyway.configure()
@@ -255,7 +273,7 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
         roster =
             own(
                 new CanonicalPlayerCreatedRosterClient(
-                    endpoints, gsTls, new GrpcChannelFactory(), NAMESPACE, gs.referenceOwner()));
+                    endpoints, gsTls, coupledOwnerTestChannels(), NAMESPACE, gs.referenceOwner()));
         roster.init();
       } catch (Exception failure) {
         try {
@@ -329,6 +347,64 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
       admin.execute("DROP SCHEMA IF EXISTS \"" + entityData.getSchema() + "\" CASCADE");
       if (failure != null) throw failure;
     }
+  }
+
+  /**
+   * Keep real network, TLS and peer validation while allowing cold physical owner composition a
+   * bounded test-only budget. There are no retries; all other RPC call options remain unchanged.
+   */
+  private static GrpcChannelFactory coupledOwnerTestChannels() {
+    return new GrpcChannelFactory() {
+      @Override
+      public ManagedChannel buildChannel(
+          String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+          throws SSLException {
+        var transport = super.buildChannel(target, defaultPort, properties, keepAlive);
+        return new ManagedChannel() {
+          @Override
+          public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+              MethodDescriptor<ReqT, RespT> method, CallOptions options) {
+            var testOptions =
+                COUPLED_OWNER_TEST_RPCS.contains(method.getFullMethodName())
+                    ? options.withDeadlineAfter(COUPLED_OWNER_TEST_RPC_SECONDS, TimeUnit.SECONDS)
+                    : options;
+            return transport.newCall(method, testOptions);
+          }
+
+          @Override
+          public String authority() {
+            return transport.authority();
+          }
+
+          @Override
+          public ManagedChannel shutdown() {
+            transport.shutdown();
+            return this;
+          }
+
+          @Override
+          public ManagedChannel shutdownNow() {
+            transport.shutdownNow();
+            return this;
+          }
+
+          @Override
+          public boolean isShutdown() {
+            return transport.isShutdown();
+          }
+
+          @Override
+          public boolean isTerminated() {
+            return transport.isTerminated();
+          }
+
+          @Override
+          public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+            return transport.awaitTermination(timeout, unit);
+          }
+        };
+      }
+    };
   }
 
   private static DriverManagerDataSource dataSource(String schema) {
