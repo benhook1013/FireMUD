@@ -1031,12 +1031,23 @@ class TelnetSessionDriverTest(unittest.TestCase):
             session.connect()
             session.send_command("SAY \u00ff")
             session.send_command(f"LOGIN demo@example.com {secret}")
-            wait_for(
+            records = wait_for(
                 session.store,
                 lambda rows: any(
-                    row.get("text") == "LOGIN demo@example.com [REDACTED]"
+                    row.get("direction") == "inbound"
+                    and row.get("event") == "received"
+                    and row.get("text") == "LOGIN demo@example.com [REDACTED]\r\n"
                     for row in rows
                 ),
+            )
+            self.assertTrue(
+                any(
+                    row.get("direction") == "outbound"
+                    and row.get("event") == "command"
+                    and row.get("text") == "LOGIN demo@example.com [REDACTED]"
+                    for row in records
+                ),
+                "the local command marker must not satisfy the inbound echo wait",
             )
             session.close("iac_escape_complete")
             server.close_and_check()

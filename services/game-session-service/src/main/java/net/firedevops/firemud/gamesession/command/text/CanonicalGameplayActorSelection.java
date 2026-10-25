@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient.VerifiedPlayerCreatedRoster;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
 
 /**
@@ -54,13 +55,53 @@ public final class CanonicalGameplayActorSelection {
     if (roster == null) {
       return new Denied(Denial.INVALID_SNAPSHOT);
     }
-    List<CanonicalGameplayRosterClient.RosterActor> actors = roster.snapshot().actors();
+    var snapshot = roster.snapshot();
+    return select(
+        roster.canonicalAccountUuid(),
+        snapshot.snapshotUuid(),
+        snapshot.snapshotDigest(),
+        snapshot.target(),
+        snapshot.actors(),
+        selector,
+        Denial.NO_PRESEEDED_ACTOR);
+  }
+
+  /** Reuses ordinal selection only for the created client's private-constructed verified menu. */
+  public static SelectionResult select(VerifiedPlayerCreatedRoster roster, String selector) {
+    if (roster == null) {
+      return new Denied(Denial.INVALID_SNAPSHOT);
+    }
+    var actors =
+        roster.actors().stream()
+            .map(
+                actor ->
+                    new CanonicalGameplayRosterClient.RosterActor(
+                        UUID.fromString(actor.getCharacterUuid()), actor.getDisplayName()))
+            .toList();
+    return select(
+        roster.canonicalAccountUuid(),
+        roster.snapshotUuid(),
+        roster.snapshotDigest(),
+        roster.target(),
+        actors,
+        selector,
+        Denial.NO_PLAYER_CREATED_ACTOR);
+  }
+
+  private static SelectionResult select(
+      UUID account,
+      UUID snapshot,
+      String digest,
+      CanonicalGameplayRosterTarget target,
+      List<CanonicalGameplayRosterClient.RosterActor> actors,
+      String selector,
+      Denial empty) {
     if (actors.isEmpty()) {
-      return new Denied(Denial.NO_PRESEEDED_ACTOR);
+      return new Denied(empty);
     }
     if (selector == null || selector.isBlank()) {
       if (actors.size() == 1) {
-        return selected(roster, 1, actors.getFirst());
+        return selected(account, snapshot, digest, target, 1, actors.getFirst());
       }
       return new SelectionRequired(
           actors.stream()
@@ -79,20 +120,18 @@ public final class CanonicalGameplayActorSelection {
     if (ordinal > actors.size()) {
       return new Denied(Denial.SELECTOR_OUT_OF_RANGE);
     }
-    return selected(roster, ordinal, actors.get(ordinal - 1));
+    return selected(account, snapshot, digest, target, ordinal, actors.get(ordinal - 1));
   }
 
   private static Selected selected(
-      ValidatedRoster roster, int ordinal, CanonicalGameplayRosterClient.RosterActor actor) {
-    CanonicalGameplayRosterClient.PreseededRosterSnapshot snapshot = roster.snapshot();
+      UUID account,
+      UUID snapshot,
+      String digest,
+      CanonicalGameplayRosterTarget target,
+      int ordinal,
+      CanonicalGameplayRosterClient.RosterActor actor) {
     return new Selected(
-        roster.canonicalAccountUuid(),
-        snapshot.snapshotUuid(),
-        snapshot.snapshotDigest(),
-        snapshot.target(),
-        actor.characterUuid(),
-        actor.displayName(),
-        ordinal);
+        account, snapshot, digest, target, actor.characterUuid(), actor.displayName(), ordinal);
   }
 
   private static boolean isCanonicalDigest(String value) {
@@ -213,6 +252,7 @@ public final class CanonicalGameplayActorSelection {
   public enum Denial {
     INVALID_SNAPSHOT,
     NO_PRESEEDED_ACTOR,
+    NO_PLAYER_CREATED_ACTOR,
     INVALID_SELECTOR,
     SELECTOR_OUT_OF_RANGE
   }

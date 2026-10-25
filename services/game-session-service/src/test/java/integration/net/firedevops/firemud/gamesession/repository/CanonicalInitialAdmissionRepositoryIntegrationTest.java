@@ -116,6 +116,24 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             fixture.initialAdmissionRepository,
             fixture.launchRepository);
     var current = routes.readCurrentTarget(TENANT);
+    var sourcePointer =
+        fixture.initialAdmissionRepository.readCurrentOpenSourceForRealm(
+            NAMESPACE, TENANT, current.realmId());
+    assertThat(sourcePointer.updatedAt())
+        .isEqualTo(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT updated_at FROM gameplay_admission_pointer WHERE target_namespace=? AND canonical_tenant_id=? AND realm_id=?",
+                    NAMESPACE,
+                    TENANT,
+                    current.realmId())
+                .get(0, java.time.LocalDateTime.class)
+                .toInstant(java.time.ZoneOffset.UTC));
+    assertThat(sourcePointer.canonicalGameInstanceId())
+        .isEqualTo(current.canonicalGameInstanceId());
+    assertThat(sourcePointer.snapshot().admissionPointerSnapshotDigest())
+        .isEqualTo(current.admissionPointerSnapshotDigest());
     assertThat(current.pointerVersion()).isEqualTo(2L);
     var target =
         net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
@@ -2718,6 +2736,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     reservePre1006Attempt(fixture, predecessor.launch(), admission);
     seedPre1006ExpectedClosedTerminal(fixture, prepared, predecessor.launch(), admission, origin);
     migration(fixture, "1017").migrate();
+    migration(fixture, "1020").migrate();
     migration(fixture, null).migrate();
     return new RetainedV2Admission(fixture, prepared, origin);
   }

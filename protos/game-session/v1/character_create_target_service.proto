@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "account/v1/character_create_source_service.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Unregistered exact-purpose owner boundary. Account acquires; Entity independently reads
+// the retained original. Neither response supplies World lifecycle or Account authority.
+service CharacterCreateTargetService {
+  rpc AcquireCharacterCreateTargetProtection(AcquireCharacterCreateTargetProtectionRequest)
+      returns (CharacterCreateTargetProtection);
+  rpc ReadOriginalCharacterCreateTargetProtection(ReadOriginalCharacterCreateTargetProtectionRequest)
+      returns (CharacterCreateTargetProtection);
+}
+
+message AcquireCharacterCreateTargetProtectionRequest {
+  account.v1.ReadOriginalCharacterCreateProtectionRequest account_protection = 1;
+}
+
+message ReadOriginalCharacterCreateTargetProtectionRequest {
+  account.v1.ReadOriginalCharacterCreateProtectionRequest account_protection = 1;
+  string game_session_protection_id = 2;
+  int64 game_session_protection_fence = 3;
+}
+
+message CharacterCreateTargetProtection {
+  account.v1.ReadOriginalCharacterCreateProtectionResponse account_protection = 1;
+  string game_session_protection_id = 2;
+  int64 game_session_protection_fence = 3;
+  string acquired_at = 4;
+  bytes original_target_evidence = 5;
+}
+
+// Exact GS-owned snapshot retained when the target protection commits. The action is the
+// unchanged CHARACTER_CREATE/1 preimage; these owner fields identify its independently read
+// catalog, current pointer and launch binding. This is not World lifecycle protection.
+message CharacterCreateTargetSnapshot {
+  uint32 schema_version = 1;
+  bytes original_action = 2;
+  string target_namespace = 3;
+  string operation_id = 4;
+  string mutation_digest = 5;
+  string canonical_tenant_id = 6;
+  string realm_id = 7;
+  string canonical_game_instance_id = 8;
+  string canonical_version_id = 9;
+  string playable_state_namespace_id = 10;
+  int64 catalog_revision = 11;
+  int64 pointer_version = 12;
+  int64 active_world_epoch = 13;
+  string catalog_receipt_digest = 14;
+  string initial_admission_request_id = 15;
+  string initial_admission_owner_proof_digest = 16;
+  string admission_pointer_snapshot_digest = 17;
+}

@@ -45,6 +45,7 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalConflictException;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalUnavailableException;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -93,6 +94,7 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
 
   @BeforeAll
   static void controlledSigningKey() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
     var generator = KeyPairGenerator.getInstance("RSA");
     generator.initialize(3072);
     keys = generator.generateKeyPair();
