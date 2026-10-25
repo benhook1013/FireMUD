@@ -2,9 +2,13 @@
 """Regenerate Java 21 Adoptium daemon URLs with Gradle's native generator."""
 
 import argparse
+import hashlib
 import json
+import os
 import re
+import stat
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -16,7 +20,14 @@ LATEST_METADATA_URL = "https://api.adoptium.net/v3/assets/latest/21/hotspot"
 FEATURE_RELEASES_URL = "https://api.adoptium.net/v3/assets/feature_releases/21/ga"
 MAX_METADATA_BYTES = 8 * 1024 * 1024
 MAX_FEATURE_RELEASES = 100
+MAX_FEATURE_RELEASE_PAGES = 10
 ADOPTIUM_RELEASE_PREFIX = "/adoptium/temurin21-binaries/releases/download/"
+RESOURCE_SESSION_ENV = (
+    "FIREMUD_LOCAL_RESOURCE_SESSION_FD",
+    "FIREMUD_LOCAL_RESOURCE_SESSION_PID",
+    "FIREMUD_LOCAL_RESOURCE_SESSION_START",
+    "FIREMUD_LOCAL_RESOURCE_SESSION_OWNER",
+)
 PLATFORMS = {
     (os, arch): f"{gradle_os}.{gradle_arch}"
     for os, gradle_os in [("linux", "LINUX"), ("mac", "MAC_OS"), ("windows", "WINDOWS")]
@@ -191,49 +202,62 @@ def read_metadata(response):
 
 
 def fetch_release_metadata(release):
-    """Fetch one exact GA release for each supported platform with bounded responses."""
+    """Fetch one exact GA release per platform within bounded pagination."""
     metadata = []
     for os_name, architecture in PLATFORMS:
-        params = {
-            "architecture": architecture,
-            "heap_size": "normal",
-            "image_type": "jdk",
-            "jvm_impl": "hotspot",
-            "os": os_name,
-            "page_size": "100",
-            "vendor": "eclipse",
-        }
-        request = urllib.request.Request(
-            f"{FEATURE_RELEASES_URL}?{urlencode(params)}",
-            headers={"User-Agent": "FireMUD-dependency-maintenance/1.0", "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            entries = read_metadata(response)
-        if not isinstance(entries, list):
-            raise TypeError("Adoptium feature-release metadata must be an array")
-        if len(entries) > MAX_FEATURE_RELEASES:
-            raise ValueError("Adoptium feature-release metadata exceeds the bounded page size")
-        if any(not isinstance(entry, dict) for entry in entries):
-            raise TypeError("Malformed Adoptium feature-release metadata")
-        matches = [entry for entry in entries if entry.get("release_name") == release]
-        if len(matches) != 1:
-            raise ValueError(f"Expected one official Adoptium release for {os_name}/{architecture}")
-        entry = matches[0]
-        binaries = entry.get("binaries")
-        if not isinstance(binaries, list) or any(not isinstance(binary, dict) for binary in binaries):
-            raise TypeError("Malformed Adoptium feature-release binaries")
-        platform_binaries = [
-            binary for binary in binaries
-            if binary.get("os") == os_name and binary.get("architecture") == architecture
-        ]
-        if len(platform_binaries) != 1:
-            raise ValueError(f"Expected one Adoptium JDK binary for {os_name}/{architecture}")
-        metadata.append({
-            "vendor": entry.get("vendor"),
-            "release_name": entry.get("release_name"),
-            "version_data": entry.get("version_data"),
-            "binaries": platform_binaries,
-        })
+        selected = None
+        for page in range(MAX_FEATURE_RELEASE_PAGES):
+            params = {
+                "architecture": architecture,
+                "heap_size": "normal",
+                "image_type": "jdk",
+                "jvm_impl": "hotspot",
+                "os": os_name,
+                "page": str(page),
+                "page_size": str(MAX_FEATURE_RELEASES),
+                "vendor": "eclipse",
+            }
+            request = urllib.request.Request(
+                f"{FEATURE_RELEASES_URL}?{urlencode(params)}",
+                headers={"User-Agent": "FireMUD-dependency-maintenance/1.0", "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                entries = read_metadata(response)
+            if not isinstance(entries, list):
+                raise TypeError("Adoptium feature-release metadata must be an array")
+            if len(entries) > MAX_FEATURE_RELEASES:
+                raise ValueError("Adoptium feature-release metadata exceeds the bounded page size")
+            if any(not isinstance(entry, dict) for entry in entries):
+                raise TypeError("Malformed Adoptium feature-release metadata")
+            matches = [entry for entry in entries if entry.get("release_name") == release]
+            if len(matches) > 1:
+                raise ValueError(f"Duplicate Adoptium release metadata for {os_name}/{architecture}")
+            if matches:
+                entry = matches[0]
+                binaries = entry.get("binaries")
+                if not isinstance(binaries, list) or any(not isinstance(binary, dict) for binary in binaries):
+                    raise TypeError("Malformed Adoptium feature-release binaries")
+                platform_binaries = [
+                    binary for binary in binaries
+                    if binary.get("os") == os_name and binary.get("architecture") == architecture
+                ]
+                if len(platform_binaries) != 1:
+                    raise ValueError(f"Expected one Adoptium JDK binary for {os_name}/{architecture}")
+                selected = {
+                    "vendor": entry.get("vendor"),
+                    "release_name": entry.get("release_name"),
+                    "version_data": entry.get("version_data"),
+                    "binaries": platform_binaries,
+                }
+                break
+            if len(entries) < MAX_FEATURE_RELEASES:
+                break
+        if selected is None:
+            raise ValueError(
+                f"Expected one official Adoptium release for {os_name}/{architecture} "
+                f"within {MAX_FEATURE_RELEASE_PAGES} pages"
+            )
+        metadata.append(selected)
     return metadata
 
 
@@ -255,9 +279,53 @@ def select_refresh_downloads(check_only=False):
 
 
 def outside_artifact_state():
+    tracked_changes = subprocess.check_output(
+        ["git", "diff", "HEAD", "--", ".", f":(exclude){ARTIFACT}"], cwd=ROOT
+    )
+    untracked_paths = subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=ROOT
+    )
+    untracked_state = []
+    for encoded_path in untracked_paths.split(b"\0"):
+        if not encoded_path:
+            continue
+        path = ROOT / os.fsdecode(encoded_path)
+        before = path.lstat()
+        mode = stat.S_IMODE(before.st_mode)
+        identity = (before.st_dev, before.st_ino, before.st_mode, before.st_size,
+                    before.st_mtime_ns, before.st_ctime_ns)
+        if stat.S_ISREG(before.st_mode):
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            digest = hashlib.sha256()
+            with os.fdopen(descriptor, "rb") as source:
+                opened = os.fstat(source.fileno())
+                opened_identity = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size,
+                                   opened.st_mtime_ns, opened.st_ctime_ns)
+                if not stat.S_ISREG(opened.st_mode) or opened_identity != identity:
+                    raise RuntimeError("Untracked file changed while checking the generated-artifact boundary")
+                for chunk in iter(lambda: source.read(64 * 1024), b""):
+                    digest.update(chunk)
+                finished = os.fstat(source.fileno())
+            after = path.lstat()
+            after_identity = (after.st_dev, after.st_ino, after.st_mode, after.st_size,
+                              after.st_mtime_ns, after.st_ctime_ns)
+            if after_identity != identity or finished.st_size != before.st_size:
+                raise RuntimeError("Untracked file changed while checking the generated-artifact boundary")
+            untracked_state.append((encoded_path, "regular", mode, before.st_size, digest.digest()))
+        elif stat.S_ISLNK(before.st_mode):
+            target = os.fsencode(os.readlink(path))
+            after = path.lstat()
+            after_identity = (after.st_dev, after.st_ino, after.st_mode, after.st_size,
+                              after.st_mtime_ns, after.st_ctime_ns)
+            if after_identity != identity:
+                raise RuntimeError("Untracked symlink changed while checking the generated-artifact boundary")
+            untracked_state.append((encoded_path, "symlink", mode, target))
+        else:
+            raise RuntimeError("Unsupported untracked special file outside the generated artifact")
     return (
-        subprocess.check_output(["git", "diff", "HEAD", "--", ".", f":(exclude){ARTIFACT}"], cwd=ROOT),
-        subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT),
+        tracked_changes,
+        tuple(untracked_state),
     )
 
 
@@ -269,19 +337,64 @@ def refresh(check_only=False):
     with tempfile.TemporaryDirectory(prefix="firemud-daemon-jdk-") as directory:
         metadata_file = Path(directory) / "download-urls.json"
         metadata_file.write_text(json.dumps(urls))
+        run_options = {"cwd": ROOT, "check": True}
+        if has_resource_session_context():
+            run_options["pass_fds"] = (int(os.environ[RESOURCE_SESSION_ENV[0]]),)
         subprocess.run(
             ["bash", str(ROOT / "dev-tools/validation/run-locked-gradle.sh"),
              "updateDaemonJvm", "--jvm-version=21", "--jvm-vendor=adoptium",
              f"-PdaemonJvmDownloadUrlsFile={metadata_file}"],
-            cwd=ROOT,
-            check=True,
+            **run_options,
         )
     validate_criteria((ROOT / ARTIFACT).read_text(), urls)
     if outside_artifact_state() != before:
         raise RuntimeError("Gradle refresh changed files outside its generated artifact")
 
 
-if __name__ == "__main__":
+def has_resource_session_context():
+    return any(name in os.environ for name in RESOURCE_SESSION_ENV)
+
+
+def verify_resource_session():
+    session_fd = int(os.environ[RESOURCE_SESSION_ENV[0]])
+    subprocess.run(
+        [sys.executable, str(ROOT / "dev-tools/validation/gradle-run-supervisor.py"),
+         "--verify-resource-session"],
+        cwd=ROOT,
+        check=True,
+        pass_fds=(session_fd,),
+    )
+
+
+def run_in_resource_session(check_only):
+    if has_resource_session_context():
+        verify_resource_session()
+    refresh(check_only=check_only)
+
+
+def resource_session_command(check_only):
+    script = str(Path(__file__).resolve())
+    child_code = (
+        "import runpy; "
+        f"runpy.run_path({script!r})['run_in_resource_session']({check_only!r})"
+    )
+    return [
+        "bash", str(ROOT / "dev-tools/validation/run-locked-gradle.sh"),
+        "--resource-session", sys.executable, "-c", child_code,
+    ]
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-only", action="store_true", help="Generate and validate while preserving existing edits; never publish")
-    refresh(check_only=parser.parse_args().check_only)
+    args = parser.parse_args(argv)
+    if has_resource_session_context():
+        verify_resource_session()
+        refresh(check_only=args.check_only)
+    else:
+        subprocess.run(resource_session_command(args.check_only), cwd=ROOT, check=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
