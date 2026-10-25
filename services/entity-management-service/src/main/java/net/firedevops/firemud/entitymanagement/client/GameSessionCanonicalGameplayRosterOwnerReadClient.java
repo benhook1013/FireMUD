@@ -28,6 +28,7 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
         CanonicalGameplayRosterOwnerReadServiceGrpc
             .CanonicalGameplayRosterOwnerReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final long PLAYER_CREATED_CALL_DEADLINE_SECONDS = 10L;
 
   private final String workloadNamespace;
   private final GrpcServerPeerIdentityClientInterceptor serverPeerIdentityInterceptor;
@@ -93,16 +94,32 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
       throw new IllegalStateException(
           "Original roster owner transport requires no ambient transaction");
     }
-    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
-        request);
+    var checkedRequest =
+        net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.requireRequest(
+            request);
     if (!workloadNamespace.equals(request.getTargetNamespace())) {
       throw new IllegalArgumentException("Original roster selection belongs to another namespace");
     }
     var current =
         requireInitializedStub("Game Session original roster owner client is not initialized");
+    if (net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.target(
+                checkedRequest)
+            .getEntryPolicy()
+        == net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+            .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED) {
+      current =
+          current.withMaxInboundMessageSize(
+              net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .MAX_PLAYER_CREATED_RESPONSE_BYTES);
+    }
     var response =
         current
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(
+                callDeadlineSeconds(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .target(checkedRequest)
+                        .getEntryPolicy()),
+                TimeUnit.SECONDS)
             .getCanonicalGameplayRosterReference(request);
     try {
       return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
@@ -121,7 +138,12 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
     requireRetirementNamespace(request);
     var response =
         requireInitializedStub("Game Session retirement owner client is not initialized")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(
+                callDeadlineSeconds(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .target(request.getOriginalSelection())
+                        .getEntryPolicy()),
+                TimeUnit.SECONDS)
             .acknowledgeCanonicalGameplayRosterRetirement(request);
     return CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
         request, response);
@@ -135,9 +157,23 @@ public final class GameSessionCanonicalGameplayRosterOwnerReadClient
     requireRetirementNamespace(request.getAcknowledgementRequest());
     var response =
         requireInitializedStub("Game Session retirement owner client is not initialized")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(
+                callDeadlineSeconds(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                        .target(request.getAcknowledgementRequest().getOriginalSelection())
+                        .getEntryPolicy()),
+                TimeUnit.SECONDS)
             .confirmCanonicalGameplayRosterRetirementAcknowledgement(request);
     return CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(request, response);
+  }
+
+  private static long callDeadlineSeconds(
+      net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy entryPolicy) {
+    return entryPolicy
+            == net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy
+                .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED
+        ? PLAYER_CREATED_CALL_DEADLINE_SECONDS
+        : CALL_DEADLINE_SECONDS;
   }
 
   private static void requireRetirementTransport() {

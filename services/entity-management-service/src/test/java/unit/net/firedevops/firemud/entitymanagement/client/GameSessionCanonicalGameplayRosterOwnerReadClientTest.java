@@ -27,9 +27,11 @@ import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvide
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcCodec;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterSourceIdentity;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
@@ -299,6 +301,70 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
   }
 
   @Test
+  void onlyCreatedOriginalReferenceCallsWidenTheStubInboundLimit() throws Exception {
+    var created = createdOriginalRequest();
+    var createdResponse =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            created, 1L, UUID.randomUUID(), null);
+    var preseeded =
+        CanonicalGameplayRosterReferenceEvidence.request(
+            REQUEST_UUID, ACCOUNT_UUID, UUID.randomUUID(), NAMESPACE, target(false));
+    var preseededResponse =
+        CanonicalGameplayRosterReferenceEvidence.response(preseeded, 1L, UUID.randomUUID(), null);
+    var stub = mockStub();
+    when(stub.getCanonicalGameplayRosterReference(created)).thenReturn(createdResponse);
+    when(stub.getCanonicalGameplayRosterReference(preseeded)).thenReturn(preseededResponse);
+    var client = newClient(stub);
+
+    assertThat(client.getCanonicalGameplayRosterReference(created)).isEqualTo(createdResponse);
+    verify(stub)
+        .withMaxInboundMessageSize(
+            CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES);
+    assertThat(client.getCanonicalGameplayRosterReference(preseeded)).isEqualTo(preseededResponse);
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub).withDeadlineAfter(10L, TimeUnit.SECONDS);
+    verify(stub, times(1))
+        .withMaxInboundMessageSize(
+            CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES);
+  }
+
+  @Test
+  void createdPurposeOriginalAndRetirementCallsUseTenSecondDeadline() throws Exception {
+    var createdOriginal = createdOriginalRequest();
+    var createdReference =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            createdOriginal, 1L, UUID.randomUUID(), null);
+    var createdRetirement = retirementRequest(NAMESPACE, true);
+    var createdAcknowledgement =
+        CanonicalGameplayRosterRetirementEvidence.response(
+            createdRetirement, UUID.randomUUID(), 1000);
+    var createdConfirmation =
+        CanonicalGameplayRosterRetirementEvidence.confirmation(
+            createdRetirement, createdAcknowledgement);
+    var confirmed =
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(createdConfirmation);
+    var stub = mockStub();
+    when(stub.getCanonicalGameplayRosterReference(createdOriginal)).thenReturn(createdReference);
+    when(stub.acknowledgeCanonicalGameplayRosterRetirement(createdRetirement))
+        .thenReturn(createdAcknowledgement);
+    when(stub.confirmCanonicalGameplayRosterRetirementAcknowledgement(createdConfirmation))
+        .thenReturn(confirmed);
+    var client = newClient(stub);
+
+    assertThat(client.getCanonicalGameplayRosterReference(createdOriginal))
+        .isEqualTo(createdReference);
+    assertThat(client.acknowledgeCanonicalGameplayRosterRetirement(createdRetirement))
+        .isEqualTo(createdAcknowledgement);
+    assertThat(client.confirmCanonicalGameplayRosterRetirementAcknowledgement(createdConfirmation))
+        .isEqualTo(confirmed);
+
+    verify(stub, times(3)).withDeadlineAfter(10L, TimeUnit.SECONDS);
+    verify(stub).getCanonicalGameplayRosterReference(createdOriginal);
+    verify(stub).acknowledgeCanonicalGameplayRosterRetirement(createdRetirement);
+    verify(stub).confirmCanonicalGameplayRosterRetirementAcknowledgement(createdConfirmation);
+  }
+
+  @Test
   void retirementRejectsNamespaceMalformedInputAndAmbientTransactionsBeforeTransport()
       throws Exception {
     var stub = mockStub();
@@ -359,6 +425,11 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
 
   private static CanonicalGameplayRosterRetirementAcknowledgementRequest retirementRequest(
       String namespace) {
+    return retirementRequest(namespace, false);
+  }
+
+  private static CanonicalGameplayRosterRetirementAcknowledgementRequest retirementRequest(
+      String namespace, boolean created) {
     var target =
         CanonicalGameplayRosterTarget.newBuilder()
             .setTenantUuid(TENANT_UUID.toString())
@@ -377,15 +448,40 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
             .setPublishedReleaseBundleRef("release:exact")
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setEntryPolicy(
-                CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
+                created
+                    ? CanonicalGameplayRosterEntryPolicy
+                        .CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED
+                    : CanonicalGameplayRosterEntryPolicy
+                        .CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
             .build();
     var original =
-        CanonicalGameplayRosterReferenceEvidence.request(
-            REQUEST_UUID, ACCOUNT_UUID, UUID.randomUUID(), namespace, target);
+        created
+            ? CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
+                REQUEST_UUID,
+                ACCOUNT_UUID,
+                UUID.randomUUID(),
+                namespace,
+                target,
+                CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
+                    CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
+                        .setSchemaVersion(1)
+                        .setDescriptorUuid(UUID.randomUUID().toString())
+                        .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+                        .setDescriptorDigest("sha256:" + "1".repeat(64))
+                        .setAuthoredBindingUuid(UUID.randomUUID().toString())
+                        .setAuthoredBindingDigest("sha256:" + "2".repeat(64))
+                        .build()))
+            : CanonicalGameplayRosterReferenceEvidence.request(
+                REQUEST_UUID, ACCOUNT_UUID, UUID.randomUUID(), namespace, target);
+    var originalResponse =
+        created
+            ? CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                original, 1, UUID.randomUUID(), null)
+            : CanonicalGameplayRosterReferenceEvidence.response(
+                original, 1, UUID.randomUUID(), null);
     var retired =
         CanonicalGameplayRosterReferenceEvidence.sealRetirement(
-            CanonicalGameplayRosterReferenceEvidence.response(original, 1, UUID.randomUUID(), null)
-                .toBuilder()
+            originalResponse.toBuilder()
                 .setState(
                     CanonicalGameplayRosterReferenceState
                         .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
@@ -405,6 +501,50 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
             .setAdmissionUuid(UUID.randomUUID().toString())
             .setMinimumRetentionMillis(1000)
             .build());
+  }
+
+  private static net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+      createdOriginalRequest() {
+    var target = target(true);
+    return CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
+        REQUEST_UUID,
+        ACCOUNT_UUID,
+        UUID.randomUUID(),
+        NAMESPACE,
+        target,
+        CanonicalPlayerCreatedRosterEvidence.requireSourceIdentity(
+            CanonicalPlayerCreatedRosterSourceIdentity.newBuilder()
+                .setSchemaVersion(1)
+                .setDescriptorUuid(UUID.randomUUID().toString())
+                .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+                .setDescriptorDigest("sha256:" + "1".repeat(64))
+                .setAuthoredBindingUuid(UUID.randomUUID().toString())
+                .setAuthoredBindingDigest("sha256:" + "2".repeat(64))
+                .build()));
+  }
+
+  private static CanonicalGameplayRosterTarget target(boolean created) {
+    return CanonicalGameplayRosterTarget.newBuilder()
+        .setTenantUuid(TENANT_UUID.toString())
+        .setRealmUuid(REALM_UUID.toString())
+        .setGameInstanceUuid(INSTANCE_UUID.toString())
+        .setCanonicalVersionUuid(VERSION_UUID.toString())
+        .setPlayableStateNamespaceUuid(NAMESPACE_UUID.toString())
+        .setWorldSlug("earth")
+        .setRealmSlug("main")
+        .setCatalogRevision(71)
+        .setPointerVersion(73)
+        .setActiveWorldEpoch(82)
+        .setPublishedPolicyDigest("a".repeat(64))
+        .setPublishedOwnerProofDigest("b".repeat(64))
+        .setAdmissionPointerSnapshotDigest("c".repeat(64))
+        .setPublishedReleaseBundleRef("release:exact")
+        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+        .setEntryPolicy(
+            created
+                ? CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED
+                : CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY)
+        .build();
   }
 
   private static GameSessionCanonicalGameplayRosterOwnerReadClient newClient(
@@ -448,6 +588,10 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
             CanonicalGameplayRosterOwnerReadServiceGrpc
                 .CanonicalGameplayRosterOwnerReadServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.withDeadlineAfter(10L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.withMaxInboundMessageSize(
+            CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES))
+        .thenReturn(stub);
     return stub;
   }
 

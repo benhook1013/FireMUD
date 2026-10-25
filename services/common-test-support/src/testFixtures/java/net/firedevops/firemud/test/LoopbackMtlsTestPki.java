@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.CertificateEncodingException;
@@ -14,6 +15,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 
 /** Test-only PKI for loopback mTLS proofs. */
@@ -100,6 +103,34 @@ public final class LoopbackMtlsTestPki {
         throw new IllegalArgumentException("unknown test certificate alias: " + alias);
       }
       return identity;
+    }
+
+    /** Creates fresh server key managers using the existing issued identity and CA chain. */
+    public KeyManagerFactory keyManagerFactory(Identity identity)
+        throws GeneralSecurityException, IOException {
+      char[] password = STORE_PASSWORD.toCharArray();
+      KeyStore store = KeyStore.getInstance("PKCS12");
+      store.load(null, password);
+      store.setKeyEntry(
+          "identity",
+          identity.privateKey(),
+          password,
+          new X509Certificate[] {identity.certificate(), caCertificate});
+      KeyManagerFactory factory =
+          KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+      factory.init(store, password);
+      return factory;
+    }
+
+    /** Creates fresh trust managers containing only this fixture's CA. */
+    public TrustManagerFactory trustManagerFactory() throws GeneralSecurityException, IOException {
+      KeyStore store = KeyStore.getInstance("PKCS12");
+      store.load(null, null);
+      store.setCertificateEntry("test-ca", caCertificate);
+      TrustManagerFactory factory =
+          TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+      factory.init(store);
+      return factory;
     }
 
     public CommonGrpcClientProperties clientProperties(Path directory, Identity identity)

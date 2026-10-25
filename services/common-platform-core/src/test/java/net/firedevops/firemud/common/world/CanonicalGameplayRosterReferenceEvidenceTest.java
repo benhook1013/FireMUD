@@ -3,13 +3,23 @@ package net.firedevops.firemud.common.world;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.UnknownFieldSet;
+import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSnapshotReference;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest;
+import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
 import org.junit.jupiter.api.Test;
 
 class CanonicalGameplayRosterReferenceEvidenceTest {
@@ -230,6 +240,426 @@ class CanonicalGameplayRosterReferenceEvidenceTest {
               () -> CanonicalGameplayRosterRecoveryEvidence.requireResponse(recovery, invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
+  }
+
+  @Test
+  void createdMenuAndSelectedReplayRetainTheDistinctCompleteOriginalCreationReceipt()
+      throws Exception {
+    var fixture = createdFixture();
+    var original = fixture.original();
+    var menu =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            original, 1L, UUID.randomUUID(), fixture.roster());
+    assertThat(CanonicalGameplayRosterReferenceEvidence.playerCreatedReceipt(menu))
+        .isEqualTo(fixture.roster());
+    assertThat(CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(menu))
+        .isEqualTo(fixture.roster().getRoster());
+    var selected = selectedOriginal(fixture, menu);
+    assertThat(CanonicalGameplayRosterReferenceEvidence.requireResponse(original, selected))
+        .isEqualTo(selected);
+    var replay = GetCanonicalGameplayRosterReferenceResponse.parseFrom(selected.toByteArray());
+    assertThat(CanonicalGameplayRosterReferenceEvidence.requireResponse(original, replay))
+        .isEqualTo(selected);
+    assertThat(
+            CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(replay))
+        .isEqualTo(fixture.selected());
+    assertThat(
+            CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(replay)
+                .getTerminal())
+        .isEqualTo(fixture.selected().getTerminal());
+    assertThatThrownBy(() -> CanonicalGameplayRosterReferenceEvidence.receipt(menu))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> CanonicalGameplayRosterReferenceEvidence.selectedAssignmentReceipt(selected))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.response(
+                    original, 1L, UUID.randomUUID(), null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.request(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "gameplay",
+                    fixture.roster().getRoster().getTarget()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var foreignOriginal = original.toBuilder().setTargetNamespace("other").build();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    foreignOriginal, selected.toBuilder().setRequest(foreignOriginal).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("workload namespace");
+    for (var changed :
+        List.of(
+            selected.toBuilder().setSelectedCharacterUuid(UUID.randomUUID().toString()).build(),
+            selected.toBuilder()
+                .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                    fixture.selected().toBuilder()
+                        .setRequestUuid(UUID.randomUUID().toString())
+                        .build()
+                        .toByteString())
+                .build(),
+            selected.toBuilder()
+                .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                    fixture.selected().toBuilder()
+                        .setCanonicalAccountUuid(UUID.randomUUID().toString())
+                        .build()
+                        .toByteString())
+                .build(),
+            selected.toBuilder()
+                .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                    fixture.selected().toBuilder()
+                        .setSourceIdentity(
+                            fixture.selected().getSourceIdentity().toBuilder()
+                                .setDescriptorRevisionUuid(UUID.randomUUID().toString()))
+                        .build()
+                        .toByteString())
+                .build())) {
+      assertThatThrownBy(
+              () -> CanonicalGameplayRosterReferenceEvidence.requireResponse(original, changed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void fiveMebibyteSelectedReceiptRequiresExactCanonicalBytesAndRejectsTamperingAndOversize()
+      throws Exception {
+    var fixture =
+        ControlledPlayerCreatedRosterTerminalFixtures.withFiveMebibyteAccountProtection("gameplay");
+    var original = fixture.original();
+    var canonicalSelectedBytes = original.getCanonicalSelectedPlayerCreatedCharacterReceipt();
+
+    assertThat(canonicalSelectedBytes.size()).isGreaterThan(5 * 1024 * 1024);
+    int midpoint = canonicalSelectedBytes.size() / 2;
+    var ropeBackedCanonicalBytes =
+        canonicalSelectedBytes
+            .substring(0, midpoint)
+            .concat(canonicalSelectedBytes.substring(midpoint, canonicalSelectedBytes.size()));
+    var ropeBackedOriginal =
+        original.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(ropeBackedCanonicalBytes)
+            .build();
+    assertThat(
+            CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                fixture.originalRequest(), ropeBackedOriginal))
+        .isEqualTo(ropeBackedOriginal);
+
+    var duplicateRequestField =
+        new byte[CodedOutputStream.computeStringSize(1, fixture.selected().getRequestUuid())];
+    var codedOutput = CodedOutputStream.newInstance(duplicateRequestField);
+    codedOutput.writeString(1, fixture.selected().getRequestUuid());
+    codedOutput.checkNoSpaceLeft();
+    var noncanonical =
+        original.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                canonicalSelectedBytes.concat(ByteString.copyFrom(duplicateRequestField)))
+            .build();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    fixture.originalRequest(), noncanonical))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Selected PLAYER_CREATED receipt bytes are not canonical");
+
+    var tamperedSelected =
+        fixture.selected().toBuilder()
+            .setTarget(
+                fixture.selected().getTarget().toBuilder()
+                    .setPointerVersion(fixture.selected().getTarget().getPointerVersion() + 1L)
+                    .build())
+            .build();
+    var tampered =
+        original.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(tamperedSelected.toByteString())
+            .build();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    fixture.originalRequest(), tampered))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("binding changed");
+
+    var oversized =
+        original.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                logicalBytes(
+                    CanonicalGameplayRosterReferenceEvidence.MAX_SELECTED_PLAYER_CREATED_BYTES + 1))
+            .build();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    fixture.originalRequest(), oversized))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Original roster selection owner binding is invalid");
+  }
+
+  @Test
+  void createdSourceBytesAndPolicyBranchesAreClosedAndMutuallyExclusive() {
+    var fixture = createdFixture();
+    var created = fixture.original();
+    var source = CanonicalGameplayRosterReferenceEvidence.playerCreatedSourceIdentity(created);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+    for (var changed :
+        List.of(
+            created.toBuilder().clearCanonicalPlayerCreatedSourceIdentity().build(),
+            created.toBuilder()
+                .setCanonicalPlayerCreatedSourceIdentity(
+                    source.toBuilder().setUnknownFields(unknown).build().toByteString())
+                .build(),
+            created.toBuilder()
+                .setCanonicalPlayerCreatedSourceIdentity(
+                    source.toByteString().concat(ByteString.copyFrom(new byte[] {8, 1})))
+                .build(),
+            created.toBuilder()
+                .setCanonicalTarget(
+                    CanonicalGameplayRosterReferenceEvidence.target(created).toBuilder()
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+                        .build()
+                        .toByteString())
+                .build(),
+            created.toBuilder()
+                .setCanonicalTarget(
+                    CanonicalGameplayRosterReferenceEvidence.target(created).toBuilder()
+                        .setEntryPolicy(
+                            CanonicalGameplayRosterEntryPolicy
+                                .CANONICAL_ROSTER_ENTRY_POLICY_AUTO_PROVISIONED)
+                        .build()
+                        .toByteString())
+                .build(),
+            request().toBuilder()
+                .setCanonicalPlayerCreatedSourceIdentity(source.toByteString())
+                .build())) {
+      assertThatThrownBy(() -> CanonicalGameplayRosterReferenceEvidence.requireRequest(changed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var createdMenu =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            created, 1L, UUID.randomUUID(), fixture.roster());
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    created,
+                    createdMenu.toBuilder()
+                        .setCanonicalRosterReceipt(fixture.roster().getRoster().toByteString())
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var preseeded = request();
+    var reserved =
+        CanonicalGameplayRosterReferenceEvidence.response(preseeded, 1L, UUID.randomUUID(), null);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    preseeded,
+                    reserved.toBuilder()
+                        .setCanonicalPlayerCreatedRosterReceipt(fixture.roster().toByteString())
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    preseeded,
+                    reserved.toBuilder()
+                        .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                            fixture.selected().toByteString())
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                    preseeded, 1L, UUID.randomUUID(), null))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void largestCreatedSelectorsAndUnicodeReleaseFitUnchangedOriginalAndRecoveryRequestBudgets() {
+    var fixture = createdFixture();
+    var target =
+        CanonicalGameplayRosterReferenceEvidence.target(fixture.original()).toBuilder()
+            .setWorldSlug("a".repeat(64))
+            .setRealmSlug("b".repeat(64))
+            .setCatalogRevision(Long.MAX_VALUE)
+            .setPointerVersion(Long.MAX_VALUE)
+            .setActiveWorldEpoch(Long.MAX_VALUE)
+            .setPublishedReleaseBundleRef("\u0800".repeat(1024))
+            .build();
+    var largest =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "a".repeat(63),
+            target,
+            CanonicalGameplayRosterReferenceEvidence.playerCreatedSourceIdentity(
+                fixture.original()));
+    assertThat(CanonicalGameplayRosterReferenceEvidence.MAX_REQUEST_BYTES).isEqualTo(4096);
+    assertThat(
+            target.getPublishedReleaseBundleRef().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        .hasSize(3072);
+    assertThat(largest.getSerializedSize())
+        .isEqualTo(4081)
+        .isLessThanOrEqualTo(CanonicalGameplayRosterReferenceEvidence.MAX_REQUEST_BYTES);
+    var recovery =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest
+            .newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(largest)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    assertThat(CanonicalGameplayRosterRecoveryEvidence.requireRequest(recovery).getSerializedSize())
+        .isEqualTo(4124)
+        .isLessThanOrEqualTo(CanonicalGameplayRosterRecoveryEvidence.MAX_REQUEST_BYTES);
+  }
+
+  @Test
+  void createdPurposeBudgetsRetainTheFullTerminalAndRejectOversizeWithoutHugeBackingArrays() {
+    var fixture = createdFixture();
+    var menu =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            fixture.original(), 1L, UUID.randomUUID(), fixture.roster());
+    assertThat(CanonicalGameplayRosterReferenceEvidence.MAX_RECEIPT_BYTES).isEqualTo(64 * 1024);
+    assertThat(CanonicalGameplayRosterReferenceEvidence.MAX_SELECTED_ASSIGNMENT_BYTES)
+        .isEqualTo(8192);
+    assertThat(CanonicalPlayerCreatedRosterEvidence.MAX_TERMINAL_BYTES)
+        .isEqualTo(192 * 1024 * 1024);
+    assertThat(CanonicalGameplayRosterReferenceEvidence.MAX_SELECTED_PLAYER_CREATED_BYTES)
+        .isEqualTo(193 * 1024 * 1024);
+    assertThat(CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES)
+        .isEqualTo(194 * 1024 * 1024);
+    var preseeded = request();
+    var reserved =
+        CanonicalGameplayRosterReferenceEvidence.response(preseeded, 1L, UUID.randomUUID(), null);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                    preseeded,
+                    reserved.toBuilder()
+                        .setCanonicalRosterReceipt(logicalBytes(64 * 1024 + 1))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRosterReferenceEvidence.selectedAssignmentReceipt(
+                    reserved.toBuilder()
+                        .setCanonicalSelectedAssignmentReceipt(logicalBytes(8192 + 1))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    int completeSelectedEnvelope =
+        CodedOutputStream.computeTagSize(18)
+            + CodedOutputStream.computeUInt32SizeNoTag(
+                CanonicalGameplayRosterReferenceEvidence.MAX_SELECTED_PLAYER_CREATED_BYTES)
+            + CanonicalGameplayRosterReferenceEvidence.MAX_SELECTED_PLAYER_CREATED_BYTES;
+    // A full 193 MiB selected envelope, 66 KiB menu, maximal original and bounded input/metadata
+    // fit the original-response purpose without constructing a gratuitous 192 MiB terminal.
+    assertThat(completeSelectedEnvelope + 66 * 1024 + 4096 + 2048)
+        .isLessThanOrEqualTo(
+            CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES);
+    for (var changed :
+        List.of(
+            menu.toBuilder()
+                .setCanonicalPlayerCreatedRosterReceipt(
+                    logicalBytes(
+                        CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RECEIPT_BYTES
+                            + 1))
+                .build(),
+            menu.toBuilder()
+                .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                    logicalBytes(
+                        CanonicalGameplayRosterReferenceEvidence.MAX_SELECTED_PLAYER_CREATED_BYTES
+                            + 1))
+                .build(),
+            menu.toBuilder()
+                .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                    logicalBytes(
+                        CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES
+                            + 1))
+                .build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayRosterReferenceEvidence.requireResponse(
+                      fixture.original(), changed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  // Rope ByteStrings share their tiny backing payload; over-budget tests reject before parsing.
+  static ByteString logicalBytes(int size) {
+    ByteString bytes = ByteString.copyFrom(new byte[1024]);
+    while (bytes.size() < size) bytes = bytes.concat(bytes);
+    return bytes.substring(0, size);
+  }
+
+  record CreatedFixture(
+      GetCanonicalGameplayRosterReferenceRequest original,
+      CanonicalPlayerCreatedRosterResponse roster,
+      CanonicalSelectedPlayerCreatedCharacterResponse selected) {}
+
+  static CreatedFixture createdFixture() {
+    var selected = CanonicalPlayerCreatedRosterEvidenceTest.selectedFixture();
+    var request = selected.request();
+    var actors =
+        List.of(
+            CanonicalGameplayRosterActor.newBuilder()
+                .setCharacterUuid(request.getSelectedCharacterUuid())
+                .setDisplayName("Persisted created actor")
+                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                .build());
+    var digest =
+        CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
+            request.getCanonicalAccountUuid(),
+            request.getExpectedTarget(),
+            request.getExpectedSource(),
+            actors);
+    var snapshot =
+        CanonicalGameplayRosterSnapshotReference.newBuilder()
+            .setSnapshotUuid(request.getExpectedSnapshot().getSnapshotUuid())
+            .setSnapshotDigest(digest)
+            .build();
+    var roster =
+        CanonicalPlayerCreatedRosterResponse.newBuilder()
+            .setSourceIdentity(request.getExpectedSource())
+            .setRoster(
+                CanonicalGameplayRosterResponse.newBuilder()
+                    .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+                    .setTarget(request.getExpectedTarget())
+                    .setSnapshotUuid(snapshot.getSnapshotUuid())
+                    .setSnapshotDigest(digest)
+                    .addAllActors(actors))
+            .build();
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedRequest(
+            UUID.fromString(request.getRequestUuid()),
+            UUID.fromString(request.getCanonicalAccountUuid()),
+            UUID.fromString(request.getPlayerExecutionContext().getSessionId()),
+            selected
+                .response()
+                .getTerminal()
+                .getOriginalRequest()
+                .getOriginal()
+                .getTargetNamespace(),
+            request.getExpectedTarget(),
+            request.getExpectedSource());
+    return new CreatedFixture(
+        original, roster, selected.response().toBuilder().setSnapshot(snapshot).build());
+  }
+
+  static GetCanonicalGameplayRosterReferenceResponse selectedOriginal(
+      CreatedFixture fixture, GetCanonicalGameplayRosterReferenceResponse menu) {
+    return menu.toBuilder()
+        .setSelectionInput(
+            net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()
+                .setSchemaVersion(1)
+                .setSelector("1"))
+        .setSelectedCharacterUuid(fixture.selected().getSelectedCharacterUuid())
+        .setCanonicalSelectedPlayerCreatedCharacterReceipt(fixture.selected().toByteString())
+        .setTerminalOutcome("SELECTED")
+        .build();
   }
 
   private static GetCanonicalGameplayRosterReferenceRequest request() {

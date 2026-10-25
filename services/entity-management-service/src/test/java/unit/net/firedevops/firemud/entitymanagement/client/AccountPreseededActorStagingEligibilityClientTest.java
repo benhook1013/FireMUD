@@ -35,6 +35,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.client.AccountPreseededActorStagingEligibilityClient;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
@@ -192,6 +193,16 @@ class AccountPreseededActorStagingEligibilityClientTest {
                     .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
                     .build())
             .build());
+  }
+
+  @Test
+  void rejectsWellFormedEvidenceWhenRequestBindingDiffersAsPrecondition() throws Exception {
+    assertPreconditionRejected(
+        "66666666-6666-4666-8666-666666666666", TENANT_ID.toString(), REQUEST_ID.toString());
+    assertPreconditionRejected(
+        ACCOUNT_ID.toString(), "66666666-6666-4666-8666-666666666666", REQUEST_ID.toString());
+    assertPreconditionRejected(
+        ACCOUNT_ID.toString(), TENANT_ID.toString(), "66666666-6666-4666-8666-666666666666");
   }
 
   @Test
@@ -408,6 +419,22 @@ class AccountPreseededActorStagingEligibilityClientTest {
                 client.resolvePreseededActorStagingEligibility(
                     ACCOUNT_ID.toString(), TENANT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  private static void assertPreconditionRejected(
+      String requestedAccountId, String requestedTenantId, String requestedRequestId)
+      throws Exception {
+    AccountActorStagingEligibilityServiceGrpc.AccountActorStagingEligibilityServiceBlockingStub
+        stub = mockStub();
+    when(stub.resolvePreseededActorStagingEligibility(any())).thenReturn(validResponse());
+    AccountPreseededActorStagingEligibilityClient client = newClient(stub);
+
+    assertThatThrownBy(
+            () ->
+                client.resolvePreseededActorStagingEligibility(
+                    requestedAccountId, requestedTenantId, requestedRequestId))
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
+        .hasMessage("Account actor-staging eligibility response does not match the exact request");
   }
 
   private static AccountActorStagingEligibilityEvidence resolve(
