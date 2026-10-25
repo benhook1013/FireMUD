@@ -2040,7 +2040,10 @@ public final class CanonicalGameplayRosterRetentionRepository {
     requireOwnerTransaction();
     Record row =
         dsl.fetchSingle(
-            "SELECT COALESCE(max(extract(epoch FROM clock_timestamp() - recorded_at)) FILTER (WHERE lifecycle_state = 'PROTECTED'), 0)::bigint AS oldest_blocking, "
+            "SELECT COALESCE(max(extract(epoch FROM clock_timestamp() - retirement_observed_at)) "
+                + "FILTER (WHERE lifecycle_state = 'RETIRED' "
+                + "AND retirement_observed_at + minimum_retention_millis * interval '1 millisecond' <= clock_timestamp()), "
+                + "0)::bigint AS oldest_blocking, "
                 + "COALESCE(max(GREATEST(0, extract(epoch FROM clock_timestamp() - retirement_observed_at - minimum_retention_millis * interval '1 millisecond'))) "
                 + "FILTER (WHERE lifecycle_state = 'RETIRED'), 0)::bigint AS cleanup_lag FROM entity_canonical_roster_retention_lifecycle");
     return new Health(row.get("oldest_blocking", Long.class), row.get("cleanup_lag", Long.class));

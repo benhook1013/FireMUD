@@ -101,6 +101,60 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
         .isFalse();
   }
 
+  @Test
+  void oldProtectedSnapshotDoesNotContributeToOldestBlockingRetirement() {
+    dsl.fetch("SELECT pg_sleep(1.1)");
+
+    var health = transaction.execute(ignored -> repository.health());
+
+    assertThat(health.oldestBlockingSeconds()).isZero();
+    assertThat(health.cleanupLagSeconds()).isZero();
+  }
+
+  @Test
+  void retirementHealthStartsAfterStoredHorizonAndKeepsPayloadAndCleanupLag() {
+    var local = localRequest();
+    var owner = recoveryOwner(recovery(local));
+    var snapshot = retainedSnapshot();
+    bindSnapshot(local, owner, snapshot);
+    var candidate = transaction.execute(ignored -> repository.candidates(null, 1)).getFirst();
+    transaction.executeWithoutResult(
+        ignored ->
+            assertThat(
+                    repository.observeRetirement(
+                        candidate, retirement(owner, snapshot), policy(Duration.ofSeconds(2))))
+                .isTrue());
+
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT retirement_observed_at + minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
+                        + "FROM entity_canonical_roster_retention_lifecycle WHERE snapshot_uuid = ?",
+                    snapshot.snapshotUuid())
+                .get(0, Boolean.class))
+        .isTrue();
+    var beforeHorizon = transaction.execute(ignored -> repository.health());
+    assertThat(beforeHorizon.oldestBlockingSeconds()).isZero();
+    assertThat(beforeHorizon.cleanupLagSeconds()).isZero();
+
+    dsl.fetch("SELECT pg_sleep(3.1)");
+
+    var afterHorizon = transaction.execute(ignored -> repository.health());
+    assertThat(afterHorizon.oldestBlockingSeconds()).isPositive();
+    assertThat(afterHorizon.cleanupLagSeconds()).isPositive();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM entity_canonical_gameplay_roster_snapshots WHERE snapshot_uuid = ?",
+                    snapshot.snapshotUuid())
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT lifecycle_state FROM entity_canonical_roster_retention_lifecycle WHERE snapshot_uuid = ?",
+                    snapshot.snapshotUuid())
+                .get(0, String.class))
+        .isEqualTo("RETIRED");
+  }
+
   @AfterEach
   void dropOwnedFixture() {
     if (schema != null) {
