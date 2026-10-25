@@ -20,8 +20,11 @@ import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.UUID;
 import javax.net.ssl.SSLSession;
+import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.config.PreseededActorAssignmentConfiguration;
+import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.security.CanonicalPreseededActorAssignmentPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
@@ -29,6 +32,7 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentR
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
+import net.firedevops.firemud.entitymanagement.service.RunOwnedPreseededAssignmentAuthority;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
@@ -157,6 +161,94 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
             new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, unavailableService),
             wireRequest);
     assertNoPartialResponse(unavailable, Status.Code.UNAVAILABLE);
+    assertThat(unavailable.errorDescription)
+        .isEqualTo("Preseeded actor assignment owner is unavailable");
+
+    PreseededActorAssignmentService upstreamFailureService =
+        mock(PreseededActorAssignmentService.class);
+    when(upstreamFailureService.assign(domainRequest))
+        .thenThrow(
+            Status.FAILED_PRECONDITION
+                .withDescription("PRIVATE OWNER DETAIL")
+                .asRuntimeException());
+    var upstreamFailure =
+        invoke(
+            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, upstreamFailureService),
+            wireRequest);
+    assertNoPartialResponse(upstreamFailure, Status.Code.FAILED_PRECONDITION);
+    assertThat(upstreamFailure.errorDescription)
+        .isEqualTo("Preseeded actor assignment owner evidence is not current");
+  }
+
+  @Test
+  void disabledAccountEvidencePortsReturnUnavailable() {
+    var configuration = new PreseededActorAssignmentConfiguration();
+    var wireRequest = request();
+    var accountIdentityUnavailableService =
+        configuration.preseededActorAssignmentService(
+            mock(RunOwnedPreseededAssignmentAuthority.class),
+            configuration.disabledPreseededActorAccountIdentityPort(),
+            configuration.disabledPreseededActorStagingEligibilityPort(),
+            configuration.unavailablePreseededActorAssignmentOwnerEvidencePort(),
+            mock(CharacterRepository.class));
+    var accountIdentityUnavailable =
+        invoke(
+            new CanonicalPreseededActorAssignmentGrpcService(
+                NAMESPACE, accountIdentityUnavailableService),
+            wireRequest);
+    assertNoPartialResponse(accountIdentityUnavailable, Status.Code.UNAVAILABLE);
+
+    var stagingUnavailableService =
+        configuration.preseededActorAssignmentService(
+            mock(RunOwnedPreseededAssignmentAuthority.class),
+            (accountUuid, assignmentUuid) ->
+                new RuntimeAccountIdentityEvidence(
+                    1,
+                    "dev",
+                    UUID.fromString(assignmentUuid),
+                    UUID.fromString(accountUuid),
+                    23L,
+                    "ACCOUNT_DATABASE_INSERT"),
+            configuration.disabledPreseededActorStagingEligibilityPort(),
+            configuration.unavailablePreseededActorAssignmentOwnerEvidencePort(),
+            mock(CharacterRepository.class));
+    var stagingUnavailable =
+        invoke(
+            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, stagingUnavailableService),
+            wireRequest);
+    assertNoPartialResponse(stagingUnavailable, Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void knownPreconditionIsFailedPreconditionAndUnexpectedIllegalStateIsInternal() {
+    var wireRequest = request();
+    PreseededActorAssignmentRequest domainRequest =
+        PreseededActorAssignmentGrpcCodec.fromRequest(wireRequest);
+
+    PreseededActorAssignmentService preconditionService =
+        mock(PreseededActorAssignmentService.class);
+    when(preconditionService.assign(domainRequest))
+        .thenThrow(
+            new PreseededActorAssignmentService.PreconditionException(
+                "PRIVATE PRECONDITION DETAIL"));
+    var precondition =
+        invoke(
+            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, preconditionService),
+            wireRequest);
+    assertNoPartialResponse(precondition, Status.Code.FAILED_PRECONDITION);
+    assertThat(precondition.errorDescription)
+        .isEqualTo("Preseeded actor assignment preconditions are not satisfied");
+
+    PreseededActorAssignmentService unexpectedFailureService =
+        mock(PreseededActorAssignmentService.class);
+    when(unexpectedFailureService.assign(domainRequest))
+        .thenThrow(new IllegalStateException("PRIVATE INTERNAL DETAIL"));
+    var unexpectedFailure =
+        invoke(
+            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, unexpectedFailureService),
+            wireRequest);
+    assertNoPartialResponse(unexpectedFailure, Status.Code.INTERNAL);
+    assertThat(unexpectedFailure.errorDescription).isEqualTo("Preseeded actor assignment failed");
   }
 
   private static CapturingObserver invoke(
@@ -259,6 +351,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
       implements StreamObserver<AssignPreseededActorResponse> {
     private AssignPreseededActorResponse value;
     private Status.Code errorCode;
+    private String errorDescription;
     private boolean completed;
 
     @Override
@@ -268,7 +361,9 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      errorCode = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      errorCode = status.getCode();
+      errorDescription = status.getDescription();
     }
 
     @Override
