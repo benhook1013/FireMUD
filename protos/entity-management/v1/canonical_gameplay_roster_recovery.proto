@@ -29,5 +29,7 @@ message CanonicalGameplayRosterRecoveryResponse {
   string target_fence_uuid = 5;
   // Exact locally retained original receipt, if capture won before nonce closure. Absence is
   // positive fenced no-capture evidence only in this authenticated closed-admission response.
+  // PRESEEDED_ONLY; mutually exclusive with the distinct PLAYER_CREATED receipt.
   bytes canonical_roster_receipt = 6;
+  bytes canonical_player_created_roster_receipt = 7;
 }

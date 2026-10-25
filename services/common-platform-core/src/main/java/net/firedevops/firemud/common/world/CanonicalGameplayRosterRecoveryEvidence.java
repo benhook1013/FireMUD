@@ -2,9 +2,11 @@ package net.firedevops.firemud.common.world;
 
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse;
 
 /**
@@ -47,6 +49,9 @@ public final class CanonicalGameplayRosterRecoveryEvidence {
       long ownerFence,
       UUID targetFence,
       CanonicalGameplayRosterResponse receipt) {
+    requireRequest(request);
+    if (created(request))
+      throw new IllegalArgumentException("PRESEEDED_ONLY recovery response factory required");
     var result =
         CanonicalGameplayRosterRecoveryResponse.newBuilder()
             .setSchemaVersion(1)
@@ -56,6 +61,32 @@ public final class CanonicalGameplayRosterRecoveryEvidence {
             .setTargetFenceUuid(targetFence.toString());
     if (receipt != null) result.setCanonicalRosterReceipt(receipt.toByteString());
     return requireResponse(request, result.build());
+  }
+
+  public static CanonicalGameplayRosterRecoveryResponse playerCreatedResponse(
+      CanonicalGameplayRosterRecoveryRequest request,
+      UUID admission,
+      long ownerFence,
+      UUID targetFence,
+      CanonicalPlayerCreatedRosterResponse receipt) {
+    requireRequest(request);
+    if (!created(request))
+      throw new IllegalArgumentException("PLAYER_CREATED recovery response factory required");
+    var result =
+        CanonicalGameplayRosterRecoveryResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setRequest(request)
+            .setAdmissionUuid(admission.toString())
+            .setOwnerFence(ownerFence)
+            .setTargetFenceUuid(targetFence.toString());
+    if (receipt != null) result.setCanonicalPlayerCreatedRosterReceipt(receipt.toByteString());
+    return requireResponse(request, result.build());
+  }
+
+  private static boolean created(CanonicalGameplayRosterRecoveryRequest request) {
+    return CanonicalGameplayRosterReferenceEvidence.target(request.getOriginalSelection())
+            .getEntryPolicy()
+        == CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED;
   }
 
   public static CanonicalGameplayRosterRecoveryResponse requireResponse(
@@ -73,12 +104,21 @@ public final class CanonicalGameplayRosterRecoveryEvidence {
     }
     CanonicalGameplayRosterReferenceEvidence.uuid(response.getAdmissionUuid());
     CanonicalGameplayRosterReferenceEvidence.uuid(response.getTargetFenceUuid());
-    if (!response.getCanonicalRosterReceipt().isEmpty()) {
-      // Reuse the canonical original-receipt parser and exact target/account binding.
-      CanonicalGameplayRosterReferenceEvidence.receipt(
+    boolean created = created(expected);
+    if ((created && !response.getCanonicalRosterReceipt().isEmpty())
+        || (!created && !response.getCanonicalPlayerCreatedRosterReceipt().isEmpty())) {
+      throw new IllegalArgumentException(
+          "Recovery receipt changed its explicit roster policy branch");
+    }
+    if (!response.getCanonicalRosterReceipt().isEmpty()
+        || !response.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
+      // Exact validated projection only; this does not authenticate an Entity response.
+      CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(
           GetCanonicalGameplayRosterReferenceResponse.newBuilder()
               .setRequest(expected.getOriginalSelection())
               .setCanonicalRosterReceipt(response.getCanonicalRosterReceipt())
+              .setCanonicalPlayerCreatedRosterReceipt(
+                  response.getCanonicalPlayerCreatedRosterReceipt())
               .build());
     }
     return response;
