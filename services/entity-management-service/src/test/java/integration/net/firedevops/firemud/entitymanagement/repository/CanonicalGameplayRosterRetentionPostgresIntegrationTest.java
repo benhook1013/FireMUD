@@ -116,6 +116,119 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   }
 
   @Test
+  void latestMigrationsRetainClassificationShapeAndSeparateProofBudgets() {
+    transaction.executeWithoutResult(
+        ignored -> {
+          var liveChecks =
+              dsl.fetch(
+                  "SELECT t.relname AS table_name, pg_get_constraintdef(c.oid) AS definition "
+                      + "FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                      + "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                      + "WHERE c.contype = 'c' AND n.nspname = current_schema() "
+                      + "AND t.relname IN ('entity_canonical_roster_target_classifications', "
+                      + "'entity_canonical_roster_snapshot_targets', 'entity_canonical_roster_retired_targets')");
+          assertThat(liveChecks.getValues("table_name", String.class))
+              .contains(
+                  "entity_canonical_roster_target_classifications",
+                  "entity_canonical_roster_snapshot_targets",
+                  "entity_canonical_roster_retired_targets");
+          assertThat(liveChecks.getValues("definition", String.class))
+              .anySatisfy(
+                  definition ->
+                      assertThat(definition)
+                          .contains("classification_state", "target_binding", "retirement_proof")
+                          .doesNotContain("octet_length(retirement_proof)"));
+          assertProofBudget(
+              liveChecks,
+              "entity_canonical_roster_target_classifications",
+              "octet_length(retirement_proof)",
+              "203423744",
+              "131072");
+          assertProofBudget(
+              liveChecks,
+              "entity_canonical_roster_snapshot_targets",
+              "octet_length(source_retirement_proof)",
+              "203423744",
+              "131072");
+          assertProofBudget(
+              liveChecks,
+              "entity_canonical_roster_retired_targets",
+              "octet_length(owner_retirement_proof)",
+              "203423744");
+
+          // This clone inherits the actual latest-migration CHECKs. It contains synthetic bytes
+          // only: no source triggers or owner evidence are copied, so these probes prove storage
+          // shape constraints and do not qualify an authenticated source or retirement authority.
+          dsl.execute(
+              "CREATE TEMP TABLE roster_classification_constraint_probe "
+                  + "(LIKE entity_canonical_roster_target_classifications INCLUDING CONSTRAINTS INCLUDING DEFAULTS) "
+                  + "ON COMMIT DROP");
+          byte[] target = "target-binding".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          byte[] proof = "synthetic-proof".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          insertClassificationProbe("ADMISSION", "UNKNOWN", null, null, null);
+          insertClassificationProbe("ADMISSION", "KNOWN", target, digest(target), null);
+
+          assertRejectedClassificationProbe("ADMISSION", "UNKNOWN", target, digest(target), null);
+          assertRejectedClassificationProbe("ADMISSION", "KNOWN", target, null, null);
+          assertRejectedClassificationProbe("ADMISSION", "KNOWN", target, "0".repeat(64), null);
+          assertRejectedClassificationProbe("ADMISSION", "KNOWN", target, digest(target), proof);
+          assertRejectedClassificationProbe("TRANSFER", "KNOWN", target, digest(target), proof);
+          assertRejectedClassificationProbe(
+              "TRANSFER_RETIREMENT", "KNOWN", target, digest(target), null);
+        });
+  }
+
+  private void assertProofBudget(
+      org.jooq.Result<org.jooq.Record> checks,
+      String tableName,
+      String columnExpression,
+      String... bounds) {
+    assertThat(checks)
+        .anySatisfy(
+            row -> {
+              assertThat(row.get("table_name", String.class)).isEqualTo(tableName);
+              String definition = row.get("definition", String.class);
+              assertThat(definition).contains(columnExpression).contains(bounds);
+            });
+  }
+
+  private void assertRejectedClassificationProbe(
+      String sourceKind, String state, byte[] target, String targetDigest, byte[] proof) {
+    dsl.execute("SAVEPOINT roster_shape_probe");
+    assertThatThrownBy(
+            () -> insertClassificationProbe(sourceKind, state, target, targetDigest, proof))
+        .isInstanceOf(DataAccessException.class);
+    dsl.execute("ROLLBACK TO SAVEPOINT roster_shape_probe");
+    dsl.execute("RELEASE SAVEPOINT roster_shape_probe");
+  }
+
+  private void insertClassificationProbe(
+      String sourceKind, String state, byte[] target, String targetDigest, byte[] proof) {
+    dsl.execute(
+        "INSERT INTO roster_classification_constraint_probe "
+            + "(source_kind, operation_uuid, admission_uuid, source_binding, classification_state, "
+            + "target_binding, target_digest, retirement_proof) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        sourceKind,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        new byte[] {1},
+        state,
+        target,
+        targetDigest,
+        proof);
+  }
+
+  private String digest(byte[] value) {
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 is required by the JVM", impossible);
+    }
+  }
+
+  @Test
   void retirementHealthStartsAfterStoredHorizonAndKeepsPayloadAndCleanupLag() {
     var local = localRequest();
     var owner = recoveryOwner(recovery(local));
