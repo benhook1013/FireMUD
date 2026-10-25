@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Test;
 class CanonicalPreseededActorAssignmentPeerInterceptorTest {
   private static final String NAMESPACE = "gameplay";
   private static final String EXACT_PEER = "spiffe://firemud/ns/gameplay/sa/game-session-service";
+  private static final String EXACT_WORLD_PEER =
+      "spiffe://firemud/ns/gameplay/sa/world-management-service";
 
   @AfterEach
   void clearSessionContext() {
@@ -66,6 +68,31 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
   }
 
   @Test
+  void acceptsOnlyTheExactSameNamespaceWorldCertificateForTheReceiptReadMethod() {
+    var interceptor = new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE);
+    var call =
+        callFor(
+            CanonicalPreseededActorAssignmentPeerInterceptor.RECEIPT_READ_METHOD_NAME,
+            peerSession(EXACT_WORLD_PEER));
+    ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
+    when(next.startCall(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              var peer =
+                  CanonicalPreseededActorAssignmentPeerInterceptor.currentVerifiedWorldPeer();
+              assertThat(peer).isNotNull();
+              assertThat(peer.uri()).isEqualTo(EXACT_WORLD_PEER);
+              assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+              assertThat(SessionContext.isInternalService()).isFalse();
+              return new ServerCall.Listener<>() {};
+            });
+
+    interceptor.interceptCall(call, new Metadata(), next);
+
+    verify(next).startCall(any(), any());
+  }
+
+  @Test
   void rejectsAbsentWrongServiceAndCrossNamespaceCertificatesBeforeHandler() {
     var interceptor = new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE);
     for (SSLSession session :
@@ -85,6 +112,46 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
               any(Metadata.class));
       verify(next, never()).startCall(any(), any());
     }
+  }
+
+  @Test
+  void keepsWorldReadAndGameSessionWriteRolesDisjoint() {
+    var interceptor = new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE);
+    for (String uri :
+        List.of(
+            EXACT_PEER,
+            "spiffe://firemud/ns/gameplay/sa/account-service",
+            "spiffe://firemud/ns/other/sa/world-management-service")) {
+      var readCall =
+          callFor(
+              CanonicalPreseededActorAssignmentPeerInterceptor.RECEIPT_READ_METHOD_NAME,
+              peerSession(uri));
+      ServerCallHandler<String, String> readNext = mock(ServerCallHandler.class);
+
+      interceptor.interceptCall(readCall, new Metadata(), readNext);
+
+      verify(readCall)
+          .close(
+              org.mockito.ArgumentMatchers.argThat(
+                  status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+              any(Metadata.class));
+      verify(readNext, never()).startCall(any(), any());
+    }
+
+    var writeCall =
+        callFor(
+            CanonicalPreseededActorAssignmentPeerInterceptor.METHOD_NAME,
+            peerSession(EXACT_WORLD_PEER));
+    ServerCallHandler<String, String> writeNext = mock(ServerCallHandler.class);
+
+    interceptor.interceptCall(writeCall, new Metadata(), writeNext);
+
+    verify(writeCall)
+        .close(
+            org.mockito.ArgumentMatchers.argThat(
+                status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+            any(Metadata.class));
+    verify(writeNext, never()).startCall(any(), any());
   }
 
   @Test
@@ -112,6 +179,21 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
                   status -> status.getCode() == Status.Code.PERMISSION_DENIED),
               any(Metadata.class));
       verify(next, never()).startCall(any(), any());
+
+      var receiptReadCall =
+          callFor(
+              CanonicalPreseededActorAssignmentPeerInterceptor.RECEIPT_READ_METHOD_NAME,
+              peerSession(EXACT_WORLD_PEER));
+      ServerCallHandler<String, String> receiptReadNext = mock(ServerCallHandler.class);
+
+      interceptor.interceptCall(receiptReadCall, new Metadata(), receiptReadNext);
+
+      verify(receiptReadCall)
+          .close(
+              org.mockito.ArgumentMatchers.argThat(
+                  status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+              any(Metadata.class));
+      verify(receiptReadNext, never()).startCall(any(), any());
       SessionContext.clear();
     }
   }

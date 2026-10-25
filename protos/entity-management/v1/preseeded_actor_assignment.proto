@@ -12,6 +12,8 @@ option java_multiple_files = true;
 service CanonicalPreseededActorAssignmentService {
   rpc AssignPreseededActor(AssignPreseededActorRequest)
       returns (AssignPreseededActorResponse);
+  rpc ReadPreseededActorAssignmentReceipt(ReadPreseededActorAssignmentReceiptRequest)
+      returns (ReadPreseededActorAssignmentReceiptResponse);
 }
 
 // The stable assignment intent. All target values are caller preconditions and are independently
@@ -59,4 +61,36 @@ message AssignPreseededActorResponse {
   // Present only for ASSIGNED. This is persisted character identity, not an admission grant.
   optional string character_uuid = 4;
   string intent_digest = 5;
+}
+
+// Exact persisted receipt selector. placement_operation_uuid correlates this read with a World
+// placement operation; the remaining fields must match the immutable Entity assignment receipt.
+message ReadPreseededActorAssignmentReceiptRequest {
+  uint32 schema_version = 1;
+  string placement_operation_uuid = 2;
+  string assignment_uuid = 3;
+  string canonical_account_uuid = 4;
+  string character_uuid = 5;
+  string intent_digest = 6;
+  PreseededActorAssignmentExpectedTarget expected_target = 7;
+}
+
+// The immutable Entity-owned portion of a committed PRESEEDED assignment. This does not convey
+// current Account eligibility, PLAY authority, or runtime activation.
+message ReadPreseededActorAssignmentReceiptResponse {
+  uint32 schema_version = 1;
+  // Transport correlation only; this value is not stored by or attributed to Entity.
+  string placement_operation_uuid = 2;
+  string assignment_uuid = 3;
+  string canonical_account_uuid = 4;
+  string character_uuid = 5;
+  string intent_digest = 6;
+  PreseededActorAssignmentExpectedTarget expected_target = 7;
+  PreseededActorAssignmentCorePayload core_payload = 8;
+  PreseededActorAssignmentReceiptStatus status = 9;
+}
+
+enum PreseededActorAssignmentReceiptStatus {
+  PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_UNSPECIFIED = 0;
+  PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED = 1;
 }

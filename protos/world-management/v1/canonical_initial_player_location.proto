@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+import "entity-management/v1/preseeded_actor_assignment.proto";
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Unregistered same-namespace Game Session owner boundary for retained first placement.
+service CanonicalInitialPlayerLocationService {
+  rpc PlaceInitialPlayer(CanonicalInitialPlayerLocationRequest)
+      returns (CanonicalInitialPlayerLocationResponse);
+  rpc ReadInitialPlayerLocation(CanonicalInitialPlayerLocationRequest)
+      returns (CanonicalInitialPlayerLocationResponse);
+}
+
+// Closed selectors for one immutable Entity assignment, one World initial-admission hold, and
+// its matching Game Session terminal. No caller-supplied owner proof bytes are accepted.
+message CanonicalInitialPlayerLocationRequest {
+  uint32 schema_version = 1;
+  string placement_operation_uuid = 2;
+  entity_management.v1.PreseededActorAssignmentExpectedTarget expected_target = 3;
+  string canonical_account_uuid = 4;
+  string character_uuid = 5;
+  string assignment_uuid = 6;
+  string assignment_intent_digest = 7;
+  string initial_admission_hold_uuid = 8;
+  string initial_admission_hold_fence = 9;
+  string initial_admission_request_id = 10;
+  string initial_admission_request_digest = 11;
+  int64 active_lifecycle_epoch = 12;
+  string terminal_proof_digest = 13;
+  int64 committed_pointer_version = 14;
+  int64 audit_event_id = 15;
+}
+
+enum CanonicalInitialPlayerLocationOutcome {
+  CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_UNSPECIFIED = 0;
+  CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED = 1;
+  CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_CONFLICT = 2;
+}
+
+message CanonicalInitialPlayerLocationResponse {
+  uint32 schema_version = 1;
+  string placement_operation_uuid = 2;
+  string request_digest = 3;
+  string canonical_account_uuid = 4;
+  string character_uuid = 5;
+  string assignment_uuid = 6;
+  string assignment_intent_digest = 7;
+  string result_digest = 8;
+  CanonicalInitialPlayerLocationOutcome outcome = 9;
+  string conflict_code = 10;
+  CanonicalInitialPlayerLocationRoom start_location = 11;
+  // Private World runtime room key; not a canonical RoomInstanceRef or current occupancy.
+  string private_runtime_room_key = 12;
+}
+
+// This is the retained initial ROOM binding, not a read of current occupancy or activation.
+message CanonicalInitialPlayerLocationRoom {
+  string canonical_tenant_uuid = 1;
+  string canonical_version_uuid = 2;
+  string room_template_uuid = 3;
+}

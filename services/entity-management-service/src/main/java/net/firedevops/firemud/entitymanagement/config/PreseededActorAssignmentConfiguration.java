@@ -157,8 +157,11 @@ public class PreseededActorAssignmentConfiguration {
 
   /** Creates the assignment RPC handler only for an explicitly controlled composition. */
   public CanonicalPreseededActorAssignmentGrpcService canonicalPreseededActorAssignmentGrpcService(
-      String trustedNamespace, PreseededActorAssignmentService assignmentService) {
-    return new CanonicalPreseededActorAssignmentGrpcService(trustedNamespace, assignmentService);
+      String trustedNamespace,
+      PreseededActorAssignmentService assignmentService,
+      PreseededActorAssignmentReceiptService receiptService) {
+    return new CanonicalPreseededActorAssignmentGrpcService(
+        trustedNamespace, assignmentService, receiptService);
   }
 
   /** Creates the method-specific certificate guard without registering either object. */

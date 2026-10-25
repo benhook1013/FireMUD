@@ -65,8 +65,12 @@ import net.firedevops.firemud.entitymanagement.service.impl.CanonicalPreseededAc
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentOutcome;
+import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerReadRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerReadResponse;
@@ -93,9 +97,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Physical mTLS-to-Entity-writer proof with the actual Spring-proxied repository and current
- * PostgreSQL migrations. Account and Game Session answers are controlled owner-shaped responses;
- * this proves neither upstream custody/issuance nor production runtime activation.
+ * Physical mTLS-to-Entity assignment and receipt proof with the actual Spring-proxied repository
+ * and current PostgreSQL migrations. Account and Game Session answers are controlled owner-shaped
+ * responses; this proves neither upstream custody/issuance nor production runtime activation.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -111,6 +115,8 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
       "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service";
   private static final String GAME_SESSION_URI =
       "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
+  private static final String WORLD_URI =
+      "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service";
   private static final Path TLS_DIRECTORY = createTlsDirectory();
   private static final TestTls TLS = createTestTls(TLS_DIRECTORY);
 
@@ -149,7 +155,8 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
   }
 
   @Test
-  void composesExactMtlsOwnerReadsCapabilityAndActualPostgresAssignmentWriter() throws Exception {
+  void composesExactMtlsOwnerReadsCapabilityAndActualPostgresAssignmentWriterAndReceiptRead()
+      throws Exception {
     var ownerFixture = readOwnerFixture();
     var assignment = assignmentRequest(ownerFixture.request());
     var grantDirectory = Files.createDirectory(TLS_DIRECTORY.resolve("protected-capability"));
@@ -209,8 +216,10 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
               configuration.enabledPreseededActorStagingEligibilityPort(stagingClient),
               configuration.preseededActorAssignmentOwnerEvidencePort(gameSessionClient, NAMESPACE),
               observedRepository);
+      var receiptService = configuration.preseededActorAssignmentReceiptService(observedRepository);
       CanonicalPreseededActorAssignmentGrpcService handler =
-          configuration.canonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService);
+          configuration.canonicalPreseededActorAssignmentGrpcService(
+              NAMESPACE, assignmentService, receiptService);
       Server entityServer =
           boundedEntityServer(
               handler,
@@ -230,6 +239,8 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
             "foreign-game-session-client",
             wireRequest,
             Status.Code.PERMISSION_DENIED);
+        assertNoMutation(baseline, assignment);
+        assertCallDenied(entityServer, "world-client", wireRequest, Status.Code.PERMISSION_DENIED);
         assertNoMutation(baseline, assignment);
 
         // The protected file is checked against the live server bundle and exact run binding.
@@ -354,6 +365,61 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
         assertThat(receipt.status()).isEqualTo("ASSIGNED");
 
         List<String> persistedRows = assignmentAndActorRows(assignment, characterUuid);
+        MutationCounts assignedBaseline = mutationCounts(assignment);
+        ReadPreseededActorAssignmentReceiptRequest receiptReadRequest =
+            toReceiptReadWire(
+                assignment, characterUuid, UUID.fromString("80000000-0000-4000-8000-000000000008"));
+
+        // Only the exact same-namespace World peer can read this persisted Entity receipt.
+        // Rejected peers do not reach the repository or alter either stored row.
+        assertReceiptReadCallDenied(
+            entityServer, "game-session-client", receiptReadRequest, Status.Code.PERMISSION_DENIED);
+        assertReceiptReadCallDenied(
+            entityServer, "account-client", receiptReadRequest, Status.Code.PERMISSION_DENIED);
+        assertReceiptReadCallDenied(
+            entityServer,
+            "foreign-world-client",
+            receiptReadRequest,
+            Status.Code.PERMISSION_DENIED);
+        assertThat(receiptReadEntryCount.get()).isZero();
+        assertNoMutation(assignedBaseline, assignment);
+
+        ReadPreseededActorAssignmentReceiptResponse persistedRead =
+            callReceiptRead(entityServer, "world-client", receiptReadRequest);
+        assertThat(persistedRead.getSchemaVersion()).isEqualTo(1);
+        assertThat(persistedRead.getPlacementOperationUuid())
+            .isEqualTo(receiptReadRequest.getPlacementOperationUuid());
+        assertThat(persistedRead.getAssignmentUuid())
+            .isEqualTo(assignment.assignmentUuid().toString());
+        assertThat(persistedRead.getCanonicalAccountUuid())
+            .isEqualTo(assignment.canonicalAccountUuid().toString());
+        assertThat(persistedRead.getCharacterUuid()).isEqualTo(characterUuid.toString());
+        assertThat(persistedRead.getIntentDigest()).isEqualTo(assignment.mutationIntentDigest());
+        assertThat(persistedRead.getExpectedTarget())
+            .isEqualTo(toWire(assignment).getExpectedTarget());
+        assertThat(persistedRead.getCorePayload().getDisplayName())
+            .isEqualTo(assignment.corePayload().displayName());
+        assertThat(persistedRead.getStatus())
+            .isEqualTo(
+                PreseededActorAssignmentReceiptStatus
+                    .PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED);
+        assertThat(receiptReadEntryCount.get()).isEqualTo(1);
+        assertThat(receiptReadEnteredOutsideTransaction.get()).isTrue();
+        assertThat(receiptReadCallerUri.get()).isEqualTo(WORLD_URI);
+        assertThat(assignmentAndActorRows(assignment, characterUuid))
+            .containsExactlyElementsOf(persistedRows);
+        assertNoMutation(assignedBaseline, assignment);
+
+        ReadPreseededActorAssignmentReceiptRequest changedSelector =
+            receiptReadRequest.toBuilder()
+                .setCharacterUuid("90000000-0000-4000-8000-000000000009")
+                .build();
+        assertReceiptReadCallDenied(
+            entityServer, "world-client", changedSelector, Status.Code.NOT_FOUND);
+        assertThat(assignmentAndActorRows(assignment, characterUuid))
+            .containsExactlyElementsOf(persistedRows);
+        assertNoMutation(assignedBaseline, assignment);
+
         byte[] terminalResponse = assigned.toByteArray();
         AssignPreseededActorResponse replay =
             call(entityServer, "game-session-client", wireRequest);
@@ -408,6 +474,18 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
                   throw new IllegalStateException(
                       "Assignment writer was entered inside a caller-owned SQL transaction");
                 }
+              } else if (invocation
+                  .getMethod()
+                  .getName()
+                  .equals("readPreseededActorAssignmentReceipt")) {
+                receiptReadEntryCount.incrementAndGet();
+                receiptReadEnteredOutsideTransaction.set(
+                    !TransactionSynchronizationManager.isActualTransactionActive());
+                receiptReadCallerUri.set(GrpcPeerIdentity.current().uri());
+                if (!receiptReadEnteredOutsideTransaction.get()) {
+                  throw new IllegalStateException(
+                      "Assignment receipt read was entered inside a caller-owned SQL transaction");
+                }
               }
               return invocation.proceed();
             });
@@ -416,6 +494,9 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
 
   private final AtomicInteger writerEntryCount = new AtomicInteger();
   private final AtomicBoolean writerEnteredOutsideTransaction = new AtomicBoolean();
+  private final AtomicInteger receiptReadEntryCount = new AtomicInteger();
+  private final AtomicBoolean receiptReadEnteredOutsideTransaction = new AtomicBoolean();
+  private final AtomicReference<String> receiptReadCallerUri = new AtomicReference<>();
 
   private MutationCounts mutationCounts(PreseededActorAssignmentRequest request) {
     UUID tenant = request.expectedTarget().canonicalTenantUuid();
@@ -483,6 +564,18 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
             failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode));
   }
 
+  private static void assertReceiptReadCallDenied(
+      Server server,
+      String callerAlias,
+      ReadPreseededActorAssignmentReceiptRequest request,
+      Status.Code expectedCode)
+      throws Exception {
+    assertThatThrownBy(() -> callReceiptRead(server, callerAlias, request))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode));
+  }
+
   private static AssignPreseededActorResponse call(
       Server server, String callerAlias, AssignPreseededActorRequest request) throws Exception {
     CommonGrpcClientProperties callerTls =
@@ -495,6 +588,23 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
           .newBlockingStub(channel)
           .withDeadlineAfter(15, TimeUnit.SECONDS)
           .assignPreseededActor(request);
+    } finally {
+      channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  private static ReadPreseededActorAssignmentReceiptResponse callReceiptRead(
+      Server server, String callerAlias, ReadPreseededActorAssignmentReceiptRequest request)
+      throws Exception {
+    CommonGrpcClientProperties callerTls =
+        TLS.pki().clientProperties(TLS_DIRECTORY, TLS.pki().identity(callerAlias));
+    ManagedChannel channel =
+        new GrpcChannelFactory()
+            .buildChannel("127.0.0.1:" + server.getPort(), 6565, callerTls, false);
+    try {
+      return CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(channel)
+          .withDeadlineAfter(15, TimeUnit.SECONDS)
+          .readPreseededActorAssignmentReceipt(request);
     } finally {
       channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
     }
@@ -598,6 +708,19 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
                 .setDisplayName(request.corePayload().displayName())
                 .build())
         .setMutationIntentDigest(request.mutationIntentDigest())
+        .build();
+  }
+
+  private static ReadPreseededActorAssignmentReceiptRequest toReceiptReadWire(
+      PreseededActorAssignmentRequest request, UUID characterUuid, UUID placementOperationUuid) {
+    return ReadPreseededActorAssignmentReceiptRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setPlacementOperationUuid(placementOperationUuid.toString())
+        .setAssignmentUuid(request.assignmentUuid().toString())
+        .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
+        .setCharacterUuid(characterUuid.toString())
+        .setIntentDigest(request.mutationIntentDigest())
+        .setExpectedTarget(toWire(request).getExpectedTarget())
         .build();
   }
 
@@ -739,8 +862,10 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
               identity("game-session-server", NAMESPACE, "game-session-service", true),
               identity("entity-client", NAMESPACE, "entity-management-service", false),
               identity("game-session-client", NAMESPACE, "game-session-service", false),
+              identity("world-client", NAMESPACE, "world-management-service", false),
               identity("account-client", NAMESPACE, "account-service", false),
-              identity("foreign-game-session-client", "other", "game-session-service", false));
+              identity("foreign-game-session-client", "other", "game-session-service", false),
+              identity("foreign-world-client", "other", "world-management-service", false));
       var serverIdentity = pki.identity("entity-server");
       Path chain = directory.resolve("entity-server-chain.pem");
       Files.writeString(

@@ -10,7 +10,7 @@ Entity V1003–V1010 prepares opaque actor UUIDs, quarantine metadata, namespace
 
 The focused SQL-isolation fixtures may insert owner-resolved rows to test exact tenant/account/namespace/scope predicates; those rows are fixture evidence only and do not prove an Account or Game Design owner supplied that provenance at runtime. Existing `shared-live`, `instance:<id>`, numeric Account/tenant IDs, names, caller checksums, and Game Session pointers never fill missing UUID provenance.
 
-World-owned `character_location` and `npc_location` tables, together with their authoritative movement, occupancy, and read paths, are target-only. They are absent from the current schema and runtime; current room topology or session bindings do not establish location authority, and Entity Management must not persist a competing location table, field, or cache authority.
+World owns guarded initial `character_location` storage and a manually composed, unregistered [initial-placement boundary](../world-management-service/api-contracts.md#canonical-initial-player-location). Its current proof gaps, later movement, NPC location and live occupancy remain separate; current room topology or session bindings do not establish that authority. Entity Management must not persist a competing location table, field or cache authority.
 
 The target-state model is container-first:
 
@@ -34,13 +34,13 @@ Inventory and equipment mutations are also intended to be auditable through a ca
 ### Responsibilities
 
 - Target responsibility: persist characters, NPCs, and items with optimistic locking. The current character update path does not yet provide tenant- and namespace-bound version CAS or stale-write proof; see [Runtime and Data](./runtime-and-data.md#implementation-status).
-- Own the persisted runtime actor core that unifies player and NPC gameplay identity; target location and occupancy authority belongs to World Management, but its tables and read/write path are not implemented
+- Own the persisted runtime actor core that unifies player and NPC gameplay identity; target location and occupancy authority belongs to World Management, while the prepared initial-placement path remains unregistered and does not establish movement or occupancy
 - Provide CRUD and query APIs for other services
-- Own and manage all inventories and item containment; at target, character location and instance metadata live in the World Management Service, but the current authoritative path is absent
+- Own and manage all inventories and item containment; at target, character location and instance metadata live in the World Management Service, while the prepared initial-placement boundary does not establish registered execution
 - Own room-attached ground containers, hidden inventory containers, equipment bindings, and the audit trail for item/container movement
 - Coordinate deferred writes through Game Session Service
 
-Target responsibility: World Management is the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Those tables and their authoritative write/read path are currently absent; Entity Management must not persist competing location fields or treat cached location as authoritative. See [World Management Runtime and Data](../world-management-service/runtime-and-data.md#character-location-ownership).
+Target responsibility: World Management is the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Guarded initial character placement is prepared but remains unregistered; NPC location, movement and live occupancy remain separate gaps. Entity Management must not persist competing location fields or treat cached location as authoritative. See [World Management Runtime and Data](../world-management-service/runtime-and-data.md#character-location-ownership).
 
 For canonical naming and scoping rules, see [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 
