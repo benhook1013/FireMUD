@@ -506,6 +506,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .isEqualTo(references.read(missingRoster));
     var retiredCandidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
+            UUID.fromString(missingRoster.getOperationUuid()),
             UUID.fromString(references.read(missingRoster).getTargetFenceUuid()),
             missingRoster,
             "RETIRED");

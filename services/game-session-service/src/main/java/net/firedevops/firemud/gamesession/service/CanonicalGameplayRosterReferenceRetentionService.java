@@ -79,9 +79,22 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
           .counter("firemud.canonical.roster.reference.cleanup", "result", "failure")
           .increment();
     }
+    var processedFences = new java.util.HashSet<UUID>();
     for (var candidate : candidates) {
-      cursor = candidate.fenceUuid();
+      cursor = candidate.operationUuid();
       try {
+        if (!candidate.hasValidOriginal()) {
+          metrics
+              .counter("firemud.canonical.roster.reference.cleanup", "result", "failure")
+              .increment();
+          continue;
+        }
+        if (!processedFences.add(candidate.fenceUuid())) {
+          metrics
+              .counter("firemud.canonical.roster.reference.cleanup", "result", "protected")
+              .increment();
+          continue;
+        }
         boolean changed =
             "RETIRED".equals(candidate.state())
                 ? Boolean.TRUE.equals(
