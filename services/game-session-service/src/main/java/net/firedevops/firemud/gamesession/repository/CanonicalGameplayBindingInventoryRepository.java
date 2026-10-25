@@ -56,6 +56,10 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static final String GENERATION = "game_session_canonical_binding_generation";
   private static final String LEGACY_DISPOSITION =
       "game_session_canonical_binding_legacy_disposition";
+  private static final String ISSUER_BOOTSTRAP_CONTROL =
+      "game_session_canonical_issuer_layout_bootstrap_control";
+  private static final String ISSUER_BOOTSTRAP_INTENT =
+      "game_session_canonical_issuer_layout_bootstrap_intent";
   private final DSLContext dsl;
 
   CanonicalGameplayBindingInventoryRepository(DSLContext dsl) {
@@ -1491,6 +1495,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static CanonicalGameplayBindingTransitionSnapshot prepareInTransaction(
       DSLContext transaction, CanonicalGameplayBindingTransitionRequest request) {
     BigInteger revision = lockInventoryRevision(transaction);
+    requireNoPendingIssuerLayoutBootstrapIntent(transaction, request.candidate().issuerId());
     CanonicalGameplayAccountCoverageEvidence accountCoverageEvidence =
         lockAccountCoverageEvidence(transaction, request.candidate().accountId());
     boolean initialBinding = request.expectedPriorBindingRef() == null;
@@ -1602,6 +1607,64 @@ public final class CanonicalGameplayBindingInventoryRepository {
             decimal(revision));
     requireOne(revisionUpdated, "durable inventory revision compare-and-set lost its locked row");
     return prepared;
+  }
+
+  private static void requireNoPendingIssuerLayoutBootstrapIntent(
+      DSLContext transaction, String issuerId) {
+    Record control =
+        transaction.fetchOne(
+            "SELECT * FROM " + ISSUER_BOOTSTRAP_CONTROL + " WHERE issuer_id = ? FOR UPDATE",
+            issuerId);
+    if (control == null) {
+      Record orphanIntent =
+          transaction.fetchOne(
+              "SELECT operation_id FROM "
+                  + ISSUER_BOOTSTRAP_INTENT
+                  + " WHERE issuer_id = ? ORDER BY operation_id LIMIT 1 FOR UPDATE",
+              issuerId);
+      if (orphanIntent != null) {
+        throw conflict("Issuer bootstrap intent exists without its positive current control row");
+      }
+      return;
+    }
+
+    UUID operationId = control.get("current_operation_id", UUID.class);
+    String state = control.get("state", String.class);
+    BigInteger controlEpoch = readBigInteger(control, "control_epoch");
+    BigInteger operationFence = readBigInteger(control, "current_operation_fence");
+    BigInteger coverageFence = readBigInteger(control, "current_coverage_fence");
+    BigInteger lastIssuedFence = readBigInteger(control, "last_issued_fence");
+    if (!Objects.equals(issuerId, control.get("issuer_id", String.class))
+        || !"INITIAL_BOOTSTRAP_INTENT".equals(state)
+        || operationId == null
+        || NIL_UUID.equals(operationId)
+        || controlEpoch.signum() <= 0
+        || operationFence.signum() <= 0
+        || coverageFence.signum() <= 0
+        || !operationFence.equals(controlEpoch)
+        || operationFence.equals(coverageFence)
+        || lastIssuedFence.compareTo(coverageFence) < 0) {
+      throw conflict("Issuer bootstrap control has a malformed or unsupported current pointer");
+    }
+
+    Record intent =
+        transaction.fetchOne(
+            "SELECT * FROM "
+                + ISSUER_BOOTSTRAP_INTENT
+                + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
+            operationId,
+            issuerId);
+    if (intent == null
+        || !operationId.equals(intent.get("operation_id", UUID.class))
+        || !Objects.equals(issuerId, intent.get("issuer_id", String.class))
+        || !"INITIAL_BOOTSTRAP_INTENT".equals(intent.get("intent_state", String.class))
+        || !controlEpoch.equals(readBigInteger(intent, "control_epoch"))
+        || !operationFence.equals(readBigInteger(intent, "operation_fence"))
+        || !coverageFence.equals(readBigInteger(intent, "coverage_fence"))
+        || readBigInteger(intent, "inventory_snapshot_revision").signum() <= 0) {
+      throw conflict("Issuer bootstrap control does not point to its exact durable intent tuple");
+    }
+    throw conflict("Initial issuer-layout bootstrap intent blocks new binding preparation");
   }
 
   private static void validateRequest(CanonicalGameplayBindingTransitionRequest request) {

@@ -933,43 +933,59 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       DriverManagerDataSource dataSource = dataSource(schema);
       flyway(dataSource, schema, migrationTarget).migrate();
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
-      UUID tenantId = UUID.randomUUID();
+      CanonicalGameplayBindingIdentity retainedIdentity =
+          "1028".equals(migrationTarget)
+              ? CanonicalGameplayBindingInventoryRepositoryIntegrationTest.identity(
+                  UUID.randomUUID().toString())
+              : null;
+      UUID tenantId = retainedIdentity == null ? UUID.randomUUID() : retainedIdentity.tenantId();
       var runtime =
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource, tenantId);
       CanonicalGameplayBindingInventoryRepositoryIntegrationTest
           .seedSyntheticVerifiedLegacyDisposition(dsl);
 
-      UUID accountId = UUID.randomUUID();
-      UUID transitionId = UUID.randomUUID();
-      CanonicalGameplayBindingIdentity identity =
-          new CanonicalGameplayBindingIdentity(
-              accountId,
-              runtime.canonicalTenantId(),
-              runtime.playableStateNamespaceId(),
-              UUID.randomUUID(),
-              "SHARED",
-              runtime.gameInstanceUuid(),
-              runtime.gameInstanceId(),
-              UUID.randomUUID().toString(),
-              UUID.randomUUID(),
-              java.math.BigInteger.ONE,
-              GameSessionAccountDelegationProfile.ISSUER,
-              java.math.BigInteger.ONE,
-              java.math.BigInteger.ONE,
-              java.math.BigInteger.valueOf(16),
-              java.math.BigInteger.valueOf(32));
-      CanonicalIssuerReservationFenceEvidence reservation =
-          new CanonicalIssuerReservationFenceEvidence(
-              UUID.randomUUID(),
-              UUID.randomUUID(),
-              UUID.randomUUID(),
-              java.math.BigInteger.ONE,
-              java.math.BigInteger.ONE,
-              java.math.BigInteger.ONE);
-      new CanonicalGameplayBindingInventoryRepository(dsl)
-          .prepare(
-              new CanonicalGameplayBindingTransitionRequest(
-                  transitionId, UUID.randomUUID(), identity, reservation, null, null));
+      UUID accountId;
+      if (retainedIdentity != null) {
+        // This V1028-only fixture reuses the existing canonical historical-source SQL helper.
+        // It is retained storage for this migration test, not a live prepare-owner or admission
+        // proof. V1028 predates the V1030 issuer-intent guard read by current prepare().
+        accountId = retainedIdentity.accountId();
+        CanonicalGameplayBindingInventoryRepositoryIntegrationTest.seedActiveSource(
+            dsl, retainedIdentity);
+        seedNoActiveAccountCoverageControl(dsl, accountId);
+      } else {
+        accountId = UUID.randomUUID();
+        UUID transitionId = UUID.randomUUID();
+        CanonicalGameplayBindingIdentity identity =
+            new CanonicalGameplayBindingIdentity(
+                accountId,
+                runtime.canonicalTenantId(),
+                runtime.playableStateNamespaceId(),
+                UUID.randomUUID(),
+                "SHARED",
+                runtime.gameInstanceUuid(),
+                runtime.gameInstanceId(),
+                UUID.randomUUID().toString(),
+                UUID.randomUUID(),
+                java.math.BigInteger.ONE,
+                GameSessionAccountDelegationProfile.ISSUER,
+                java.math.BigInteger.ONE,
+                java.math.BigInteger.ONE,
+                java.math.BigInteger.valueOf(16),
+                java.math.BigInteger.valueOf(32));
+        CanonicalIssuerReservationFenceEvidence reservation =
+            new CanonicalIssuerReservationFenceEvidence(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                java.math.BigInteger.ONE,
+                java.math.BigInteger.ONE,
+                java.math.BigInteger.ONE);
+        new CanonicalGameplayBindingInventoryRepository(dsl)
+            .prepare(
+                new CanonicalGameplayBindingTransitionRequest(
+                    transitionId, UUID.randomUUID(), identity, reservation, null, null));
+      }
       dsl.execute(
           "UPDATE game_session_canonical_account_coverage_control SET last_operation_fence = ?"
               + " WHERE account_id = ? AND state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'",
@@ -1000,6 +1016,15 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
               "aof-7");
       return new Fixture(
           schema, dataSource, dsl, intent, runtime.targetNamespace(), keyPair, evidence);
+    }
+
+    private static void seedNoActiveAccountCoverageControl(DSLContext dsl, UUID accountId) {
+      // Controlled retained-row input only; this is not owner-produced no-active authority.
+      dsl.execute(
+          "INSERT INTO game_session_canonical_account_coverage_control "
+              + "(account_id, state, last_operation_fence) "
+              + "VALUES (?, 'NO_ACTIVE_ACCOUNT_WIDE_FLOW', 0)",
+          accountId);
     }
 
     private void migrateTo(String migrationTarget) {

@@ -328,7 +328,7 @@ key:   session:game:index:issuer:{issuerIndexLayoutTag}:<issuerId>:<partitionId>
 type:  HASH
 field: <bindingRef>
 value: {
-  schemaVersion: 1,
+  schemaVersion: 2,
   issuerId,
   accountId,
   tenantId,
@@ -336,9 +336,42 @@ value: {
   sessionId,
   bindingGeneration,
   issuerAuthGeneration,
-  issuerIndexLayoutVersion
+  issuerIndexLayoutVersion,
+  playableStateNamespaceId,
+  characterId,
+  playableStateScope,
+  runtimeGameInstanceId,
+  regionId,
+  regionEpoch,
+  issuerControlEpoch,
+  layout: {
+    partitionCount, partitionCapacity, mappingIdentity,
+    descriptorBytes, descriptorDigest
+  },
+  reservation: {
+    reservationId, bindingRef, transitionId, partitionId,
+    lifecycle, reservationFence, inventoryRevision
+  },
+  anchor: {
+    issuerCoverageOperationId, operationFence, coverageFence,
+    issuerInventorySnapshotRevision, sourceCheckpointBytes,
+    sourceCheckpointDigest, sourceEventBytes, sourceEventDigest
+  },
+  memberOperation: { operationId, operationFence, coverageGeneration },
+  incarnation: {
+    attestorBinding, acceptedAttestationDigest, targetDeploymentEvidence,
+    coordOpsRoAclDigest, coordRedisConfigObservedDigest
+  }
 }
 ```
+
+The value is a closed, bounded RFC 8785 canonical JSON object. Except for the literal numeric `schemaVersion: 2`, counters use canonical unsigned decimal strings; every counter is positive except the zero-based `partitionId`. Implementations preserve values beyond binary floating-point precision. UUIDs and identifiers retain their exact canonical spelling, and bytes use canonical padded Base64. `sourceEventBytes` and `sourceEventDigest` are both explicit `null` only when the exact qualified Account checkpoint has no corresponding event. Unknown or duplicate fields, unsupported versions, malformed UTF-8, noncanonical bytes, inconsistent owner/partition/layout references, and resource-bound violations fail closed; parser limits never authorize normalization or truncation.
+
+The full owner identity, immutable authorized layout descriptor, and Account source bytes must agree with the original reservation and anchor. `anchor.issuerInventorySnapshotRevision` is the complete immutable issuer inventory revision; `reservation.inventoryRevision` is that reservation's durable transition revision, and they are not interchangeable. The anchor operation fence, coverage fence, binding-local member-operation fence and `issuerControlEpoch` retain separate evidence domains. The anchor operation and coverage fences have distinct values; equality between counters from different domains does not merge their authority or imply an ordering. `memberOperation.coverageGeneration` is concrete only after its issuing owner allocates it; a parser, bootstrap preparation, or caller cannot invent it. The value retains the complete stable incarnation binding, including every field of accepted `targetDeploymentEvidence/v1`, not only its digest. Fresh observation nonces, observation times, and signing-key selection are not stable row identity; the protected current-observation owner validates them at each decisive boundary. See [Redis Operations and Access](./system-architecture-redis-ops-access.md) for protected evidence ownership.
+
+The exact `bindingRef` field identity and canonical partition key remain unchanged. Physical schema-v1 values are retained historical or legacy evidence and never qualify a v2 member, retry, readback, or cleanup. Encountering v1 requires the canonical fenced complete-inventory rebuild or migration; an empty-key assumption, SQL acknowledgement, or hidden second-key witness cannot upgrade it. The same binding under a different anchor, reservation, local operation, issuer-control epoch, or storage incarnation is a conflict, not an idempotent retry. Mutation, exact readback, and cleanup compare the complete v2 value at the one issuer-partition key and permit only the defined original-operation transition.
+
+Capacity evidence shares that same owned partition HASH and atomic boundary. Reserved versioned capacity-field names must be disjoint from every canonical `bindingRef` field, and capacity values retain the exact anchor, layout, original reservation/member-operation tuple, and incarnation needed for comparison. Capacity counts distinct non-terminal reservations through `RESERVED`, `BOUND`, and `RELEASE_PENDING`; it is not inferred from binding rows or total HASH fields. Separate capacity/readback steps compare the same complete tuples and never use a second key, key absence as initialization authority, or SQL intent as physical evidence.
 
 ### Canonical Issuer Partition Mapping
 
@@ -391,6 +424,14 @@ An issuer-generation replay at sequence `0` is a no-op only when the exact canon
 The issuer binding/index CAS must persist and exact-compare the complete binding fields together with reservation identity, owner, transition, partition and layout, lifecycle, fence, and revision in one atomic durable result, or use separate atomic binding and reservation CAS results joined in one durable acknowledgement. The acknowledgement must preserve and exact-compare all of those fields, and recovery must read back and reconcile the same complete joined result before clearing an obligation or publishing coverage; a binding-only or reservation-only success cannot authorize recovery.
 
 For a linked issuer recovery edge, edge creation, update, every exact retry, child-result/readback association, and parent-consumption CAS must persist and exact-compare `parentRecoveryOperationId`, `parentLifecycle`, `parentOperationFence`, and `parentCoverageFence` together with the exact child identity, child lifecycle/fences, `linkRevision`, and complete snapshot/layout/cutoff/reservation/capacity proof. Child requests, digests, transitions, readbacks, acknowledgements, and retries remain parent-independent. A standalone issuer operation uses the four exact typed `NOT_APPLICABLE` parent markers and has no parent lifecycle or parent-consumption path.
+
+### Installed Issuer Anchor for Ordinary NEW
+
+Ordinary binding-local `NEW` may use the global issuer index only under a positively installed, complete issuer-coverage and layout anchor. It binds the exact `{issuerId, issuerCoverageOperationId, operationFence, coverageFence, issuerInventorySnapshotRevision}` and pinned active layout `{issuerIndexLayoutVersion, issuerIndexPartitionCount, issuerIndexPartitionCapacity}`. The account-side `NO_ACTIVE_ACCOUNT_WIDE_FLOW` exception is account-only and says nothing about issuer coverage or layout.
+
+The issuer owner establishes that anchor only from an authorized immutable layout descriptor, exact current Account source checkpoint, verified legacy disposition, and complete durable issuer inventory including reservations and unresolved obligations. It must build or verify every required partition and reservation, prove local and aggregate capacity, and retain same-attempt readback before guarded publication. An empty physical index, absent or empty inventory result, or conformance-vector count is not initialization authority; unresolved legacy identities remain retained and fenced. Controlled descriptor, source, and incarnation inputs establish only local algorithm behavior, not operational bootstrap authority.
+
+The physical v2 HASH value above is a projection, not the installed anchor or an issuer binding-local acknowledgement. The separate issuer acknowledgement must be explicitly versioned and bind the complete anchor, exact local transition/reservation, member and capacity readbacks, current control/incarnation evidence, and owner-issued per-transition generation. Neither physical-row parsing nor the account `accountIndexAcknowledgement` schema v2 can manufacture that result; the account acknowledgement and its CLOSED barrier receipt establish no issuer anchor or issuer `INSTALLED`/`OPEN` state. The final tenant-local CAS must positively compare the exact issuer barrier `OPEN` state and owner epoch/incarnation with the original candidate and required Account, issuer, and region evidence; global issuer-index and capacity keys never enter tenant-local Lua.
 
 ### Recovery and Cutoff Scope Authority
 
