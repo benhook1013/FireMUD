@@ -236,7 +236,7 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
               assertSqlTransaction();
               return List.of(first, last);
             });
-    when(repository.targetCandidates(last.fenceUuid(), 2))
+    when(repository.targetCandidates(last.operationUuid(), 2))
         .thenAnswer(
             ignored -> {
               assertSqlTransaction();
@@ -325,7 +325,7 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
         .isEqualTo(4);
     var pages = inOrder(repository);
     pages.verify(repository).targetCandidates(null, 2);
-    pages.verify(repository, times(3)).targetCandidates(last.fenceUuid(), 2);
+    pages.verify(repository, times(3)).targetCandidates(last.operationUuid(), 2);
     verify(repository, times(4)).purgeConfirmedRetirementAcknowledgements(2);
     verify(repository, times(4)).transferHealth();
     verify(repository, times(4)).health();
@@ -350,13 +350,13 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
               assertSqlTransaction();
               return List.of();
             });
-    when(repository.targetCandidates(unavailable.fenceUuid(), 2))
+    when(repository.targetCandidates(unavailable.operationUuid(), 2))
         .thenAnswer(
             ignored -> {
               assertSqlTransaction();
               return List.of(eligible, retired);
             });
-    when(repository.targetCandidates(retired.fenceUuid(), 2))
+    when(repository.targetCandidates(retired.operationUuid(), 2))
         .thenAnswer(
             ignored -> {
               assertSqlTransaction();
@@ -413,8 +413,8 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
 
     var pages = inOrder(repository);
     pages.verify(repository).targetCandidates(null, 2);
-    pages.verify(repository).targetCandidates(unavailable.fenceUuid(), 2);
-    pages.verify(repository).targetCandidates(retired.fenceUuid(), 2);
+    pages.verify(repository).targetCandidates(unavailable.operationUuid(), 2);
+    pages.verify(repository).targetCandidates(retired.operationUuid(), 2);
     pages.verify(repository).targetCandidates(null, 2);
     verify(owner, never()).retireTarget(retired.original());
     verify(owner, times(3)).retireTarget(any());
@@ -458,6 +458,32 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
   }
 
   @Test
+  void invalidCandidateAdvancesItsRealOperationCursorWithoutOwnerCallOrPurge() {
+    var invalid = TargetCandidate.invalid(new UUID(1, 1), new UUID(0, 1), "RETIRED");
+    var later = candidate(2, "ACTIVE");
+    when(repository.targetCandidates(null, 2)).thenReturn(List.of(invalid));
+    when(repository.targetCandidates(invalid.operationUuid(), 2)).thenReturn(List.of(later));
+    when(owner.retireTarget(later.original())).thenReturn(false);
+
+    service.sweep();
+
+    verifyNoInteractions(owner);
+    verify(repository, never()).purgeRetiredTarget(any());
+    assertThat(outcomes("failure")).isEqualTo(1);
+
+    service.sweep();
+
+    var pages = inOrder(repository);
+    pages.verify(repository).targetCandidates(null, 2);
+    pages.verify(repository).targetCandidates(invalid.operationUuid(), 2);
+    verify(owner).retireTarget(later.original());
+    verify(repository, never()).purgeRetiredTarget(invalid);
+    assertThat(outcomes("failure")).isEqualTo(1);
+    assertThat(outcomes("protected")).isEqualTo(1);
+    assertOutsideTransaction();
+  }
+
+  @Test
   void refusesBothActualAndSynchronizationOnlyAmbientTransactionsBeforeAnyWork() {
     try {
       TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -485,6 +511,7 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
 
   private static TargetCandidate candidate(long id, String state) {
     return new TargetCandidate(
+        new UUID(1, id),
         new UUID(0, id),
         GetCanonicalGameplayRosterReferenceRequest.newBuilder()
             .setOperationUuid(new UUID(1, id).toString())
