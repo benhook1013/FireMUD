@@ -12,6 +12,8 @@ import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberRepairOperation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingAccountIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingAccountIndexProjectionReceipt;
@@ -36,9 +38,9 @@ import org.jooq.impl.DSL;
 /**
  * Game Session-owned durable preparation ledger.
  *
- * <p>This class deliberately has no Spring stereotype and a package-private API. It is not an
- * admission, acknowledgement, Redis, or controller-CAS surface. A future transfer orchestrator must
- * consume the complete stored evidence before it can make a candidate admissible.
+ * <p>This class deliberately has no Spring stereotype and a package-private API. It owns the
+ * binding-local account-member acknowledgement, but it is not a Redis or controller-CAS surface. A
+ * completed member acknowledgement leaves the candidate provisional and non-admitting.
  */
 public final class CanonicalGameplayBindingInventoryRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -277,9 +279,22 @@ public final class CanonicalGameplayBindingInventoryRepository {
               || !candidateObligation
                   .accountIndexFence()
                   .equals(current.candidate().accountIndexFence())
-              || candidateObligation.status()
-                  != CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED) {
+              || (candidateObligation.status()
+                      != CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED
+                  && candidateObligation.status()
+                      != CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED)) {
             throw conflict("The account-index candidate obligation differs from durable ownership");
+          }
+          if (candidateObligation.status()
+              == CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED) {
+            if (candidateObligation.projectionState()
+                    != CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                        .PRESENT_AWAITING_COVERAGE
+                || !member.equals(candidateObligation.projectedMember())) {
+              throw conflict(
+                  "Completed account-index acknowledgement differs from the exact member");
+            }
+            return projectionReceipt(candidateObligation);
           }
           if (candidateObligation.projectionState()
               == CanonicalGameplayBindingAccountIndexObligation.ProjectionState
@@ -403,6 +418,154 @@ public final class CanonicalGameplayBindingInventoryRepository {
               "Durable inventory revision compare-and-set lost during account-index readback");
           var saved = loadAccountIndexObligations(transaction, transitionId, false).getFirst();
           return projectionReceipt(saved);
+        });
+  }
+
+  /**
+   * Allocates or returns the immutable binding-local account-member repair operation for one
+   * ordinary NEW transition. The account-wide control is positively read and pinned by its epoch;
+   * this method never creates or releases an account-wide admission fence.
+   */
+  CanonicalGameplayAccountMemberRepairOperation beginAccountMemberRepair(UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger inventoryRevision = lockInventoryRevision(transaction);
+          CanonicalGameplayBindingProvisionalCasEvidence evidence =
+              loadProvisionalCasEvidence(transaction, transitionId, true);
+          UUID accountId = evidence.candidate().identity().accountId();
+          AccountCoverageControl control =
+              lockExistingAccountCoverageControl(transaction, accountId);
+          requireNoActiveAccountControl(control);
+          if (!control.evidence().equals(evidence.transition().accountCoverageEvidence())) {
+            throw conflict(
+                "Binding transition did not retain the current positively read account-control state");
+          }
+          readVerifiedLegacyDisposition(transaction, inventoryRevision, true);
+          requireOrdinaryNewMemberRepairTransition(evidence);
+
+          Record existing = findMemberRepairOperation(transaction, transitionId, true);
+          if (existing != null) {
+            CanonicalGameplayAccountMemberRepairOperation operation =
+                toMemberRepairOperation(existing);
+            if (!operation.accountControlEpoch().equals(control.epoch())) {
+              throw conflict("The account-wide control fence advanced after member repair began");
+            }
+            CanonicalGameplayBindingAccountIndexObligation currentObligation =
+                loadAccountIndexObligations(transaction, transitionId, true).getFirst();
+            boolean completed = "ACKNOWLEDGED".equals(existing.get("status", String.class));
+            requireMemberRepairObligationCurrent(
+                operation, evidence.candidate(), currentObligation, completed);
+            if (completed) {
+              toMemberAcknowledgement(existing);
+            }
+            return operation;
+          }
+
+          CanonicalGameplayBindingAccountIndexObligation originalObligation =
+              loadAccountIndexObligations(transaction, transitionId, true).getFirst();
+          if (originalObligation.status()
+                  != CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED
+              || evidence.candidate().accountIndexState()
+                  != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED) {
+            throw conflict(
+                "A new member repair requires the original unresolved account obligation");
+          }
+
+          UUID operationId = freshOperationId(transitionId);
+          UUID coverageFence =
+              freshDistinctCoverageFence(
+                  operationId, transitionId, evidence.candidate().accountIndexFence());
+          BigInteger operationFence = allocateMemberRepairFence(transaction, accountId);
+          String member = CanonicalGameplayAccountIndexMember.of(evidence.candidate()).value();
+          CanonicalGameplayAccountMemberRepairOperation operation =
+              new CanonicalGameplayAccountMemberRepairOperation(
+                  transitionId,
+                  operationId,
+                  operationFence,
+                  coverageFence,
+                  inventoryRevision,
+                  evidence.candidate().bindingRef(),
+                  accountId,
+                  evidence.candidate().identity().tenantId(),
+                  evidence.candidate().bindingGeneration(),
+                  evidence.candidate().accountIndexFence(),
+                  originalObligation,
+                  member,
+                  control.epoch());
+          insertMemberRepairOperation(transaction, operation);
+          return operation;
+        });
+  }
+
+  /**
+   * Commits only an actual Redis write/read result bound to the stored original operation. The
+   * durable operation, current obligation, account-control epoch, readback, and later evidence
+   * generation are compared or written in one PostgreSQL transaction.
+   */
+  CanonicalGameplayAccountMemberAcknowledgement acknowledgeAccountMemberRepair(
+      CanonicalGameplayAccountMemberRepairOperation expected,
+      CanonicalGameplayAccountMemberRepairRedisOwner.Readback actual) {
+    Objects.requireNonNull(expected, "expected");
+    Objects.requireNonNull(actual, "actual");
+    if (!expected.equals(actual.operation()) || !expected.member().equals(actual.member())) {
+      throw conflict("Redis readback is not bound to the exact expected member repair operation");
+    }
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision = lockInventoryRevision(transaction);
+          AccountCoverageControl control =
+              lockExistingAccountCoverageControl(transaction, expected.accountId());
+          requireNoActiveAccountControl(control);
+          if (!control.epoch().equals(expected.accountControlEpoch())) {
+            throw conflict("The account-wide control fence changed during member repair");
+          }
+          readVerifiedLegacyDisposition(transaction, currentRevision, true);
+          Record operationRow =
+              findMemberRepairOperation(transaction, expected.transitionId(), true);
+          if (operationRow == null) {
+            throw conflict("The exact durable account-member repair operation is missing");
+          }
+          CanonicalGameplayAccountMemberRepairOperation stored =
+              toMemberRepairOperation(operationRow);
+          if (!stored.equals(expected)
+              || !stored.equals(actual.operation())
+              || !stored.member().equals(actual.member())) {
+            throw conflict("Expected and actual member repair differ from the durable owner tuple");
+          }
+          CanonicalGameplayBindingProvisionalCasEvidence current =
+              loadProvisionalCasEvidence(transaction, expected.transitionId(), true);
+          requireOrdinaryNewMemberRepairTransition(current);
+          CanonicalGameplayBindingAccountIndexObligation currentObligation =
+              loadAccountIndexObligations(transaction, expected.transitionId(), true).getFirst();
+          boolean completed = "ACKNOWLEDGED".equals(operationRow.get("status", String.class));
+          requireMemberRepairObligationCurrent(
+              stored, current.candidate(), currentObligation, completed);
+          if (!current.transition().accountCoverageEvidence().equals(control.evidence())) {
+            throw conflict(
+                "Transition account-wide state no longer matches the pinned control row");
+          }
+          String exactMember = CanonicalGameplayAccountIndexMember.of(current.candidate()).value();
+          if (!exactMember.equals(actual.member())) {
+            throw conflict("Redis readback member differs from the exact durable candidate tuple");
+          }
+          if (completed) {
+            return toMemberAcknowledgement(operationRow);
+          }
+
+          BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+          BigInteger coverageGeneration =
+              allocateMemberRepairCoverageGeneration(
+                  transaction, stored.accountId(), stored.inventorySnapshotRevision());
+          if (coverageGeneration.compareTo(stored.inventorySnapshotRevision()) <= 0) {
+            throw conflict("Binding-local evidence generation must advance beyond its snapshot");
+          }
+          persistMemberRepairAcknowledgement(
+              transaction, stored, current, nextRevision, coverageGeneration, actual.member());
+          return new CanonicalGameplayAccountMemberAcknowledgement(
+              stored, coverageGeneration, actual.member());
         });
   }
 
@@ -1093,7 +1256,47 @@ public final class CanonicalGameplayBindingInventoryRepository {
     CanonicalGameplayBindingRegionBridgeObligation regionObligation =
         regionObligationRow == null ? null : toRegionObligation(regionObligationRow);
     requireExactProvisionalRows(evidence, accountObligations, issuerObligation, regionObligation);
+    if (!accountObligations.isEmpty()
+        && accountObligations.getFirst().status()
+            == CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED) {
+      requireCompletedMemberRepairAcknowledgement(
+          transaction, evidence, accountObligations.getFirst());
+    }
     return evidence;
+  }
+
+  private static void requireCompletedMemberRepairAcknowledgement(
+      DSLContext transaction,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      CanonicalGameplayBindingAccountIndexObligation obligation) {
+    requireOrdinaryNewMemberRepairTransition(evidence);
+    Record operationRow =
+        findMemberRepairOperation(transaction, evidence.transition().transitionId(), false);
+    if (operationRow == null) {
+      throw conflict(
+          "Acknowledged account-index obligation has no durable member-repair operation");
+    }
+    CanonicalGameplayAccountMemberRepairOperation operation = toMemberRepairOperation(operationRow);
+    if (!"ACKNOWLEDGED".equals(operationRow.get("status", String.class))) {
+      throw conflict("Account-index obligation was acknowledged before its operation completed");
+    }
+    requireMemberRepairObligationCurrent(operation, evidence.candidate(), obligation, true);
+    toMemberAcknowledgement(operationRow);
+    Record control =
+        transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_account_coverage_control WHERE account_id = ?",
+            operation.accountId());
+    if (control == null) {
+      throw conflict("Acknowledged member repair lost its positive account-control row");
+    }
+    CanonicalGameplayAccountCoverageEvidence currentControl =
+        accountCoverageEvidenceFromControl(control, operation.accountId());
+    if (!(currentControl instanceof CanonicalGameplayAccountCoverageEvidence.NoActiveFlow)
+        || !evidence.transition().accountCoverageEvidence().equals(currentControl)
+        || !readBigInteger(control, "last_operation_fence")
+            .equals(operation.accountControlEpoch())) {
+      throw conflict("Acknowledged member repair has stale account-control state or fence epoch");
+    }
   }
 
   private static void requireExactProvisionalRows(
@@ -1134,8 +1337,17 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !candidateAccount.accountIndexFence().equals(candidate.accountIndexFence())
         || candidateAccount.executionPhase()
             != CanonicalGameplayBindingAccountIndexObligation.ExecutionPhase.BEFORE_FINAL_CAS
-        || candidateAccount.status()
-            != CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED
+        || (candidateAccount.status()
+                != CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED
+            && candidateAccount.status()
+                != CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED)
+        || (candidateAccount.status()
+                == CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED
+            && (candidateAccount.projectionState()
+                    != CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                        .PRESENT_AWAITING_COVERAGE
+                || candidate.accountIndexState()
+                    != CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED))
         || !candidateAccount.inventoryRevision().equals(transition.inventoryRevision())) {
       throw conflict("Durable account-index repair obligations differ from this exact transition");
     }
@@ -1466,6 +1678,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   private static CanonicalGameplayAccountCoverageEvidence lockAccountCoverageEvidence(
       DSLContext transaction, UUID accountId) {
+    return lockAccountCoverageControl(transaction, accountId).evidence();
+  }
+
+  private static AccountCoverageControl lockAccountCoverageControl(
+      DSLContext transaction, UUID accountId) {
     transaction.execute(
         "INSERT INTO game_session_canonical_account_coverage_control "
             + "(account_id, state, last_operation_fence) "
@@ -1478,7 +1695,35 @@ public final class CanonicalGameplayBindingInventoryRepository {
                     + "WHERE account_id = ? FOR UPDATE",
                 accountId),
             "account coverage control row must exist");
-    return accountCoverageEvidenceFromControl(control, accountId);
+    return toAccountCoverageControl(control, accountId);
+  }
+
+  private static AccountCoverageControl lockExistingAccountCoverageControl(
+      DSLContext transaction, UUID accountId) {
+    Record control =
+        transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_account_coverage_control "
+                + "WHERE account_id = ? FOR UPDATE",
+            accountId);
+    if (control == null) {
+      throw conflict("Account coverage control row is missing; absence is not no-active proof");
+    }
+    return toAccountCoverageControl(control, accountId);
+  }
+
+  private static AccountCoverageControl toAccountCoverageControl(Record control, UUID accountId) {
+    return new AccountCoverageControl(
+        accountId,
+        control.get("state", String.class),
+        readBigInteger(control, "last_operation_fence"),
+        control.get("current_operation_id", UUID.class),
+        nullableBigInteger(control, "current_operation_fence"),
+        control.get("account_admission_fence", UUID.class),
+        control.get("historical_account_admission_fence", UUID.class),
+        control.get("coverage_fence", UUID.class),
+        nullableBigInteger(control, "inventory_snapshot_revision"),
+        nullableBigInteger(control, "coverage_generation"),
+        accountCoverageEvidenceFromControl(control, accountId));
   }
 
   private static void requireReadAccountCoverageEvidenceCurrent(
@@ -1499,6 +1744,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if ("ACTIVE".equals(state)) {
       throw conflict("Account-wide admission fence blocks a new binding transition");
     }
+    if ("ACQUISITION_INTENT".equals(state)) {
+      throw conflict("Account-fence acquisition intent blocks a new binding transition");
+    }
     if ("NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(state)) {
       return CanonicalGameplayAccountCoverageEvidence.noActiveFlow();
     }
@@ -1513,6 +1761,483 @@ public final class CanonicalGameplayBindingInventoryRepository {
           readBigInteger(control, "coverage_generation"));
     }
     throw conflict("Account coverage control state is unknown and cannot authorize a transition");
+  }
+
+  private static void requireNoActiveAccountControl(AccountCoverageControl control) {
+    if (!"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(control.state())
+        || control.currentOperationId() != null
+        || control.currentOperationFence() != null
+        || control.accountAdmissionFence() != null
+        || control.historicalAccountAdmissionFence() != null
+        || control.coverageFence() != null
+        || control.inventorySnapshotRevision() != null
+        || control.coverageGeneration() != null
+        || !(control.evidence() instanceof CanonicalGameplayAccountCoverageEvidence.NoActiveFlow)) {
+      throw conflict("Account-wide control is not the positively read no-active state");
+    }
+    if (control.epoch().signum() < 0) {
+      throw conflict("Account-wide control has an invalid fence epoch");
+    }
+  }
+
+  private static void requireOrdinaryNewMemberRepairTransition(
+      CanonicalGameplayBindingProvisionalCasEvidence evidence) {
+    if (evidence.transition().status()
+            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        || evidence.candidate().lifecycle()
+            != CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL
+        || evidence.expectedPrior() != null
+        || evidence.expectedPriorReservation() != null
+        || evidence.transition().expectedPriorBindingRef() != null
+        || evidence.transition().expectedPriorBindingGeneration() != null
+        || !(evidence.transition().accountCoverageEvidence()
+            instanceof CanonicalGameplayAccountCoverageEvidence.NoActiveFlow)) {
+      throw conflict(
+          "Binding-local member repair requires an ordinary NEW provisional transition in the no-active arm");
+    }
+  }
+
+  private static void requireMemberRepairObligationCurrent(
+      CanonicalGameplayAccountMemberRepairOperation operation,
+      CanonicalGameplayBindingInventoryEntry candidate,
+      CanonicalGameplayBindingAccountIndexObligation current,
+      boolean completed) {
+    CanonicalGameplayBindingAccountIndexObligation original = operation.originalObligation();
+    if (!current.transitionId().equals(operation.transitionId())
+        || current.ordinal() != original.ordinal()
+        || !current.bindingRef().equals(operation.bindingRef())
+        || !current.accountId().equals(operation.accountId())
+        || !current.tenantId().equals(operation.tenantId())
+        || current.action() != original.action()
+        || !current.bindingGeneration().equals(operation.bindingGeneration())
+        || !Objects.equals(current.expectedPriorGeneration(), original.expectedPriorGeneration())
+        || !current.accountIndexFence().equals(operation.accountIndexFence())
+        || current.executionPhase() != original.executionPhase()
+        || !current.inventoryRevision().equals(candidate.inventoryRevision())) {
+      throw conflict("Current account-index obligation differs from its immutable original tuple");
+    }
+    if (completed) {
+      if (current.status() != CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED
+          || current.projectionState()
+              != CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                  .PRESENT_AWAITING_COVERAGE
+          || !operation.member().equals(current.projectedMember())
+          || (original.projectionState()
+                  == CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                      .PRESENT_AWAITING_COVERAGE
+              && !Objects.equals(
+                  original.projectionInventoryRevision(), current.projectionInventoryRevision()))
+          || candidate.accountIndexState()
+              != CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED) {
+        throw conflict("Completed member repair lost its exact durable acknowledgement state");
+      }
+    } else {
+      if (current.status() != CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED
+          || candidate.accountIndexState()
+              != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED) {
+        throw conflict("Pending member repair no longer owns its unresolved candidate obligation");
+      }
+      if (current.projectionState()
+          == CanonicalGameplayBindingAccountIndexObligation.ProjectionState.REQUIRED) {
+        if (original.projectionState()
+                != CanonicalGameplayBindingAccountIndexObligation.ProjectionState.REQUIRED
+            || current.projectedMember() != null
+            || current.projectionInventoryRevision() != null) {
+          throw conflict("Current account-index projection differs from its frozen original state");
+        }
+      } else if (current.projectionState()
+          == CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+              .PRESENT_AWAITING_COVERAGE) {
+        if (!operation.member().equals(current.projectedMember())) {
+          throw conflict("Retained PRESENT observation differs from the exact repair member");
+        }
+        if (original.projectionState()
+                == CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                    .PRESENT_AWAITING_COVERAGE
+            && (!Objects.equals(original.projectedMember(), current.projectedMember())
+                || !Objects.equals(
+                    original.projectionInventoryRevision(),
+                    current.projectionInventoryRevision()))) {
+          throw conflict("Original PRESENT observation changed after the repair was frozen");
+        }
+      } else {
+        throw conflict("Pending ADD_OR_RETAIN has an unsupported account-index projection state");
+      }
+    }
+  }
+
+  private static Record findMemberRepairOperation(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    return transaction.fetchOne(
+        "SELECT * FROM game_session_canonical_account_member_repair_operation"
+            + " WHERE transition_id = ? AND obligation_ordinal = 0"
+            + (forUpdate ? " FOR UPDATE" : ""),
+        transitionId);
+  }
+
+  private static BigInteger allocateMemberRepairFence(DSLContext transaction, UUID accountId) {
+    transaction.execute(
+        "INSERT INTO game_session_canonical_account_member_repair_control "
+            + "(account_id, last_operation_fence) VALUES (?, 0) ON CONFLICT (account_id) DO NOTHING",
+        accountId);
+    Record fenceRow =
+        Objects.requireNonNull(
+            transaction.fetchOne(
+                "SELECT last_operation_fence FROM "
+                    + "game_session_canonical_account_member_repair_control "
+                    + "WHERE account_id = ? FOR UPDATE",
+                accountId),
+            "account member-repair fence row must exist");
+    BigInteger previous = readBigInteger(fenceRow, "last_operation_fence");
+    BigInteger next = previous.add(BigInteger.ONE);
+    requireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_account_member_repair_control "
+                + "SET last_operation_fence = ? WHERE account_id = ? AND last_operation_fence = ?",
+            decimal(next),
+            accountId,
+            decimal(previous)),
+        "Account member-repair operation fence compare-and-set lost its locked row");
+    return next;
+  }
+
+  private static BigInteger allocateMemberRepairCoverageGeneration(
+      DSLContext transaction, UUID accountId, BigInteger inventorySnapshotRevision) {
+    Record generationRow =
+        Objects.requireNonNull(
+            transaction.fetchOne(
+                "SELECT last_coverage_generation FROM "
+                    + "game_session_canonical_account_member_repair_control "
+                    + "WHERE account_id = ? FOR UPDATE",
+                accountId),
+            "account member-repair generation row must exist");
+    BigInteger previous = readBigInteger(generationRow, "last_coverage_generation");
+    BigInteger next = previous.add(BigInteger.ONE);
+    if (next.compareTo(inventorySnapshotRevision) <= 0) {
+      next = inventorySnapshotRevision.add(BigInteger.ONE);
+    }
+    requireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_account_member_repair_control "
+                + "SET last_coverage_generation = ? WHERE account_id = ?"
+                + " AND last_coverage_generation = ?",
+            decimal(next),
+            accountId,
+            decimal(previous)),
+        "Account member-repair coverage generation compare-and-set lost its locked row");
+    return next;
+  }
+
+  private static UUID freshNonNilUuid() {
+    UUID value;
+    do {
+      value = UUID.randomUUID();
+    } while (value.equals(NIL_UUID));
+    return value;
+  }
+
+  private static UUID freshOperationId(UUID transitionId) {
+    UUID value;
+    do {
+      value = freshNonNilUuid();
+    } while (value.equals(transitionId));
+    return value;
+  }
+
+  private static UUID freshDistinctCoverageFence(
+      UUID operationId, UUID transitionId, UUID accountIndexFence) {
+    UUID coverageFence;
+    do {
+      coverageFence = freshNonNilUuid();
+    } while (coverageFence.equals(operationId)
+        || coverageFence.equals(transitionId)
+        || coverageFence.equals(accountIndexFence));
+    return coverageFence;
+  }
+
+  private static void insertMemberRepairOperation(
+      DSLContext transaction, CanonicalGameplayAccountMemberRepairOperation operation) {
+    CanonicalGameplayBindingAccountIndexObligation original = operation.originalObligation();
+    requireOne(
+        transaction.execute(
+            "INSERT INTO game_session_canonical_account_member_repair_operation "
+                + "(operation_id, transition_id, obligation_ordinal, operation_fence, coverage_fence,"
+                + " inventory_snapshot_revision, binding_ref, account_id, tenant_id, binding_generation,"
+                + " account_index_fence, original_action, original_expected_prior_generation,"
+                + " original_execution_phase, original_status, original_inventory_revision,"
+                + " original_projection_state, original_projection_member,"
+                + " original_projection_inventory_revision, desired_action, member,"
+                + " account_control_state, account_control_epoch, status)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                + " 'NO_ACTIVE_ACCOUNT_WIDE_FLOW', ?, 'PENDING')",
+            operation.operationId(),
+            operation.transitionId(),
+            original.ordinal(),
+            decimal(operation.operationFence()),
+            operation.coverageFence(),
+            decimal(operation.inventorySnapshotRevision()),
+            operation.bindingRef().bytes(),
+            operation.accountId(),
+            operation.tenantId(),
+            decimal(operation.bindingGeneration()),
+            operation.accountIndexFence(),
+            original.action().name(),
+            decimalNullable(original.expectedPriorGeneration()),
+            original.executionPhase().name(),
+            original.status().name(),
+            decimal(original.inventoryRevision()),
+            original.projectionState().name(),
+            original.projectedMember(),
+            decimalNullable(original.projectionInventoryRevision()),
+            original.action().name(),
+            operation.member(),
+            decimal(operation.accountControlEpoch())),
+        "Account member-repair operation insert conflicted with an existing obligation");
+  }
+
+  private static CanonicalGameplayAccountMemberRepairOperation toMemberRepairOperation(Record row) {
+    if (!"ADD_OR_RETAIN".equals(row.get("desired_action", String.class))
+        || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(row.get("account_control_state", String.class))) {
+      throw conflict("Durable member-repair operation carries an unsupported action or scope");
+    }
+    CanonicalGameplayBindingRef bindingRef =
+        CanonicalGameplayBindingRef.fromExactBytes(row.get("binding_ref", byte[].class));
+    UUID accountId = row.get("account_id", UUID.class);
+    UUID tenantId = row.get("tenant_id", UUID.class);
+    if (!bindingRef.tenantId().equals(tenantId.toString())) {
+      throw conflict("Durable member-repair bindingRef belongs to a different tenant");
+    }
+    CanonicalGameplayBindingAccountIndexObligation original =
+        new CanonicalGameplayBindingAccountIndexObligation(
+            row.get("transition_id", UUID.class),
+            row.get("obligation_ordinal", Integer.class),
+            bindingRef,
+            accountId,
+            tenantId,
+            CanonicalGameplayBindingAccountIndexObligation.Action.valueOf(
+                row.get("original_action", String.class)),
+            readBigInteger(row, "binding_generation"),
+            nullableBigInteger(row, "original_expected_prior_generation"),
+            row.get("account_index_fence", UUID.class),
+            CanonicalGameplayBindingAccountIndexObligation.ExecutionPhase.valueOf(
+                row.get("original_execution_phase", String.class)),
+            CanonicalGameplayBindingAccountIndexObligation.Status.valueOf(
+                row.get("original_status", String.class)),
+            readBigInteger(row, "original_inventory_revision"),
+            CanonicalGameplayBindingAccountIndexObligation.ProjectionState.valueOf(
+                row.get("original_projection_state", String.class)),
+            row.get("original_projection_member", String.class),
+            nullableBigInteger(row, "original_projection_inventory_revision"));
+    try {
+      return new CanonicalGameplayAccountMemberRepairOperation(
+          row.get("transition_id", UUID.class),
+          row.get("operation_id", UUID.class),
+          readBigInteger(row, "operation_fence"),
+          row.get("coverage_fence", UUID.class),
+          readBigInteger(row, "inventory_snapshot_revision"),
+          bindingRef,
+          accountId,
+          tenantId,
+          readBigInteger(row, "binding_generation"),
+          row.get("account_index_fence", UUID.class),
+          original,
+          row.get("member", String.class),
+          readBigInteger(row, "account_control_epoch"));
+    } catch (RuntimeException malformed) {
+      throw conflict("Durable account-member repair operation is incomplete or invalid");
+    }
+  }
+
+  private static CanonicalGameplayAccountMemberAcknowledgement toMemberAcknowledgement(
+      Record operationRow) {
+    if (!"ACKNOWLEDGED".equals(operationRow.get("status", String.class))
+        || !"PRESENT".equals(operationRow.get("readback_state", String.class))) {
+      throw conflict(
+          "Durable account-member repair has no complete exact readback acknowledgement");
+    }
+    try {
+      return new CanonicalGameplayAccountMemberAcknowledgement(
+          toMemberRepairOperation(operationRow),
+          readBigInteger(operationRow, "coverage_generation"),
+          operationRow.get("readback_member", String.class));
+    } catch (RuntimeException malformed) {
+      throw conflict("Durable binding-local account-index acknowledgement is invalid");
+    }
+  }
+
+  private static void persistMemberRepairAcknowledgement(
+      DSLContext transaction,
+      CanonicalGameplayAccountMemberRepairOperation operation,
+      CanonicalGameplayBindingProvisionalCasEvidence current,
+      BigInteger nextRevision,
+      BigInteger coverageGeneration,
+      String member) {
+    BigInteger transitionRevision = current.transition().inventoryRevision();
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + TRANSITION
+                + " SET inventory_revision = ?"
+                + " WHERE transition_id = ? AND status = 'PROVISIONAL'"
+                + " AND inventory_revision = ? AND candidate_binding_ref = ?"
+                + " AND candidate_binding_generation = ? AND candidate_account_index_fence = ?"
+                + " AND account_coverage_state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'"
+                + " AND account_coverage_operation_id IS NULL"
+                + " AND account_coverage_operation_fence IS NULL"
+                + " AND account_coverage_lifecycle IS NULL"
+                + " AND account_admission_fence_kind = 'NOT_APPLICABLE'"
+                + " AND account_admission_fence IS NULL AND historical_account_admission_fence IS NULL"
+                + " AND historical_account_admission_fence_kind = 'NOT_APPLICABLE'"
+                + " AND resolved_scope_kind = 'NOT_APPLICABLE'"
+                + " AND resolved_scope_account_id IS NULL AND account_coverage_fence IS NULL"
+                + " AND account_coverage_generation IS NULL AND account_inventory_snapshot_revision IS NULL",
+            decimal(nextRevision),
+            operation.transitionId(),
+            decimal(transitionRevision),
+            operation.bindingRef().bytes(),
+            decimal(operation.bindingGeneration()),
+            operation.accountIndexFence()),
+        "Durable NEW transition changed before member acknowledgement");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + INVENTORY
+                + " SET account_index_state = 'ACKNOWLEDGED', inventory_revision = ?"
+                + " WHERE binding_ref = ? AND transition_id = ? AND lifecycle = 'PROVISIONAL'"
+                + " AND binding_generation = ? AND account_index_fence = ?"
+                + " AND account_id = ? AND tenant_id = ?"
+                + " AND account_index_state = 'REPAIR_REQUIRED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            operation.bindingRef().bytes(),
+            operation.transitionId(),
+            decimal(operation.bindingGeneration()),
+            operation.accountIndexFence(),
+            operation.accountId(),
+            operation.tenantId(),
+            decimal(transitionRevision)),
+        "Durable NEW candidate changed before member acknowledgement");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + ACCOUNT_OBLIGATION
+                + " SET status = 'ACKNOWLEDGED', projection_state = 'PRESENT_AWAITING_COVERAGE',"
+                + " projection_member = ?, projection_inventory_revision = COALESCE("
+                + " projection_inventory_revision, ?), inventory_revision = ?"
+                + " WHERE transition_id = ? AND obligation_ordinal = 0"
+                + " AND binding_ref = ? AND account_id = ? AND tenant_id = ?"
+                + " AND action = 'ADD_OR_RETAIN' AND binding_generation = ?"
+                + " AND expected_prior_generation IS NULL AND account_index_fence = ?"
+                + " AND execution_phase = 'BEFORE_FINAL_CAS' AND status = 'REQUIRED'"
+                + " AND inventory_revision = ?"
+                + " AND ((projection_state = 'REQUIRED' AND projection_member IS NULL"
+                + " AND projection_inventory_revision IS NULL)"
+                + " OR (projection_state = 'PRESENT_AWAITING_COVERAGE' AND projection_member = ?))",
+            member,
+            decimal(nextRevision),
+            decimal(nextRevision),
+            operation.transitionId(),
+            operation.bindingRef().bytes(),
+            operation.accountId(),
+            operation.tenantId(),
+            decimal(operation.bindingGeneration()),
+            operation.accountIndexFence(),
+            decimal(transitionRevision),
+            member),
+        "Original account-index obligation changed before complete v2 acknowledgement");
+    requireCount(
+        transaction.execute(
+            "UPDATE "
+                + ACCOUNT_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND obligation_ordinal = 1"
+                + " AND inventory_revision = ?",
+            decimal(nextRevision),
+            operation.transitionId(),
+            decimal(transitionRevision)),
+        0,
+        "Ordinary NEW unexpectedly owns a prior account-index obligation");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + ISSUER_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND binding_ref = ?"
+                + " AND status = 'REQUIRED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            operation.transitionId(),
+            operation.bindingRef().bytes(),
+            decimal(transitionRevision)),
+        "Issuer obligation changed before member acknowledgement");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + REGION_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND binding_ref = ?"
+                + " AND status = 'REQUIRED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            operation.transitionId(),
+            operation.bindingRef().bytes(),
+            decimal(transitionRevision)),
+        "Region obligation changed before member acknowledgement");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + RESERVATION
+                + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
+                + " AND binding_ref = ? AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            current.transition().issuerReservationId(),
+            operation.transitionId(),
+            operation.bindingRef().bytes(),
+            decimal(transitionRevision)),
+        "Issuer reservation changed before member acknowledgement");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + "game_session_canonical_account_member_repair_operation"
+                + " SET status = 'ACKNOWLEDGED', coverage_generation = ?, readback_state = 'PRESENT',"
+                + " readback_member = ?, completed_inventory_revision = ?, updated_at = CURRENT_TIMESTAMP"
+                + " WHERE operation_id = ? AND transition_id = ? AND obligation_ordinal = 0"
+                + " AND operation_fence = ? AND coverage_fence = ?"
+                + " AND inventory_snapshot_revision = ? AND binding_ref = ?"
+                + " AND account_id = ? AND tenant_id = ? AND binding_generation = ?"
+                + " AND account_index_fence = ? AND member = ? AND account_control_epoch = ?"
+                + " AND original_action = 'ADD_OR_RETAIN'"
+                + " AND original_expected_prior_generation IS NULL"
+                + " AND original_execution_phase = 'BEFORE_FINAL_CAS'"
+                + " AND original_status = 'REQUIRED' AND original_inventory_revision = ?"
+                + " AND original_projection_state = ?"
+                + " AND original_projection_member IS NOT DISTINCT FROM ?"
+                + " AND original_projection_inventory_revision IS NOT DISTINCT FROM ?"
+                + " AND desired_action = 'ADD_OR_RETAIN'"
+                + " AND account_control_state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'"
+                + " AND status = 'PENDING' AND coverage_generation IS NULL"
+                + " AND readback_state IS NULL AND readback_member IS NULL",
+            decimal(coverageGeneration),
+            member,
+            decimal(nextRevision),
+            operation.operationId(),
+            operation.transitionId(),
+            decimal(operation.operationFence()),
+            operation.coverageFence(),
+            decimal(operation.inventorySnapshotRevision()),
+            operation.bindingRef().bytes(),
+            operation.accountId(),
+            operation.tenantId(),
+            decimal(operation.bindingGeneration()),
+            operation.accountIndexFence(),
+            member,
+            decimal(operation.accountControlEpoch()),
+            decimal(operation.originalObligation().inventoryRevision()),
+            operation.originalObligation().projectionState().name(),
+            operation.originalObligation().projectedMember(),
+            decimalNullable(operation.originalObligation().projectionInventoryRevision())),
+        "Durable member-repair operation changed before acknowledgement persistence");
+    requireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_binding_inventory_clock"
+                + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = ?",
+            decimal(nextRevision),
+            decimal(nextRevision.subtract(BigInteger.ONE))),
+        "Inventory revision compare-and-set lost during member acknowledgement");
   }
 
   private static void requireAccountCoverageEvidenceCurrent(
@@ -1655,7 +2380,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             reservation.get("runtime_game_instance_id", Long.class),
             candidate.runtimeGameInstanceId())
         || !Objects.equals(reservation.get("session_id", String.class), candidate.sessionId())
-        || !Objects.equals(reservation.get("issuer_id", UUID.class), candidate.issuerId())
+        || !Objects.equals(reservation.get("issuer_id", String.class), candidate.issuerId())
         || !readBigInteger(reservation, "issuer_auth_generation")
             .equals(candidate.issuerAuthGeneration())
         || !readBigInteger(reservation, "issuer_index_layout_version")
@@ -1810,7 +2535,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
             request.candidate().runtimeGameInstanceId())
         || !Objects.equals(
             reservation.get("session_id", String.class), request.candidate().sessionId())
-        || !Objects.equals(reservation.get("issuer_id", UUID.class), request.candidate().issuerId())
+        || !Objects.equals(
+            reservation.get("issuer_id", String.class), request.candidate().issuerId())
         || !readBigInteger(reservation, "issuer_auth_generation")
             .equals(request.candidate().issuerAuthGeneration())
         || !readBigInteger(reservation, "issuer_index_layout_version")
@@ -2281,7 +3007,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         row.get("session_id", String.class),
         row.get("region_id", UUID.class),
         readBigInteger(row, "region_epoch"),
-        row.get("issuer_id", UUID.class),
+        row.get("issuer_id", String.class),
         readBigInteger(row, "issuer_auth_generation"),
         readBigInteger(row, "issuer_index_layout_version"),
         readBigInteger(row, "issuer_index_partition_count"),
@@ -2308,6 +3034,23 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static BigDecimal decimal(BigInteger value) {
     return new BigDecimal(value);
   }
+
+  private static BigDecimal decimalNullable(BigInteger value) {
+    return value == null ? null : decimal(value);
+  }
+
+  private record AccountCoverageControl(
+      UUID accountId,
+      String state,
+      BigInteger epoch,
+      UUID currentOperationId,
+      BigInteger currentOperationFence,
+      UUID accountAdmissionFence,
+      UUID historicalAccountAdmissionFence,
+      UUID coverageFence,
+      BigInteger inventorySnapshotRevision,
+      BigInteger coverageGeneration,
+      CanonicalGameplayAccountCoverageEvidence evidence) {}
 
   private static void requireOne(int changed, String message) {
     if (changed != 1) {

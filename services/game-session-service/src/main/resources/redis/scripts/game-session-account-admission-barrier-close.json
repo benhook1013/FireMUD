@@ -1,0 +1,43 @@
+{
+  "scriptId": "game-session.account-admission-barrier-close.v1",
+  "resourcePath": "redis/lua/game-session-account-admission-barrier-close.lua",
+  "sha256": "25044c5fbee57edba7158d993772dddb946f38c22f1545a3449b694ee5bb3197",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "accountAdmissionBarrier",
+      "ownedPrefix": "session:game:account-admission:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "schema"},
+    {"name": "accountId"},
+    {"name": "tenantId"},
+    {"name": "playableStateNamespaceId"},
+    {"name": "tenantGameplayTag"},
+    {"name": "ownerOperationId"},
+    {"name": "ownerFenceEpoch"},
+    {"name": "incarnationDigest"},
+    {"name": "state"}
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "CLOSED_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "CLOSED_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "CLOSED_ADVANCED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDS_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "STALE_OR_CONFLICTING_OWNER", "category": "STALE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "This tenant-local CLOSED barrier fails admission when missing or malformed. A CLOSED install is not OPEN authorization, an installed account-fence receipt, or coverage evidence. Reset-sensitive storage observations must be reverified before an owner retries the same durable operation; this script never opens a barrier or touches the global account index.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}

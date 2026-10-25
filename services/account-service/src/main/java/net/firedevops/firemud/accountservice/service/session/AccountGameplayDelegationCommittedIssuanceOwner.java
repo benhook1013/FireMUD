@@ -219,23 +219,7 @@ public final class AccountGameplayDelegationCommittedIssuanceOwner {
 
   private static boolean sameCommittedOwnerEvidence(
       CommittedCandidateVerificationData left, CommittedCandidateVerificationData right) {
-    return left.identity().equals(right.identity())
-        && left.authoritySnapshot().equals(right.authoritySnapshot())
-        && left.evidenceBundleReference().equals(right.evidenceBundleReference())
-        && left.tokenSha256().equals(right.tokenSha256())
-        && left.signerKid().equals(right.signerKid())
-        && left.signerGeneration().equals(right.signerGeneration())
-        && left.canonicalRegistryRecordSha256().equals(right.canonicalRegistryRecordSha256())
-        && left.commitProofSha256().equals(right.commitProofSha256())
-        && left.signerCorrespondence().equals(right.signerCorrespondence())
-        && left.envelopeKeyId().equals(right.envelopeKeyId())
-        && left.envelopeSha256().equals(right.envelopeSha256())
-        && left.envelopeBytesLength() == right.envelopeBytesLength()
-        && left.responseRecoveryExpiryEpochMillis() == right.responseRecoveryExpiryEpochMillis()
-        && left.registryAbsoluteExpiryMillis() == right.registryAbsoluteExpiryMillis()
-        && left.registrationLocalAofCount() == right.registrationLocalAofCount()
-        && left.registrationReplicaAofCount() == right.registrationReplicaAofCount()
-        && left.registrationOutcome() == right.registrationOutcome();
+    return CommittedCandidateVerificationData.hasSameOwnerEvidence(left, right);
   }
 
   private static OwnerUnavailableException unavailable() {

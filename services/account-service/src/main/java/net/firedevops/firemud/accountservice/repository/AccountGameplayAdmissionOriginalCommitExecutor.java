@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.UUID;
 import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation.State;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -40,6 +41,36 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
 
   OriginalCommitAcknowledgement execute(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId) {
+    return execute(evidence, decisionId, null);
+  }
+
+  /**
+   * Revalidates the authenticated caller's exact current Account sources on the original physical
+   * COMMIT connection. Remote JWT/JWKS/registry and published-target reads must precede this entry;
+   * neither the expected candidate nor this acknowledgement supplies those remote authorities.
+   */
+  OriginalCommitAcknowledgement executeWithCurrentSources(
+      AccountGameplayAdmissionLeaseEvidence evidence,
+      UUID decisionId,
+      String configuredNamespace,
+      CommittedCandidateVerificationData authenticatedCandidate) {
+    Objects.requireNonNull(evidence);
+    if (evidence.leaseKind() != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING
+        || evidence.carrier().containsKey("expectedOldBindingGeneration")) {
+      throw denied();
+    }
+    return execute(
+        evidence,
+        decisionId,
+        new CurrentSourceScope(
+            Objects.requireNonNull(configuredNamespace),
+            Objects.requireNonNull(authenticatedCandidate)));
+  }
+
+  private OriginalCommitAcknowledgement execute(
+      AccountGameplayAdmissionLeaseEvidence evidence,
+      UUID decisionId,
+      CurrentSourceScope currentSources) {
     Objects.requireNonNull(evidence);
     Objects.requireNonNull(decisionId);
     var manager = new OriginalCommitTransactionManager(dataSource);
@@ -58,10 +89,23 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
         ignored -> {
           if (!ignored.isNewTransaction()) throw denied();
           Connection connection = manager.enlistedConnection();
-          // The repository cannot acquire another connection: its DSL uses this connection itself.
-          var repository =
-              new AccountGameplayAdmissionLeaseRepository(
-                  DSL.using(connection, SQLDialect.POSTGRES));
+          // Every source and lease repository uses this exact enlisted connection. The concrete
+          // source graph locks Account first, before authority, token and lease-operation rows, and
+          // retains those locks through the original physical COMMIT below.
+          var exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
+          if (currentSources != null) {
+            var scope = (java.util.Map<?, ?>) evidence.carrier().get("bindingScope");
+            var token = (java.util.Map<?, ?>) evidence.carrier().get("tokenIdentityEvidence");
+            var current =
+                AccountGameplayAdmissionCurrentSources.bind(
+                        exactDsl, currentSources.configuredNamespace())
+                    .readCurrentPublicProductionNew(
+                        UUID.fromString((String) scope.get("tenantId")),
+                        UUID.fromString((String) token.get("tokenJti")),
+                        currentSources.authenticatedCandidate());
+            current.requireMatchesOriginalLease(evidence);
+          }
+          var repository = new AccountGameplayAdmissionLeaseRepository(exactDsl);
           var prior =
               repository
                   .readExact(evidence)
@@ -121,6 +165,9 @@ final class AccountGameplayAdmissionOriginalCommitExecutor {
       return "OriginalCommitAcknowledgement[not a temporal confirmation]";
     }
   }
+
+  private record CurrentSourceScope(
+      String configuredNamespace, CommittedCandidateVerificationData authenticatedCandidate) {}
 
   private record OriginalBinding(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId, String finalizationXid) {}

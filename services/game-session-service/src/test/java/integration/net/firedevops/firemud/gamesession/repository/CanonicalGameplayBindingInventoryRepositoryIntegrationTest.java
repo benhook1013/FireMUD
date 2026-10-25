@@ -3,8 +3,18 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.lettuce.core.AclSetuserArgs;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.protocol.CommandKeyword;
+import io.lettuce.core.protocol.CommandType;
+import io.lettuce.core.protocol.ProtocolVersion;
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,7 +28,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberRepairOperation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
@@ -33,6 +46,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -49,7 +63,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   private static final UUID INSTANCE_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final long RUNTIME_GAME_INSTANCE_ID = 23L;
   private static final UUID REGION_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
-  private static final UUID ISSUER_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
+  private static final String ISSUER_ID = GameSessionAccountDelegationProfile.ISSUER;
   private static final UUID TRANSITION_ID = UUID.fromString("88888888-8888-4888-8888-888888888888");
   private static final UUID ACCOUNT_INDEX_FENCE =
       UUID.fromString("99999999-9999-4999-8999-999999999999");
@@ -65,10 +79,17 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
   private static final UUID PRIOR_TRANSITION_ID =
       UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff");
+  private static final String MEMBER_REPAIR_PRINCIPAL = "gamesession_coord_app";
+  private static final String MEMBER_REPAIR_PASSWORD = UUID.randomUUID().toString();
+  private static final String MEMBER_REPAIR_ACCOUNT_KEY_PREFIX = "session:game:index:account:";
 
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static GenericContainer<?> redis =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @Test
   void failsClosedWhenInventoryAbsenceCannotProveLegacyControllerAbsence() {
@@ -207,6 +228,511 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
                               .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
                               .PRESENT_AWAITING_COVERAGE));
     } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void acknowledgesOnlyTheFrozenNewBindingMemberAfterPhysicalRedisReadback() {
+    TestSchema testSchema = newTestSchema("gs_binding_local_member_");
+    RedisMemberFixture redisFixture = null;
+    try {
+      redisFixture = startMemberRepairRedisFixture();
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
+      var before = fixture.repository().readSnapshot();
+      CanonicalGameplayAccountMemberRepairOperation operation =
+          fixture.repository().beginAccountMemberRepair(TRANSITION_ID);
+      assertThat(operation.transitionId()).isEqualTo(TRANSITION_ID);
+      assertThat(operation.accountId()).isEqualTo(ACCOUNT_ID);
+      assertThat(operation.tenantId()).isEqualTo(TENANT_ID);
+      assertThat(operation.originalObligation().ordinal()).isZero();
+      assertThat(operation.originalObligation().expectedPriorGeneration()).isNull();
+      assertThat(operation.originalObligation().status())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding
+                  .CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED);
+      assertThat(operation.operationFence()).isEqualTo(BigInteger.ONE);
+      assertThat(operation.coverageFence()).isNotEqualTo(operation.accountIndexFence());
+      assertThat(operation.accountControlEpoch()).isZero();
+      assertThat(operation.inventorySnapshotRevision()).isEqualTo(before.inventoryRevision());
+      assertThat(fixture.repository().beginAccountMemberRepair(TRANSITION_ID)).isEqualTo(operation);
+      assertThat(fixture.repository().readSnapshot()).isEqualTo(before);
+
+      BigInteger candidateCoverageGeneration =
+          operation.inventorySnapshotRevision().add(BigInteger.ONE);
+      BigInteger candidateCompletedRevision =
+          operation.inventorySnapshotRevision().add(BigInteger.ONE);
+      String memberRepairOperationTable = "game_session_canonical_account_member_repair_operation";
+      assertCheckConstraintViolation(
+          testSchema.dsl(),
+          "UPDATE "
+              + memberRepairOperationTable
+              + " SET status = 'ACKNOWLEDGED', coverage_generation = NULL,"
+              + " readback_state = 'PRESENT', readback_member = ?,"
+              + " completed_inventory_revision = ? WHERE operation_id = ? AND status = 'PENDING'",
+          operation.member(),
+          candidateCompletedRevision,
+          operation.operationId());
+      assertCheckConstraintViolation(
+          testSchema.dsl(),
+          "UPDATE "
+              + memberRepairOperationTable
+              + " SET status = 'ACKNOWLEDGED', coverage_generation = ?,"
+              + " readback_state = NULL, readback_member = ?,"
+              + " completed_inventory_revision = ? WHERE operation_id = ? AND status = 'PENDING'",
+          candidateCoverageGeneration,
+          operation.member(),
+          candidateCompletedRevision,
+          operation.operationId());
+      assertCheckConstraintViolation(
+          testSchema.dsl(),
+          "UPDATE "
+              + memberRepairOperationTable
+              + " SET status = 'ACKNOWLEDGED', coverage_generation = ?,"
+              + " readback_state = 'PRESENT', readback_member = NULL,"
+              + " completed_inventory_revision = ? WHERE operation_id = ? AND status = 'PENDING'",
+          candidateCoverageGeneration,
+          candidateCompletedRevision,
+          operation.operationId());
+      assertCheckConstraintViolation(
+          testSchema.dsl(),
+          "UPDATE "
+              + memberRepairOperationTable
+              + " SET original_projection_state = 'PRESENT_AWAITING_COVERAGE',"
+              + " original_projection_member = ?, original_projection_inventory_revision = NULL"
+              + " WHERE operation_id = ? AND status = 'PENDING'",
+          operation.member(),
+          operation.operationId());
+      var pendingAfterMalformedCompletions =
+          testSchema
+              .dsl()
+              .fetchOne(
+                  "SELECT status, coverage_generation, readback_state, readback_member,"
+                      + " original_projection_state, original_projection_inventory_revision"
+                      + " FROM "
+                      + memberRepairOperationTable
+                      + " WHERE operation_id = ?",
+                  operation.operationId());
+      assertThat(pendingAfterMalformedCompletions.get("status", String.class)).isEqualTo("PENDING");
+      assertThat(pendingAfterMalformedCompletions.get("coverage_generation")).isNull();
+      assertThat(pendingAfterMalformedCompletions.get("readback_state", String.class)).isNull();
+      assertThat(pendingAfterMalformedCompletions.get("readback_member", String.class)).isNull();
+      assertThat(pendingAfterMalformedCompletions.get("original_projection_state", String.class))
+          .isEqualTo("REQUIRED");
+      assertThat(pendingAfterMalformedCompletions.get("original_projection_inventory_revision"))
+          .isNull();
+
+      var controlBefore =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT * FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      ACCOUNT_ID),
+              "preparation positively persisted account coverage control");
+      assertThat(controlBefore.get("state", String.class)).isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(
+              Objects.requireNonNull(
+                      controlBefore.get("last_operation_fence"), "account coverage control fence")
+                  .toString())
+          .isEqualTo("0");
+      assertThat(controlBefore.get("current_operation_id", UUID.class)).isNull();
+      assertThat(controlBefore.get("account_admission_fence", UUID.class)).isNull();
+
+      var redisOwner =
+          new CanonicalGameplayAccountMemberRepairRedisOwner(
+              redisFixture.applicationClient(),
+              RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+      var acknowledgement =
+          new CanonicalGameplayAccountMemberRepairOwner(
+                  testSchema.dsl(),
+                  redisFixture.applicationClient(),
+                  RedisScriptCatalog.loadInstalled(getClass().getClassLoader()))
+              .repair(TRANSITION_ID);
+      assertThat(acknowledgement.schemaVersion()).isEqualTo(2);
+      assertThat(acknowledgement.operationId()).isEqualTo(operation.operationId());
+      assertThat(acknowledgement.action())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding
+                  .CanonicalGameplayBindingAccountIndexObligation.Action.ADD_OR_RETAIN);
+      assertThat(acknowledgement.readback().member()).isEqualTo(operation.member());
+      assertThat(acknowledgement.coverageGeneration())
+          .isGreaterThan(operation.inventorySnapshotRevision());
+      assertThat(acknowledgement.accountCoverageState().name())
+          .isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(acknowledgement.accountCoverageOperationId().name()).isEqualTo("NOT_APPLICABLE");
+      assertThat(acknowledgement.accountCoverageLifecycle().name()).isEqualTo("NOT_APPLICABLE");
+      assertThat(acknowledgement.accountCoverageOperationFence().name())
+          .isEqualTo("NOT_APPLICABLE");
+      assertThat(acknowledgement.accountAdmissionFence().name()).isEqualTo("NOT_APPLICABLE");
+      assertThat(acknowledgement.historicalAccountAdmissionFence().name())
+          .isEqualTo("NOT_APPLICABLE");
+      assertThat(acknowledgement.resolvedScope().name()).isEqualTo("NOT_APPLICABLE");
+
+      var completed = fixture.repository().readSnapshot();
+      assertThat(completed.transitions())
+          .singleElement()
+          .satisfies(
+              transition ->
+                  assertThat(transition.status())
+                      .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL));
+      assertThat(completed.bindings())
+          .singleElement()
+          .satisfies(
+              candidate -> {
+                assertThat(candidate.lifecycle())
+                    .isEqualTo(
+                        net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL);
+                assertThat(candidate.accountIndexState())
+                    .isEqualTo(
+                        net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED);
+              });
+      assertThat(completed.accountIndexObligations())
+          .singleElement()
+          .satisfies(
+              obligation -> {
+                assertThat(obligation.status())
+                    .isEqualTo(
+                        net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED);
+                assertThat(obligation.projectionState())
+                    .isEqualTo(
+                        net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                            .PRESENT_AWAITING_COVERAGE);
+                assertThat(obligation.projectedMember()).isEqualTo(operation.member());
+              });
+
+      var controlAfter =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT * FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      ACCOUNT_ID),
+              "account coverage control remains durably present");
+      assertThat(controlAfter.get("state", String.class)).isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(
+              Objects.requireNonNull(
+                      controlAfter.get("last_operation_fence"), "account coverage control fence")
+                  .toString())
+          .isEqualTo(
+              Objects.requireNonNull(
+                      controlBefore.get("last_operation_fence"), "account coverage control fence")
+                  .toString());
+      assertThat(controlAfter.get("current_operation_id", UUID.class)).isNull();
+      assertThat(controlAfter.get("account_admission_fence", UUID.class)).isNull();
+      var persistedOperation =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT * FROM game_session_canonical_account_member_repair_operation"
+                          + " WHERE operation_id = ?",
+                      operation.operationId()),
+              "binding-local repair operation is persisted");
+      assertThat(persistedOperation.get("status", String.class)).isEqualTo("ACKNOWLEDGED");
+      assertThat(persistedOperation.get("coverage_generation").toString())
+          .isEqualTo(acknowledgement.coverageGeneration().toString());
+      assertThat(persistedOperation.get("readback_member", String.class))
+          .isEqualTo(operation.member());
+      assertThat(persistedOperation.get("account_control_state", String.class))
+          .isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(persistedOperation.get("account_control_epoch").toString()).isEqualTo("0");
+      assertThat(persistedOperation.get("inventory_snapshot_revision").toString())
+          .isEqualTo(operation.inventorySnapshotRevision().toString());
+      assertThat(persistedOperation.get("operation_fence").toString())
+          .isEqualTo(operation.operationFence().toString());
+      assertThat(persistedOperation.get("coverage_fence", UUID.class))
+          .isEqualTo(operation.coverageFence());
+
+      var completedEvidence = fixture.repository().readProvisionalCasEvidence(TRANSITION_ID);
+      assertThat(completedEvidence.candidate().accountIndexState())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                  .IndexState.ACKNOWLEDGED);
+      assertThat(completedEvidence.candidate().issuerIndexState())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                  .IndexState.REPAIR_REQUIRED);
+
+      // Recreate the package-private SQL owner to model a worker restart after a lost response.
+      var restartedRepository = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+      var retryOperation = restartedRepository.beginAccountMemberRepair(TRANSITION_ID);
+      assertThat(retryOperation).isEqualTo(operation);
+      var retryReadback = redisOwner.projectAndRead(retryOperation);
+      var retryAcknowledgement =
+          restartedRepository.acknowledgeAccountMemberRepair(retryOperation, retryReadback);
+      assertThat(retryAcknowledgement).isEqualTo(acknowledgement);
+      assertThat(fixture.repository().readSnapshot()).isEqualTo(completed);
+    } finally {
+      if (redisFixture != null) {
+        redisFixture.deleteAccountKey(ACCOUNT_ID);
+        redisFixture.close();
+      }
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void missingAccountCoverageControlRowCannotAuthorizeMemberRepair() {
+    TestSchema testSchema = newTestSchema("gs_member_missing_");
+    try {
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
+      assertThat(
+              testSchema
+                  .dsl()
+                  .execute(
+                      "DELETE FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      ACCOUNT_ID))
+          .isEqualTo(1);
+
+      assertThatThrownBy(() -> fixture.repository().beginAccountMemberRepair(TRANSITION_ID))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining("account-coverage fence is missing");
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) AS row_count FROM"
+                          + " game_session_canonical_account_member_repair_operation")
+                  .get("row_count", Long.class))
+          .isZero();
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void memberRepairPreservesAnEarlierPresentObservationUntilActualAcknowledgement() {
+    TestSchema testSchema = newTestSchema("gs_member_present_");
+    RedisMemberFixture redisFixture = null;
+    try {
+      redisFixture = startMemberRepairRedisFixture();
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
+      String member =
+          CanonicalGameplayAccountIndexMember.of(fixture.evidence().candidate()).value();
+
+      // The old owner records PRESENT_AWAITING_COVERAGE but does not satisfy the obligation.
+      var historicalObservation =
+          fixture.repository().markCandidateAccountIndexPresent(fixture.evidence(), member);
+      assertThat(historicalObservation.state())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding
+                  .CanonicalGameplayBindingAccountIndexProjectionReceipt.State
+                  .PRESENT_AWAITING_COVERAGE);
+      var beforeRepair = fixture.repository().readSnapshot();
+      assertThat(beforeRepair.accountIndexObligations().getFirst().status())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding
+                  .CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED);
+
+      var operation = fixture.repository().beginAccountMemberRepair(TRANSITION_ID);
+      assertThat(operation.originalObligation().projectionState())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding
+                  .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                  .PRESENT_AWAITING_COVERAGE);
+      assertThat(operation.originalObligation().projectedMember()).isEqualTo(member);
+      assertThat(operation.originalObligation().inventoryRevision())
+          .isEqualTo(historicalObservation.projectionInventoryRevision());
+      assertThat(fixture.repository().readSnapshot()).isEqualTo(beforeRepair);
+
+      var redisOwner =
+          new CanonicalGameplayAccountMemberRepairRedisOwner(
+              redisFixture.applicationClient(),
+              RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+      var readback = redisOwner.projectAndRead(operation);
+      var acknowledgement =
+          fixture.repository().acknowledgeAccountMemberRepair(operation, readback);
+      assertThat(acknowledgement.member()).isEqualTo(member);
+      assertThat(fixture.repository().readSnapshot().accountIndexObligations())
+          .singleElement()
+          .satisfies(
+              obligation -> {
+                assertThat(obligation.status())
+                    .isEqualTo(
+                        net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED);
+                assertThat(obligation.projectionState())
+                    .isEqualTo(
+                        net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                            .PRESENT_AWAITING_COVERAGE);
+                assertThat(obligation.projectedMember()).isEqualTo(member);
+              });
+    } finally {
+      if (redisFixture != null) {
+        redisFixture.deleteAccountKey(ACCOUNT_ID);
+        redisFixture.close();
+      }
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void changedNoActiveControlFenceRejectsRedisReadbackAcknowledgement() {
+    TestSchema testSchema = newTestSchema("gs_member_fence_");
+    RedisMemberFixture redisFixture = null;
+    try {
+      redisFixture = startMemberRepairRedisFixture();
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
+      // This is a legal NO_ACTIVE row after an earlier completed account-wide lifecycle. The
+      // fixture advances only the durable epoch; it does not manufacture ACTIVE coverage proof.
+      assertThat(
+              testSchema
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_account_coverage_control"
+                          + " SET last_operation_fence = 1"
+                          + " WHERE account_id = ? AND state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'"
+                          + " AND last_operation_fence = 0",
+                      ACCOUNT_ID))
+          .isEqualTo(1);
+      CanonicalGameplayAccountMemberRepairOperation operation =
+          fixture.repository().beginAccountMemberRepair(TRANSITION_ID);
+      assertThat(operation.accountControlEpoch()).isEqualTo(BigInteger.ONE);
+      var redisOwner =
+          new CanonicalGameplayAccountMemberRepairRedisOwner(
+              redisFixture.applicationClient(),
+              RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+      var readback = redisOwner.projectAndRead(operation);
+
+      // A completed account-wide lifecycle may return to NO_ACTIVE with a later durable epoch.
+      // This controlled row advancement tests stale-result rejection only; it does not fabricate
+      // an ACTIVE operation or establish positive account-wide recovery proof.
+      assertThat(
+              testSchema
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_account_coverage_control"
+                          + " SET last_operation_fence = 2"
+                          + " WHERE account_id = ? AND state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'"
+                          + " AND last_operation_fence = 1",
+                      ACCOUNT_ID))
+          .isEqualTo(1);
+
+      assertThatThrownBy(
+              () -> fixture.repository().acknowledgeAccountMemberRepair(operation, readback))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining("control fence changed");
+      var snapshot = fixture.repository().readSnapshot();
+      assertThat(snapshot.accountIndexObligations())
+          .singleElement()
+          .satisfies(
+              obligation ->
+                  assertThat(obligation.status())
+                      .isEqualTo(
+                          net.firedevops.firemud.gamesession.binding
+                              .CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED));
+      assertThat(snapshot.bindings())
+          .singleElement()
+          .satisfies(
+              candidate ->
+                  assertThat(candidate.accountIndexState())
+                      .isEqualTo(
+                          net.firedevops.firemud.gamesession.binding
+                              .CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED));
+      var pending =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT status, coverage_generation, readback_member"
+                          + " FROM game_session_canonical_account_member_repair_operation"
+                          + " WHERE operation_id = ?",
+                      operation.operationId()),
+              "pending member-repair row remains retained");
+      assertThat(pending.get("status", String.class)).isEqualTo("PENDING");
+      assertThat(pending.get("coverage_generation")).isNull();
+      assertThat(pending.get("readback_member", String.class)).isNull();
+    } finally {
+      if (redisFixture != null) {
+        redisFixture.deleteAccountKey(ACCOUNT_ID);
+        redisFixture.close();
+      }
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void leaseBoundRuntimeFenceTriggerRejectsRawAbortAfterAccountMemberProjection() {
+    TestSchema testSchema = newTestSchema("gs_member_stale_");
+    RedisMemberFixture redisFixture = null;
+    try {
+      redisFixture = startMemberRepairRedisFixture();
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
+      CanonicalGameplayAccountMemberRepairOperation operation =
+          fixture.repository().beginAccountMemberRepair(TRANSITION_ID);
+      var redisOwner =
+          new CanonicalGameplayAccountMemberRepairRedisOwner(
+              redisFixture.applicationClient(),
+              RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+      redisOwner.projectAndRead(operation);
+
+      assertThatThrownBy(
+              () ->
+                  testSchema
+                      .dsl()
+                      .execute(
+                          "UPDATE game_session_canonical_binding_transition"
+                              + " SET status = 'ABORTED' WHERE transition_id = ?"
+                              + " AND status = 'PROVISIONAL'",
+                          TRANSITION_ID))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure)
+                    .hasMessageContaining(
+                        "A lease-bound runtime fence cannot be released without terminal owner reconciliation");
+              });
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition"
+                          + " WHERE transition_id = ?",
+                      TRANSITION_ID)
+                  .get("status", String.class))
+          .isEqualTo("PROVISIONAL");
+      var pending =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT status, coverage_generation, readback_member"
+                          + " FROM game_session_canonical_account_member_repair_operation"
+                          + " WHERE operation_id = ?",
+                      operation.operationId()),
+              "original member operation remains retained after stale transition rejection");
+      assertThat(pending.get("status", String.class)).isEqualTo("PENDING");
+      assertThat(pending.get("coverage_generation")).isNull();
+      assertThat(pending.get("readback_member", String.class)).isNull();
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_account_index_obligation"
+                          + " WHERE transition_id = ? AND obligation_ordinal = 0",
+                      TRANSITION_ID)
+                  .get("status", String.class))
+          .isEqualTo("REQUIRED");
+    } finally {
+      if (redisFixture != null) {
+        redisFixture.deleteAccountKey(ACCOUNT_ID);
+        redisFixture.close();
+      }
       dropSchema(testSchema.schema());
     }
   }
@@ -494,6 +1020,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       var snapshot = new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot();
       assertThat(snapshot.bindings()).hasSize(2);
       assertThat(snapshot.bindings())
+          .allSatisfy(row -> assertThat(row.identity().issuerId()).isEqualTo(ISSUER_ID));
+      assertThat(snapshot.bindings())
           .anySatisfy(
               row ->
                   assertThat(row.lifecycle())
@@ -697,6 +1225,53 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     return new TestSchema(schema, dataSource, dslForSchema(dataSource, schema));
   }
 
+  private static RedisMemberFixture startMemberRepairRedisFixture() {
+    RedisURI bootstrapUri =
+        RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379)).build();
+    bootstrapUri.setTimeout(Duration.ofSeconds(5));
+    RedisClient bootstrapClient = RedisClient.create(bootstrapUri);
+    try {
+      try (StatefulRedisConnection<byte[], byte[]> connection =
+          bootstrapClient.connect(ByteArrayCodec.INSTANCE)) {
+        connection
+            .sync()
+            .aclSetuser(
+                MEMBER_REPAIR_PRINCIPAL,
+                new AclSetuserArgs()
+                    .reset()
+                    .on()
+                    .addPassword(MEMBER_REPAIR_PASSWORD)
+                    .keyPattern(MEMBER_REPAIR_ACCOUNT_KEY_PREFIX + "*")
+                    .addCommand(CommandType.HELLO)
+                    .addCommand(CommandType.PING)
+                    .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+                    .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+                    .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+                    .addCommand(CommandType.EVALSHA)
+                    .addCommand(CommandType.SADD)
+                    .addCommand(CommandType.TYPE)
+                    .addCommand(CommandType.PTTL)
+                    .addCommand(CommandType.SISMEMBER));
+      }
+    } catch (RuntimeException failure) {
+      bootstrapClient.shutdown();
+      throw failure;
+    }
+
+    RedisURI applicationUri =
+        RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
+            .withAuthentication(MEMBER_REPAIR_PRINCIPAL, MEMBER_REPAIR_PASSWORD)
+            .build();
+    applicationUri.setTimeout(Duration.ofSeconds(5));
+    RedisClient applicationClient = RedisClient.create(applicationUri);
+    applicationClient.setOptions(
+        ClientOptions.builder()
+            .autoReconnect(false)
+            .protocolVersion(ProtocolVersion.RESP2)
+            .build());
+    return new RedisMemberFixture(bootstrapClient, applicationClient);
+  }
+
   private static void awaitLatch(CountDownLatch latch) {
     try {
       if (!latch.await(10, TimeUnit.SECONDS)) {
@@ -745,6 +1320,21 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget) {}
 
   private record TestSchema(String schema, DriverManagerDataSource dataSource, DSLContext dsl) {}
+
+  private record RedisMemberFixture(RedisClient bootstrapClient, RedisClient applicationClient) {
+    void deleteAccountKey(UUID accountId) {
+      String key = MEMBER_REPAIR_ACCOUNT_KEY_PREFIX + accountId;
+      try (StatefulRedisConnection<String, String> connection =
+          bootstrapClient.connect(io.lettuce.core.codec.StringCodec.UTF8)) {
+        connection.sync().del(key);
+      }
+    }
+
+    void close() {
+      applicationClient.shutdown();
+      bootstrapClient.shutdown();
+    }
+  }
 
   private static CanonicalGameplayBindingTransitionRequest transferRequest(
       String candidateSessionId, CanonicalGameplayBindingIdentity prior) {
@@ -917,6 +1507,14 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
             + " evidence_digest = 'sha256:"
             + "0000000000000000000000000000000000000000000000000000000000000000'"
             + " WHERE singleton_id = 1");
+  }
+
+  private static void assertCheckConstraintViolation(
+      DSLContext dsl, String statement, Object... values) {
+    assertThatThrownBy(() -> dsl.execute(statement, values))
+        .isInstanceOfSatisfying(
+            org.jooq.exception.DataAccessException.class,
+            failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
   }
 
   private static CanonicalIssuerReservationFenceEvidence reservation(UUID reservationFence) {

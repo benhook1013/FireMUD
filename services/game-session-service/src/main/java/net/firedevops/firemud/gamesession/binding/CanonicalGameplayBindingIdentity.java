@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.binding;
 import java.math.BigInteger;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 
 /** Canonical binding identity and separately retained runtime/issuer routing evidence. */
 public record CanonicalGameplayBindingIdentity(
@@ -16,7 +17,7 @@ public record CanonicalGameplayBindingIdentity(
     String sessionId,
     UUID regionId,
     BigInteger regionEpoch,
-    UUID issuerId,
+    String issuerId,
     BigInteger issuerAuthGeneration,
     BigInteger issuerIndexLayoutVersion,
     BigInteger issuerIndexPartitionCount,
@@ -45,7 +46,7 @@ public record CanonicalGameplayBindingIdentity(
       throw new IllegalArgumentException("runtimeGameInstanceId must be positive");
     }
     requireNonNil(regionId, "regionId");
-    requireNonNil(issuerId, "issuerId");
+    requireAccountIssuer(issuerId);
     if (!playableStateScope.equals("SHARED") && !playableStateScope.equals("ISOLATED")) {
       throw new IllegalArgumentException("playableStateScope must be SHARED or ISOLATED");
     }
@@ -80,6 +81,15 @@ public record CanonicalGameplayBindingIdentity(
   private static void requireNonNil(UUID value, String name) {
     if (value.equals(new UUID(0L, 0L))) {
       throw new IllegalArgumentException(name + " must not be nil");
+    }
+  }
+
+  private static void requireAccountIssuer(String issuerId) {
+    if (!GameSessionAccountDelegationProfile.ISSUER.equals(issuerId)) {
+      throw new IllegalArgumentException(
+          "Unsupported issuer identity; expected exact Account issuer "
+              + GameSessionAccountDelegationProfile.ISSUER
+              + "; legacy UUID issuer identities require explicit recovery");
     }
   }
 }

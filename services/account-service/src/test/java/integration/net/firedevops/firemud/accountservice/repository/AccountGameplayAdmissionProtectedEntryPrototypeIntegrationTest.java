@@ -62,6 +62,43 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   private static final String RECEIPTS = "account_gameplay_admission_original_commit_ack_receipts";
 
   @Test
+  void currentSourceCommitEntryRefusesStorageOnlyLeaseWithoutCurrentPlayerAuthority() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    var scope = (Map<?, ?>) evidence.carrier().get("bindingScope");
+    var token = (Map<?, ?>) evidence.carrier().get("tokenIdentityEvidence");
+    UUID account = UUID.fromString((String) scope.get("accountId"));
+    var expectedIdentity = org.mockito.Mockito.mock(AccountGameplayDelegationPendingIdentity.class);
+    org.mockito.Mockito.when(expectedIdentity.accountId()).thenReturn(account);
+    org.mockito.Mockito.when(expectedIdentity.tokenJti())
+        .thenReturn(UUID.fromString((String) token.get("tokenJti")));
+    var expectedCandidate =
+        org.mockito.Mockito.mock(
+            AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData.class);
+    org.mockito.Mockito.when(expectedCandidate.identity()).thenReturn(expectedIdentity);
+    org.mockito.Mockito.when(expectedCandidate.authoritySnapshot())
+        .thenReturn(
+            new net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord
+                .AccountAuthoritySnapshot(
+                account, 1L, 1L, 1L, 1L, 1L, 1L, java.util.Optional.empty()));
+    var originalOperation = operation(context, evidence);
+    var originalSources = sourceSnapshot(context);
+
+    // This controlled candidate is correlation only. The real in-transaction source readers
+    // must refuse this storage fixture, which has no current player membership/tenant authority.
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                    .executeWithCurrentSources(
+                        evidence, UUID.randomUUID(), "test", expectedCandidate))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(operation(context, evidence)).isEqualTo(originalOperation);
+    assertThat(sourceSnapshot(context)).isEqualTo(originalSources);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
+
+  @Test
   void coldGenuineAcknowledgedFinalizationPersistsExactProofWithoutAuxiliaryWrites() {
     var context = context();
     var ack = finalized(context, 15000);

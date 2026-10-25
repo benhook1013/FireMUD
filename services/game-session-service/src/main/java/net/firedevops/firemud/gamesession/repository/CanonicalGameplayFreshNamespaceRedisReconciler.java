@@ -10,7 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
-import java.util.regex.Pattern;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
@@ -25,16 +25,14 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 /**
  * Read-only namespace reconciliation for a fully fenced, physically empty disposable cohort.
  * Nonempty canonical rows and any target namespace key are retained and denied; this adapter does
- * not contain an active-session serializer or delete path. Only the exact canonical issuer
- * generation projection key family is outside this namespace result; its owner gate is separate.
+ * not contain an active-session serializer or delete path. Only the exact canonical Account issuer
+ * generation projection key is outside this namespace result; its owner gate is separate.
  */
 final class CanonicalGameplayFreshNamespaceRedisReconciler
     implements CanonicalGameplayLegacyMigrationOwner.NamespaceIndexOwner {
   private static final String TARGET_PREFIX = "session:game:";
   private static final String SCAN_PATTERN = TARGET_PREFIX + "*";
   private static final String ISSUER_GENERATION_PREFIX = "session:game:auth:issuer-generation:v1:";
-  private static final Pattern CANONICAL_UUID =
-      Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final ScanLimits DEFAULT_LIMITS =
       new ScanLimits(128, 5_000, 20_000, 1_024, Duration.ofSeconds(30));
@@ -178,7 +176,8 @@ final class CanonicalGameplayFreshNamespaceRedisReconciler
           throw conflict("Target Redis scan returned a key outside its pinned prefix");
         }
         if (key.startsWith(ISSUER_GENERATION_PREFIX) && !isCanonicalIssuerProjectionKey(key)) {
-          throw conflict("Target Redis inventory contains a malformed issuer projection key");
+          throw conflict(
+              "Target Redis inventory contains an unsupported issuer identity key; preserve legacy UUID issuer keys for explicit recovery");
         }
         visited++;
         if (visited > limits.maxVisitedKeys()) {
@@ -305,19 +304,7 @@ final class CanonicalGameplayFreshNamespaceRedisReconciler
   }
 
   private static boolean isCanonicalIssuerProjectionKey(String key) {
-    if (!key.startsWith(ISSUER_GENERATION_PREFIX)) {
-      return false;
-    }
-    String issuerId = key.substring(ISSUER_GENERATION_PREFIX.length());
-    if (!CANONICAL_UUID.matcher(issuerId).matches()) {
-      return false;
-    }
-    try {
-      UUID parsed = UUID.fromString(issuerId);
-      return !NIL_UUID.equals(parsed) && parsed.toString().equals(issuerId);
-    } catch (IllegalArgumentException malformedUuid) {
-      return false;
-    }
+    return (ISSUER_GENERATION_PREFIX + GameSessionAccountDelegationProfile.ISSUER).equals(key);
   }
 
   private static CanonicalGameplayBindingInventoryConflictException conflict(String message) {

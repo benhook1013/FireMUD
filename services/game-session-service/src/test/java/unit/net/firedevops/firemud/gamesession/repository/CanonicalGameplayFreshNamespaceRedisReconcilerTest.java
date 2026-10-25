@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingAccountIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
@@ -113,8 +114,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   }
 
   @Test
-  void onlyCanonicalNonNilIssuerProjectionIsExcludedAndPreservedWithoutReadingValue() {
-    String issuerProjection = "session:game:auth:issuer-generation:v1:" + UUID.randomUUID();
+  void onlyExactAccountIssuerProjectionIsExcludedAndPreservedWithoutReadingValue() {
+    String issuerProjection =
+        "session:game:auth:issuer-generation:v1:" + GameSessionAccountDelegationProfile.ISSUER;
     RedisFixture fixture =
         redisFixtureWithScans(
             scans(
@@ -140,8 +142,12 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   }
 
   @Test
-  void malformedIssuerProjectionKeyIsDeniedWithoutMutation() {
-    for (String issuerId : List.of("not-a-uuid", "00000000-0000-0000-0000-000000000000")) {
+  void unsupportedIssuerProjectionIdentityIsDeniedWithoutMutation() {
+    for (String issuerId :
+        List.of(
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000000",
+            "77777777-7777-4777-8777-777777777777")) {
       String malformed = "session:game:auth:issuer-generation:v1:" + issuerId;
       StringRedisTemplate redis = redisWithScans(scans(List.of(), List.of(), List.of(malformed)));
 
@@ -150,7 +156,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
                   reconciler(redis)
                       .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(2)))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-          .hasMessageContaining("malformed issuer projection key");
+          .hasMessageContaining("unsupported issuer identity")
+          .hasMessageContaining("preserve legacy UUID issuer keys");
 
       verify(redis, times(4)).execute(any(RedisCallback.class));
       verifyNoRedisMutationOrValueRead(redis);
@@ -159,7 +166,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
 
   @Test
   void repeatedCanonicalIssuerVisitsAreDeduplicatedButRemainVisitBounded() {
-    String issuerProjection = "session:game:auth:issuer-generation:v1:" + UUID.randomUUID();
+    String issuerProjection =
+        "session:game:auth:issuer-generation:v1:" + GameSessionAccountDelegationProfile.ISSUER;
     StringRedisTemplate redis =
         redisWithScans(
             scans(
@@ -585,7 +593,6 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     UUID characterId = UUID.randomUUID();
     UUID gameInstanceId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
-    UUID issuerId = UUID.randomUUID();
     UUID transitionId = UUID.randomUUID();
     UUID reservationId = UUID.randomUUID();
     UUID accountIndexFence = UUID.randomUUID();
@@ -605,7 +612,7 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
             UUID.randomUUID().toString(),
             regionId,
             BigInteger.ONE,
-            issuerId,
+            GameSessionAccountDelegationProfile.ISSUER,
             BigInteger.ONE,
             BigInteger.ONE,
             BigInteger.valueOf(8),

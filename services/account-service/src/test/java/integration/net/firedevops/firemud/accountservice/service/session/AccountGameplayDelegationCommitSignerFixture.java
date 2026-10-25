@@ -301,6 +301,11 @@ public final class AccountGameplayDelegationCommitSignerFixture {
     return signer;
   }
 
+  /** Exposes only this test fixture's pinned public JWKS source for exact-token verification. */
+  public AccountJwtJwksTrustedSource trustedJwksSource() {
+    return trustedJwksSource;
+  }
+
   /** Prepares the real signer-produced pending candidate without exposing its compact JWT. */
   public void preparePendingCandidate(UUID requestId) {
     signer.signPendingCandidate(requestId);

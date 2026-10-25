@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "game-session/v1/canonical_gameplay_admission_decision_read.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+option java_outer_classname = "AccountGameplayAdmissionLeaseProto";
+
+// Explicit, manually composed Account-only NEW-binding owner protocol. The same-namespace
+// Game Session certificate is the workload identity; no generic service JWT is accepted as it.
+service AccountGameplayAdmissionLeaseService {
+  rpc AcquireGameplayAdmissionLease(AcquireGameplayAdmissionLeaseRequest)
+      returns (AccountGameplayAdmissionLeaseResponse);
+  rpc FinalizeGameplayAdmissionLease(FinalizeGameplayAdmissionLeaseRequest)
+      returns (AccountGameplayAdmissionLeaseResponse);
+  rpc ReadGameplayAdmissionLease(ReadGameplayAdmissionLeaseRequest)
+      returns (AccountGameplayAdmissionLeaseResponse);
+  rpc AbortGameplayAdmissionLease(AbortGameplayAdmissionLeaseRequest)
+      returns (AccountGameplayAdmissionLeaseResponse);
+}
+
+// A new operation selector and expected current values only; Account still resolves and checks
+// every owner. These fields do not authorize or allocate a lease.
+message AcquireGameplayAdmissionLeaseRequest {
+  repeated uint32 schema_version = 1;
+  repeated string request_uuid = 2;
+  // Transient credential input, bounded by the existing GSA profile; never echoed in a response.
+  repeated string presented_initial_gsa_compact_jwt = 3;
+  repeated game_session.v1.CanonicalGameplayAdmissionCandidate expected_candidate = 4;
+  repeated game_session.v1.CanonicalPlayableTargetEvidence expected_target = 5;
+  repeated string binding_generation = 6;
+}
+
+// Finalization binds the exact original Account lease to the supplied Game Session decision.
+message FinalizeGameplayAdmissionLeaseRequest {
+  repeated uint32 schema_version = 1;
+  // Transient credential input, bounded by the existing GSA profile; never echoed in a response.
+  repeated string presented_initial_gsa_compact_jwt = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+  repeated string binding_decision_uuid = 4;
+}
+
+// Read is exact-operation recovery; it neither renews nor recreates a lease.
+message ReadGameplayAdmissionLeaseRequest {
+  repeated uint32 schema_version = 1;
+  // Transient credential input, bounded by the existing GSA profile; never echoed in a response.
+  repeated string presented_initial_gsa_compact_jwt = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+}
+
+// A missing decision UUID remains UNKNOWN, never NO_TOKEN or completed cleanup.
+message AbortGameplayAdmissionLeaseRequest {
+  repeated uint32 schema_version = 1;
+  // Transient credential input, bounded by the existing GSA profile; never echoed in a response.
+  repeated string presented_initial_gsa_compact_jwt = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+  repeated string binding_decision_uuid = 4;
+}
+
+enum AccountGameplayAdmissionLeaseState {
+  ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_UNSPECIFIED = 0;
+  ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_PENDING = 1;
+  ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_COMMITTED = 2;
+  ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_ABORTED = 3;
+}
+
+// All four methods return the same closed original-operation readback. Repeated fields preserve
+// absence and duplicates for receiver validation. The lease bytes remain unchanged and complete.
+message AccountGameplayAdmissionLeaseResponse {
+  repeated uint32 schema_version = 1;
+  repeated bytes original_lease_evidence_utf8 = 2;
+  repeated AccountGameplayAdmissionLeaseState state = 3;
+  repeated string binding_decision_uuid = 4;
+  // ABORTED-only pending cleanup obligation; this never reports cleanup completion.
+  repeated string orphan_cleanup_uuid = 5;
+  repeated AccountGameplayAdmissionOriginalAckReceiptEvidence original_ack_receipt = 6;
+}
+
+// Complete durable AccountGameplayAdmissionOriginalAckReceipt shape. The operation identity and
+// state are supplied by the enclosing response. These values are source evidence, not a serialized
+// in-process OriginalCommitAcknowledgement or standalone admission authority.
+message AccountGameplayAdmissionOriginalAckReceiptEvidence {
+  repeated uint32 schema_version = 1;
+  repeated string request_uuid = 2;
+  repeated string account_uuid = 3;
+  repeated string lease_uuid = 4;
+  repeated string lease_fence = 5;
+  repeated string evidence_sha256 = 6;
+  repeated string binding_decision_uuid = 7;
+  repeated string expires_at_ms = 8;
+  repeated string finalization_xid = 9;
+  repeated string committed_before_ms = 10;
+  repeated string receipt_xid = 11;
+}

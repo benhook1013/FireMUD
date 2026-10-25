@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "game-session/v1/canonical_gameplay_roster_owner_read.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+option java_outer_classname = "CanonicalGameplayAdmissionDecisionReadProto";
+
+// Explicit, manually composed Account-purpose reads. GS requires the exact same-namespace Account
+// workload and returns existing owner evidence without claiming gameplay admission.
+service CanonicalGameplayAdmissionDecisionReadService {
+  rpc GetCanonicalGameplayAdmissionDecision(
+      GetCanonicalGameplayAdmissionDecisionRequest)
+      returns (GetCanonicalGameplayAdmissionDecisionResponse);
+  rpc GetPublishedRealmAdmissionOwnerRead(
+      GetPublishedRealmAdmissionOwnerReadRequest)
+      returns (GetPublishedRealmAdmissionOwnerReadResponse);
+}
+
+// Repeated fields preserve wire presence and duplicate evidence for closed receiver validation.
+// Lease evidence is the complete unchanged canonical AccountGameplayAdmissionLeaseEvidence UTF-8.
+message GetCanonicalGameplayAdmissionDecisionRequest {
+  repeated uint32 schema_version = 1;
+  repeated string binding_decision_uuid = 2;
+  repeated bytes expected_lease_evidence_utf8 = 3;
+}
+
+// Pre-lease selectors and binding correlation only. The Account UUID and counters confer no
+// membership, ownership, current-caller, or admission authority; GS rereads its current owners.
+message GetPublishedRealmAdmissionOwnerReadRequest {
+  repeated uint32 schema_version = 1;
+  repeated GetCanonicalGameplayRosterOwnerReadRequest selector = 2;
+}
+
+enum CanonicalGameplayAdmissionDecisionStatus {
+  CANONICAL_GAMEPLAY_ADMISSION_DECISION_STATUS_UNSPECIFIED = 0;
+  CANONICAL_GAMEPLAY_ADMISSION_DECISION_STATUS_PROVISIONAL = 1;
+}
+
+enum CanonicalGameplayAdmissionOriginKind {
+  CANONICAL_GAMEPLAY_ADMISSION_ORIGIN_KIND_UNSPECIFIED = 0;
+  CANONICAL_GAMEPLAY_ADMISSION_ORIGIN_KIND_NO_PRIOR_POINTER = 1;
+  CANONICAL_GAMEPLAY_ADMISSION_ORIGIN_KIND_EXPECT_CLOSED = 2;
+}
+
+enum CanonicalGameplayAdmissionOwnerProofOutcome {
+  CANONICAL_GAMEPLAY_ADMISSION_OWNER_PROOF_OUTCOME_UNSPECIFIED = 0;
+  CANONICAL_GAMEPLAY_ADMISSION_OWNER_PROOF_OUTCOME_PENDING = 1;
+  CANONICAL_GAMEPLAY_ADMISSION_OWNER_PROOF_OUTCOME_COMMITTED = 2;
+  CANONICAL_GAMEPLAY_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED = 3;
+}
+
+// The response repeats the exact original lease and complete stored owner values. Counters and
+// arbitrary-precision generations use canonical positive decimal strings; private positive row
+// identifiers retain int64 representation. The manual client and handler cap this full message at
+// 256 KiB without changing global gRPC limits.
+message GetCanonicalGameplayAdmissionDecisionResponse {
+  repeated uint32 schema_version = 1;
+  repeated string binding_decision_uuid = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+  repeated CanonicalGameplayAdmissionDecisionStatus status = 4;
+  repeated string binding_generation = 5;
+  repeated string expected_old_binding_generation = 6;
+  repeated string resume_episode_uuid = 7;
+  repeated CanonicalGameplayAdmissionCandidate candidate = 8;
+  repeated CanonicalPlayableTargetEvidence target_evidence = 9;
+}
+
+// Complete CanonicalGameplayBindingIdentity, including exact Account issuer partition evidence.
+message CanonicalGameplayAdmissionCandidate {
+  repeated string account_uuid = 1;
+  repeated string tenant_uuid = 2;
+  repeated string playable_state_namespace_uuid = 3;
+  repeated string character_uuid = 4;
+  repeated string playable_state_scope = 5;
+  repeated string game_instance_uuid = 6;
+  repeated int64 runtime_game_instance_id = 7;
+  repeated string session_uuid = 8;
+  repeated string region_uuid = 9;
+  repeated string region_epoch = 10;
+  repeated string issuer_id = 11;
+  repeated string issuer_auth_generation = 12;
+  repeated string issuer_index_layout_version = 13;
+  repeated string issuer_index_partition_count = 14;
+  repeated string issuer_index_partition_capacity = 15;
+}
+
+// Complete existing CanonicalPlayableTarget. Nullable expectedPriorPointerVersion is represented
+// by zero or one repeated values; every other field must occur exactly once.
+message CanonicalPlayableTargetEvidence {
+  repeated string target_namespace = 1;
+  repeated string tenant_slug = 2;
+  repeated string canonical_tenant_uuid = 3;
+  repeated string world_slug = 4;
+  repeated string world_display_name = 5;
+  repeated string realm_uuid = 6;
+  repeated string realm_slug = 7;
+  repeated string realm_display_name = 8;
+  repeated int64 game_session_tenant_id = 9;
+  repeated int64 game_instance_id = 10;
+  repeated string playable_state_namespace_uuid = 11;
+  repeated string playable_state_scope = 12;
+  repeated string canonical_game_instance_uuid = 13;
+  repeated string canonical_version_uuid = 14;
+  repeated int64 runtime_version_id = 15;
+  repeated string catalog_revision = 16;
+  repeated string pointer_version = 17;
+  repeated string admission_pointer_snapshot_digest = 18;
+  repeated string active_world_epoch = 19;
+  repeated string initial_admission_request_id = 20;
+  repeated string initial_admission_request_digest = 21;
+  repeated CanonicalGameplayAdmissionOriginKind initial_admission_origin_kind = 22;
+  repeated string expected_prior_pointer_version = 23;
+  repeated string hold_uuid = 24;
+  repeated string hold_fence_uuid = 25;
+  repeated string hold_binding_digest = 26;
+  repeated int64 audit_event_id = 27;
+  repeated string owner_proof_digest = 28;
+  repeated CanonicalGameplayAdmissionOwnerProofOutcome owner_proof_outcome = 29;
+  repeated bool positive_durable_abort = 30;
+  repeated string owner_proof_terminal_at = 31;
+  repeated string character_creation_policy = 32;
+}
+
+// Complete current GS target and the existing full source response (owner proof, launch/source,
+// complete published policy set). The existing source response remains independently validated
+// by CanonicalGameplayRosterOwnerReadGrpcCodec. Total bound is below 4 MiB and includes target
+// protobuf headroom; the Account client applies it only to this RPC.
+message GetPublishedRealmAdmissionOwnerReadResponse {
+  repeated uint32 schema_version = 1;
+  repeated GetCanonicalGameplayRosterOwnerReadResponse published_source = 2;
+  repeated CanonicalPlayableTargetEvidence current_target = 3;
+}

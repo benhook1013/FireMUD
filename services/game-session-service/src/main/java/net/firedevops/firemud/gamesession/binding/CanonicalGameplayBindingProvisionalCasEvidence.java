@@ -38,9 +38,17 @@ public record CanonicalGameplayBindingProvisionalCasEvidence(
         transition.status() == CanonicalGameplayBindingTransitionSnapshot.Status.PREPARED
             ? CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED
             : CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL;
+    boolean accountIndexStillNeedsRepair =
+        candidate.accountIndexState()
+            == CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED;
+    // A provisional NEW transition may have a completed binding-local account-member repair.
+    // The repository must still prove that durable acknowledgement before it returns this model.
+    boolean accountIndexRepairWasAcknowledged =
+        transition.status() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+            && candidate.accountIndexState()
+                == CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED;
     if (candidate.lifecycle() != expectedCandidateLifecycle
-        || candidate.accountIndexState()
-            != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED
+        || (!accountIndexStillNeedsRepair && !accountIndexRepairWasAcknowledged)
         || candidate.issuerIndexState()
             != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED) {
       throw new IllegalArgumentException("candidate is not an exact non-admissible transition row");

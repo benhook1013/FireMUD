@@ -39,6 +39,15 @@ public record CanonicalGameplayBindingAccountIndexObligation(
     Objects.requireNonNull(status, "status");
     requirePositive(inventoryRevision, "inventoryRevision");
     Objects.requireNonNull(projectionState, "projectionState");
+    if (status == Status.ACKNOWLEDGED
+        && (ordinal != 0
+            || action != Action.ADD_OR_RETAIN
+            || expectedPriorGeneration != null
+            || executionPhase != ExecutionPhase.BEFORE_FINAL_CAS
+            || projectionState != ProjectionState.PRESENT_AWAITING_COVERAGE)) {
+      throw new IllegalArgumentException(
+          "ACKNOWLEDGED is reserved for a completed NEW ADD_OR_RETAIN member repair");
+    }
     switch (projectionState) {
       case REQUIRED -> {
         if (projectedMember != null || projectionInventoryRevision != null) {
@@ -88,7 +97,8 @@ public record CanonicalGameplayBindingAccountIndexObligation(
   }
 
   public enum Status {
-    REQUIRED
+    REQUIRED,
+    ACKNOWLEDGED
   }
 
   /**
