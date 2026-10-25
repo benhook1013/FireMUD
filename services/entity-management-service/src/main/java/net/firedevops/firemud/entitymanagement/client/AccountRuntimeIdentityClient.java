@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 
 /** Unwired Entity Management candidate for exact Account-owned runtime identity reads. */
 public final class AccountRuntimeIdentityClient
@@ -115,7 +116,7 @@ public final class AccountRuntimeIdentityClient
     if (!workloadNamespace.equals(evidence.targetNamespace())
         || !requestUuid.equals(evidence.requestId())
         || !accountUuid.equals(evidence.canonicalAccountId())) {
-      throw new IllegalStateException(
+      throw new PreseededActorAssignmentService.PreconditionException(
           "Account runtime identity response does not match the exact request");
     }
     return evidence;

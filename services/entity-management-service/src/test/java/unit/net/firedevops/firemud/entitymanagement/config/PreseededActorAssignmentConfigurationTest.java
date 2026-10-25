@@ -49,16 +49,18 @@ class PreseededActorAssignmentConfigurationTest {
             () ->
                 accountIdentityPort.resolveRuntimeAccountIdentity(
                     request.canonicalAccountUuid().toString(), request.assignmentUuid().toString()))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_UNAVAILABLE");
+        .isInstanceOf(
+            PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class)
+        .hasMessage("PRESEEDED_ASSIGNMENT_OWNER_EVIDENCE_UNAVAILABLE");
     assertThatThrownBy(
             () ->
                 stagingEligibilityPort.resolvePreseededActorStagingEligibility(
                     request.canonicalAccountUuid().toString(),
                     request.expectedTarget().canonicalTenantUuid().toString(),
                     request.assignmentUuid().toString()))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_UNAVAILABLE");
+        .isInstanceOf(
+            PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class)
+        .hasMessage("PRESEEDED_ASSIGNMENT_OWNER_EVIDENCE_UNAVAILABLE");
     assertThatThrownBy(() -> ownerEvidencePort.resolveCurrentEligibleTarget(request, null, null))
         .isInstanceOf(
             PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class);

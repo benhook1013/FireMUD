@@ -74,6 +74,9 @@ public final class CanonicalGameplayRosterSelectionService {
     if (accountUuid.isEmpty()) {
       return new Denied(Denial.INVALID_CONTEXT);
     }
+    if (selector != null && selector.length() > 128) {
+      return new Denied(Denial.INVALID_SELECTOR);
+    }
 
     CanonicalPublishedPlayerRoute current;
     try {

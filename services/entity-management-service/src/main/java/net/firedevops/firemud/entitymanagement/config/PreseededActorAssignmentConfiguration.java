@@ -33,7 +33,7 @@ import org.springframework.boot.ssl.SslBundles;
 public class PreseededActorAssignmentConfiguration {
   public PreseededActorAccountIdentityPort disabledPreseededActorAccountIdentityPort() {
     return (accountUuid, assignmentUuid) -> {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_UNAVAILABLE");
+      throw new PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException();
     };
   }
 
@@ -54,7 +54,7 @@ public class PreseededActorAssignmentConfiguration {
 
   public PreseededActorStagingEligibilityPort disabledPreseededActorStagingEligibilityPort() {
     return (accountUuid, tenantUuid, assignmentUuid) -> {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_UNAVAILABLE");
+      throw new PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException();
     };
   }
 

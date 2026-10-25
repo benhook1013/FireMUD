@@ -176,7 +176,7 @@ public final class CanonicalPreseededActorAssignmentGrpcService
           .withDescription("Preseeded actor assignment owner is unavailable")
           .asRuntimeException();
     }
-    if (failure instanceof IllegalStateException) {
+    if (failure instanceof PreseededActorAssignmentService.PreconditionException) {
       return Status.FAILED_PRECONDITION
           .withDescription("Preseeded actor assignment preconditions are not satisfied")
           .asRuntimeException();

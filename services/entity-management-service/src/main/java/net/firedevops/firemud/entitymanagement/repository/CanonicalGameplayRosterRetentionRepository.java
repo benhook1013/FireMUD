@@ -288,6 +288,13 @@ public final class CanonicalGameplayRosterRetentionRepository {
         playerCreated(original)
             ? (createdReceipt == null ? null : createdReceipt.getRoster())
             : originalReceipt(owner).orElse(null);
+    boolean ownerHasReceipt =
+        playerCreated(original)
+            ? !owner.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
+            : !owner.getCanonicalRosterReceipt().isEmpty();
+    if (receipt == null && ownerHasReceipt) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+    }
     UUID snapshot = admission.get("snapshot_uuid", UUID.class);
     if ((snapshot == null) != (receipt == null)
         || (snapshot != null && !snapshot.toString().equals(receipt.getSnapshotUuid()))) {

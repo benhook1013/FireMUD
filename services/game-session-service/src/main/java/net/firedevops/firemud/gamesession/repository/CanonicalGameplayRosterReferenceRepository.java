@@ -549,45 +549,68 @@ public final class CanonicalGameplayRosterReferenceRepository {
     }
     var candidates =
         dsl.fetch(
-            "SELECT s.* FROM game_session_canonical_roster_selection s "
+            "SELECT s.*, f.target_fence_uuid AS fence_target_fence_uuid, "
+                + "f.owner_fence AS fence_owner_fence, f.target_binding AS fence_target_binding, "
+                + "f.target_binding_digest AS fence_target_binding_digest "
+                + "FROM game_session_canonical_roster_selection s "
                 + "JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) "
                 + "WHERE f.target_binding_digest = ? AND s.terminal_outcome IS NULL "
                 + "AND (s.recovery_uuid IS NOT NULL OR s.recorded_at + f.replay_horizon_millis * interval '1 millisecond' <= clock_timestamp()) "
                 + "ORDER BY s.recovery_last_attempt_at NULLS FIRST, s.operation_uuid LIMIT ? FOR UPDATE OF s",
             digest(targetBinding(request)),
             policy.batchSize());
-    return candidates.map(
-        row -> {
-          java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
-          if (recovery == null) {
-            recovery = java.util.UUID.randomUUID();
-            dsl.execute(
-                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp(), recovery_last_attempt_at = clock_timestamp() "
-                    + "WHERE operation_uuid = ? AND recovery_uuid IS NULL AND terminal_outcome IS NULL",
-                recovery,
-                row.get("operation_uuid", java.util.UUID.class));
-          } else {
-            dsl.execute(
-                "UPDATE game_session_canonical_roster_selection SET recovery_last_attempt_at = GREATEST(recovery_last_attempt_at + interval '1 microsecond', clock_timestamp()) "
-                    + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
-                row.get("operation_uuid", java.util.UUID.class),
-                recovery);
-          }
-          try {
-            return net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
-                .requireRequest(
-                    net.firedevops.firemud.entitymanagement.v1
-                        .CanonicalGameplayRosterRecoveryRequest.newBuilder()
-                        .setSchemaVersion(1)
-                        .setOriginalSelection(
-                            GetCanonicalGameplayRosterReferenceRequest.parseFrom(
-                                row.get("original_request", byte[].class)))
-                        .setRecoveryUuid(recovery.toString())
-                        .build());
-          } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
-            throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_REQUEST_INVALID", invalid);
-          }
-        });
+    return candidates.stream()
+        .map(
+            row -> {
+              java.util.UUID operation =
+                  Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class));
+              java.util.UUID fenceUuid =
+                  Objects.requireNonNull(row.get("target_fence_uuid", java.util.UUID.class));
+              java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
+              if (recovery == null) {
+                recovery = java.util.UUID.randomUUID();
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp(), recovery_last_attempt_at = clock_timestamp() "
+                        + "WHERE operation_uuid = ? AND recovery_uuid IS NULL AND terminal_outcome IS NULL",
+                    recovery,
+                    operation);
+              } else {
+                dsl.execute(
+                    "UPDATE game_session_canonical_roster_selection SET recovery_last_attempt_at = GREATEST(recovery_last_attempt_at + interval '1 microsecond', clock_timestamp()) "
+                        + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
+                    operation,
+                    recovery);
+              }
+              try {
+                byte[] originalBytes =
+                    Objects.requireNonNull(row.get("original_request", byte[].class));
+                var original =
+                    decodeRetainedOriginal(
+                        originalBytes,
+                        operation,
+                        fenceUuid,
+                        row.get("fence_target_fence_uuid", java.util.UUID.class),
+                        row.get("owner_fence", Long.class),
+                        row.get("fence_owner_fence", Long.class),
+                        row.get("fence_target_binding", byte[].class),
+                        row.get("fence_target_binding_digest", String.class));
+                return net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
+                    .requireRequest(
+                        net.firedevops.firemud.entitymanagement.v1
+                            .CanonicalGameplayRosterRecoveryRequest.newBuilder()
+                            .setSchemaVersion(1)
+                            .setOriginalSelection(original)
+                            .setRecoveryUuid(recovery.toString())
+                            .build());
+              } catch (com.google.protobuf.InvalidProtocolBufferException
+                  | IllegalArgumentException invalid) {
+                // The durable marker and attempt timestamp are scheduling state only. A malformed
+                // retained request remains protected and is never sent to the owner RPC.
+                return null;
+              }
+            })
+        .filter(Objects::nonNull)
+        .toList();
   }
 
   /** Only the authenticated Entity client can construct this positive nonce-closure capability. */
@@ -659,36 +682,73 @@ public final class CanonicalGameplayRosterReferenceRepository {
         CanonicalGameplayRosterReferenceEvidence.uuid(recovery.getRecoveryUuid()));
   }
 
+  /** A null original is invalid; its operation key advances the sweep while retaining its fence. */
   public record TargetCandidate(
-      java.util.UUID fenceUuid, GetCanonicalGameplayRosterReferenceRequest original, String state) {
+      java.util.UUID operationUuid,
+      java.util.UUID fenceUuid,
+      GetCanonicalGameplayRosterReferenceRequest original,
+      String state) {
+    public TargetCandidate {
+      Objects.requireNonNull(operationUuid, "operationUuid");
+      Objects.requireNonNull(fenceUuid, "fenceUuid");
+      Objects.requireNonNull(state, "state");
+    }
+
     @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "Protobuf messages are immutable.")
     public GetCanonicalGameplayRosterReferenceRequest original() {
       return original;
     }
+
+    public boolean hasValidOriginal() {
+      return original != null;
+    }
+
+    public static TargetCandidate invalid(
+        java.util.UUID operationUuid, java.util.UUID fenceUuid, String state) {
+      return new TargetCandidate(operationUuid, fenceUuid, null, state);
+    }
   }
 
-  public java.util.List<TargetCandidate> targetCandidates(java.util.UUID afterFence, int limit) {
+  public java.util.List<TargetCandidate> targetCandidates(
+      java.util.UUID afterOperation, int limit) {
     requireWritableTransaction();
     if (limit <= 0) {
       throw new IllegalArgumentException("Bounded target candidate page required");
     }
     return dsl.fetch(
-            "SELECT DISTINCT ON (f.target_fence_uuid) f.target_fence_uuid, f.fence_state, s.original_request "
+            "SELECT f.target_fence_uuid, f.fence_state, "
+                + "f.target_binding, f.target_binding_digest, f.owner_fence AS fence_owner_fence, "
+                + "s.operation_uuid, s.target_fence_uuid AS selection_target_fence_uuid, "
+                + "s.owner_fence AS selection_owner_fence, s.original_request "
                 + "FROM game_session_canonical_roster_target_fences f JOIN game_session_canonical_roster_selection s USING (target_fence_uuid) "
-                + "WHERE (?::uuid IS NULL OR f.target_fence_uuid > ?::uuid) ORDER BY f.target_fence_uuid, s.operation_uuid LIMIT ?",
-            afterFence,
-            afterFence,
+                + "WHERE (?::uuid IS NULL OR s.operation_uuid > ?::uuid) ORDER BY s.operation_uuid LIMIT ?",
+            afterOperation,
+            afterOperation,
             limit)
         .map(
             row -> {
+              java.util.UUID operationUuid =
+                  Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class));
+              java.util.UUID fenceUuid =
+                  Objects.requireNonNull(row.get("target_fence_uuid", java.util.UUID.class));
+              String state = Objects.requireNonNull(row.get("fence_state", String.class));
               try {
                 return new TargetCandidate(
-                    row.get("target_fence_uuid", java.util.UUID.class),
-                    GetCanonicalGameplayRosterReferenceRequest.parseFrom(
-                        row.get("original_request", byte[].class)),
-                    row.get("fence_state", String.class));
-              } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
-                throw new IllegalStateException(invalid);
+                    operationUuid,
+                    fenceUuid,
+                    decodeRetainedOriginal(
+                        Objects.requireNonNull(row.get("original_request", byte[].class)),
+                        Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class)),
+                        row.get("selection_target_fence_uuid", java.util.UUID.class),
+                        fenceUuid,
+                        row.get("selection_owner_fence", Long.class),
+                        row.get("fence_owner_fence", Long.class),
+                        row.get("target_binding", byte[].class),
+                        row.get("target_binding_digest", String.class)),
+                    state);
+              } catch (com.google.protobuf.InvalidProtocolBufferException
+                  | IllegalArgumentException invalid) {
+                return TargetCandidate.invalid(operationUuid, fenceUuid, state);
               }
             });
   }
@@ -956,6 +1016,33 @@ public final class CanonicalGameplayRosterReferenceRepository {
   private static byte[] targetBinding(GetCanonicalGameplayRosterReferenceRequest request) {
     // Keep the complete typed created source identity in the shared namespace/account/target fence.
     return request.toBuilder().clearOperationUuid().clearSessionUuid().build().toByteArray();
+  }
+
+  private static GetCanonicalGameplayRosterReferenceRequest decodeRetainedOriginal(
+      byte[] originalBytes,
+      java.util.UUID operationUuid,
+      java.util.UUID selectionFenceUuid,
+      java.util.UUID fenceUuid,
+      Long selectionOwnerFence,
+      Long fenceOwnerFence,
+      byte[] retainedTargetBinding,
+      String retainedTargetBindingDigest)
+      throws com.google.protobuf.InvalidProtocolBufferException {
+    var original = GetCanonicalGameplayRosterReferenceRequest.parseFrom(originalBytes);
+    CanonicalGameplayRosterReferenceEvidence.requireRequest(original);
+    byte[] expectedTargetBinding = targetBinding(original);
+    if (!Arrays.equals(originalBytes, original.toByteArray())
+        || !operationUuid.equals(
+            CanonicalGameplayRosterReferenceEvidence.uuid(original.getOperationUuid()))
+        || !Objects.requireNonNull(selectionFenceUuid).equals(Objects.requireNonNull(fenceUuid))
+        || !Objects.requireNonNull(selectionOwnerFence)
+            .equals(Objects.requireNonNull(fenceOwnerFence))
+        || !Arrays.equals(expectedTargetBinding, Objects.requireNonNull(retainedTargetBinding))
+        || !digest(expectedTargetBinding)
+            .equals(Objects.requireNonNull(retainedTargetBindingDigest))) {
+      throw new IllegalArgumentException("CANONICAL_ROSTER_RETAINED_ORIGINAL_BINDING_CONFLICT");
+    }
+    return original;
   }
 
   private static String digest(byte[] bytes) {
