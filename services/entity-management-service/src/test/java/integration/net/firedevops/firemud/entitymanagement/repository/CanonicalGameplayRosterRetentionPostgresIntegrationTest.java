@@ -1798,6 +1798,127 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   }
 
   @Test
+  void openAdmissionRejectsOwnerReceiptWithoutLocalOriginalAndPreservesAdmissionBytes() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery, retainedSnapshot());
+    assertThat(owner.getCanonicalRosterReceipt()).isNotEmpty();
+    transaction.execute(ignored -> repository.reserveAdmission(local));
+    String admissionBefore = admissionRow(local.requestUuid());
+    assertThat(admissionBefore)
+        .contains("\"admission_state\":\"OPEN\"")
+        .contains("\"recovery_response\":null");
+
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.closeAdmission(recovery, owner, policy(Duration.ofHours(1)))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+
+    assertThat(admissionRow(local.requestUuid())).isEqualTo(admissionBefore);
+  }
+
+  @Test
+  void provisionalAdmissionInsertRollsBackWhenOwnerReceiptHasNoLocalOriginal() {
+    var local = localRequest();
+    var recovery = recovery(local);
+    var owner = recoveryOwner(recovery, retainedSnapshot());
+    assertThat(owner.getCanonicalRosterReceipt()).isNotEmpty();
+    assertThat(admissionCount(local.requestUuid())).isZero();
+
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.closeAdmission(recovery, owner, policy(Duration.ofHours(1)))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+
+    assertThat(admissionCount(local.requestUuid())).isZero();
+  }
+
+  @Test
+  void createdOpenAdmissionPreservesBytesAndXminWhenOwnerReceiptIsUnavailableLocally() {
+    var request = createdRequest();
+    var original = createdOriginal(request);
+    var receipt = createdReceipt(request);
+    var recovery =
+        CanonicalGameplayRosterRecoveryRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                original, 1, UUID.randomUUID(), receipt)
+            .toBuilder()
+            .setRecoveryUuid(recovery.getRecoveryUuid())
+            .build();
+    assertThat(owner.getCanonicalPlayerCreatedRosterReceipt()).isNotEmpty();
+    UUID operation = UUID.fromString(request.getRequestUuid());
+    transaction.execute(ignored -> repository.reserveAdmission(request));
+    String admissionBefore =
+        dsl.fetchSingle(
+                "SELECT row_to_json(a)::text || ':' || a.xmin::text "
+                    + "FROM entity_canonical_roster_admissions a WHERE operation_uuid = ?",
+                operation)
+            .get(0, String.class);
+    assertThat(admissionBefore)
+        .contains("\"admission_state\":\"OPEN\"")
+        .contains("\"recovery_response\":null");
+
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.closeAdmission(recovery, owner, policy(Duration.ofHours(1)))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+
+    String admissionAfter =
+        dsl.fetchSingle(
+                "SELECT row_to_json(a)::text || ':' || a.xmin::text "
+                    + "FROM entity_canonical_roster_admissions a WHERE operation_uuid = ?",
+                operation)
+            .get(0, String.class);
+    assertThat(admissionAfter).isEqualTo(admissionBefore);
+  }
+
+  @Test
+  void createdProvisionalAdmissionInsertRollsBackWhenOwnerReceiptHasNoLocalOriginal() {
+    var request = createdRequest();
+    var original = createdOriginal(request);
+    var receipt = createdReceipt(request);
+    var recovery =
+        CanonicalGameplayRosterRecoveryRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(original)
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var owner =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                original, 1, UUID.randomUUID(), receipt)
+            .toBuilder()
+            .setRecoveryUuid(recovery.getRecoveryUuid())
+            .build();
+    assertThat(owner.getCanonicalPlayerCreatedRosterReceipt()).isNotEmpty();
+    UUID operation = UUID.fromString(request.getRequestUuid());
+    assertThat(admissionCount(operation)).isZero();
+
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    ignored ->
+                        repository.closeAdmission(recovery, owner, policy(Duration.ofHours(1)))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+
+    assertThat(admissionCount(operation)).isZero();
+  }
+
+  @Test
   void closedUnboundAdmissionRequiresExactPositiveOwnerAcknowledgementAndLocalHorizon() {
     var local = localRequest();
     var recovery = recovery(local);
@@ -3041,6 +3162,29 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
         .toBuilder()
         .setRecoveryUuid(request.getRecoveryUuid())
         .build();
+  }
+
+  private static GetCanonicalGameplayRosterReferenceResponse recoveryOwner(
+      CanonicalGameplayRosterRecoveryRequest request, CanonicalGameplayRosterSnapshot snapshot) {
+    return CanonicalGameplayRosterReferenceEvidence.response(
+            request.getOriginalSelection(), 1, UUID.randomUUID(), snapshot.toWire())
+        .toBuilder()
+        .setRecoveryUuid(request.getRecoveryUuid())
+        .build();
+  }
+
+  private String admissionRow(UUID operation) {
+    return dsl.fetchSingle(
+            "SELECT row_to_json(a)::text FROM entity_canonical_roster_admissions a WHERE operation_uuid = ?",
+            operation)
+        .get(0, String.class);
+  }
+
+  private int admissionCount(UUID operation) {
+    return dsl.fetchSingle(
+            "SELECT count(*) FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+            operation)
+        .get(0, Integer.class);
   }
 
   private static CanonicalGameplayRosterRetentionPolicy policy(Duration duration) {
