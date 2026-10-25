@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package entity_management.v1;
+
+import "entity-management/v1/entity_management_service.proto";
+
+option java_package = "net.firedevops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+// Dedicated run-owned bootstrap ingress. This operation creates only a non-admitting
+// PRESEEDED_ONLY actor; it does not authorize PLAY or runtime activation.
+service CanonicalPreseededActorAssignmentService {
+  rpc AssignPreseededActor(AssignPreseededActorRequest)
+      returns (AssignPreseededActorResponse);
+}
+
+// The stable assignment intent. All target values are caller preconditions and are independently
+// resolved by Entity's Account and Game Session owner readers before persistence.
+message AssignPreseededActorRequest {
+  uint32 schema_version = 1;
+  string assignment_uuid = 2;
+  string canonical_account_uuid = 3;
+  PreseededActorAssignmentExpectedTarget expected_target = 4;
+  PreseededActorAssignmentCorePayload core_payload = 5;
+  string mutation_intent_digest = 6;
+}
+
+// Exact projection of the existing eleven-field Entity expected-target record. game_instance_id
+// remains bounded opaque text here; the assignment digest does not parse or normalize it.
+message PreseededActorAssignmentExpectedTarget {
+  string canonical_tenant_uuid = 1;
+  string realm_uuid = 2;
+  string world_slug = 3;
+  string realm_slug = 4;
+  string game_instance_id = 5;
+  int64 catalog_revision = 6;
+  string canonical_version_uuid = 7;
+  string frozen_policy_digest = 8;
+  string playable_state_namespace_uuid = 9;
+  string published_release_bundle_ref = 10;
+  PlayableStateScope playable_state_scope = 11;
+}
+
+message PreseededActorAssignmentCorePayload {
+  CanonicalGameplayRosterActorKind actor_kind = 1;
+  string display_name = 2;
+}
+
+enum PreseededActorAssignmentOutcome {
+  PRESEEDED_ACTOR_ASSIGNMENT_OUTCOME_UNSPECIFIED = 0;
+  PRESEEDED_ACTOR_ASSIGNMENT_OUTCOME_ASSIGNED = 1;
+  PRESEEDED_ACTOR_ASSIGNMENT_OUTCOME_IDEMPOTENCY_CONFLICT = 2;
+}
+
+message AssignPreseededActorResponse {
+  uint32 schema_version = 1;
+  string assignment_uuid = 2;
+  PreseededActorAssignmentOutcome outcome = 3;
+  // Present only for ASSIGNED. This is persisted character identity, not an admission grant.
+  optional string character_uuid = 4;
+  string intent_digest = 5;
+}
