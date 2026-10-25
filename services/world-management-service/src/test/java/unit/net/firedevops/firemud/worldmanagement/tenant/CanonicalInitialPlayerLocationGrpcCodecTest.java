@@ -87,10 +87,43 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
     assertInvalid(request().toBuilder().setPlacementOperationUuid("not-a-uuid").build());
     assertInvalid(
         request().toBuilder()
+            .setExpectedTarget(target().toBuilder().setGameInstanceId("opaque-instance:preserved"))
+            .build());
+    assertInvalid(
+        request().toBuilder()
+            .setExpectedTarget(
+                target().toBuilder().setGameInstanceId("00000000-0000-0000-0000-000000000000"))
+            .build());
+    assertInvalid(
+        request().toBuilder()
+            .setExpectedTarget(target().toBuilder().setPublishedReleaseBundleRef("r".repeat(1025)))
+            .build());
+    assertInvalid(
+        request().toBuilder()
+            .setExpectedTarget(target().toBuilder().setPublishedReleaseBundleRef("r".repeat(1024)))
+            .build());
+    assertInvalid(
+        request().toBuilder()
+            .setExpectedTarget(target().toBuilder().setPublishedReleaseBundleRef("r".repeat(129)))
+            .build());
+    assertInvalid(
+        request().toBuilder()
             .setExpectedTarget(
                 target().toBuilder()
                     .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
             .build());
+  }
+
+  @Test
+  void acceptsReleaseReferencesAt128Characters() {
+    var candidate =
+        request().toBuilder()
+            .setExpectedTarget(target().toBuilder().setPublishedReleaseBundleRef("r".repeat(128)))
+            .build();
+
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(candidate);
+
+    assertThat(selection.publishedReleaseBundleRef()).hasSize(128);
   }
 
   @Test

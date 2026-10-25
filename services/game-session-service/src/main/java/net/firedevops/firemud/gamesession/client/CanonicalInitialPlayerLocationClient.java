@@ -26,9 +26,8 @@ public final class CanonicalInitialPlayerLocationClient
             .CanonicalInitialPlayerLocationServiceBlockingStub> {
   private static final int SCHEMA_VERSION = 1;
   private static final long CALL_DEADLINE_SECONDS = 20L;
-  private static final int MAX_GAME_INSTANCE_ID_LENGTH = 255;
   private static final int MAX_REQUEST_ID_LENGTH = 128;
-  private static final int MAX_RELEASE_REF_LENGTH = 1024;
+  private static final int MAX_RELEASE_REF_LENGTH = 128;
   private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Pattern MACHINE_CODE = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
@@ -137,7 +136,7 @@ public final class CanonicalInitialPlayerLocationClient
       throw new IllegalArgumentException(
           "Initial player location target requires canonical realm selectors");
     }
-    requireBoundedText(target.getGameInstanceId(), "game_instance_id", MAX_GAME_INSTANCE_ID_LENGTH);
+    requireCanonicalNonNilUuid(target.getGameInstanceId(), "game_instance_id");
     if (target.getCatalogRevision() <= 0L) {
       throw new IllegalArgumentException("catalog_revision must be positive");
     }
@@ -159,8 +158,8 @@ public final class CanonicalInitialPlayerLocationClient
     if (request.getActiveLifecycleEpoch() <= 0L) {
       throw new IllegalArgumentException("active_lifecycle_epoch must be positive");
     }
-    if (request.getCommittedPointerVersion() <= 0L) {
-      throw new IllegalArgumentException("committed_pointer_version must be positive");
+    if (request.getCommittedPointerVersion() != 1L) {
+      throw new IllegalArgumentException("committed_pointer_version must be exactly 1");
     }
     if (request.getAuditEventId() <= 0L) {
       throw new IllegalArgumentException("audit_event_id must be positive");

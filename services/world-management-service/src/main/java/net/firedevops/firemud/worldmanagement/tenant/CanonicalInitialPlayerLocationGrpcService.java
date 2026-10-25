@@ -44,14 +44,14 @@ public final class CanonicalInitialPlayerLocationGrpcService
           "A complete closed placement selector is required");
       return;
     }
+    final CanonicalInitialPlayerLocationResponse response;
     try {
       Result result = service.place(selection);
-      responseObserver.onNext(
-          CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, result));
-      responseObserver.onCompleted();
+      response = CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, result);
     } catch (StatusRuntimeException rejected) {
       reportOwnerFailure(
           responseObserver, rejected, "World initial-player placement is unavailable");
+      return;
     } catch (WorldCanonicalInitialPlayerLocationRepository.OperationBindingConflictException
         | WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationEvidenceException
         | WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationReadbackException
@@ -60,9 +60,19 @@ public final class CanonicalInitialPlayerLocationGrpcService
           responseObserver,
           Status.FAILED_PRECONDITION,
           "Exact placement owner evidence is unavailable");
+      return;
     } catch (RuntimeException failure) {
       fail(responseObserver, Status.UNAVAILABLE, "World initial-player placement is unavailable");
+      return;
     }
+
+    try {
+      responseObserver.onNext(response);
+    } catch (RuntimeException observerFailure) {
+      responseObserver.onError(observerFailure);
+      return;
+    }
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -80,21 +90,18 @@ public final class CanonicalInitialPlayerLocationGrpcService
           "A complete closed placement selector is required");
       return;
     }
+    final Optional<CanonicalInitialPlayerLocationResponse> response;
     try {
-      Optional<Result> retained = service.read(selection);
-      if (retained.isEmpty()) {
-        fail(
-            responseObserver,
-            Status.NOT_FOUND,
-            "No exact retained initial placement matches the selector");
-        return;
-      }
-      responseObserver.onNext(
-          CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, retained.orElseThrow()));
-      responseObserver.onCompleted();
+      response =
+          service
+              .read(selection)
+              .map(
+                  retained ->
+                      CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, retained));
     } catch (StatusRuntimeException rejected) {
       reportOwnerFailure(
           responseObserver, rejected, "World initial-player location read is unavailable");
+      return;
     } catch (WorldCanonicalInitialPlayerLocationRepository.OperationBindingConflictException
         | WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationEvidenceException
         | WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationReadbackException
@@ -103,12 +110,30 @@ public final class CanonicalInitialPlayerLocationGrpcService
           responseObserver,
           Status.FAILED_PRECONDITION,
           "Exact retained placement evidence is unavailable");
+      return;
     } catch (RuntimeException failure) {
       fail(
           responseObserver,
           Status.UNAVAILABLE,
           "World initial-player location read is unavailable");
+      return;
     }
+
+    if (response.isEmpty()) {
+      fail(
+          responseObserver,
+          Status.NOT_FOUND,
+          "No exact retained initial placement matches the selector");
+      return;
+    }
+
+    try {
+      responseObserver.onNext(response.orElseThrow());
+    } catch (RuntimeException observerFailure) {
+      responseObserver.onError(observerFailure);
+      return;
+    }
+    responseObserver.onCompleted();
   }
 
   private boolean requirePeer(StreamObserver<?> responseObserver) {

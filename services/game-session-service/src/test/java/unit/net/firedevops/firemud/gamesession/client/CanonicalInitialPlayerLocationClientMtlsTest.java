@@ -167,7 +167,7 @@ class CanonicalInitialPlayerLocationClientMtlsTest {
                 .setRealmUuid("66666666-6666-4666-8666-666666666666")
                 .setWorldSlug("outer-reach")
                 .setRealmSlug("green-march")
-                .setGameInstanceId("opaque-instance:preserved")
+                .setGameInstanceId("99999999-9999-4999-8999-999999999999")
                 .setCatalogRevision(7L)
                 .setCanonicalVersionUuid("77777777-7777-4777-8777-777777777777")
                 .setFrozenPolicyDigest("8".repeat(64))

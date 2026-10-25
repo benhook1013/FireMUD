@@ -126,7 +126,34 @@ class CanonicalInitialPlayerLocationClientTest {
                 .setCanonicalAccountUuid("00000000-0000-0000-0000-000000000000")
                 .build(),
             request.toBuilder()
-                .setExpectedTarget(request.getExpectedTarget().toBuilder().setGameInstanceId(" "))
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder()
+                        .setGameInstanceId("opaque-instance:preserved"))
+                .build(),
+            request.toBuilder()
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder()
+                        .setGameInstanceId("00000000-0000-0000-0000-000000000000"))
+                .build(),
+            request.toBuilder()
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder()
+                        .setGameInstanceId("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"))
+                .build(),
+            request.toBuilder()
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder()
+                        .setPublishedReleaseBundleRef("r".repeat(1025)))
+                .build(),
+            request.toBuilder()
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder()
+                        .setPublishedReleaseBundleRef("r".repeat(1024)))
+                .build(),
+            request.toBuilder()
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder()
+                        .setPublishedReleaseBundleRef("r".repeat(129)))
                 .build(),
             request.toBuilder()
                 .setExpectedTarget(
@@ -156,6 +183,7 @@ class CanonicalInitialPlayerLocationClientTest {
             request.toBuilder().setTerminalProofDigest(REQUEST_DIGEST).build(),
             request.toBuilder().setActiveLifecycleEpoch(0L).build(),
             request.toBuilder().setCommittedPointerVersion(0L).build(),
+            request.toBuilder().setCommittedPointerVersion(2L).build(),
             request.toBuilder().setAuditEventId(0L).build());
 
     for (var candidate : malformed) {
@@ -166,6 +194,22 @@ class CanonicalInitialPlayerLocationClientTest {
     }
     verify(stub, never()).placeInitialPlayer(any());
     verify(stub, never()).readInitialPlayerLocation(any());
+  }
+
+  @Test
+  void acceptsCanonicalInstanceUuidAndReleaseReferencesAt128Characters() throws Exception {
+    var stub = mockStub();
+    var client = clientWithStub(stub);
+    var candidate =
+        request().toBuilder()
+            .setExpectedTarget(
+                request().getExpectedTarget().toBuilder()
+                    .setPublishedReleaseBundleRef("r".repeat(128)))
+            .build();
+    when(stub.placeInitialPlayer(candidate)).thenReturn(appliedResponse(candidate));
+
+    assertThat(client.placeInitialPlayer(candidate)).isEqualTo(appliedResponse(candidate));
+    verify(stub).placeInitialPlayer(candidate);
   }
 
   @Test
@@ -398,7 +442,7 @@ class CanonicalInitialPlayerLocationClientTest {
                 .setRealmUuid("66666666-6666-4666-8666-666666666666")
                 .setWorldSlug("outer-reach")
                 .setRealmSlug("green-march")
-                .setGameInstanceId("opaque-instance:preserved")
+                .setGameInstanceId("99999999-9999-4999-8999-999999999999")
                 .setCatalogRevision(7L)
                 .setCanonicalVersionUuid("77777777-7777-4777-8777-777777777777")
                 .setFrozenPolicyDigest("8".repeat(64))

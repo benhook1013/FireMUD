@@ -15,6 +15,7 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 final class CanonicalInitialPlayerLocationGrpcCodec {
   static final int SCHEMA_VERSION = 1;
   static final int MAX_REQUEST_BYTES = 16 * 1024;
+  private static final int MAX_RELEASE_REF_LENGTH = 128;
   private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
 
@@ -48,7 +49,10 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
       throw invalid("a positive catalog revision and SHARED target are required");
     }
     rawDigest(target.getFrozenPolicyDigest(), "frozen_policy_digest");
-    boundedText(target.getPublishedReleaseBundleRef(), "published_release_bundle_ref", 128);
+    boundedText(
+        target.getPublishedReleaseBundleRef(),
+        "published_release_bundle_ref",
+        MAX_RELEASE_REF_LENGTH);
 
     String assignmentIntentDigest =
         rawDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");

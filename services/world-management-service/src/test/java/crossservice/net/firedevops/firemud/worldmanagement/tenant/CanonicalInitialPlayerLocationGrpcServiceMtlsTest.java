@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -19,12 +20,14 @@ import io.grpc.TlsServerCredentials;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.grpc.stub.StreamObserver;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -35,11 +38,13 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayer
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Controlled inbound socket proof; it does not establish a genuine World owner transaction. */
@@ -178,6 +183,204 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
       stopServer(server);
     }
     verifyNoMoreInteractions(service);
+  }
+
+  @Test
+  void placeOnNextFailureIsForwardedUnchangedWithoutCompleting() {
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    when(owner.place(any())).thenReturn(retainedConflict());
+    var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+    var observerFailure = new IllegalStateException("observer failure");
+    var nextCalled = new boolean[1];
+    var completed = new boolean[1];
+    var errors = new Throwable[1];
+    StreamObserver<CanonicalInitialPlayerLocationResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CanonicalInitialPlayerLocationResponse response) {
+            nextCalled[0] = true;
+            throw observerFailure;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            errors[0] = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            completed[0] = true;
+          }
+        };
+
+    // This direct callback fixture isolates observer behavior; socket mTLS proof is above.
+    try (MockedStatic<CanonicalInitialPlayerLocationPeerInterceptor> peer =
+        mockStatic(CanonicalInitialPlayerLocationPeerInterceptor.class)) {
+      peer.when(CanonicalInitialPlayerLocationPeerInterceptor::currentVerifiedPeer)
+          .thenReturn(
+              new GrpcPeerIdentity(
+                  "spiffe://firemud/ns/firemud/sa/game-session-service",
+                  NAMESPACE,
+                  "game-session-service"));
+      peer.when(() -> CanonicalInitialPlayerLocationPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+          .thenCallRealMethod();
+
+      grpc.placeInitialPlayer(request(), observer);
+    }
+
+    assertThat(nextCalled[0]).isTrue();
+    assertThat(errors[0]).isSameAs(observerFailure);
+    assertThat(completed[0]).isFalse();
+    verify(owner).place(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request()));
+  }
+
+  @Test
+  void placeOnCompletedFailureEscapesWithoutASecondTerminalCallback() {
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    when(owner.place(any())).thenReturn(retainedConflict());
+    var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+    var observerFailure = new IllegalStateException("completion failure");
+    var nextCalled = new boolean[1];
+    var completed = new boolean[1];
+    var errors = new Throwable[1];
+    StreamObserver<CanonicalInitialPlayerLocationResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CanonicalInitialPlayerLocationResponse response) {
+            nextCalled[0] = true;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            errors[0] = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            completed[0] = true;
+            throw observerFailure;
+          }
+        };
+
+    // This direct callback fixture isolates observer behavior; socket mTLS proof is above.
+    try (MockedStatic<CanonicalInitialPlayerLocationPeerInterceptor> peer =
+        mockStatic(CanonicalInitialPlayerLocationPeerInterceptor.class)) {
+      peer.when(CanonicalInitialPlayerLocationPeerInterceptor::currentVerifiedPeer)
+          .thenReturn(
+              new GrpcPeerIdentity(
+                  "spiffe://firemud/ns/firemud/sa/game-session-service",
+                  NAMESPACE,
+                  "game-session-service"));
+      peer.when(() -> CanonicalInitialPlayerLocationPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+          .thenCallRealMethod();
+
+      assertThatThrownBy(() -> grpc.placeInitialPlayer(request(), observer))
+          .isSameAs(observerFailure);
+    }
+
+    assertThat(nextCalled[0]).isTrue();
+    assertThat(completed[0]).isTrue();
+    assertThat(errors[0]).isNull();
+    verify(owner).place(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request()));
+  }
+
+  @Test
+  void readOnNextFailureIsForwardedUnchangedWithoutCompleting() {
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    when(owner.read(any())).thenReturn(Optional.of(retainedConflict()));
+    var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+    var observerFailure = new IllegalStateException("observer failure");
+    var nextCalled = new boolean[1];
+    var completed = new boolean[1];
+    var errors = new Throwable[1];
+    StreamObserver<CanonicalInitialPlayerLocationResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CanonicalInitialPlayerLocationResponse response) {
+            nextCalled[0] = true;
+            throw observerFailure;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            errors[0] = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            completed[0] = true;
+          }
+        };
+
+    // This direct callback fixture isolates observer behavior; socket mTLS proof is above.
+    try (MockedStatic<CanonicalInitialPlayerLocationPeerInterceptor> peer =
+        mockStatic(CanonicalInitialPlayerLocationPeerInterceptor.class)) {
+      peer.when(CanonicalInitialPlayerLocationPeerInterceptor::currentVerifiedPeer)
+          .thenReturn(
+              new GrpcPeerIdentity(
+                  "spiffe://firemud/ns/firemud/sa/game-session-service",
+                  NAMESPACE,
+                  "game-session-service"));
+      peer.when(() -> CanonicalInitialPlayerLocationPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+          .thenCallRealMethod();
+
+      grpc.readInitialPlayerLocation(request(), observer);
+    }
+
+    assertThat(nextCalled[0]).isTrue();
+    assertThat(errors[0]).isSameAs(observerFailure);
+    assertThat(completed[0]).isFalse();
+    verify(owner).read(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request()));
+  }
+
+  @Test
+  void readOnCompletedFailureEscapesWithoutASecondTerminalCallback() {
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    when(owner.read(any())).thenReturn(Optional.of(retainedConflict()));
+    var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+    var observerFailure = new IllegalStateException("completion failure");
+    var nextCalled = new boolean[1];
+    var completed = new boolean[1];
+    var errors = new Throwable[1];
+    StreamObserver<CanonicalInitialPlayerLocationResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CanonicalInitialPlayerLocationResponse response) {
+            nextCalled[0] = true;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            errors[0] = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            completed[0] = true;
+            throw observerFailure;
+          }
+        };
+
+    // This direct callback fixture isolates observer behavior; socket mTLS proof is above.
+    try (MockedStatic<CanonicalInitialPlayerLocationPeerInterceptor> peer =
+        mockStatic(CanonicalInitialPlayerLocationPeerInterceptor.class)) {
+      peer.when(CanonicalInitialPlayerLocationPeerInterceptor::currentVerifiedPeer)
+          .thenReturn(
+              new GrpcPeerIdentity(
+                  "spiffe://firemud/ns/firemud/sa/game-session-service",
+                  NAMESPACE,
+                  "game-session-service"));
+      peer.when(() -> CanonicalInitialPlayerLocationPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+          .thenCallRealMethod();
+
+      assertThatThrownBy(() -> grpc.readInitialPlayerLocation(request(), observer))
+          .isSameAs(observerFailure);
+    }
+
+    assertThat(nextCalled[0]).isTrue();
+    assertThat(completed[0]).isTrue();
+    assertThat(errors[0]).isNull();
+    verify(owner).read(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request()));
   }
 
   private static Server startServer(
