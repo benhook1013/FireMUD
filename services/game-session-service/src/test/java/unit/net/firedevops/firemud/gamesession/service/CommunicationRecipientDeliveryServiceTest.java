@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,9 +68,7 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void deliverDropsStaleRecipientResolvedByGameplayIdentity() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
     SessionContext clearedRecipient =
         new SessionContext(
             42L, 22L, "456", "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -97,9 +96,7 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void unreadableRecipientDoesNotAbortDeliveryToLaterRecipients() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
     SessionContext healthyRecipient =
         new SessionContext(
             43L, 22L, "789", "friend@example.com", 789L, "Sora", 1L, "R-1", "jwt", "en-NZ", 1L);
@@ -149,9 +146,7 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void deliverDropsStaleRecipientResolvedByGameplayName() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
     SessionContext clearedRecipient =
         new SessionContext(
             42L, 22L, "456", "friend@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
@@ -179,9 +174,7 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void deliverDoesNotFallbackToNameWhenRecipientIdIsMalformed() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -206,9 +199,7 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void deliverDoesNotFallbackToNameWhenRecipientIdIsNonPositive() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -231,9 +222,7 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void deliverDoesNotFallbackToNameWhenStructuredRecipientIdDoesNotResolve() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -261,12 +250,8 @@ class CommunicationRecipientDeliveryServiceTest {
   @Test
   @SuppressWarnings("unchecked")
   void deliverBuffersStructuredReplayEntryForRecipientCommunication() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
-    SessionContext recipient =
-        new SessionContext(
-            42L, 22L, "456", "friend@example.com", 456L, "Sora", 1L, "R-2", "jwt", "en-NZ", 1L);
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
+    SessionContext recipient = GameplayCommandTestFixtures.communicationTargetSora();
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -311,12 +296,8 @@ class CommunicationRecipientDeliveryServiceTest {
 
   @Test
   void deliverDoesNotBufferNonReplayableRecipientOutput() {
-    SessionContext actor =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
-    SessionContext recipient =
-        new SessionContext(
-            42L, 22L, "456", "friend@example.com", 456L, "Sora", 1L, "R-2", "jwt", "en-NZ", 1L);
+    SessionContext actor = GameplayCommandTestFixtures.communicationSenderEmberline();
+    SessionContext recipient = GameplayCommandTestFixtures.communicationTargetSora();
     CommunicationRecipientView view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
@@ -349,10 +330,8 @@ class CommunicationRecipientDeliveryServiceTest {
   @ValueSource(booleans = {false, true})
   void sendFailureRequestsOwnedCloseAndRetainsRegistrationUntilCallback(boolean closeFails)
       throws Exception {
-    SessionContext actor = new SessionContext(41L, 22L, "123", 123L, 1L, "R-1", "jwt");
-    SessionContext recipient =
-        new SessionContext(
-            42L, 22L, "456", "friend@example.com", 456L, "Sora", 1L, "R-2", "jwt", "en-NZ", 1L);
+    SessionContext actor = GameplayCommandTestFixtures.unnamedOutputActor();
+    SessionContext recipient = GameplayCommandTestFixtures.communicationTargetSora();
     var view =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)

@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 final class PublishedReleaseBundleContract {
   static final String SUPPORTED_ATTESTATION_SCHEMA_VERSION = "v1";
   static final String SELECTOR_ATTESTATION_SCHEMA_VERSION = "v2";
+  static final String SELECTED_FULL_ATTESTATION_SCHEMA_VERSION = "v4";
   static final int SUPPORTED_MANIFEST_SCHEMA_VERSION = 1;
   static final int SUPPORTED_ARTIFACT_SCHEMA_VERSION = 1;
   static final String SCHEMA_VERSION_UNSUPPORTED = "SCHEMA_VERSION_UNSUPPORTED";
@@ -22,10 +23,30 @@ final class PublishedReleaseBundleContract {
   private PublishedReleaseBundleContract() {}
 
   static void requireSelectorBinding(PublishedReleaseBundleDto bundle) {
+    requireSelectedBinding(
+        bundle,
+        SELECTOR_ATTESTATION_SCHEMA_VERSION,
+        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION,
+        "World selector");
+  }
+
+  static void requireSelectedFullBinding(PublishedReleaseBundleDto bundle) {
+    requireSelectedBinding(
+        bundle,
+        SELECTED_FULL_ATTESTATION_SCHEMA_VERSION,
+        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION,
+        "Selected-full release");
+  }
+
+  private static void requireSelectedBinding(
+      PublishedReleaseBundleDto bundle,
+      String expectedBundleSchema,
+      int evidenceSchema,
+      String description) {
     var evidence =
         Objects.requireNonNull(bundle.worldPublishedStartLocationEvidence(), "World evidence");
     var request = evidence.request();
-    if (!SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())
+    if (!expectedBundleSchema.equals(bundle.attestationSchemaVersion())
         || bundle.scriptOnly()
         || bundle.scriptPatchVersion() != null
         || !request.canonicalTenantId().equals(bundle.canonicalTenantId())
@@ -37,7 +58,7 @@ final class PublishedReleaseBundleContract {
         || request.appliedCommitId() == null
         || request.appliedCommitId().isBlank()) {
       throw new IllegalArgumentException(
-          "World selector differs from complete immutable release binding");
+          description + " differs from complete immutable release binding");
     }
     new ExportedAssetManifest(
         bundle.manifestHash(),
@@ -51,7 +72,7 @@ final class PublishedReleaseBundleContract {
     }
     var required = AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder();
     if (bundle.participantDigests().size() != required.size()) {
-      throw new IllegalArgumentException("World selector release lacks required participants");
+      throw new IllegalArgumentException(description + " release lacks required participants");
     }
     for (int index = 0; index < required.size(); index++) {
       var participant = bundle.participantDigests().get(index);
@@ -67,27 +88,65 @@ final class PublishedReleaseBundleContract {
           || !Objects.equals(
               participant.digestSchemaVersion(),
               AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                  participant.participantKey(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION))) {
+                  participant.participantKey(), evidenceSchema))) {
         throw new IllegalArgumentException(
-            "World selector requires all exact successful ordered release participants");
+            description + " requires all exact successful ordered release participants");
       }
       if ("WORLD_MANAGEMENT".equals(participant.participantKey())
           && (!request.contentDigest().equals(participant.contentDigest())
               || request.digestSchemaVersion() != participant.digestSchemaVersion())) {
         throw new IllegalArgumentException(
-            "World selector differs from World participant digest/schema");
+            description + " differs from World participant digest/schema");
       }
       if ("GAME_LOGIC".equals(participant.participantKey())
           && (participant.abilitySchemaDigest() == null
               || !participant.abilitySchemaDigest().matches("sha256:[0-9a-f]{64}"))) {
         throw new IllegalArgumentException(
-            "World selector release lacks Game Logic ability schema proof");
+            description + " release lacks Game Logic ability schema proof");
       }
       if (!"GAME_LOGIC".equals(participant.participantKey())
           && participant.abilitySchemaDigest() != null) {
         throw new IllegalArgumentException(
-            "World selector ability schema proof must be owned by Game Logic");
+            description + " ability schema proof must be owned by Game Logic");
+      }
+    }
+  }
+
+  static void requireFreshSelectedFullParticipantVector(
+      long versionId, String appliedCommitId, List<PublishParticipantDigestDto> participants) {
+    if (versionId <= 0 || appliedCommitId == null || appliedCommitId.isBlank()) {
+      throw new IllegalArgumentException("Selected-full participant scope is invalid");
+    }
+    var required = AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder();
+    if (participants == null || participants.size() != required.size()) {
+      throw new IllegalArgumentException(
+          "Selected-full release requires all five exact participants");
+    }
+    String expectedScope = Long.toString(versionId);
+    for (int index = 0; index < required.size(); index++) {
+      var participant = participants.get(index);
+      String participantKey = required.get(index);
+      boolean gameLogic = "GAME_LOGIC".equals(participantKey);
+      if (participant == null
+          || !participantKey.equals(participant.participantKey())
+          || !expectedScope.equals(participant.scopeValue())
+          || participant.baseVersionId() != null
+          || !appliedCommitId.equals(participant.appliedCommitId())
+          || !participant.succeeded()
+          || (participant.errorMessage() != null && !participant.errorMessage().isBlank())
+          || participant.contentDigest() == null
+          || !participant.contentDigest().matches("[0-9a-f]{64}")
+          || participant.digestSchemaVersion() == null
+          || participant.digestSchemaVersion()
+              != AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                  participantKey,
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION)
+          || (gameLogic
+              ? participant.abilitySchemaDigest() == null
+                  || !participant.abilitySchemaDigest().matches("sha256:[0-9a-f]{64}")
+              : participant.abilitySchemaDigest() != null)) {
+        throw new IllegalArgumentException(
+            "Selected-full release requires the exact 4/3/1/6/2 successful participant vector");
       }
     }
   }
@@ -100,11 +159,14 @@ final class PublishedReleaseBundleContract {
       String generationRevision,
       List<PublishParticipantDigestDto> participants,
       WorldPublishedStartLocationEvidence evidence) {
-    if (!SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
+    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
+      requireSelectorBinding(stored);
+    } else if (SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
+      requireSelectedFullBinding(stored);
+    } else {
       throw new IllegalStateException(
           "IDEMPOTENCY_CONFLICT: historical release is selector-ineligible");
     }
-    requireSelectorBinding(stored);
     if (stored.versionNumber() != version.versionNumber()
         || version.scriptOnly()
         || version.scriptPatchVersion() != null
@@ -124,6 +186,14 @@ final class PublishedReleaseBundleContract {
   }
 
   static void requireSupportedSchemaForRead(PublishedReleaseBundleDto bundle) {
+    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectorBinding(bundle);
+      return;
+    }
+    if (SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectedFullBinding(bundle);
+      return;
+    }
     if (!SUPPORTED_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
       throw new IllegalStateException(
           SCHEMA_VERSION_UNSUPPORTED
@@ -140,10 +210,22 @@ final class PublishedReleaseBundleContract {
       requireSelectorBinding(bundle);
       return;
     }
+    if (SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectedFullBinding(bundle);
+      return;
+    }
     requireSupportedSchemaForRead(bundle);
   }
 
   static void requireSupportedSchemaForLaunch(PublishedReleaseBundleDto bundle) {
+    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectorBinding(bundle);
+      return;
+    }
+    if (SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectedFullBinding(bundle);
+      return;
+    }
     if (!SUPPORTED_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
       throw new IllegalArgumentException(
           SCHEMA_VERSION_UNSUPPORTED
@@ -156,17 +238,13 @@ final class PublishedReleaseBundleContract {
    * Descriptor resolution only; descriptor/v1 remains separate from the complete release carrier.
    */
   static void requireSupportedSchemaForLaunchDescriptor(PublishedReleaseBundleDto bundle) {
-    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
-      requireSelectorBinding(bundle);
-      return;
-    }
     requireSupportedSchemaForLaunch(bundle);
   }
 
   static void requireExactRepairMatch(
       PublishedReleaseBundleDto bundle, ExportedAssetManifest exportedManifest) {
-    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
-      requireSelectorBinding(bundle);
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())) {
+      requireSupportedSchemaForPublicationRead(bundle);
     } else {
       requireSupportedSchemaForRead(bundle);
     }

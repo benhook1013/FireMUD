@@ -12,17 +12,23 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
-import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Reads and validates Logging/Admin's current StartSession reservation claim snapshot.
@@ -43,30 +49,30 @@ public final class StartSessionReservationEvidenceClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
+  private final String expectedLoggingPeerUri;
   private final Clock clock;
+  private final CommonGrpcClientProperties transportTlsProperties;
 
   @Autowired
   public StartSessionReservationEvidenceClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer) {
-    this(endpoints, tlsProperties, channelFactory, stubCustomizer, Clock.systemUTC());
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(endpoints, tlsProperties, channelFactory, workloadNamespace, Clock.systemUTC());
   }
 
   StartSessionReservationEvidenceClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      BlockingGrpcStubCustomizer stubCustomizer,
+      String workloadNamespace,
       Clock clock) {
-    super(
-        endpoints,
-        tlsProperties,
-        channelFactory,
-        stubCustomizer,
-        StartSessionReservationEvidenceClient.class);
+    super(endpoints, tlsProperties, channelFactory, StartSessionReservationEvidenceClient.class);
+    this.expectedLoggingPeerUri = loggingAdminServerUri(workloadNamespace);
     this.clock = Objects.requireNonNull(clock, "clock is required");
+    this.transportTlsProperties =
+        Objects.requireNonNull(tlsProperties, "TLS properties are required").copy();
   }
 
   @PostConstruct
@@ -88,9 +94,10 @@ public final class StartSessionReservationEvidenceClient
   protected StartSessionReservationEvidenceServiceGrpc
           .StartSessionReservationEvidenceServiceBlockingStub
       buildStub(io.grpc.ManagedChannel channel) {
-    return applyStubCustomizer(
-        StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
-            .withCompression("gzip"));
+    return StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedLoggingPeerUri))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedLoggingPeerUri))
+        .withCompression("gzip");
   }
 
   /** Reads the exact active claim for ISSUE or RECOVER and validates every returned binding. */
@@ -101,6 +108,7 @@ public final class StartSessionReservationEvidenceClient
       UUID currentClaimOwnerId,
       long currentClaimFence,
       Purpose purpose) {
+    requireWorkloadOnlyContext();
     Objects.requireNonNull(tuple, "reservation tuple is required");
     requireNonNilUuid(reservationOwnerId, "reservationOwnerId");
     requireNonNilUuid(currentClaimOwnerId, "currentClaimOwnerId");
@@ -123,6 +131,7 @@ public final class StartSessionReservationEvidenceClient
             .setPurpose(toWirePurpose(purpose))
             .build();
 
+    requireWorkloadMtls();
     var currentStub = stub();
     if (currentStub == null) {
       throw new IllegalStateException("Logging/Admin reservation evidence client is unavailable");
@@ -141,6 +150,47 @@ public final class StartSessionReservationEvidenceClient
         currentClaimFence,
         purpose);
     return response;
+  }
+
+  static String loggingAdminServerUri(String targetNamespace) {
+    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+      throw new IllegalArgumentException("StartSession target namespace is invalid");
+    }
+    return "spiffe://firemud/ns/" + targetNamespace + "/sa/logging-admin-service";
+  }
+
+  private void requireWorkloadMtls() {
+    if (transportTlsProperties.isPlaintext()) {
+      throw new IllegalStateException("Logging/Admin reservation evidence requires workload mTLS");
+    }
+    try {
+      var material = new GrpcTlsMaterialResolver().resolve(transportTlsProperties);
+      if (material == null) {
+        throw new IllegalStateException("Missing workload TLS material");
+      }
+      try (var certificate = material.certChain().openStream();
+          var privateKey = material.privateKey().openStream();
+          var ca = material.caCert().openStream()) {
+        if (certificate.read() < 0 || privateKey.read() < 0 || ca.read() < 0) {
+          throw new IllegalStateException("Empty workload TLS material");
+        }
+      }
+    } catch (IOException | RuntimeException unavailable) {
+      throw new IllegalStateException(
+          "Logging/Admin reservation evidence requires usable workload mTLS", unavailable);
+    }
+  }
+
+  private static void requireWorkloadOnlyContext() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Logging/Admin reservation evidence requires no ambient SQL or synchronization");
+    }
+    if (SessionContext.hasAuthenticatedCallerContext()) {
+      throw new IllegalStateException(
+          "Logging/Admin reservation evidence requires a workload-only caller context");
+    }
   }
 
   private void validateResponse(

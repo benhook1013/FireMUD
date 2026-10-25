@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -34,9 +35,7 @@ class WorldsTextCommandDispatchHandlerTest {
 
   @Test
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
-    SessionContext context =
-        new SessionContext(
-            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -65,9 +64,7 @@ class WorldsTextCommandDispatchHandlerTest {
   @Test
   void publishesCommandEventForGameplayScopedRealmsBrowse() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
-    SessionContext context =
-        new SessionContext(
-            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -108,9 +105,7 @@ class WorldsTextCommandDispatchHandlerTest {
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
-    SessionContext context =
-        new SessionContext(
-            7L, 22L, "123", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.helpCapabilityEmberline(7L);
 
     TextCommandInterpretationResult result =
         handler.handle(

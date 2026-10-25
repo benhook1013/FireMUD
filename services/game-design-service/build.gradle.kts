@@ -31,10 +31,25 @@ dependencies {
     implementation(libs.aws.sdk.s3)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
-    add("crossServiceTestImplementation", project(":game-session-service"))
+    add(
+        "crossServiceTestImplementation",
+        project(mapOf("path" to ":game-session-service", "configuration" to "gameSessionClassesProof"))
+    )
+    add(
+        "crossServiceTestImplementation",
+        project(mapOf("path" to ":entity-management-service", "configuration" to "entityClassesProof"))
+    )
+    add(
+        "crossServiceTestImplementation",
+        project(mapOf("path" to ":automation-scripting-service", "configuration" to "automationClassesProof"))
+    )
     add(
         "crossServiceTestImplementation",
         project(mapOf("path" to ":world-management-service", "configuration" to "worldClassesProof"))
+    )
+    add(
+        "crossServiceTestImplementation",
+        project(mapOf("path" to ":world-management-service", "configuration" to "worldSelectedPublicationProof"))
     )
     add(
         "crossServiceTestImplementation",
@@ -66,6 +81,10 @@ val gameDesignClassesProof by configurations.creating {
 
 // Composed owner proofs load foreign migrations from disk; classes-only artifacts omit them.
 tasks.named("crossServiceTest") {
+    inputs.dir(rootProject.layout.projectDirectory.dir("services/entity-management-service/src/main/resources/db/migration"))
+        .withPropertyName("entityOwnerMigrations")
+    inputs.dir(rootProject.layout.projectDirectory.dir("services/automation-scripting-service/src/main/resources/db/migration"))
+        .withPropertyName("automationOwnerMigrations")
     inputs.dir(rootProject.layout.projectDirectory.dir("services/account-service/src/main/resources/db/migration"))
         .withPropertyName("accountOwnerMigrations")
     inputs.dir(rootProject.layout.projectDirectory.dir("services/game-logic-service/src/main/resources/db/migration"))

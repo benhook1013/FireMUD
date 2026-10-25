@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
@@ -35,6 +36,8 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 public final class AccountControlUiOriginalOrderFixture implements AutoCloseable {
   private final AccountControlUiOwnerSourcesFixture f;
   private final AccountControlUiActorService actors;
+  final AccountJwtJwksTrustedSource publicSource;
+  final AccountControlUiSignerFixture signerFixture;
   private final AccountControlUiIssuanceService issuance;
   private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
@@ -109,11 +112,43 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       Clock actorClock,
       String migrationTarget)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        Clock.systemUTC());
+  }
+
+  /**
+   * Test-only owner fixture with a separately injectable issuance clock; actor validation remains
+   * on its independently supplied clock.
+   */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock)
+      throws Exception {
     this.temporary = temporary;
+    Objects.requireNonNull(actorClock, "actorClock");
+    Objects.requireNonNull(serviceClock, "serviceClock");
     f =
         new AccountControlUiOwnerSourcesFixture(
             jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
-    var lifecycle = new AccountControlUiSignerFixture(f, temporary);
+    signerFixture = new AccountControlUiSignerFixture(f, temporary, serviceClock);
+    var lifecycle = signerFixture;
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
     assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
@@ -174,9 +209,14 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             new AcknowledgementRequirements(1, 1, 5000),
             testCatalog());
     var operations = new AccountControlUiIssuanceRepository(f.dsl);
-    var publicSource =
-        new AccountJwtJwksTrustedSource(
-            lifecycle.client, lifecycle.trust, lifecycle.desired, lifecycle.publication, f.manager);
+    publicSource =
+        org.mockito.Mockito.spy(
+            new AccountJwtJwksTrustedSource(
+                lifecycle.client,
+                lifecycle.trust,
+                lifecycle.desired,
+                lifecycle.publication,
+                f.manager));
     actors =
         new AccountControlUiActorService(
             operations,
@@ -195,11 +235,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             f.fences,
             lifecycle.signer,
             new AccountControlUiResponseCryptography(
-                new AccountControlUiKeyring(temporary.resolve("custody")), Clock.systemUTC()),
+                new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
             coordination,
             actors,
             f.manager,
-            Clock.systemUTC(),
+            serviceClock,
             300_000L,
             AccountControlUiOwnerSourcesFixture.CALLER);
   }

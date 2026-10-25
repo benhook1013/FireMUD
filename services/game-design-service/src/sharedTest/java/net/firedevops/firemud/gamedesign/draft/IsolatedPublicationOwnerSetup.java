@@ -137,6 +137,24 @@ public final class IsolatedPublicationOwnerSetup {
     return operation;
   }
 
+  /**
+   * Isolated GDS transaction fixture with a fresh stipulated selected-full World schema-4 input.
+   * The World evidence remains stipulated and is not native producer or freeze proof.
+   */
+  public static GameDesignPublicationOperation retainFrozenSourceBackedSelectedFull(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      List<OrdinaryAsset> ordinaryAssets)
+      throws Exception {
+    String authoredPolicyCommit = retainPublicProductionPolicy(dsl, target, ordinaryAssets);
+    GameDesignPublicationOperation operation =
+        retain(dsl, target, draftEpoch, notes, true, authoredPolicyCommit, false, true);
+    new GameDesignPublicationOperationRepository(dsl).reserveSourceBacked(operation);
+    return operation;
+  }
+
   /** Fixture input from an actual same-tenant game_assets row, not publication authority. */
   public record OrdinaryAsset(long assetRowId, String usageKey) {
     public OrdinaryAsset {
@@ -176,6 +194,20 @@ public final class IsolatedPublicationOwnerSetup {
       String sourceBaseReference,
       boolean historicalV1)
       throws Exception {
+    return retain(
+        dsl, target, draftEpoch, notes, captureSources, sourceBaseReference, historicalV1, false);
+  }
+
+  private static GameDesignPublicationOperation retain(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      boolean captureSources,
+      String sourceBaseReference,
+      boolean historicalV1,
+      boolean selectedFullWorld)
+      throws Exception {
     var sources = new GameDesignSourceRepository(dsl);
     var reviewed = new GameDesignReviewedBaseRepository(dsl);
     var evidence =
@@ -189,10 +221,14 @@ public final class IsolatedPublicationOwnerSetup {
                         : sourceBaseReference))
             : null;
     var seed =
-        captureSources
-            ? IsolatedPublicationOperationFixtures.fresh(
+        selectedFullWorld
+            ? IsolatedPublicationOperationFixtures.freshSelectedFull(
                 target, evidence.reference().canonicalValue())
-            : IsolatedPublicationOperationFixtures.fresh(target);
+            : captureSources
+                ? IsolatedPublicationOperationFixtures.fresh(
+                    target, evidence.reference().canonicalValue())
+                : IsolatedPublicationOperationFixtures.fresh(target);
+    var seedWorld = seed.world();
     var draft = seed.account().input().selection().selectedCommit();
     var coordinator = new DraftCommitCoordinatorRepository(dsl);
     // The original Draft Account/World result is stipulated upstream fixture evidence, not a new
@@ -222,7 +258,7 @@ public final class IsolatedPublicationOwnerSetup {
             draft.commitId(),
             draft.digest(),
             "ISOLATED-world-applied",
-            seed.world().appliedResultBytes(),
+            seedWorld.appliedResultBytes(),
             epochs);
     coordinator.markOwnerInProgress(draft, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
     coordinator.recordOwnerOutcome(draft, outcome);
@@ -253,8 +289,11 @@ public final class IsolatedPublicationOwnerSetup {
     var operation =
         historicalV1
             ? IsolatedPublicationOperationFixtures.historicalV1ForSelection(
-                selectedBinding, seed.world())
-            : IsolatedPublicationOperationFixtures.forSelection(selectedBinding, seed.world());
+                selectedBinding, seedWorld)
+            : selectedFullWorld
+                ? IsolatedPublicationOperationFixtures.forSelectedFullSelection(
+                    selectedBinding, seedWorld)
+                : IsolatedPublicationOperationFixtures.forSelection(selectedBinding, seedWorld);
     var attempt = new PublishAttempt();
     attempt.setTenantId(target.gameDesignVersionTenantKey());
     attempt.setPublishWorkflowId(operation.workflowId());

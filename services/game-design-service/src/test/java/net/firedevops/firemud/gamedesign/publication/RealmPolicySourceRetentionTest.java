@@ -1,0 +1,129 @@
+package net.firedevops.firemud.gamedesign.publication;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import org.junit.jupiter.api.Test;
+
+class RealmPolicySourceRetentionTest {
+  private static final UUID TENANT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
+  private static final UUID VERSION_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID COMMIT_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID REQUEST_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final UUID REVISION_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final UUID GENESIS_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
+
+  @Test
+  void schema3ActorCoreAndOriginalPolicyProvenanceSurviveOwnerApplication() {
+    String policyJson =
+        "{\"schemaVersion\":3,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+            + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+            + "\"publicProduction\":true,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PLAYER_CREATED\","
+            + "\"creationDescriptor\":{\"schemaVersion\":1,\"descriptorId\":\"11111111-1111-4111-8111-111111111111\","
+            + "\"descriptorRevisionId\":\"22222222-2222-4222-8222-222222222222\","
+            + "\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]},"
+            + "\"initialActorCore\":{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"}}";
+    String payload =
+        RealmPolicySource.canonical(
+            Map.of(
+                "revisionKind",
+                RealmEntryPolicy.REVISION_KIND,
+                "logicalRevisionId",
+                "policy-logical-r3",
+                "policy",
+                RealmPolicySource.tree(policyJson)));
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            target(),
+            REQUEST_ID,
+            COMMIT_ID,
+            "base-commit-0",
+            List.of(
+                new RevisionPayload("0", REVISION_ID, Owner.GAME_DESIGN_CONTROL_PLANE, payload)),
+            List.of(
+                new AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    RealmPolicySource.SCOPE,
+                    VERSION_ID.toString(),
+                    RealmPolicySource.SCOPE,
+                    "effective",
+                    "0")));
+    var policy = RealmPolicySource.revision(binding, binding.revisions().getFirst());
+    var snapshot = new RealmPolicySnapshot(binding, "1", List.of(policy));
+    var application = new RealmPolicyApplication(freshGenesis(), null, "0", snapshot);
+    var retained = RealmPolicySnapshot.fromStored(application.snapshot().canonicalJson());
+    var retainedPolicy = retained.policies().getFirst();
+
+    assertThat(retainedPolicy.commitId()).isEqualTo(COMMIT_ID);
+    assertThat(retainedPolicy.revisionId()).isEqualTo(REVISION_ID);
+    assertThat(retainedPolicy.logicalRevisionId()).isEqualTo("policy-logical-r3");
+    assertThat(retainedPolicy.policy().initialActorCore().displayName()).isEqualTo("Wayfarer");
+    assertThat(retainedPolicy.policy().initialActorCore().dispositionKey()).isEqualTo("newcomer");
+    assertThat(application.canonicalBytes()).containsSequence(retained.canonicalBytes());
+  }
+
+  @Test
+  void missingBothGenesisAndInheritedCommitAndInvalidRequiredTextAreRejected() {
+    RealmPolicySnapshot snapshot = snapshot();
+
+    assertThatThrownBy(() -> new RealmPolicyApplication(null, null, "0", snapshot))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> new RealmPolicyApplication(freshGenesis(), null, "invalid", snapshot()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void knownSiblingSourceKindsAreNonPolicyAndUnknownKindsStillDeny() {
+    assertThat(RealmPolicySource.isPolicyRevision(revision(BrandingSource.REVISION_KIND)))
+        .isFalse();
+    assertThat(RealmPolicySource.isPolicyRevision(revision(TemplateConfigSource.REVISION_KIND)))
+        .isFalse();
+    assertThatThrownBy(() -> RealmPolicySource.isPolicyRevision(revision("UNKNOWN_SOURCE")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Unsupported Game Design owner revision kind");
+  }
+
+  private static RealmPolicyGenesis freshGenesis() {
+    return new RealmPolicyGenesis(target(), GENESIS_ID, "17");
+  }
+
+  private static RealmPolicySnapshot snapshot() {
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            target(),
+            REQUEST_ID,
+            COMMIT_ID,
+            "base-commit-0",
+            List.of(new RevisionPayload("0", REVISION_ID, Owner.GAME_DESIGN_CONTROL_PLANE, "{}")),
+            List.of(
+                new AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    RealmPolicySource.SCOPE,
+                    VERSION_ID.toString(),
+                    RealmPolicySource.SCOPE,
+                    "effective",
+                    "0")));
+    return new RealmPolicySnapshot(binding, "1", List.of());
+  }
+
+  private static TargetProof target() {
+    return new TargetProof(
+        TENANT_ID, VERSION_ID, 23L, "tenant-key", 42L, "tenant-key", "NEW_GAME_ROW");
+  }
+
+  private static RevisionPayload revision(String kind) {
+    return new RevisionPayload(
+        "0", REVISION_ID, Owner.GAME_DESIGN_CONTROL_PLANE, "{\"revisionKind\":\"" + kind + "\"}");
+  }
+}

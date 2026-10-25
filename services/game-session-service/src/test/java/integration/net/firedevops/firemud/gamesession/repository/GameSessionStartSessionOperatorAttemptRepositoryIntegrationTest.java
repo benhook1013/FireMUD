@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -675,6 +676,128 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
           .isZero();
     } finally {
       executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void unsafeLegacyNumericTuplesDenyExecutionWithoutChangingStoredRows() throws Exception {
+    for (long fence : new long[] {9_007_199_254_740_992L, 9_007_199_254_740_994L}) {
+      Fixture fixture = fixture(Duration.ofMinutes(5));
+      // These numeric values were exactly representable in historical JSON, but are unsafe v1
+      // fences.
+      StartSessionPostAuthorizationExecutionTuple current =
+          tuple(
+              "operator-attempt-unsafe-legacy-" + fence,
+              "unsafe retained tuple denial",
+              RESERVATION_OWNER,
+              fence);
+      String canonical = new String(current.canonicalBytes(), StandardCharsets.UTF_8);
+      String currentFence = "\"reservationClaimFence\":\"" + fence + "\"";
+      assertThat(canonical).contains(currentFence);
+      assertThat(canonical.indexOf(currentFence)).isEqualTo(canonical.lastIndexOf(currentFence));
+      byte[] original =
+          canonical
+              .replace(currentFence, "\"reservationClaimFence\":" + fence)
+              .getBytes(StandardCharsets.UTF_8);
+      assertThat(
+              Rfc8785CanonicalJson.canonicalizeUtf8(new String(original, StandardCharsets.UTF_8)))
+          .containsExactly(original);
+
+      UUID attemptId = UUID.randomUUID();
+      UUID mutationId = UUID.randomUUID();
+      UUID claimOwner = UUID.randomUUID();
+      long ownerFence =
+          Objects.requireNonNull(
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT nextval('game_session_start_session_operator_owner_fence_seq')")
+                  .get(0, Long.class));
+      // Seed the original opaque carrier through the existing storage guards, without changing SQL,
+      // disabling immutability, or inferring a replacement value from historical bytes.
+      fixture.dsl.execute(
+          "INSERT INTO game_session_start_session_operator_attempt "
+              + "(target_namespace, control_plane_request_id, canonical_tenant_id, owner_attempt_id, "
+              + "owner_mutation_id, claim_owner_id, owner_fence, post_authorization_execution_tuple, "
+              + "mutation_digest, authorization_reference_fingerprint, lease_expires_at) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, clock_timestamp() + interval '5 minutes')",
+          NAMESPACE,
+          current.controlPlaneRequestId(),
+          TENANT,
+          attemptId,
+          mutationId,
+          claimOwner,
+          ownerFence,
+          original,
+          current.mutationDigest(),
+          current.authorizationReferenceFingerprint());
+      var claim =
+          new AttemptClaim(
+              NAMESPACE,
+              current.controlPlaneRequestId(),
+              attemptId,
+              mutationId,
+              claimOwner,
+              ownerFence);
+      java.util.function.Supplier<String> retained =
+          () ->
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT to_jsonb(attempt)::text || ':' || attempt.xmin::text "
+                          + "FROM game_session_start_session_operator_attempt attempt "
+                          + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                      NAMESPACE,
+                      current.controlPlaneRequestId())
+                  .get(0, String.class);
+      String before = Objects.requireNonNull(retained.get());
+      assertThat(
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT post_authorization_execution_tuple FROM game_session_start_session_operator_attempt "
+                          + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                      NAMESPACE,
+                      current.controlPlaneRequestId())
+                  .get(0, byte[].class))
+          .containsExactly(original);
+      assertThatThrownBy(() -> StartSessionPostAuthorizationExecutionTuple.decode(original))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(
+              "reservationClaimFence numeric value exceeds the safe JSON integer range");
+      assertThat(retained.get()).isEqualTo(before);
+
+      // An independently constructed current spelling cannot adopt or rewrite the original row.
+      assertThatThrownBy(() -> fixture.reserve(current))
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StartSessionOperatorAttemptConflictException.class)
+          .hasMessageContaining("different complete post-authorization tuple");
+      assertThat(retained.get()).isEqualTo(before);
+      assertThatThrownBy(() -> fixture.attach(claim, projection(current)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(
+              "reservationClaimFence numeric value exceeds the safe JSON integer range");
+      assertThat(retained.get()).isEqualTo(before);
+      assertThatThrownBy(() -> fixture.continueEvidence(current))
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StartSessionOperatorAttemptConflictException.class)
+          .hasMessageContaining(
+              "Evidence continuation tuple differs from the original complete StartSession attempt");
+      assertThat(retained.get()).isEqualTo(before);
+      assertThatThrownBy(
+              () -> fixture.currentOriginalAttempt(currentAttemptRequest(current, claim)))
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StartSessionOperatorAttemptConflictException.class)
+          .hasMessageContaining(
+              "Current original-attempt read differs from the complete StartSession tuple");
+      assertThat(retained.get()).isEqualTo(before);
+      assertThat(fixture.attemptCount()).isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+          .isZero();
     }
   }
 

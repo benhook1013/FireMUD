@@ -10,22 +10,42 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeSettlementReceipt;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Immutable Entity/Automation preliminary source-read reservations and exact abort recovery. */
+/**
+ * Immutable Entity/Automation preliminary reservations, finalized source retention, and exact
+ * Automation {@code COMMITTED_EMPTY} terminal settlement.
+ */
 public final class AccountSelectedOwnerIntakeSourceReservationRepository {
+  public static final int MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE = 128;
+
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(AccountSelectedOwnerIntakeSourceReservationRepository.class);
+
   private static final String RESERVATIONS =
       "account_selected_owner_intake_source_read_reservations";
   private static final String SOURCES = "account_selected_owner_intake_source_read_sources";
   private static final String ABORTS = "account_selected_owner_intake_source_read_aborts";
+  private static final String AUTHORIZATIONS = "account_selected_owner_intake_authorizations";
+  private static final String AUTHORIZATION_SOURCES = "account_selected_owner_intake_sources";
+  private static final String SETTLEMENTS = "account_selected_owner_intake_settlements";
 
   private final DSLContext dsl;
 
@@ -35,7 +55,28 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
 
   public enum State {
     RESERVED,
+    FINALIZED,
     ABORTED
+  }
+
+  /** Keyset position for continuing one caller-owned expired-reservation sweep. */
+  public record RecoveryCursor(long expiresAtEpochSecond, UUID operationId) {
+    public RecoveryCursor {
+      DraftAuthorizationFenceBinding.requireUuid(operationId);
+    }
+  }
+
+  /** Valid scopes decoded from one raw page, with its continuation based on the last raw row. */
+  record ExpiredPreliminarySourceReadPage(
+      List<SelectedOwnerIntakeSourceReadScope> scopes,
+      int examinedCount,
+      RecoveryCursor nextCursor) {
+    ExpiredPreliminarySourceReadPage {
+      scopes = List.copyOf(scopes);
+      if (examinedCount < 0 || scopes.size() > examinedCount) {
+        throw new IllegalArgumentException("Invalid expired preliminary recovery page");
+      }
+    }
   }
 
   /** Historical evidence only. RESERVED does not imply a live source-read permission. */
@@ -173,7 +214,13 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     Record row = reservation(scope);
     requireReservation(row, scope);
     if (aborted(scope)) return new Recovery(scope, State.ABORTED);
-    return new Recovery(scope, State.RESERVED);
+    var authorization = authorization(scope.operationId());
+    if (authorization == null) return new Recovery(scope, State.RESERVED);
+    var binding =
+        SelectedOwnerIntakeAuthorizationBinding.fromStored(
+            authorization.get("binding_bytes", byte[].class));
+    requireAuthorization(authorization, binding);
+    return new Recovery(scope, State.FINALIZED);
   }
 
   Recovery abortSourceRead(SelectedOwnerIntakeSourceReadScope scope) {
@@ -181,10 +228,460 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     lockReservedSources(scope);
     Record row = reservation(scope);
     requireReservation(row, scope);
+    if (authorization(scope.operationId()) != null) {
+      throw new IllegalStateException("Finalized owner intake cannot be preliminarily aborted");
+    }
     if (!aborted(scope)) {
       dsl.execute("INSERT INTO " + ABORTS + " (operation_id) VALUES (?)", scope.operationId());
     }
     return new Recovery(scope, State.ABORTED);
+  }
+
+  /** Finds one bounded, keyset-paged batch of exact expired reservations for one namespace. */
+  ExpiredPreliminarySourceReadPage findExpiredPreliminarySourceReadScopes(
+      int limit, String namespace, RecoveryCursor after) {
+    requireTransaction();
+    requireRecoveryLimit(limit);
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Canonical Account workload namespace required");
+    }
+
+    String continuation =
+        after == null
+            ? ""
+            : " AND (issuer.expires_at_epoch_second, reservation.operation_id) > (?, ?)";
+    Object[] parameters =
+        after == null
+            ? new Object[] {namespace, limit}
+            : new Object[] {namespace, after.expiresAtEpochSecond(), after.operationId(), limit};
+    List<Record> rows =
+        dsl.fetch(
+            "SELECT reservation.*, issuer.expires_at_epoch_second AS recovery_expires_at_epoch_second, "
+                + "reservation.operation_id AS recovery_operation_id FROM "
+                + RESERVATIONS
+                + " reservation JOIN account_control_ui_issuance_operations issuer"
+                + " ON issuer.operation_id = reservation.issuance_operation_id"
+                + " CROSS JOIN LATERAL account_publication_authorization_read_frame("
+                + "reservation.scope_bytes, 1) schema_part"
+                + " CROSS JOIN LATERAL account_publication_authorization_read_frame("
+                + "reservation.scope_bytes, schema_part.next_position) owner_part"
+                + " CROSS JOIN LATERAL account_publication_authorization_read_frame("
+                + "reservation.scope_bytes, owner_part.next_position) namespace_part"
+                + " LEFT JOIN "
+                + AUTHORIZATIONS
+                + " finalized_reservation ON finalized_reservation.operation_id = reservation.operation_id"
+                + " LEFT JOIN "
+                + ABORTS
+                + " aborted ON aborted.operation_id = reservation.operation_id"
+                + " WHERE convert_from(namespace_part.frame_value, 'UTF8') = ?"
+                + " AND issuer.status IN ('COMMITTED', 'REVOKING', 'REVOKED')"
+                + " AND extract(epoch FROM clock_timestamp()) >= issuer.expires_at_epoch_second"
+                + " AND finalized_reservation.operation_id IS NULL"
+                + " AND aborted.operation_id IS NULL"
+                + continuation
+                + " ORDER BY issuer.expires_at_epoch_second, reservation.operation_id"
+                + " LIMIT ?",
+            parameters);
+    List<SelectedOwnerIntakeSourceReadScope> scopes = new ArrayList<>(rows.size());
+    RecoveryCursor nextCursor = null;
+    int rowNumber = 0;
+    for (Record row : rows) {
+      rowNumber++;
+      nextCursor =
+          new RecoveryCursor(
+              row.get("recovery_expires_at_epoch_second", Long.class),
+              row.get("recovery_operation_id", UUID.class));
+      try {
+        var scope =
+            SelectedOwnerIntakeSourceReadScope.fromStored(row.get("scope_bytes", byte[].class));
+        if (!namespace.equals(scope.targetNamespace())) {
+          throw new IllegalArgumentException("Expired reservation belongs to another namespace");
+        }
+        requireReservation(row, scope);
+        scopes.add(scope);
+      } catch (IllegalArgumentException | IllegalStateException invalidRow) {
+        LOGGER.warn(
+            "Skipped invalid expired preliminary source-read row {}/{} (failureType={})",
+            rowNumber,
+            rows.size(),
+            invalidRow.getClass().getSimpleName());
+      }
+    }
+    return new ExpiredPreliminarySourceReadPage(scopes, rows.size(), nextCursor);
+  }
+
+  /**
+   * Aborts one expired preliminary reservation after taking the canonical source and reservation
+   * locks. A concurrent finalization or a candidate that is no longer eligible is skipped.
+   */
+  boolean abortExpiredPreliminarySourceRead(
+      SelectedOwnerIntakeSourceReadScope scope, String namespace) {
+    requireTransaction();
+    Objects.requireNonNull(scope, "scope");
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)
+        || !namespace.equals(scope.targetNamespace())) {
+      throw new IllegalArgumentException("Exact Account workload namespace required");
+    }
+    requireOwner(scope.owner());
+
+    lockReservedSources(scope);
+    Record row = reservation(scope);
+    requireReservation(row, scope);
+    if (aborted(scope) || authorization(scope.operationId()) != null) return false;
+
+    UUID issuanceOperationId = row.get("issuance_operation_id", UUID.class);
+    if (dsl.fetchOne(
+            "SELECT operation_id FROM account_control_ui_issuance_operations"
+                + " WHERE operation_id = ? AND status IN ('COMMITTED', 'REVOKING', 'REVOKED')"
+                + " AND extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second",
+            issuanceOperationId)
+        == null) {
+      return false;
+    }
+
+    dsl.execute("INSERT INTO " + ABORTS + " (operation_id) VALUES (?)", scope.operationId());
+    return true;
+  }
+
+  private static void requireRecoveryLimit(int limit) {
+    if (limit <= 0 || limit > MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE) {
+      throw new IllegalArgumentException(
+          "Expired preliminary recovery batch must be between 1 and "
+              + MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE);
+    }
+  }
+
+  SelectedOwnerIntakeAuthorizationBinding finalizeSourceRead(
+      SelectedOwnerIntakeSourceReadScope scope,
+      SelectedOwnerIntakeSourceContent content,
+      AccountControlUiActorService.Current current,
+      Runnable admission) {
+    requireTransaction();
+    Objects.requireNonNull(content, "content");
+    Objects.requireNonNull(current, "current");
+    Objects.requireNonNull(admission, "admission");
+    lockReservedSources(scope);
+    Record reserved = reservation(scope);
+    requireReservation(reserved, scope);
+    requireCurrentReservation(reserved, current);
+    if (!scope.equals(content.scope()))
+      throw new IllegalArgumentException("Selected content differs from original source scope");
+    if (aborted(scope)) throw new IllegalStateException("Original source-read scope aborted");
+
+    Record row = authorization(scope.operationId());
+    if (row != null) {
+      var original =
+          SelectedOwnerIntakeAuthorizationBinding.fromStored(
+              row.get("binding_bytes", byte[].class));
+      if (!Arrays.equals(original.content().canonicalBytes(), content.canonicalBytes()))
+        throw new IllegalArgumentException(
+            "Intake request identity conflicts with original selected content");
+      requireAuthorization(row, original);
+      return original;
+    }
+
+    List<SourceEvidence> sourceVector = current.source().sources();
+    var binding = new SelectedOwnerIntakeAuthorizationBinding(content, sourceVector);
+    admission.run();
+    dsl.execute(
+        "INSERT INTO "
+            + AUTHORIZATIONS
+            + " (operation_id, fence_id, intake_request_id, owner, target_namespace, actor_account_uuid, "
+            + "tenant_uuid, version_uuid, content_bytes, content_digest, binding_bytes, binding_digest, "
+            + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        binding.operationId(),
+        binding.fenceId(),
+        binding.intakeRequestId(),
+        binding.owner().name(),
+        binding.targetNamespace(),
+        binding.actorAccountId(),
+        binding.tenantId(),
+        binding.versionId(),
+        binding.content().canonicalBytes(),
+        binding.content().digest(),
+        binding.canonicalBytes(),
+        binding.digest(),
+        current.stored().operationId,
+        current.source().issuanceFence(),
+        current.stored().sources,
+        current.stored().bundle,
+        AccountControlUiAuthority.canonical(current.source().outboxCheckpoints()));
+    for (SourceEvidence source : binding.sources()) {
+      dsl.execute(
+          "INSERT INTO "
+              + AUTHORIZATION_SOURCES
+              + " (operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+          binding.operationId(),
+          source.key(),
+          source.canonicalBytes());
+    }
+    requireAuthorization(
+        dsl.fetchOne(
+            "SELECT * FROM " + AUTHORIZATIONS + " WHERE operation_id = ? FOR UPDATE",
+            binding.operationId()),
+        binding);
+    return binding;
+  }
+
+  Optional<SelectedOwnerIntakeAuthorizationBinding> findFinalAuthorization(
+      SelectedOwnerIntakeSourceReadScope scope) {
+    requireTransaction();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record row = authorization(scope.operationId());
+    if (row == null) return Optional.empty();
+    var binding =
+        SelectedOwnerIntakeAuthorizationBinding.fromStored(row.get("binding_bytes", byte[].class));
+    requireAuthorization(row, binding);
+    if (!scope.equals(binding.content().scope()))
+      throw new IllegalArgumentException("Finalized authorization differs from original scope");
+    return Optional.of(binding);
+  }
+
+  /** Historical exact authorization read; settled orders remain recoverable through this path. */
+  void readFinalAuthorization(SelectedOwnerIntakeAuthorizationBinding requested) {
+    readFinalAuthorization(requested, false);
+  }
+
+  /**
+   * External HELD reads deny after exact terminal settlement; historical reads remain available.
+   */
+  void readHeldFinalAuthorization(SelectedOwnerIntakeAuthorizationBinding requested) {
+    readFinalAuthorization(requested, true);
+  }
+
+  private void readFinalAuthorization(
+      SelectedOwnerIntakeAuthorizationBinding requested, boolean requireHeld) {
+    requireTransaction();
+    Objects.requireNonNull(requested, "requested");
+    Record lookup = authorizationLookup(requested.operationId());
+    if (lookup == null
+        || !Arrays.equals(requested.canonicalBytes(), lookup.get("binding_bytes", byte[].class)))
+      throw new IllegalArgumentException(
+          "Original finalized owner authorization absent or changed");
+    var original =
+        SelectedOwnerIntakeAuthorizationBinding.fromStored(
+            lookup.get("binding_bytes", byte[].class));
+    SelectedOwnerIntakeSourceReadScope scope = original.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record row = authorization(original.operationId());
+    requireAuthorization(row, original);
+    if (aborted(original.content().scope()))
+      throw new IllegalArgumentException("Finalized owner authorization cannot be aborted");
+    if (requireHeld && settlement(original.operationId()) != null) {
+      throw new IllegalArgumentException("Settled owner authorization is no longer held");
+    }
+  }
+
+  /**
+   * Exact committed settlement recovery; callers perform this before any external terminal read.
+   */
+  Optional<AccountSelectedOwnerIntakeSettlementReceipt> findSettlement(
+      SelectedOwnerIntakeAuthorizationBinding requested) {
+    requireTransaction();
+    Objects.requireNonNull(requested, "original selected-owner authorization is required");
+    if (requested.owner() != Owner.AUTOMATION_SCRIPTING
+        && requested.owner() != Owner.ENTITY_MANAGEMENT) {
+      throw new IllegalArgumentException("Automation terminal settlement required");
+    }
+    SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record order = authorization(requested.operationId());
+    requireAuthorization(order, requested);
+    if (aborted(scope))
+      throw new IllegalArgumentException("Finalized owner authorization was aborted");
+    Record row = settlement(requested.operationId());
+    if (row == null) return Optional.empty();
+    return Optional.of(exactSettlement(row, requested, null));
+  }
+
+  /**
+   * Commits one immutable COMMITTED_EMPTY owner receipt after the authenticated owner read has
+   * completed outside SQL. The read correlation is retained on first write but is not settlement
+   * identity; a fresh correlation with identical owner receipt bytes recovers the first receipt.
+   */
+  AccountSelectedOwnerIntakeSettlementReceipt settleCommittedEmpty(
+      AutomationSelectedSourceIntakeTerminalReadEvidence evidence) {
+    requireTransaction();
+    Objects.requireNonNull(evidence, "Automation terminal evidence is required");
+    var requested = evidence.request().binding();
+    if (requested.owner() != Owner.AUTOMATION_SCRIPTING
+        || !"COMMITTED_EMPTY".equals(evidence.receipt().outcome())) {
+      throw new IllegalArgumentException("Exact Automation COMMITTED_EMPTY evidence required");
+    }
+    return settleCommittedEmpty(
+        requested,
+        evidence.request().readRequestId(),
+        () -> AccountSelectedOwnerIntakeSettlementReceipt.create(evidence),
+        evidence);
+  }
+
+  AccountSelectedOwnerIntakeSettlementReceipt settleEntityCommittedEmpty(
+      EntitySelectedSourceIntakeTerminalReadEvidence evidence) {
+    requireTransaction();
+    Objects.requireNonNull(evidence, "Entity terminal evidence is required");
+    var requested = evidence.request().binding();
+    if (requested.owner() != Owner.ENTITY_MANAGEMENT
+        || !"COMMITTED_EMPTY".equals(evidence.receipt().outcome())) {
+      throw new IllegalArgumentException("Exact Entity COMMITTED_EMPTY evidence required");
+    }
+    return settleCommittedEmpty(
+        requested,
+        evidence.request().readRequestId(),
+        () -> AccountSelectedOwnerIntakeSettlementReceipt.create(evidence),
+        evidence);
+  }
+
+  private AccountSelectedOwnerIntakeSettlementReceipt settleCommittedEmpty(
+      SelectedOwnerIntakeAuthorizationBinding requested,
+      UUID readRequestId,
+      Supplier<AccountSelectedOwnerIntakeSettlementReceipt> receiptFactory,
+      Object retryEvidence) {
+    SelectedOwnerIntakeSourceReadScope scope = requested.content().scope();
+    lockReservedSources(scope);
+    requireReservation(reservation(scope), scope);
+    Record order = authorization(requested.operationId());
+    requireAuthorization(order, requested);
+    if (aborted(scope))
+      throw new IllegalArgumentException("Finalized owner authorization was aborted");
+
+    Record prior = settlement(requested.operationId());
+    if (prior != null) return exactSettlement(prior, requested, retryEvidence);
+
+    AccountSelectedOwnerIntakeSettlementReceipt receipt = receiptFactory.get();
+    dsl.execute(
+        "INSERT INTO "
+            + SETTLEMENTS
+            + " (operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
+            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
+            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        receipt.operationId(),
+        requested.fenceId(),
+        requested.intakeRequestId(),
+        requested.owner().name(),
+        requested.targetNamespace(),
+        requested.tenantId(),
+        requested.versionId(),
+        requested.canonicalBytes(),
+        requested.digest(),
+        readRequestId,
+        receipt.ownerReceiptBytes(),
+        receipt.ownerReceiptDigest(),
+        receipt.canonicalBytes(),
+        receipt.digest());
+    return exactSettlement(settlement(requested.operationId()), requested, retryEvidence);
+  }
+
+  private AccountSelectedOwnerIntakeSettlementReceipt exactSettlement(
+      Record row, SelectedOwnerIntakeAuthorizationBinding requested, Object retryEvidence) {
+    if (row == null) throw new IllegalStateException("Account settlement commit readback absent");
+    byte[] storedBytes = row.get("receipt_bytes", byte[].class);
+    var receipt = AccountSelectedOwnerIntakeSettlementReceipt.fromStored(storedBytes);
+    var original = receipt.authorizationBinding();
+    if (!Arrays.equals(original.canonicalBytes(), requested.canonicalBytes())
+        || !Arrays.equals(storedBytes, receipt.canonicalBytes())
+        || !receipt.digest().equals(row.get("receipt_digest", String.class))
+        || !Arrays.equals(
+            receipt.ownerReceiptBytes(), row.get("terminal_receipt_bytes", byte[].class))
+        || !receipt.ownerReceiptDigest().equals(row.get("terminal_receipt_digest", String.class))
+        || !receipt.terminalReadRequestId().equals(row.get("terminal_read_request_id", UUID.class))
+        || !original.operationId().equals(row.get("operation_id", UUID.class))
+        || !original.fenceId().equals(row.get("fence_id", UUID.class))
+        || !original.intakeRequestId().equals(row.get("intake_request_id", UUID.class))
+        || !original.owner().name().equals(row.get("owner", String.class))
+        || !original.targetNamespace().equals(row.get("target_namespace", String.class))
+        || !original.tenantId().equals(row.get("tenant_uuid", UUID.class))
+        || !original.versionId().equals(row.get("version_uuid", UUID.class))
+        || !Arrays.equals(original.canonicalBytes(), row.get("binding_bytes", byte[].class))
+        || !original.digest().equals(row.get("binding_digest", String.class))) {
+      throw new IllegalArgumentException("Changed exact selected-owner terminal settlement");
+    }
+    if (retryEvidence instanceof AutomationSelectedSourceIntakeTerminalReadEvidence automation
+        && !receipt.sameImmutableOwnerReceipt(automation)) {
+      throw new IllegalArgumentException("Changed Automation owner terminal receipt");
+    }
+    if (retryEvidence instanceof EntitySelectedSourceIntakeTerminalReadEvidence entity
+        && !receipt.sameImmutableOwnerReceipt(entity)) {
+      throw new IllegalArgumentException("Changed Entity owner terminal receipt");
+    }
+    return receipt;
+  }
+
+  private Record settlement(UUID operationId) {
+    return dsl.fetchOne(
+        "SELECT * FROM " + SETTLEMENTS + " WHERE operation_id = ? FOR UPDATE", operationId);
+  }
+
+  private Record authorization(UUID operationId) {
+    return dsl.fetchOne(
+        "SELECT * FROM " + AUTHORIZATIONS + " WHERE operation_id = ? FOR UPDATE", operationId);
+  }
+
+  private Record authorizationLookup(UUID operationId) {
+    return dsl.fetchOne("SELECT * FROM " + AUTHORIZATIONS + " WHERE operation_id = ?", operationId);
+  }
+
+  private void requireAuthorization(Record row, SelectedOwnerIntakeAuthorizationBinding binding) {
+    if (row == null
+        || !Arrays.equals(binding.canonicalBytes(), row.get("binding_bytes", byte[].class))
+        || !binding.digest().equals(row.get("binding_digest", String.class))
+        || !Arrays.equals(
+            binding.content().canonicalBytes(), row.get("content_bytes", byte[].class))
+        || !binding.content().digest().equals(row.get("content_digest", String.class))
+        || !binding.operationId().equals(row.get("operation_id", UUID.class))
+        || !binding.fenceId().equals(row.get("fence_id", UUID.class))
+        || !binding.intakeRequestId().equals(row.get("intake_request_id", UUID.class))
+        || !binding.owner().name().equals(row.get("owner", String.class))
+        || !binding.targetNamespace().equals(row.get("target_namespace", String.class))
+        || !binding.actorAccountId().equals(row.get("actor_account_uuid", UUID.class))
+        || !binding.tenantId().equals(row.get("tenant_uuid", UUID.class))
+        || !binding.versionId().equals(row.get("version_uuid", UUID.class))) {
+      throw new IllegalArgumentException(
+          "Original finalized owner authorization absent or changed");
+    }
+    Record reserved = reservation(binding.content().scope());
+    requireReservation(reserved, binding.content().scope());
+    if (!binding.operationId().equals(reserved.get("operation_id", UUID.class))
+        || !binding.fenceId().equals(reserved.get("fence_id", UUID.class))
+        || !binding.intakeRequestId().equals(reserved.get("intake_request_id", UUID.class))
+        || !binding.owner().name().equals(reserved.get("owner", String.class))
+        || !binding.actorAccountId().equals(reserved.get("actor_account_uuid", UUID.class))
+        || !binding.tenantId().equals(reserved.get("tenant_uuid", UUID.class))
+        || !binding.versionId().equals(reserved.get("version_uuid", UUID.class))) {
+      throw new IllegalArgumentException(
+          "Finalized authorization differs from original reservation");
+    }
+    var issuer = issuer(reserved.get("issuance_operation_id", UUID.class));
+    if (!issuer.operationId.equals(row.get("issuance_operation_id", UUID.class))
+        || !Objects.equals(
+            reserved.get("issuance_fence", Long.class), row.get("issuance_fence", Long.class))
+        || !Arrays.equals(issuer.sources, row.get("source_payload", byte[].class))
+        || !Arrays.equals(issuer.bundle, row.get("issuance_bundle", byte[].class))
+        || !Arrays.equals(
+            reserved.get("outbox_checkpoints", byte[].class),
+            row.get("outbox_checkpoints", byte[].class))) {
+      throw new IllegalArgumentException("Changed finalized creator evidence");
+    }
+    List<Record> sources =
+        dsl.fetch(
+            "SELECT source_key, source_evidence FROM "
+                + AUTHORIZATION_SOURCES
+                + " WHERE operation_id = ? ORDER BY account_publication_authorization_source_sort_key(source_key)",
+            binding.operationId());
+    if (sources.size() != binding.sources().size())
+      throw new IllegalArgumentException("Incomplete finalized source participation");
+    for (int index = 0; index < sources.size(); index++) {
+      SourceEvidence source = binding.sources().get(index);
+      if (!source.key().equals(sources.get(index).get("source_key", String.class))
+          || !Arrays.equals(
+              source.canonicalBytes(), sources.get(index).get("source_evidence", byte[].class))) {
+        throw new IllegalArgumentException("Changed finalized source participation");
+      }
+    }
   }
 
   SourceReadCurrentness sourceReadCurrentness(SelectedOwnerIntakeSourceReadScope scope) {
@@ -192,6 +689,8 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     Record row = reservation(scope);
     requireReservation(row, scope);
     if (aborted(scope)) throw new IllegalStateException("Original source-read scope aborted");
+    if (authorization(scope.operationId()) != null)
+      throw new IllegalStateException("Finalized owner intake is not a preliminary source read");
     var original = issuer(row.get("issuance_operation_id", UUID.class));
     if (!"COMMITTED".equals(original.status))
       throw new IllegalStateException("Original creator issuance is no longer committed");
@@ -204,6 +703,8 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
     Record row = reservation(scope);
     requireReservation(row, scope);
     if (aborted(scope)) throw new IllegalStateException("Original source-read scope aborted");
+    if (authorization(scope.operationId()) != null)
+      throw new IllegalStateException("Finalized owner intake is not a preliminary source read");
     var original = issuer(row.get("issuance_operation_id", UUID.class));
     if (!"COMMITTED".equals(original.status) || !currentness(row, original).equals(expected)) {
       throw new IllegalStateException("Exact current pending source-read scope required");

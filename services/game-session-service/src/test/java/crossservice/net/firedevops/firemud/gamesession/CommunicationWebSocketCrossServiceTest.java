@@ -36,9 +36,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class CommunicationWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(45);
   private static final long TENANT_ID = 1L;
-  private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
-  private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
-  private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
+  private static final long ACCOUNT_ID = ChatTestFixtures.EMBERLINE_ACCOUNT_ROW_ID;
+  private static final long SORA_ACCOUNT_ID = ChatTestFixtures.SORA_ACCOUNT_ROW_ID;
+  private static final long NYX_ACCOUNT_ID = ChatTestFixtures.NYX_ACCOUNT_ROW_ID;
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
@@ -664,9 +664,9 @@ class CommunicationWebSocketCrossServiceTest {
         DEMO_WORLD_INSTANCE_ID,
         ACCOUNT_ID,
         7L,
-        ACCOUNT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+        ChatTestFixtures.EMBERLINE_CHARACTER_ID,
+        ChatTestFixtures.SORA_CHARACTER_ID,
+        ChatTestFixtures.NYX_CHARACTER_ID);
   }
 
   private static String truncateGuardState(JdbcTemplate jdbc, BaselineTruncateGuard guard) {
@@ -719,19 +719,7 @@ class CommunicationWebSocketCrossServiceTest {
 
   private void seedLiveTargetSession() {
     STACK.seedLiveSession(
-        90210L,
-        TENANT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        "sora@example.com",
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        "Sora",
-        DEMO_WORLD_INSTANCE_ID,
-        ChatTestFixtures.ROOM_ID,
-        "target-jwt",
-        "demo",
-        "production",
-        1L,
-        "SHARED");
+        ChatTestFixtures.soraRecipientSession(90210L, TENANT_ID, DEMO_WORLD_INSTANCE_ID));
   }
 
   private List<String> runCommunicationSequence(

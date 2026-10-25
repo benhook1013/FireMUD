@@ -167,7 +167,6 @@ for readme in readmes:
         if tuple(int(part) for part in version_parts) < (2, 63, 0):
             raise SystemExit(f"{workflow_versions}: GH_VERSION must be >= 2.63.0")
         prerequisite_fragments = (
-            "`pr-review`",
             "`report-worktree-pr-topology.sh`",
             "`maintenance/cloc-report.py pr`",
             "require GitHub CLI `gh` >= 2.63.0",

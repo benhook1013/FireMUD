@@ -8,7 +8,7 @@ import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
-import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -39,10 +39,7 @@ class EffectiveCommandHistorySettingsResolverTest {
             new FiremudCommandHistoryProperties(10), authorityReader);
 
     EffectiveCommandHistorySettingsResolver.ResolvedValue<FiremudCommandHistoryProperties>
-        resolved =
-            resolver.resolvedCommandHistory(
-                new SessionContext(
-                    1L, 22L, "123", "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+        resolved = resolver.resolvedCommandHistory(GameplayCommandTestFixtures.settingsEmber());
 
     assertThat(resolved.effective()).isEqualTo(new FiremudCommandHistoryProperties(20));
     assertThat(resolved.sources())

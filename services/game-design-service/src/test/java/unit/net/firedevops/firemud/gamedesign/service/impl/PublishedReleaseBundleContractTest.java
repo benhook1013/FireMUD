@@ -38,6 +38,52 @@ class PublishedReleaseBundleContractTest {
   }
 
   @Test
+  void exactRepairAcceptsFull4VectorAndRejectsLegacyParticipantSchemas() throws Exception {
+    var selector = selectorEvidence(4);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            VERSION_ID,
+            selector,
+            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    var full = bundle("v4", selector, participants);
+    assertDoesNotThrow(
+        () -> PublishedReleaseBundleContract.requireExactRepairMatch(full, exportedManifest));
+
+    var legacyAutomation = participants.get(3);
+    var mixed =
+        replaceParticipant(
+            participants,
+            3,
+            new PublishParticipantDigestDto(
+                legacyAutomation.participantKey(),
+                legacyAutomation.scopeValue(),
+                legacyAutomation.baseVersionId(),
+                legacyAutomation.appliedCommitId(),
+                legacyAutomation.contentDigest(),
+                5,
+                legacyAutomation.abilitySchemaDigest(),
+                legacyAutomation.errorCode(),
+                legacyAutomation.errorMessage()));
+    assertSelectorRepairRejected(
+        bundle("v4", selector, mixed),
+        "Selected-full release requires all exact successful ordered release participants");
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
+                    VERSION_ID,
+                    selector.request().appliedCommitId(),
+                    PublishedWorldSelectorFixtures.participants(
+                        VERSION_ID,
+                        selector,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)));
+    assertEquals(
+        "Selected-full release requires the exact 4/3/1/6/2 successful participant vector",
+        denied.getMessage());
+  }
+
+  @Test
   void exactRepairRejectsMalformedSelectorV2Binding() throws Exception {
     WorldPublishedStartLocationEvidence selector = selectorEvidence();
     var incompleteParticipants = selectorParticipants(selector).subList(1, 5);
@@ -292,6 +338,12 @@ class PublishedReleaseBundleContractTest {
             1L,
             TENANT_ID,
             "NEW_GAME_ROW"));
+  }
+
+  private static WorldPublishedStartLocationEvidence selectorEvidence(int digestSchemaVersion)
+      throws Exception {
+    var base = selectorEvidence();
+    return PublishedWorldSelectorFixtures.withDigestSchemaVersion(base, digestSchemaVersion);
   }
 
   private static List<PublishParticipantDigestDto> selectorParticipants(

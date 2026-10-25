@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -55,7 +56,6 @@ class GameAuthoredHelpReaderImplTest {
   }
 
   private SessionContext gameplayContext() {
-    return new SessionContext(
-        41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+    return GameplayCommandTestFixtures.authoredHelpEmberline();
   }
 }

@@ -231,12 +231,13 @@ if [[ "${resolution_phase}" == reconcile ]]; then
     selected_job="$(jq -r .source_job_id <<<"${selected}")"
     selected_check="$(jq -r .source_check_run_id <<<"${selected}")"
     selected_attempt="$(jq -r .source_run_attempt <<<"${selected}")"
+    selected_source_title="${workflow_name} pr-${pr_number} base-${base_sha} head-${head_sha}"
     selected_source_native() {
-      local run job check
+      local run job check preserve_step_state recovered
       run="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${selected_run}/attempts/${selected_attempt}")" || return 1
       jq -e --argjson id "${selected_run}" --argjson attempt "${selected_attempt}" --argjson workflow "${workflow_id}" \
         --arg repo "${GITHUB_REPOSITORY}" --arg head_repo "${head_repository}" --arg head "${head_sha}" \
-        --arg branch "${head_branch}" --arg title "${source_title}" --arg name "${workflow_name}" \
+        --arg branch "${head_branch}" --arg title "${selected_source_title}" --arg name "${workflow_name}" \
         --arg path "${workflow_file}" --argjson pr "${pr_number}" '
         .id == $id and .run_attempt == $attempt and .workflow_id == $workflow and
         .repository.full_name == $repo and .head_repository.full_name == $head_repo and
@@ -250,14 +251,39 @@ if [[ "${resolution_phase}" == reconcile ]]; then
         --arg name "${gate_name}" --arg head "${head_sha}" \
         --arg url "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${selected_check}" '
         .id == $id and .run_id == $run and .run_attempt == $attempt and .head_sha == $head and
-        .name == $name and .status == "completed" and .conclusion == "success" and .check_run_url == $url and
-        ([.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
-          .conclusion == "skipped")] | length == 1)' <<<"${job}" >/dev/null || return 1
+        .name == $name and .status == "completed" and .conclusion == "success" and .check_run_url == $url' \
+        <<<"${job}" >/dev/null || return 1
+      preserve_step_state="$(jq -er '
+        if .steps == null then "absent"
+        elif (.steps | type) != "array" or any(.steps[]; type != "object" or (.name | type) != "string") then
+          error("malformed selected job steps")
+        else
+          [.steps[] | select(.name == "Preserve successful required gate on metadata-only edit")] as $matches
+          | if ($matches | length) == 0 then "absent"
+            elif ($matches | length) > 1 then "duplicate"
+            elif $matches[0].status == "completed" and $matches[0].conclusion == "skipped" then "skipped"
+            else "conflict" end
+        end
+      ' <<<"${job}")" || return 1
+      if [[ "${preserve_step_state}" == absent ]]; then
+        [[ "${workflow_file}" == ".github/workflows/ci.yml" &&
+          "${workflow_name}" == "CI — Validation" && "${gate_name}" == "Validation Gate" ]] || return 1
+        recovered="$(bash "$(dirname "${BASH_SOURCE[0]}")/validate-exact-attempt-gate.sh" \
+          "${selected_run}" "${selected_attempt}" "${selected_job}" "${selected_check}" \
+          "${gate_name}" "${workflow_id}" "${workflow_name}" "${workflow_file}" \
+          "${selected_source_title}" "${pr_number}" "${base_sha}" "${head_sha}" \
+          "${head_branch}" "${GITHUB_REPOSITORY}" "${head_repository}" \
+          completed success "" "" "" true)" || return 1
+        printf '%s\n' "${recovered}"
+        return 0
+      fi
+      [[ "${preserve_step_state}" == skipped ]] || return 1
       check="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/check-runs/${selected_check}")" || return 1
       jq -e --argjson id "${selected_check}" --arg head "${head_sha}" --arg name "${gate_name}" '
         .id == $id and .app.id == 15368 and .app.slug == "github-actions" and .head_sha == $head and
         .name == $name and .status == "completed" and .conclusion == "success"' <<<"${check}" >/dev/null || return 1
-      jq -cn --argjson run "${run}" --argjson job "${job}" --argjson check "${check}" '{run: $run, job: $job, check: $check}'
+      jq -cnS --argjson run "${run}" --argjson job "${job}" --argjson check "${check}" \
+        '{run: $run, jobs: null, job: $job, check: $check}'
     }
     selected_native="$(selected_source_native)" || fail_closed "Selected current-base source lacks independent native proof."
     terminal_state=success

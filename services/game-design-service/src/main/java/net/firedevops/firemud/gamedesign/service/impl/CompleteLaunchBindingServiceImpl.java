@@ -157,6 +157,30 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
               bundle.commandDefinitions(),
               bundle.generationConfigRevision(),
               bundle.worldPublishedStartLocationEvidence());
+    } else if (PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(
+        bundle.attestationSchemaVersion())) {
+      releaseAttestation =
+          AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+              descriptor.targetNamespace(),
+              descriptor.resultDigest(),
+              source.canonicalTenantId(),
+              canonicalVersion.getCanonicalVersionId(),
+              source.worldSlug(),
+              source.operationId(),
+              source.evidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              bundle.publishWorkflowId(),
+              commitId,
+              participants,
+              bundle.manifestHash(),
+              bundle.manifestSchemaVersion(),
+              bundle.requiredManifestAssetKeys(),
+              artifacts,
+              bundle.commandDefinitions(),
+              bundle.generationConfigRevision(),
+              bundle.worldPublishedStartLocationEvidence());
     } else {
       releaseAttestation =
           AuthoredWorldReleaseAttestationEvidence.create(
@@ -273,7 +297,8 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         || !Objects.equals(snapshotCanonicalVersionId, bundle.canonicalVersionId())
         || !("v1".equals(bundle.attestationSchemaVersion())
                 && bundle.worldPublishedStartLocationEvidence() == null
-            || "v2".equals(bundle.attestationSchemaVersion())
+            || PublishedReleaseBundleDto.isSelectedAttestationSchema(
+                    bundle.attestationSchemaVersion())
                 && bundle.worldPublishedStartLocationEvidence() != null)
         || !Objects.equals(bundle.id(), descriptor.releaseBundleId())
         || !Objects.equals(bundle.versionId(), descriptor.versionId())
@@ -351,6 +376,7 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
         switch (bundle.attestationSchemaVersion()) {
           case "v1" -> AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION;
           case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          case "v4" -> AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION;
           default ->
               throw deny(
                   "RELEASE_ATTESTATION_SCHEMA_UNSUPPORTED",
