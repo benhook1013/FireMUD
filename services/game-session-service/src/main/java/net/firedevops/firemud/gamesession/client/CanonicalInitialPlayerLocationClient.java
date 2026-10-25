@@ -1,0 +1,320 @@
+package net.firedevops.firemud.gamesession.client;
+
+import io.grpc.ManagedChannel;
+import java.io.IOException;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
+
+/** Manually composed, non-admitting client for World-owned initial placement evidence. */
+public final class CanonicalInitialPlayerLocationClient
+    extends AbstractReloadingBlockingGrpcClient<
+        CanonicalInitialPlayerLocationServiceGrpc
+            .CanonicalInitialPlayerLocationServiceBlockingStub> {
+  private static final int SCHEMA_VERSION = 1;
+  private static final long CALL_DEADLINE_SECONDS = 20L;
+  private static final int MAX_GAME_INSTANCE_ID_LENGTH = 255;
+  private static final int MAX_REQUEST_ID_LENGTH = 128;
+  private static final int MAX_RELEASE_REF_LENGTH = 1024;
+  private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
+  private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
+  private static final Pattern MACHINE_CODE = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
+  private static final Pattern POSITIVE_ROOM_ID = Pattern.compile("[1-9][0-9]*");
+
+  private final String namespace;
+
+  public CanonicalInitialPlayerLocationClient(
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties tls,
+      GrpcChannelFactory channels,
+      String namespace) {
+    super(
+        endpoints,
+        requireFileBackedMtls(tls, "Initial player location"),
+        channels,
+        CanonicalInitialPlayerLocationClient.class);
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Fixed Game Session workload namespace required");
+    }
+    this.namespace = namespace;
+  }
+
+  /** Initializes the manual channel outside any ambient SQL transaction or synchronization. */
+  public void init() throws IOException {
+    requireNoAmbientSql("Initial player location client initialization requires no ambient SQL");
+    initOnce("Initial player location client is closed", "World placement unavailable");
+  }
+
+  @Override
+  protected String configuredTarget(ServiceEndpointsProperties endpoints) {
+    return endpoints.getWorldManagementService();
+  }
+
+  @Override
+  protected String defaultTarget() {
+    return "world-management-service:6565";
+  }
+
+  @Override
+  protected CanonicalInitialPlayerLocationServiceGrpc
+          .CanonicalInitialPlayerLocationServiceBlockingStub
+      buildStub(ManagedChannel channel) {
+    String peer = "spiffe://firemud/ns/" + namespace + "/sa/world-management-service";
+    return CanonicalInitialPlayerLocationServiceGrpc.newBlockingStub(channel)
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer))
+        .withCompression("gzip");
+  }
+
+  /** Places one assigned actor once and returns retained placement evidence, not live occupancy. */
+  public CanonicalInitialPlayerLocationResponse placeInitialPlayer(
+      CanonicalInitialPlayerLocationRequest request) {
+    return invoke(request, true);
+  }
+
+  /**
+   * Reads only the retained result for this exact operation, not current occupancy or activation.
+   */
+  public CanonicalInitialPlayerLocationResponse readInitialPlayerLocation(
+      CanonicalInitialPlayerLocationRequest request) {
+    return invoke(request, false);
+  }
+
+  private CanonicalInitialPlayerLocationResponse invoke(
+      CanonicalInitialPlayerLocationRequest request, boolean place) {
+    requireNoAmbientSql("Initial player location RPC requires no ambient SQL");
+    requireRequest(request);
+    var stub =
+        requireInitializedStub("World initial player location client is unavailable")
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+    var response =
+        place ? stub.placeInitialPlayer(request) : stub.readInitialPlayerLocation(request);
+    requireResponse(request, response);
+    return response;
+  }
+
+  private static void requireRequest(CanonicalInitialPlayerLocationRequest request) {
+    Objects.requireNonNull(request, "request");
+    if (request.getSchemaVersion() != SCHEMA_VERSION
+        || !request.getUnknownFields().asMap().isEmpty()
+        || !request.hasExpectedTarget()) {
+      throw new IllegalArgumentException(
+          "Closed complete schema-1 initial player location request required");
+    }
+    var target = request.getExpectedTarget();
+    if (!target.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Initial player location target contains unknown fields");
+    }
+
+    requireCanonicalNonNilUuid(request.getPlacementOperationUuid(), "placement_operation_uuid");
+    requireCanonicalNonNilUuid(request.getCanonicalAccountUuid(), "canonical_account_uuid");
+    requireCanonicalNonNilUuid(request.getCharacterUuid(), "character_uuid");
+    requireCanonicalNonNilUuid(request.getAssignmentUuid(), "assignment_uuid");
+    requireCanonicalNonNilUuid(target.getCanonicalTenantUuid(), "canonical_tenant_uuid");
+    requireCanonicalNonNilUuid(target.getRealmUuid(), "realm_uuid");
+    requireCanonicalNonNilUuid(target.getCanonicalVersionUuid(), "canonical_version_uuid");
+    requireCanonicalNonNilUuid(
+        target.getPlayableStateNamespaceUuid(), "playable_state_namespace_uuid");
+    requireCanonicalNonNilUuid(
+        request.getInitialAdmissionHoldUuid(), "initial_admission_hold_uuid");
+    requireCanonicalNonNilUuid(
+        request.getInitialAdmissionHoldFence(), "initial_admission_hold_fence");
+    if (!RealmEntryPolicy.isCanonicalSlug(target.getWorldSlug())
+        || !RealmEntryPolicy.isCanonicalSlug(target.getRealmSlug())) {
+      throw new IllegalArgumentException(
+          "Initial player location target requires canonical realm selectors");
+    }
+    requireBoundedText(target.getGameInstanceId(), "game_instance_id", MAX_GAME_INSTANCE_ID_LENGTH);
+    if (target.getCatalogRevision() <= 0L) {
+      throw new IllegalArgumentException("catalog_revision must be positive");
+    }
+    requireDigest(target.getFrozenPolicyDigest(), "frozen_policy_digest");
+    requireBoundedText(
+        target.getPublishedReleaseBundleRef(),
+        "published_release_bundle_ref",
+        MAX_RELEASE_REF_LENGTH);
+    if (target.getPlayableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
+      throw new IllegalArgumentException("Initial admission requires SHARED playable state");
+    }
+    requireDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");
+    requireBoundedText(
+        request.getInitialAdmissionRequestId(),
+        "initial_admission_request_id",
+        MAX_REQUEST_ID_LENGTH);
+    requireDigest(request.getInitialAdmissionRequestDigest(), "initial_admission_request_digest");
+    requirePrefixedDigest(request.getTerminalProofDigest(), "terminal_proof_digest");
+    if (request.getActiveLifecycleEpoch() <= 0L) {
+      throw new IllegalArgumentException("active_lifecycle_epoch must be positive");
+    }
+    if (request.getCommittedPointerVersion() <= 0L) {
+      throw new IllegalArgumentException("committed_pointer_version must be positive");
+    }
+    if (request.getAuditEventId() <= 0L) {
+      throw new IllegalArgumentException("audit_event_id must be positive");
+    }
+  }
+
+  private static void requireResponse(
+      CanonicalInitialPlayerLocationRequest request,
+      CanonicalInitialPlayerLocationResponse response) {
+    if (response == null
+        || response.getSchemaVersion() != SCHEMA_VERSION
+        || !response.getUnknownFields().asMap().isEmpty()
+        || !request.getPlacementOperationUuid().equals(response.getPlacementOperationUuid())
+        || !request.getCanonicalAccountUuid().equals(response.getCanonicalAccountUuid())
+        || !request.getCharacterUuid().equals(response.getCharacterUuid())
+        || !request.getAssignmentUuid().equals(response.getAssignmentUuid())
+        || !request.getAssignmentIntentDigest().equals(response.getAssignmentIntentDigest())) {
+      throw invalidResponse("World response changed the schema, operation, scope, or assignment");
+    }
+    requireResponseUuid(response.getPlacementOperationUuid(), "placement_operation_uuid");
+    requireResponseUuid(response.getCanonicalAccountUuid(), "canonical_account_uuid");
+    requireResponseUuid(response.getCharacterUuid(), "character_uuid");
+    requireResponseUuid(response.getAssignmentUuid(), "assignment_uuid");
+    requireResponseRawDigest(response.getAssignmentIntentDigest(), "assignment_intent_digest");
+    requireResponseDigest(response.getRequestDigest(), "request_digest");
+    requireResponseDigest(response.getResultDigest(), "result_digest");
+
+    switch (response.getOutcome()) {
+      case CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED -> {
+        if (!response.getConflictCode().isEmpty() || !response.hasStartLocation()) {
+          throw invalidResponse("APPLIED response must carry only its complete start location");
+        }
+        var location = response.getStartLocation();
+        if (!location.getUnknownFields().asMap().isEmpty()) {
+          throw invalidResponse("start_location contains unknown fields");
+        }
+        requireResponseUuid(
+            location.getCanonicalTenantUuid(), "start_location.canonical_tenant_uuid");
+        requireResponseUuid(
+            location.getCanonicalVersionUuid(), "start_location.canonical_version_uuid");
+        requireResponseUuid(location.getRoomTemplateUuid(), "start_location.room_template_uuid");
+        if (!request
+                .getExpectedTarget()
+                .getCanonicalTenantUuid()
+                .equals(location.getCanonicalTenantUuid())
+            || !request
+                .getExpectedTarget()
+                .getCanonicalVersionUuid()
+                .equals(location.getCanonicalVersionUuid())) {
+          throw invalidResponse("APPLIED start location changed its tenant or version scope");
+        }
+        requirePositiveRuntimeRoomId(response.getRuntimeRoomInstanceId());
+      }
+      case CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_CONFLICT -> {
+        if (!MACHINE_CODE.matcher(response.getConflictCode()).matches()
+            || response.hasStartLocation()
+            || !response.getRuntimeRoomInstanceId().isEmpty()) {
+          throw invalidResponse("CONFLICT response must contain a conflict code and no location");
+        }
+      }
+      default -> throw invalidResponse("World returned an unsupported placement outcome");
+    }
+  }
+
+  private static void requirePositiveRuntimeRoomId(String value) {
+    if (value == null || !POSITIVE_ROOM_ID.matcher(value).matches()) {
+      throw invalidResponse("runtime_room_instance_id must be a positive private room id");
+    }
+    try {
+      if (Long.parseLong(value) <= 0L) {
+        throw invalidResponse("runtime_room_instance_id must be a positive private room id");
+      }
+    } catch (NumberFormatException invalid) {
+      throw invalidResponse(
+          "runtime_room_instance_id exceeds the supported private room id range", invalid);
+    }
+  }
+
+  private static void requireBoundedText(String value, String field, int maxLength) {
+    if (value == null
+        || value.isBlank()
+        || !value.equals(value.trim())
+        || value.length() > maxLength
+        || containsUnpairedSurrogate(value)
+        || value.codePoints().anyMatch(Character::isISOControl)) {
+      throw new IllegalArgumentException(field + " is incomplete or outside its text bound");
+    }
+  }
+
+  private static boolean containsUnpairedSurrogate(String value) {
+    for (int index = 0; index < value.length(); index++) {
+      char current = value.charAt(index);
+      if (Character.isHighSurrogate(current)) {
+        if (index + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(index + 1))) {
+          return true;
+        }
+        index++;
+      } else if (Character.isLowSurrogate(current)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static void requireDigest(String value, String field) {
+    if (value == null || !RAW_SHA256.matcher(value).matches()) {
+      throw new IllegalArgumentException(field + " must be raw lowercase SHA-256 hex");
+    }
+  }
+
+  private static void requirePrefixedDigest(String value, String field) {
+    if (value == null || !PREFIXED_SHA256.matcher(value).matches()) {
+      throw new IllegalArgumentException(field + " must be prefixed lowercase SHA-256");
+    }
+  }
+
+  private static void requireResponseDigest(String value, String field) {
+    if (value == null || !PREFIXED_SHA256.matcher(value).matches()) {
+      throw invalidResponse(field + " is not prefixed lowercase SHA-256");
+    }
+  }
+
+  private static void requireResponseRawDigest(String value, String field) {
+    if (value == null || !RAW_SHA256.matcher(value).matches()) {
+      throw invalidResponse(field + " is not raw lowercase SHA-256");
+    }
+  }
+
+  private static void requireCanonicalNonNilUuid(String value, String field) {
+    try {
+      DraftAuthorizationFenceBinding.canonicalUuid(value);
+      if ("00000000-0000-0000-0000-000000000000".equals(value)) {
+        throw new IllegalArgumentException("nil UUID is not allowed");
+      }
+    } catch (RuntimeException invalid) {
+      throw new IllegalArgumentException(field + " must be a canonical non-nil UUID", invalid);
+    }
+  }
+
+  private static void requireResponseUuid(String value, String field) {
+    try {
+      requireCanonicalNonNilUuid(value, field);
+    } catch (IllegalArgumentException invalid) {
+      throw invalidResponse(field + " is not a canonical non-nil UUID", invalid);
+    }
+  }
+
+  private static IllegalStateException invalidResponse(String message) {
+    return new IllegalStateException(
+        "World initial player location response is invalid: " + message);
+  }
+
+  private static IllegalStateException invalidResponse(String message, Throwable cause) {
+    return new IllegalStateException(
+        "World initial player location response is invalid: " + message, cause);
+  }
+}

@@ -17,14 +17,20 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.security.CanonicalPreseededActorAssignmentPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceipt;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptRequest;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptService;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
@@ -34,12 +40,17 @@ import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentOutcome;
+import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class CanonicalPreseededActorAssignmentGrpcServiceTest {
   private static final String NAMESPACE = "gameplay";
   private static final String PEER_URI = "spiffe://firemud/ns/gameplay/sa/game-session-service";
+  private static final String WORLD_PEER_URI =
+      "spiffe://firemud/ns/gameplay/sa/world-management-service";
   private static final UUID ASSIGNMENT_UUID = uuid("10000000-0000-4000-8000-000000000001");
   private static final UUID ACCOUNT_UUID = uuid("20000000-0000-4000-8000-000000000002");
   private static final UUID CHARACTER_UUID = uuid("30000000-0000-4000-8000-000000000003");
@@ -66,7 +77,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
                 PreseededActorAssignmentResult.Outcome.ASSIGNED,
                 CHARACTER_UUID,
                 domainRequest.mutationIntentDigest()));
-    var handler = new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService);
+    var handler = assignmentHandler(assignmentService);
 
     CapturingObserver response = invoke(handler, wireRequest);
 
@@ -94,10 +105,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
                 null,
                 domainRequest.mutationIntentDigest()));
 
-    CapturingObserver response =
-        invoke(
-            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService),
-            wireRequest);
+    CapturingObserver response = invoke(assignmentHandler(assignmentService), wireRequest);
 
     assertThat(response.completed).isTrue();
     assertThat(response.value.getOutcome())
@@ -112,10 +120,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
     PreseededActorAssignmentService assignmentService = mock(PreseededActorAssignmentService.class);
     var malformed = request().toBuilder().setMutationIntentDigest("f".repeat(64)).build();
 
-    CapturingObserver response =
-        invoke(
-            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService),
-            malformed);
+    CapturingObserver response = invoke(assignmentHandler(assignmentService), malformed);
 
     assertNoPartialResponse(response, Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(assignmentService);
@@ -125,7 +130,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
   void missingInterceptorPeerFailsBeforeAssignmentService() {
     PreseededActorAssignmentService assignmentService = mock(PreseededActorAssignmentService.class);
     var response = new CapturingObserver();
-    var handler = new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService);
+    var handler = assignmentHandler(assignmentService);
 
     Context.ROOT.run(() -> handler.assignPreseededActor(request(), response));
 
@@ -141,10 +146,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
     PreseededActorAssignmentService deniedService = mock(PreseededActorAssignmentService.class);
     when(deniedService.assign(domainRequest))
         .thenThrow(new AdminAuthorizationException("fixture denial"));
-    var denied =
-        invoke(
-            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, deniedService),
-            wireRequest);
+    var denied = invoke(assignmentHandler(deniedService), wireRequest);
     assertNoPartialResponse(denied, Status.Code.PERMISSION_DENIED);
 
     PreseededActorAssignmentService unavailableService =
@@ -152,11 +154,75 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
     when(unavailableService.assign(domainRequest))
         .thenThrow(
             new PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException());
-    var unavailable =
-        invoke(
-            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, unavailableService),
-            wireRequest);
+    var unavailable = invoke(assignmentHandler(unavailableService), wireRequest);
     assertNoPartialResponse(unavailable, Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void worldReceiptReadReturnsOnlyTheExactPersistedAssignedReceipt() {
+    var wireRequest = receiptReadRequest();
+    var readRequest = PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(wireRequest);
+    var receipt = receipt();
+    var receiptService = mock(PreseededActorAssignmentReceiptService.class);
+    when(receiptService.read(readRequest.receiptRequest())).thenReturn(Optional.of(receipt));
+    var assignmentService = mock(PreseededActorAssignmentService.class);
+    var handler =
+        new CanonicalPreseededActorAssignmentGrpcService(
+            NAMESPACE, assignmentService, receiptService);
+
+    CapturingReadObserver response = invokeRead(handler, wireRequest);
+
+    assertThat(response.completed).isTrue();
+    assertThat(response.errorCode).isNull();
+    assertThat(response.value.getSchemaVersion()).isEqualTo(1);
+    assertThat(response.value.getPlacementOperationUuid())
+        .isEqualTo(wireRequest.getPlacementOperationUuid());
+    assertThat(response.value.getAssignmentUuid()).isEqualTo(receipt.assignmentUuid().toString());
+    assertThat(response.value.getCanonicalAccountUuid())
+        .isEqualTo(receipt.canonicalAccountUuid().toString());
+    assertThat(response.value.getCharacterUuid()).isEqualTo(receipt.characterUuid().toString());
+    assertThat(response.value.getIntentDigest()).isEqualTo(receipt.intentDigest());
+    assertThat(response.value.getExpectedTarget()).isEqualTo(wireRequest.getExpectedTarget());
+    assertThat(response.value.getCorePayload().getDisplayName()).isEqualTo("Sora");
+    assertThat(response.value.getStatus())
+        .isEqualTo(
+            PreseededActorAssignmentReceiptStatus
+                .PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED);
+    verify(receiptService).read(readRequest.receiptRequest());
+    verifyNoInteractions(assignmentService);
+  }
+
+  @Test
+  void missingOrMismatchedPersistedReceiptFailsWithoutPartialResponse() {
+    var wireRequest = receiptReadRequest();
+    var readRequest = PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(wireRequest);
+    var receiptService = mock(PreseededActorAssignmentReceiptService.class);
+    when(receiptService.read(readRequest.receiptRequest())).thenReturn(Optional.empty());
+    var handler =
+        new CanonicalPreseededActorAssignmentGrpcService(
+            NAMESPACE, mock(PreseededActorAssignmentService.class), receiptService);
+
+    assertNoPartialReadResponse(invokeRead(handler, wireRequest), Status.Code.NOT_FOUND);
+
+    when(receiptService.read(readRequest.receiptRequest()))
+        .thenReturn(
+            Optional.of(receipt(uuid("90000000-0000-4000-8000-000000000009"), receiptRequest())));
+    assertNoPartialReadResponse(invokeRead(handler, wireRequest), Status.Code.FAILED_PRECONDITION);
+  }
+
+  @Test
+  void receiptReadRequiresTheWorldPeerBeforeReadingEntityStorage() {
+    var receiptService = mock(PreseededActorAssignmentReceiptService.class);
+    var handler =
+        new CanonicalPreseededActorAssignmentGrpcService(
+            NAMESPACE, mock(PreseededActorAssignmentService.class), receiptService);
+    var response = new CapturingReadObserver();
+
+    Context.ROOT.run(
+        () -> handler.readPreseededActorAssignmentReceipt(receiptReadRequest(), response));
+
+    assertNoPartialReadResponse(response, Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(receiptService);
   }
 
   private static CapturingObserver invoke(
@@ -183,10 +249,109 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
     return response;
   }
 
+  private static CapturingReadObserver invokeRead(
+      CanonicalPreseededActorAssignmentGrpcService handler,
+      ReadPreseededActorAssignmentReceiptRequest request) {
+    var response = new CapturingReadObserver();
+    ServerCall<
+            ReadPreseededActorAssignmentReceiptRequest, ReadPreseededActorAssignmentReceiptResponse>
+        call = mock(ServerCall.class);
+    MethodDescriptor<
+            ReadPreseededActorAssignmentReceiptRequest, ReadPreseededActorAssignmentReceiptResponse>
+        descriptor = mock(MethodDescriptor.class);
+    when(descriptor.getFullMethodName())
+        .thenReturn(CanonicalPreseededActorAssignmentPeerInterceptor.RECEIPT_READ_METHOD_NAME);
+    when(call.getMethodDescriptor()).thenReturn(descriptor);
+    Attributes attributes =
+        Attributes.newBuilder()
+            .set(Grpc.TRANSPORT_ATTR_SSL_SESSION, peerSession(WORLD_PEER_URI))
+            .build();
+    when(call.getAttributes()).thenReturn(attributes);
+    ServerCallHandler<
+            ReadPreseededActorAssignmentReceiptRequest, ReadPreseededActorAssignmentReceiptResponse>
+        next =
+            (ignoredCall, ignoredHeaders) -> {
+              handler.readPreseededActorAssignmentReceipt(request, response);
+              return new ServerCall.Listener<>() {};
+            };
+
+    new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE)
+        .interceptCall(call, new Metadata(), next);
+    return response;
+  }
+
+  private static CanonicalPreseededActorAssignmentGrpcService assignmentHandler(
+      PreseededActorAssignmentService assignmentService) {
+    return new CanonicalPreseededActorAssignmentGrpcService(
+        NAMESPACE, assignmentService, mock(PreseededActorAssignmentReceiptService.class));
+  }
+
   private static void assertNoPartialResponse(CapturingObserver response, Status.Code code) {
     assertThat(response.value).isNull();
     assertThat(response.completed).isFalse();
     assertThat(response.errorCode).isEqualTo(code);
+  }
+
+  private static void assertNoPartialReadResponse(
+      CapturingReadObserver response, Status.Code code) {
+    assertThat(response.value).isNull();
+    assertThat(response.completed).isFalse();
+    assertThat(response.errorCode).isEqualTo(code);
+  }
+
+  private static ReadPreseededActorAssignmentReceiptRequest receiptReadRequest() {
+    var assignmentRequest = request();
+    var assignment = PreseededActorAssignmentGrpcCodec.fromRequest(assignmentRequest);
+    return ReadPreseededActorAssignmentReceiptRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setPlacementOperationUuid("80000000-0000-4000-8000-000000000008")
+        .setAssignmentUuid(assignment.assignmentUuid().toString())
+        .setCanonicalAccountUuid(assignment.canonicalAccountUuid().toString())
+        .setCharacterUuid(CHARACTER_UUID.toString())
+        .setIntentDigest(assignment.mutationIntentDigest())
+        .setExpectedTarget(assignmentRequest.getExpectedTarget())
+        .build();
+  }
+
+  private static PreseededActorAssignmentReceiptRequest receiptRequest() {
+    var assignment = PreseededActorAssignmentGrpcCodec.fromRequest(request());
+    return new PreseededActorAssignmentReceiptRequest(
+        assignment.assignmentUuid(),
+        assignment.canonicalAccountUuid(),
+        CHARACTER_UUID,
+        assignment.mutationIntentDigest(),
+        assignment.expectedTarget());
+  }
+
+  private static PreseededActorAssignmentReceipt receipt() {
+    return receipt(CHARACTER_UUID, receiptRequest());
+  }
+
+  private static PreseededActorAssignmentReceipt receipt(
+      UUID characterUuid, PreseededActorAssignmentReceiptRequest selector) {
+    var assignment = PreseededActorAssignmentGrpcCodec.fromRequest(request());
+    return new PreseededActorAssignmentReceipt(
+        selector.assignmentUuid(),
+        selector.canonicalAccountUuid(),
+        characterUuid,
+        selector.intentDigest(),
+        selector.expectedTarget(),
+        assignment.corePayload(),
+        1,
+        "gameplay",
+        23L,
+        "ACCOUNT_REPOSITORY_INSERT",
+        PreseededActorAssignmentOwnerEvidence.Eligibility.ELIGIBLE,
+        Instant.parse("2026-10-25T00:00:00Z"),
+        9L,
+        "b".repeat(64),
+        "c".repeat(64),
+        PreseededActorAssignmentOwnerEvidence.AccountPurpose.PRESEEDED_ACTOR_STAGING,
+        PreseededActorAssignmentOwnerEvidence.AccountCurrentness.CURRENT_AT_REVALIDATION,
+        "d".repeat(64),
+        selector.expectedTarget().publishedReleaseBundleRef(),
+        "PRESEEDED_ONLY",
+        "ASSIGNED");
   }
 
   private static AssignPreseededActorRequest request() {
@@ -239,9 +404,13 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
   }
 
   private static SSLSession peerSession() {
+    return peerSession(PEER_URI);
+  }
+
+  private static SSLSession peerSession(String uri) {
     X509Certificate leaf = mock(X509Certificate.class);
     try {
-      when(leaf.getSubjectAlternativeNames()).thenReturn(List.of(List.of(6, PEER_URI)));
+      when(leaf.getSubjectAlternativeNames()).thenReturn(List.of(List.of(6, uri)));
       SSLSession session = mock(SSLSession.class);
       when(session.getPeerCertificates()).thenReturn(new Certificate[] {leaf});
       return session;
@@ -263,6 +432,28 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
 
     @Override
     public void onNext(AssignPreseededActorResponse next) {
+      value = next;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class CapturingReadObserver
+      implements StreamObserver<ReadPreseededActorAssignmentReceiptResponse> {
+    private ReadPreseededActorAssignmentReceiptResponse value;
+    private Status.Code errorCode;
+    private boolean completed;
+
+    @Override
+    public void onNext(ReadPreseededActorAssignmentReceiptResponse next) {
       value = next;
     }
 

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.gamesession;
 
 import com.google.protobuf.Timestamp;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
@@ -14,7 +15,80 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalInitialAdmissionOwnerPr
 
 /** Closed Game Session producer codec for the exact World initial-admission owner tuple. */
 public final class CanonicalInitialAdmissionOwnerGrpcCodec {
+  private static final long MIN_TIMESTAMP_SECONDS = -62_135_596_800L;
+  private static final long MAX_TIMESTAMP_SECONDS = 253_402_300_799L;
+
   private CanonicalInitialAdmissionOwnerGrpcCodec() {}
+
+  public static GetCanonicalInitialAdmissionOwnerProofRequest toRequest(
+      HoldIdentity expectedIdentity) {
+    Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+    Request request = expectedIdentity.request();
+    var builder =
+        GetCanonicalInitialAdmissionOwnerProofRequest.newBuilder()
+            .setTargetNamespace(request.targetNamespace())
+            .setInitialAdmissionRequestId(request.initialAdmissionRequestId())
+            .setInitialAdmissionRequestDigest(request.initialAdmissionRequestDigest())
+            .setCanonicalTenantId(request.canonicalTenantId().toString())
+            .setWorldSlug(request.worldSlug())
+            .setRealmId(request.realmId().toString())
+            .setPlayableStateNamespaceId(request.playableStateNamespaceId().toString())
+            .setPlayableStateScope(request.playableStateScope())
+            .setCanonicalGameInstanceId(request.canonicalGameInstanceId().toString())
+            .setCanonicalVersionId(request.canonicalVersionId().toString())
+            .setActiveLifecycleEpoch(request.activeLifecycleEpoch())
+            .setExpectedCatalogRevision(request.expectedCatalogRevision())
+            .setOrigin(toWireOrigin(request.initialAdmissionOrigin()))
+            .setHoldId(expectedIdentity.holdId().toString())
+            .setHoldFence(expectedIdentity.holdFence().toString())
+            .setHoldBindingDigest(expectedIdentity.holdBindingDigest());
+    if (request.expectedPriorPointerVersion() != null) {
+      builder.setExpectedPriorPointerVersion(request.expectedPriorPointerVersion());
+    }
+    return builder.build();
+  }
+
+  /** Parses only an exact response for this hold and returns its canonical closed owner proof. */
+  public static GameSessionCanonicalInitialAdmissionOwnerProof requireResponse(
+      HoldIdentity expectedIdentity, GetCanonicalInitialAdmissionOwnerProofResponse response) {
+    Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+    Objects.requireNonNull(response, "response");
+    if (!response.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Owner proof response contains unknown fields");
+    }
+    if (response.hasTerminalAt()
+        && !response.getTerminalAt().getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Owner proof terminal time contains unknown fields");
+    }
+
+    GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome =
+        fromWireOutcome(response.getOutcome());
+    Instant terminalAt =
+        response.hasTerminalAt() ? canonicalInstant(response.getTerminalAt()) : null;
+    if (outcome != GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING
+        && terminalAt == null) {
+      throw new IllegalArgumentException("Terminal owner proof is missing terminal time");
+    }
+    GameSessionCanonicalInitialAdmissionOwnerProof proof =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            expectedIdentity,
+            outcome,
+            response.hasCommittedPointerVersion() ? response.getCommittedPointerVersion() : null,
+            response.hasAuditEventId() ? response.getAuditEventId() : null,
+            response.getProofDigest().isEmpty() ? null : response.getProofDigest(),
+            response.getPositiveDurableAbort(),
+            terminalAt);
+    proof =
+        GameSessionCanonicalInitialAdmissionOwnerProofCodec.fromStored(
+            GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof));
+    GetCanonicalInitialAdmissionOwnerProofResponse canonicalResponse =
+        toResponse(expectedIdentity, proof);
+    if (!canonicalResponse.equals(response)) {
+      throw new IllegalArgumentException(
+          "Owner proof response changed the exact echoed tuple or canonical result fields");
+    }
+    return proof;
+  }
 
   public static HoldIdentity parseRequest(GetCanonicalInitialAdmissionOwnerProofRequest request) {
     Objects.requireNonNull(request, "request");
@@ -174,5 +248,35 @@ public final class CanonicalInitialAdmissionOwnerGrpcCodec {
           CanonicalInitialAdmissionOwnerProofOutcome
               .CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED;
     };
+  }
+
+  private static GameSessionCanonicalInitialAdmissionOwnerProof.Outcome fromWireOutcome(
+      CanonicalInitialAdmissionOwnerProofOutcome outcome) {
+    return switch (outcome) {
+      case CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING ->
+          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING;
+      case CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_COMMITTED ->
+          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED;
+      case CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED ->
+          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED;
+      case CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_UNSPECIFIED, UNRECOGNIZED ->
+          throw new IllegalArgumentException("Owner proof outcome is unsupported");
+    };
+  }
+
+  private static Instant canonicalInstant(Timestamp timestamp) {
+    long seconds = timestamp.getSeconds();
+    int nanos = timestamp.getNanos();
+    if (seconds < MIN_TIMESTAMP_SECONDS
+        || seconds > MAX_TIMESTAMP_SECONDS
+        || nanos < 0
+        || nanos >= 1_000_000_000) {
+      throw new IllegalArgumentException("Owner proof terminal time is not a canonical Timestamp");
+    }
+    Instant instant = Instant.ofEpochSecond(seconds, nanos);
+    if (instant.getEpochSecond() != seconds || instant.getNano() != nanos) {
+      throw new IllegalArgumentException("Owner proof terminal time is not canonical");
+    }
+    return instant;
   }
 }

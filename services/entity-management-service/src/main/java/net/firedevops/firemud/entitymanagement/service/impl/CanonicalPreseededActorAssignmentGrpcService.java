@@ -4,35 +4,45 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.entitymanagement.security.CanonicalPreseededActorAssignmentPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceipt;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptService;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
 
 /**
- * Unregistered certificate-guarded assignment ingress. It delegates all owner reads, grant
- * revalidation and persistence to the existing Entity assignment service.
+ * Unregistered method-guarded assignment write and immutable receipt read. Assignment delegates
+ * owner reads, grant revalidation and persistence to the existing Entity assignment service; the
+ * receipt read delegates to the existing committed-receipt service.
  */
 public final class CanonicalPreseededActorAssignmentGrpcService
     extends CanonicalPreseededActorAssignmentServiceGrpc
         .CanonicalPreseededActorAssignmentServiceImplBase {
   private final String trustedNamespace;
   private final PreseededActorAssignmentService assignmentService;
+  private final PreseededActorAssignmentReceiptService receiptService;
 
   public CanonicalPreseededActorAssignmentGrpcService(
-      String trustedNamespace, PreseededActorAssignmentService assignmentService) {
+      String trustedNamespace,
+      PreseededActorAssignmentService assignmentService,
+      PreseededActorAssignmentReceiptService receiptService) {
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException(
           "Entity Management workload namespace must be one DNS label");
     }
     this.trustedNamespace = trustedNamespace;
     this.assignmentService = Objects.requireNonNull(assignmentService, "assignmentService");
+    this.receiptService = Objects.requireNonNull(receiptService, "receiptService");
   }
 
   @Override
@@ -73,6 +83,62 @@ public final class CanonicalPreseededActorAssignmentGrpcService
       responseObserver.onError(
           Status.INTERNAL
               .withDescription("Preseeded actor assignment failed")
+              .asRuntimeException());
+    }
+  }
+
+  @Override
+  public void readPreseededActorAssignmentReceipt(
+      ReadPreseededActorAssignmentReceiptRequest request,
+      StreamObserver<ReadPreseededActorAssignmentReceiptResponse> responseObserver) {
+    try {
+      CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedWorldPeer(trustedNamespace);
+    } catch (StatusRuntimeException unauthorized) {
+      responseObserver.onError(unauthorized);
+      return;
+    }
+
+    final PreseededActorAssignmentGrpcCodec.ReceiptReadRequest receiptReadRequest;
+    try {
+      receiptReadRequest = PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(request);
+    } catch (IllegalArgumentException malformedRequest) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Preseeded actor assignment receipt selector is invalid")
+              .asRuntimeException());
+      return;
+    }
+
+    final Optional<PreseededActorAssignmentReceipt> storedReceipt;
+    try {
+      storedReceipt =
+          Objects.requireNonNull(
+              receiptService.read(receiptReadRequest.receiptRequest()),
+              "receiptService.read result");
+    } catch (RuntimeException storageFailure) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Preseeded actor assignment receipt read failed")
+              .asRuntimeException());
+      return;
+    }
+    if (storedReceipt.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("Exact committed preseeded actor assignment receipt not found")
+              .asRuntimeException());
+      return;
+    }
+
+    PreseededActorAssignmentReceipt receipt = storedReceipt.orElseThrow();
+    try {
+      responseObserver.onNext(
+          PreseededActorAssignmentGrpcCodec.toReceiptReadResponse(receiptReadRequest, receipt));
+      responseObserver.onCompleted();
+    } catch (RuntimeException invalidPersistedReceipt) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Preseeded actor assignment receipt is not exact and committed")
               .asRuntimeException());
     }
   }
