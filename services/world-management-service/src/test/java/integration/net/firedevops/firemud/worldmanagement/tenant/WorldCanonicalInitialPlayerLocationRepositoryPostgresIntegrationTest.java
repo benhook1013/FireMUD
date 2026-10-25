@@ -9,6 +9,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -32,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -111,6 +115,18 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
       assertThat(repository.read(request)).isEmpty();
       assertThat(repository.readByOperationId(request.operationId(), selector(request, lifecycle)))
           .isEmpty();
+
+      var downgradedTransactionManager =
+          new ReadCommittedPhysicalRepeatableReadTransactionManager(source);
+      var downgradedRepository =
+          new WorldCanonicalInitialPlayerLocationRepository(
+              dsl, downgradedTransactionManager, lifecycleRepository);
+      assertThatThrownBy(() -> downgradedRepository.read(request))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "World initial-location readback requires a read-only repeatable-read transaction");
+      assertThat(downgradedTransactionManager.repeatableReadRequested()).isTrue();
+
       assertThat(rowCount(dsl, "world_canonical_initial_player_location_operation"))
           .isEqualTo(operationsBefore);
       assertThat(rowCount(dsl, "character_location")).isEqualTo(locationsBefore);
@@ -213,6 +229,33 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
 
   private static long rowCount(DSLContext dsl, String table) {
     return dsl.fetchSingle("SELECT count(*) FROM " + DSL.name(table)).get(0, Long.class);
+  }
+
+  private static final class ReadCommittedPhysicalRepeatableReadTransactionManager
+      extends DataSourceTransactionManager {
+    private static final long serialVersionUID = 1L;
+    private boolean repeatableReadRequested;
+
+    private ReadCommittedPhysicalRepeatableReadTransactionManager(DriverManagerDataSource source) {
+      super(source);
+    }
+
+    @Override
+    protected void prepareTransactionalConnection(
+        Connection connection, TransactionDefinition definition) throws SQLException {
+      super.prepareTransactionalConnection(connection, definition);
+      if (definition.isReadOnly()
+          && definition.getIsolationLevel() == TransactionDefinition.ISOLATION_REPEATABLE_READ) {
+        repeatableReadRequested = true;
+        try (Statement statement = connection.createStatement()) {
+          statement.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+        }
+      }
+    }
+
+    private boolean repeatableReadRequested() {
+      return repeatableReadRequested;
+    }
   }
 
   private static String prefixedDigest(byte[] bytes) throws Exception {

@@ -6,6 +6,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -881,9 +882,21 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     }
   }
 
-  private static void requireReadOnlyRepeatableReadTransaction() {
+  private void requireReadOnlyRepeatableReadTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
-        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !Integer.valueOf(Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "World initial-location readback requires a read-only repeatable-read transaction");
+    }
+    Record state =
+        dsl.fetchOne(
+            "SELECT current_setting('transaction_isolation') AS isolation, "
+                + "current_setting('transaction_read_only') AS read_only");
+    if (state == null
+        || !"repeatable read".equals(state.get("isolation", String.class))
+        || !"on".equals(state.get("read_only", String.class))) {
       throw new IllegalStateException(
           "World initial-location readback requires a read-only repeatable-read transaction");
     }

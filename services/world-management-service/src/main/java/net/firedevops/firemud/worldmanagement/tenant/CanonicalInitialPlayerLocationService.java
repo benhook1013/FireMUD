@@ -19,11 +19,10 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Re
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
-import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
 import net.firedevops.firemud.worldmanagement.client.GameSessionCanonicalInitialAdmissionOwnerClient;
+import net.firedevops.firemud.worldmanagement.client.PreseededActorAssignmentReceiptShape;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.RequestSelector;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
@@ -137,26 +136,7 @@ public final class CanonicalInitialPlayerLocationService {
     // PLAY.
     ReadPreseededActorAssignmentReceiptRequest request = entityRequest(selection);
     ReadPreseededActorAssignmentReceiptResponse response = entityReceiptReader.read(request);
-    if (response == null
-        || response.getSerializedSize() > 16 * 1024
-        || !response.getUnknownFields().asMap().isEmpty()
-        || response.getSchemaVersion() != 1
-        || !response.getPlacementOperationUuid().equals(selection.placementOperationId().toString())
-        || !response.getAssignmentUuid().equals(selection.assignmentId().toString())
-        || !response.getCanonicalAccountUuid().equals(selection.canonicalAccountId().toString())
-        || !response.getCharacterUuid().equals(selection.characterId().toString())
-        || !response.getIntentDigest().equals(selection.assignmentIntentDigest())
-        || !response.hasExpectedTarget()
-        || !response.getExpectedTarget().equals(selection.expectedTarget())
-        || !response.getExpectedTarget().getUnknownFields().asMap().isEmpty()
-        || !response.hasCorePayload()
-        || !response.getCorePayload().getUnknownFields().asMap().isEmpty()
-        || response.getCorePayload().getActorKind()
-            != CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER
-        || !validDisplayName(response.getCorePayload().getDisplayName())
-        || response.getStatus()
-            != PreseededActorAssignmentReceiptStatus
-                .PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED) {
+    if (!PreseededActorAssignmentReceiptShape.matches(request, response)) {
       throw failedPrecondition("Entity returned no exact committed assignment receipt");
     }
     return response;
@@ -414,14 +394,6 @@ public final class CanonicalInitialPlayerLocationService {
         ("firemud-world-initial-location-lifecycle-read/v1/" + operationId)
             .getBytes(StandardCharsets.US_ASCII);
     return UUID.nameUUIDFromBytes(name);
-  }
-
-  private static boolean validDisplayName(String value) {
-    return value != null
-        && !value.isBlank()
-        && value.equals(value.trim())
-        && value.codePointCount(0, value.length()) <= 100
-        && value.codePoints().noneMatch(Character::isISOControl);
   }
 
   private static io.grpc.StatusRuntimeException failedPrecondition(String message) {

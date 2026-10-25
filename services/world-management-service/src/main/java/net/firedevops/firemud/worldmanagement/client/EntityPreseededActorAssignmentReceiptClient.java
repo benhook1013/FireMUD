@@ -20,9 +20,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
-import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
 import net.firedevops.firemud.worldmanagement.tenant.CanonicalInitialPlayerLocationService;
@@ -160,38 +158,11 @@ public final class EntityPreseededActorAssignmentReceiptClient
   private static void requireExactResponse(
       ReadPreseededActorAssignmentReceiptRequest request,
       ReadPreseededActorAssignmentReceiptResponse response) {
-    if (response == null
-        || response.getSerializedSize() > MAX_WIRE_BYTES
-        || !response.getUnknownFields().asMap().isEmpty()
-        || response.getSchemaVersion() != 1
-        || !response.getPlacementOperationUuid().equals(request.getPlacementOperationUuid())
-        || !response.getAssignmentUuid().equals(request.getAssignmentUuid())
-        || !response.getCanonicalAccountUuid().equals(request.getCanonicalAccountUuid())
-        || !response.getCharacterUuid().equals(request.getCharacterUuid())
-        || !response.getIntentDigest().equals(request.getIntentDigest())
-        || !response.hasExpectedTarget()
-        || !response.getExpectedTarget().equals(request.getExpectedTarget())
-        || !response.getExpectedTarget().getUnknownFields().asMap().isEmpty()
-        || !response.hasCorePayload()
-        || !response.getCorePayload().getUnknownFields().asMap().isEmpty()
-        || response.getCorePayload().getActorKind()
-            != CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER
-        || !validDisplayName(response.getCorePayload().getDisplayName())
-        || response.getStatus()
-            != PreseededActorAssignmentReceiptStatus
-                .PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED) {
+    if (!PreseededActorAssignmentReceiptShape.matches(request, response)) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Entity returned no exact committed preseeded assignment receipt")
           .asRuntimeException();
     }
-  }
-
-  private static boolean validDisplayName(String value) {
-    return value != null
-        && !value.isBlank()
-        && value.equals(value.trim())
-        && value.codePointCount(0, value.length()) <= 100
-        && value.codePoints().noneMatch(Character::isISOControl);
   }
 
   private static boolean isCanonicalNonNilUuid(String value) {
