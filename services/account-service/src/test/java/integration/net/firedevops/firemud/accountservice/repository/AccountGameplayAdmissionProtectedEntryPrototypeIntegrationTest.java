@@ -894,8 +894,50 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {
-    return new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-        .execute(pending(context, lifetime), UUID.randomUUID());
+    var evidence = pending(context, lifetime);
+    long startedAtNanos = System.nanoTime();
+    try {
+      return new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+          .execute(evidence, UUID.randomUUID());
+    } catch (RuntimeException failure) {
+      try {
+        long failedAtNanos = System.nanoTime();
+        long jvmWallClockMs = Instant.now().toEpochMilli();
+        Long databaseWallClockMs = null;
+        Throwable databaseClockFailure = null;
+        try {
+          databaseWallClockMs =
+              context
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS database_now_ms")
+                  .get("database_now_ms", Long.class);
+        } catch (Throwable diagnosticFailure) {
+          databaseClockFailure = diagnosticFailure;
+        }
+        String diagnosticMessage =
+            "Original COMMIT failure timing: evaluatedAtMs="
+                + evidence.carrier().get("evaluatedAt")
+                + "; expiresAtMs="
+                + evidence.carrier().get("expiresAt")
+                + "; jvmWallClockMs="
+                + jvmWallClockMs
+                + "; dbWallClockMs="
+                + (databaseWallClockMs == null ? "unavailable" : databaseWallClockMs)
+                + "; monotonicElapsedNanos="
+                + (failedAtNanos - startedAtNanos);
+        IllegalStateException diagnostic = new IllegalStateException(diagnosticMessage);
+        if (databaseClockFailure != null) {
+          diagnostic.addSuppressed(
+              new IllegalStateException(
+                  "Database wall-clock read failed: " + databaseClockFailure.getClass().getName()));
+        }
+        failure.addSuppressed(diagnostic);
+      } catch (Throwable ignoredDiagnosticFailure) {
+        // Timing diagnostics must never replace the original finalization failure.
+      }
+      throw failure;
+    }
   }
 
   private static AccountGameplayAdmissionLeaseEvidence pending(Context context, long lifetime) {
