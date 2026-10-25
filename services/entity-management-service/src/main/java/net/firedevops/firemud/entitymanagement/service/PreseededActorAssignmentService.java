@@ -11,6 +11,15 @@ import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
  * authorize runtime activation.
  */
 public final class PreseededActorAssignmentService {
+  /** A known mismatch or ineligibility in the current owner evidence for this assignment. */
+  public static final class PreconditionException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    public PreconditionException(String message) {
+      super(message);
+    }
+  }
+
   private final RunOwnedPreseededAssignmentAuthority runAuthority;
   private final PreseededActorAccountIdentityPort accountIdentityPort;
   private final PreseededActorStagingEligibilityPort stagingEligibilityPort;
@@ -56,7 +65,7 @@ public final class PreseededActorAssignmentService {
 
     String intentDigest = PreseededActorAssignmentIntentDigest.compute(request, target);
     if (!request.mutationIntentDigest().equals(intentDigest)) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_MUTATION_INTENT_DIGEST_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_MUTATION_INTENT_DIGEST_MISMATCH");
     }
     // Re-read the run-owned capability against the independently resolved target immediately
     // before entering the atomic owner repository operation.
@@ -70,7 +79,7 @@ public final class PreseededActorAssignmentService {
     if (proof == null
         || !request.assignmentUuid().equals(proof.requestId())
         || !request.canonicalAccountUuid().equals(proof.canonicalAccountId())) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_PROOF_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_PROOF_MISMATCH");
     }
   }
 
@@ -84,16 +93,16 @@ public final class PreseededActorAssignmentService {
         || !request.expectedTarget().canonicalTenantUuid().equals(staging.canonicalTenantId())
         || !identity.targetNamespace().equals(staging.targetNamespace())
         || !identity.accountUuidProvenance().equals(staging.accountUuidProvenance())) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_MISMATCH");
     }
     if (staging.purpose()
             != AccountActorStagingEligibilityEvidence.Purpose.PUBLIC_PRODUCTION_STAGING_ONLY
         || staging.currentness()
             != AccountActorStagingEligibilityEvidence.Currentness.CURRENT_AT_REVALIDATION) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_REVALIDATION_REQUIRED");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_REVALIDATION_REQUIRED");
     }
     if (staging.decision() != AccountActorStagingEligibilityEvidence.Decision.STAGING_ELIGIBLE) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_NOT_CURRENTLY_ELIGIBLE");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_NOT_CURRENTLY_ELIGIBLE");
     }
   }
 
@@ -104,23 +113,23 @@ public final class PreseededActorAssignmentService {
     if (target == null
         || !request.assignmentUuid().equals(target.assignmentUuid())
         || !request.canonicalAccountUuid().equals(target.canonicalAccountUuid())) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_OWNER_PROOF_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_OWNER_PROOF_MISMATCH");
     }
     if (target.eligibility() != PreseededActorAssignmentOwnerEvidence.Eligibility.ELIGIBLE) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_NOT_CURRENTLY_ELIGIBLE");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_NOT_CURRENTLY_ELIGIBLE");
     }
     if (target.accountPurpose()
             != PreseededActorAssignmentOwnerEvidence.AccountPurpose.PRESEEDED_ACTOR_STAGING
         || target.accountCurrentness()
             != PreseededActorAssignmentOwnerEvidence.AccountCurrentness.CURRENT_AT_REVALIDATION) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_REVALIDATION_REQUIRED");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_REVALIDATION_REQUIRED");
     }
     if (target.entryPolicy()
         != PreseededActorAssignmentOwnerEvidence.PublishedEntryPolicy.PRESEEDED_ONLY) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_POLICY_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_POLICY_MISMATCH");
     }
     if (!request.expectedTarget().exactlyMatches(target)) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
     }
     if (!target.canonicalTenantUuid().equals(staging.canonicalTenantId())
         || target.eligibilityEvaluatedAt() == null
@@ -128,7 +137,7 @@ public final class PreseededActorAssignmentService {
         || target.membershipAuthorityGeneration() != staging.membershipAuthorityGeneration()
         || !target.eligibilityEvidenceDigest().equals(staging.eligibilityDecisionDigest())
         || !target.accountAuthoritySnapshotDigest().equals(staging.authoritySnapshotDigest())) {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_MISMATCH");
+      throw new PreconditionException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_MISMATCH");
     }
   }
 }
