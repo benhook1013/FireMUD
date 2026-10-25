@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -251,9 +252,168 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
     assertThat(unexpectedFailure.errorDescription).isEqualTo("Preseeded actor assignment failed");
   }
 
+  @Test
+  void dependencyStatusesMapToBoundedTransportFailuresWithoutPartialResponse() {
+    var wireRequest = request();
+    PreseededActorAssignmentRequest domainRequest =
+        PreseededActorAssignmentGrpcCodec.fromRequest(wireRequest);
+    for (Status.Code upstreamCode :
+        List.of(
+            Status.Code.UNAVAILABLE,
+            Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.RESOURCE_EXHAUSTED,
+            Status.Code.ABORTED,
+            Status.Code.CANCELLED,
+            Status.Code.UNAUTHENTICATED,
+            Status.Code.UNKNOWN)) {
+      PreseededActorAssignmentService assignmentService =
+          mock(PreseededActorAssignmentService.class);
+      when(assignmentService.assign(domainRequest))
+          .thenThrow(
+              Status.fromCode(upstreamCode)
+                  .withDescription("PRIVATE DEPENDENCY DETAIL")
+                  .asRuntimeException());
+
+      CapturingObserver response =
+          invoke(
+              new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService),
+              wireRequest);
+
+      Status.Code expectedCode =
+          upstreamCode == Status.Code.UNKNOWN ? Status.Code.INTERNAL : Status.Code.UNAVAILABLE;
+      assertNoPartialResponse(response, expectedCode);
+      assertThat(response.errorDescription)
+          .isEqualTo(
+              expectedCode == Status.Code.UNAVAILABLE
+                  ? "Preseeded actor assignment owner is unavailable"
+                  : "Preseeded actor assignment failed");
+    }
+  }
+
+  @Test
+  void onNextFailureIsReportedAsTheSameExceptionAndDoesNotComplete() {
+    var wireRequest = request();
+    PreseededActorAssignmentRequest domainRequest =
+        PreseededActorAssignmentGrpcCodec.fromRequest(wireRequest);
+    var assignmentService = mock(PreseededActorAssignmentService.class);
+    when(assignmentService.assign(domainRequest))
+        .thenReturn(
+            new PreseededActorAssignmentResult(
+                ASSIGNMENT_UUID,
+                PreseededActorAssignmentResult.Outcome.ASSIGNED,
+                CHARACTER_UUID,
+                domainRequest.mutationIntentDigest()));
+    var observerFailure = new IllegalStateException("observer failure");
+    var calls = new ObserverCalls();
+    StreamObserver<AssignPreseededActorResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(AssignPreseededActorResponse value) {
+            calls.next = true;
+            throw observerFailure;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            calls.error = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            calls.completed = true;
+          }
+        };
+
+    invokeWithObserver(
+        new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService),
+        wireRequest,
+        observer);
+
+    assertThat(calls.next).isTrue();
+    assertThat(calls.error).isSameAs(observerFailure);
+    assertThat(calls.completed).isFalse();
+  }
+
+  @Test
+  void onCompletedFailurePropagatesWithoutASecondTerminalCallback() {
+    var wireRequest = request();
+    PreseededActorAssignmentRequest domainRequest =
+        PreseededActorAssignmentGrpcCodec.fromRequest(wireRequest);
+    var assignmentService = mock(PreseededActorAssignmentService.class);
+    when(assignmentService.assign(domainRequest))
+        .thenReturn(
+            new PreseededActorAssignmentResult(
+                ASSIGNMENT_UUID,
+                PreseededActorAssignmentResult.Outcome.ASSIGNED,
+                CHARACTER_UUID,
+                domainRequest.mutationIntentDigest()));
+    var observerFailure = new IllegalStateException("completion failure");
+    var calls = new ObserverCalls();
+    StreamObserver<AssignPreseededActorResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(AssignPreseededActorResponse value) {
+            calls.next = true;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            calls.error = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            calls.completed = true;
+            throw observerFailure;
+          }
+        };
+
+    assertThatThrownBy(
+            () ->
+                invokeWithObserver(
+                    new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService),
+                    wireRequest,
+                    observer))
+        .isSameAs(observerFailure);
+    assertThat(calls.next).isTrue();
+    assertThat(calls.completed).isTrue();
+    assertThat(calls.error).isNull();
+  }
+
+  @Test
+  void invalidPersistedResultStillReturnsBoundedInternalWithoutPartialResponse() {
+    var wireRequest = request();
+    PreseededActorAssignmentRequest domainRequest =
+        PreseededActorAssignmentGrpcCodec.fromRequest(wireRequest);
+    var assignmentService = mock(PreseededActorAssignmentService.class);
+    when(assignmentService.assign(domainRequest))
+        .thenReturn(
+            new PreseededActorAssignmentResult(
+                uuid("80000000-0000-4000-8000-000000000008"),
+                PreseededActorAssignmentResult.Outcome.ASSIGNED,
+                CHARACTER_UUID,
+                domainRequest.mutationIntentDigest()));
+
+    CapturingObserver response =
+        invoke(
+            new CanonicalPreseededActorAssignmentGrpcService(NAMESPACE, assignmentService),
+            wireRequest);
+
+    assertNoPartialResponse(response, Status.Code.INTERNAL);
+    assertThat(response.errorDescription).isEqualTo("Preseeded actor assignment failed");
+  }
+
   private static CapturingObserver invoke(
       CanonicalPreseededActorAssignmentGrpcService handler, AssignPreseededActorRequest request) {
     var response = new CapturingObserver();
+    invokeWithObserver(handler, request, response);
+    return response;
+  }
+
+  private static void invokeWithObserver(
+      CanonicalPreseededActorAssignmentGrpcService handler,
+      AssignPreseededActorRequest request,
+      StreamObserver<AssignPreseededActorResponse> response) {
     ServerCall<AssignPreseededActorRequest, AssignPreseededActorResponse> call =
         mock(ServerCall.class);
     MethodDescriptor<AssignPreseededActorRequest, AssignPreseededActorResponse> descriptor =
@@ -272,7 +432,12 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
 
     new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE)
         .interceptCall(call, new Metadata(), next);
-    return response;
+  }
+
+  private static final class ObserverCalls {
+    private boolean next;
+    private Throwable error;
+    private boolean completed;
   }
 
   private static void assertNoPartialResponse(CapturingObserver response, Status.Code code) {

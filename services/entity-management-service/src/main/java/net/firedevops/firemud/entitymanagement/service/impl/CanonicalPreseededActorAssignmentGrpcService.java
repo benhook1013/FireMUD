@@ -65,16 +65,24 @@ public final class CanonicalPreseededActorAssignmentGrpcService
       return;
     }
 
+    final AssignPreseededActorResponse response;
     try {
-      responseObserver.onNext(
-          PreseededActorAssignmentGrpcCodec.toResponse(assignmentRequest, result));
-      responseObserver.onCompleted();
+      response = PreseededActorAssignmentGrpcCodec.toResponse(assignmentRequest, result);
     } catch (RuntimeException invalidPersistedResult) {
       responseObserver.onError(
           Status.INTERNAL
               .withDescription("Preseeded actor assignment failed")
               .asRuntimeException());
+      return;
     }
+
+    try {
+      responseObserver.onNext(response);
+    } catch (RuntimeException observerFailure) {
+      responseObserver.onError(observerFailure);
+      return;
+    }
+    responseObserver.onCompleted();
   }
 
   private static StatusRuntimeException toAssignmentFailureStatus(RuntimeException failure) {
@@ -90,7 +98,12 @@ public final class CanonicalPreseededActorAssignmentGrpcService
             .withDescription("Preseeded actor assignment owner evidence is not current")
             .asRuntimeException();
       }
-      if (code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED) {
+      if (code == Status.Code.UNAVAILABLE
+          || code == Status.Code.DEADLINE_EXCEEDED
+          || code == Status.Code.RESOURCE_EXHAUSTED
+          || code == Status.Code.ABORTED
+          || code == Status.Code.CANCELLED
+          || code == Status.Code.UNAUTHENTICATED) {
         return Status.UNAVAILABLE
             .withDescription("Preseeded actor assignment owner is unavailable")
             .asRuntimeException();
