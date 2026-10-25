@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+import "account/v1/character_create_source_service.proto";
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Unregistered CHARACTER_CREATE owner protection. No activation, admission or terminal authority.
+service CharacterCreateLifecycleService {
+  // Exact same-namespace Account workload only; World independently reads Account's original rows.
+  rpc AcquireCharacterCreateLifecycleProtection(AcquireCharacterCreateLifecycleProtectionRequest)
+      returns (WorldCharacterCreateLifecycleProtection);
+  // Exact same-namespace Entity workload only; immutable original acquisition, never a refresh.
+  rpc ReadOriginalCharacterCreateLifecycleProtection(ReadOriginalCharacterCreateLifecycleProtectionRequest)
+      returns (WorldCharacterCreateLifecycleProtection);
+}
+
+message AcquireCharacterCreateLifecycleProtectionRequest {
+  account.v1.ReadOriginalCharacterCreateProtectionRequest account_protection = 1;
+}
+
+message ReadOriginalCharacterCreateLifecycleProtectionRequest {
+  account.v1.ReadOriginalCharacterCreateProtectionRequest account_protection = 1;
+  string world_protection_id = 2;
+  int64 world_protection_fence = 3;
+}
+
+message WorldCharacterCreateLifecycleProtection {
+  account.v1.ReadOriginalCharacterCreateProtectionResponse account_protection = 1;
+  string world_protection_id = 2;
+  int64 world_protection_fence = 3;
+  string acquired_at = 4;
+  bytes original_lifecycle_evidence = 5;
+}

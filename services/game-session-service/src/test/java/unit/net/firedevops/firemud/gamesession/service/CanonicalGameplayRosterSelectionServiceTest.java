@@ -40,7 +40,12 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelecte
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
+import net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceService;
+import net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceService.ResolvedPlayerCreatedRosterSource;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient.VerifiedPlayerCreatedCharacter;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClient.VerifiedPlayerCreatedRoster;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
 import net.firedevops.firemud.gamesession.command.text.CanonicalGameplayActorSelection;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
@@ -50,12 +55,15 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository.SelectionOutcome;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionService;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.testing.ControlledPlayerCreatedRosterValues;
+import net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceRequest;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -753,6 +761,555 @@ class CanonicalGameplayRosterSelectionServiceTest {
         menu.service().select(context(menu.route(), UUID.randomUUID().toString()), null, null),
         CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
   }
+
+  @Test
+  void createdZeroDeniesAndOneReturnsTheDistinctCompleteTerminalReference() throws Exception {
+    var empty = createdHarness(0);
+    assertDenied(
+        empty.service().select(empty.context(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.NO_PLAYER_CREATED_ACTOR);
+    verify(empty.client())
+        .completeSelection(empty.source(), empty.context(), SelectionOutcome.DENIED);
+    verify(empty.client(), never()).readSelectedPlayerCreatedCharacter(any(), any());
+    verifyNoInteractions(empty.preseeded(), empty.publications());
+
+    var one = createdHarness(1);
+    assertThat(one.service().select(one.context(), null, null))
+        .isInstanceOfSatisfying(
+            CanonicalGameplayRosterSelectionService.SelectedPlayerCreatedOwnerReference.class,
+            selected -> {
+              assertThat(selected.ownerReference()).isSameAs(one.reference());
+              assertThat(selected.displayName()).isEqualTo("Created One");
+              assertThat(selected.ordinal()).isEqualTo(1);
+              assertThat(selected.ownerReference().terminal().toByteString())
+                  .isEqualTo(one.reference().response().getTerminal().toByteString());
+              assertThat(selected.ownerReference().creationOperationUuid().toString())
+                  .isEqualTo(one.reference().response().getCreationOperationUuid());
+            });
+    verify(one.client()).completeSelection(one.source(), one.context(), SelectionOutcome.SELECTED);
+    verify(one.sources(), org.mockito.Mockito.times(3)).resolvePlayerCreatedRosterSource(any());
+    var request = org.mockito.ArgumentCaptor.forClass(ReadPlayerCreatedRosterSourceRequest.class);
+    verify(one.sources(), org.mockito.Mockito.times(3))
+        .resolvePlayerCreatedRosterSource(request.capture());
+    var actual = request.getValue();
+    assertThat(actual.getSchemaVersion()).isEqualTo(1);
+    assertThat(actual.getReadRequestId()).isEqualTo(one.context().getRequestId());
+    assertThat(actual.getTargetNamespace()).isEqualTo(one.route().targetNamespace());
+    assertThat(actual.getCanonicalTenantId()).isEqualTo(one.route().canonicalTenantId().toString());
+    assertThat(actual.getRealmId()).isEqualTo(one.route().realmId().toString());
+    assertThat(actual.getWorldSlug()).isEqualTo(one.route().worldSlug());
+    assertThat(actual.getRealmSlug()).isEqualTo(one.route().realmSlug());
+    assertThat(actual.getPlayableStateNamespaceId())
+        .isEqualTo(one.route().playableStateNamespaceId().toString());
+    assertThat(actual.getPlayableStateScope()).isEqualTo("SHARED");
+    assertThat(actual.getCanonicalGameInstanceId())
+        .isEqualTo(one.route().canonicalGameInstanceId().toString());
+    assertThat(actual.getCatalogRevision()).isEqualTo(one.route().catalogRevision());
+    assertThat(actual.getPointerVersion()).isEqualTo(one.route().pointerVersion());
+    assertThat(actual.getExpectedCanonicalVersionId())
+        .isEqualTo(one.route().canonicalVersionId().toString());
+    assertThat(actual.getActiveWorldEpoch()).isEqualTo(one.route().activeWorldEpoch());
+    verifyNoInteractions(one.preseeded(), one.publications());
+  }
+
+  @Test
+  void createdManyUsesExactMenuAndOnlyOneBasedOrdinals() throws Exception {
+    var menuHarness = createdHarness(2);
+    var menu =
+        (CanonicalGameplayRosterSelectionService.SelectionRequired)
+            menuHarness.service().select(menuHarness.context(), null, null);
+    assertThat(menu.choices())
+        .containsExactly(
+            new CanonicalGameplayActorSelection.Choice(1, "Created One"),
+            new CanonicalGameplayActorSelection.Choice(2, "Created Two"));
+    verify(menuHarness.client())
+        .completeSelection(menuHarness.source(), menuHarness.context(), SelectionOutcome.MENU);
+    // A later explicit choice has its own original operation and retains the earlier menu identity.
+    var choice = createdHarness(2);
+    assertThat(choice.service().select(choice.context(), "2", menu.menuIdentity()))
+        .isInstanceOfSatisfying(
+            CanonicalGameplayRosterSelectionService.SelectedPlayerCreatedOwnerReference.class,
+            selected ->
+                assertThat(selected.ownerReference().selectedCharacterUuid())
+                    .isEqualTo(SECOND_ACTOR));
+    verify(choice.client())
+        .reserveSelectionInput(
+            choice.source(),
+            choice.context(),
+            "2",
+            menu.menuIdentity().snapshotUuid(),
+            menu.menuIdentity().snapshotDigest());
+    for (String selector : List.of(FIRST_ACTOR.toString(), "Created One", "01", "0", "3")) {
+      var invalid = createdHarness(2);
+      assertDenied(
+          invalid.service().select(invalid.context(), selector, menu.menuIdentity()),
+          selector.equals("3")
+              ? CanonicalGameplayRosterSelectionService.Denial.SELECTOR_OUT_OF_RANGE
+              : CanonicalGameplayRosterSelectionService.Denial.INVALID_SELECTOR);
+      verify(invalid.client())
+          .completeSelection(invalid.source(), invalid.context(), SelectionOutcome.DENIED);
+      verify(invalid.client(), never()).readSelectedPlayerCreatedCharacter(any(), any());
+    }
+    var missing = createdHarness(2);
+    assertDenied(
+        missing.service().select(missing.context(), "1", null),
+        CanonicalGameplayRosterSelectionService.Denial.MISSING_MENU_IDENTITY);
+    var stale = createdHarness(2);
+    assertDenied(
+        stale
+            .service()
+            .select(
+                stale.context(),
+                "1",
+                new CanonicalGameplayRosterSelectionService.SelectionMenuIdentity(
+                    CHANGED_SNAPSHOT, menu.menuIdentity().snapshotDigest())),
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+  }
+
+  @Test
+  void createdDispatchNeverFallsBackAndUnsupportedPoliciesStayDenied() throws Exception {
+    var h = createdHarness(1);
+    for (String policy : List.of("AUTO_PROVISIONED", "UNKNOWN")) {
+      when(h.routes().readCurrentTarget(h.route().canonicalTenantId()))
+          .thenReturn(withPolicy(h.route(), policy));
+      assertDenied(
+          h.service().select(h.context(), null, null),
+          CanonicalGameplayRosterSelectionService.Denial.UNSUPPORTED_ENTRY_POLICY);
+    }
+    verifyNoInteractions(h.sources(), h.client(), h.preseeded(), h.publications());
+    when(h.routes().readCurrentTarget(h.route().canonicalTenantId())).thenReturn(h.route());
+    for (var service :
+        List.of(
+            new CanonicalGameplayRosterSelectionService(
+                h.routes(), h.publications(), h.preseeded()),
+            new CanonicalGameplayRosterSelectionService(
+                h.routes(), h.publications(), h.preseeded(), h.sources(), null),
+            new CanonicalGameplayRosterSelectionService(
+                h.routes(), h.publications(), h.preseeded(), null, h.client()))) {
+      assertDenied(
+          service.select(h.context(), null, null),
+          CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
+    }
+    verifyNoInteractions(h.sources(), h.client(), h.preseeded(), h.publications());
+    var old = PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute();
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var publications = mock(CanonicalPublishedPlayerRouteReadService.class);
+    var preseeded = mock(CanonicalGameplayRosterClient.class);
+    var sources = mock(GameSessionCharacterCreatePublicSourceService.class);
+    var created = mock(CanonicalPlayerCreatedRosterClient.class);
+    when(routes.readCurrentTarget(old.route().canonicalTenantId())).thenReturn(old.route());
+    when(publications.readCurrent(old.route())).thenReturn(old);
+    when(preseeded.listPreseededRoster(any(), any()))
+        .thenReturn(PublishedRealmPolicyEvidenceFixture.rosterSnapshot(old, ACCOUNT, List.of()));
+    var fiveArgumentPreseeded =
+        new CanonicalGameplayRosterSelectionService(
+            routes, publications, preseeded, sources, created);
+    assertDenied(
+        fiveArgumentPreseeded.select(
+            context(old.route(), UUID.randomUUID().toString()), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.NO_PRESEEDED_ACTOR);
+    verifyNoInteractions(sources, created);
+  }
+
+  @Test
+  void createdSourceTargetDescriptorAndPolicyRacesAfterEitherRpcRefuseSelection() throws Exception {
+    for (boolean afterSelected : List.of(false, true)) {
+      for (String changedPart : List.of("target", "source", "policy")) {
+        var h = createdHarness(1);
+        var changed = mock(ResolvedPlayerCreatedRosterSource.class);
+        var changedRoute =
+            changedPart.equals("policy") ? withPolicy(h.route(), "PRESEEDED_ONLY") : h.route();
+        var changedTarget =
+            changedPart.equals("target")
+                ? h.source().target().toBuilder()
+                    .setPointerVersion(h.route().pointerVersion() + 1)
+                    .build()
+                : h.source().target();
+        var changedIdentity =
+            changedPart.equals("source")
+                ? h.source().sourceIdentity().toBuilder()
+                    .setDescriptorRevisionUuid(UUID.randomUUID().toString())
+                    .build()
+                : h.source().sourceIdentity();
+        when(changed.route()).thenReturn(changedRoute);
+        when(changed.target()).thenReturn(changedTarget);
+        when(changed.sourceIdentity()).thenReturn(changedIdentity);
+        if (afterSelected)
+          when(h.sources().resolvePlayerCreatedRosterSource(any()))
+              .thenReturn(h.source(), h.source(), changed);
+        else
+          when(h.sources().resolvePlayerCreatedRosterSource(any())).thenReturn(h.source(), changed);
+        assertDenied(
+            h.service().select(h.context(), null, null),
+            CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
+        verify(h.client()).completeSelection(h.source(), h.context(), SelectionOutcome.DENIED);
+        if (!afterSelected)
+          verify(h.client(), never()).readSelectedPlayerCreatedCharacter(any(), any());
+      }
+    }
+  }
+
+  @Test
+  void createdSourceRereadIgnoresOnlyCorrelationFieldsAndRequiresInitialFullRoute()
+      throws Exception {
+    var h = createdHarness(1);
+    var same = mock(ResolvedPlayerCreatedRosterSource.class);
+    var sameRoute = h.route();
+    var sameTarget = h.source().target();
+    var sameIdentity = h.source().sourceIdentity();
+    when(same.route()).thenReturn(sameRoute);
+    when(same.target()).thenReturn(sameTarget);
+    when(same.sourceIdentity()).thenReturn(sameIdentity);
+    when(same.response())
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.ReadPlayerCreatedRosterSourceResponse.newBuilder()
+                .setRequest(
+                    ReadPlayerCreatedRosterSourceRequest.newBuilder()
+                        .setReadRequestId(UUID.randomUUID().toString()))
+                .build());
+    when(h.sources().resolvePlayerCreatedRosterSource(any())).thenReturn(h.source(), same, same);
+    assertThat(h.service().select(h.context(), null, null))
+        .isInstanceOf(
+            CanonicalGameplayRosterSelectionService.SelectedPlayerCreatedOwnerReference.class);
+    var changed = createdHarness(1);
+    when(changed.source().route()).thenReturn(withPolicy(changed.route(), "AUTO_PROVISIONED"));
+    assertDenied(
+        changed.service().select(changed.context(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
+    verifyNoInteractions(changed.client());
+  }
+
+  @Test
+  void createdTransientAndUntrustedPeerFailuresNeverPrematurelyFinalize() throws Exception {
+    for (boolean selectedRead : List.of(false, true)) {
+      var unavailable = createdHarness(1);
+      if (selectedRead)
+        doThrow(Status.UNAVAILABLE.asRuntimeException())
+            .when(unavailable.client())
+            .readSelectedPlayerCreatedCharacter(any(), any());
+      else
+        doThrow(Status.UNAVAILABLE.asRuntimeException())
+            .when(unavailable.client())
+            .listPlayerCreatedRoster(any(), any());
+      assertDenied(
+          unavailable.service().select(unavailable.context(), null, null),
+          selectedRead
+              ? CanonicalGameplayRosterSelectionService.Denial.ASSIGNMENT_UNAVAILABLE
+              : CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
+      verify(unavailable.client(), never()).completeSelection(any(), any(), any());
+      var wrongPeer = createdHarness(1);
+      if (selectedRead)
+        doThrow(Status.UNAUTHENTICATED.asRuntimeException())
+            .when(wrongPeer.client())
+            .readSelectedPlayerCreatedCharacter(any(), any());
+      else
+        doThrow(Status.UNAUTHENTICATED.asRuntimeException())
+            .when(wrongPeer.client())
+            .listPlayerCreatedRoster(any(), any());
+      assertDenied(
+          wrongPeer.service().select(wrongPeer.context(), null, null),
+          selectedRead
+              ? CanonicalGameplayRosterSelectionService.Denial.INVALID_ASSIGNMENT_PROOF
+              : CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
+      verify(wrongPeer.client(), never()).completeSelection(any(), any(), any());
+      var storage = createdHarness(1);
+      var failure =
+          new CanonicalPublishedPlayerRouteReadService.StorageUnavailableException(
+              "owner unavailable");
+      if (selectedRead)
+        doThrow(failure).when(storage.client()).readSelectedPlayerCreatedCharacter(any(), any());
+      else doThrow(failure).when(storage.client()).listPlayerCreatedRoster(any(), any());
+      assertDenied(
+          storage.service().select(storage.context(), null, null),
+          CanonicalGameplayRosterSelectionService.Denial.ROUTE_UNAVAILABLE);
+      verify(storage.client(), never()).completeSelection(any(), any(), any());
+    }
+    // Controlled exception double checks dispatch, not upstream source custody.
+    for (RuntimeException failure :
+        List.of(
+            Status.UNAVAILABLE.asRuntimeException(),
+            mock(
+                GameSessionCharacterCreatePublicSourceService.SourceDependencyUnavailableException
+                    .class))) {
+      for (int phase = 0; phase < 3; phase++) {
+        var h = createdHarness(1);
+        var calls = new AtomicInteger();
+        int failedPhase = phase;
+        when(h.sources().resolvePlayerCreatedRosterSource(any()))
+            .thenAnswer(
+                call -> {
+                  assertNoAmbientSql();
+                  if (calls.getAndIncrement() == failedPhase) throw failure;
+                  return h.source();
+                });
+        assertDenied(
+            h.service().select(h.context(), null, null),
+            CanonicalGameplayRosterSelectionService.Denial.ROUTE_UNAVAILABLE);
+        verify(h.client(), never()).completeSelection(any(), any(), any());
+      }
+    }
+  }
+
+  @Test
+  void createdTypedStaleOwnerFailuresRetainRouteChangedAndDefinitiveDeniedCompletion()
+      throws Exception {
+    for (int phase = 0; phase < 3; phase++) {
+      var h = createdHarness(1);
+      var stale =
+          new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+              "owner source changed");
+      if (phase == 0)
+        doThrow(stale).when(h.client()).reserveSelectionInput(any(), any(), any(), any(), any());
+      else if (phase == 1) doThrow(stale).when(h.client()).listPlayerCreatedRoster(any(), any());
+      else doThrow(stale).when(h.client()).readSelectedPlayerCreatedCharacter(any(), any());
+      assertDenied(
+          h.service().select(h.context(), null, null),
+          CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
+      verify(h.client()).completeSelection(h.source(), h.context(), SelectionOutcome.DENIED);
+    }
+  }
+
+  @Test
+  void createdAccountOriginalAndSelectedCapabilitySubstitutionFailClosed() throws Exception {
+    var account = createdHarness(1);
+    when(account.roster().canonicalAccountUuid()).thenReturn(UUID.randomUUID());
+    assertDenied(
+        account.service().select(account.context(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
+    var original = createdHarness(1);
+    var substitutedOriginal =
+        original.roster().originalSelection().toBuilder()
+            .setSessionUuid(UUID.randomUUID().toString())
+            .build();
+    when(original.roster().originalSelection()).thenReturn(substitutedOriginal);
+    assertDenied(
+        original.service().select(original.context(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
+    var selected = createdHarness(1);
+    var substitutedRoster = mock(VerifiedPlayerCreatedRoster.class);
+    when(selected.reference().roster()).thenReturn(substitutedRoster);
+    assertDenied(
+        selected.service().select(selected.context(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_ASSIGNMENT_PROOF);
+    verify(selected.client(), never()).completeSelection(any(), any(), any());
+  }
+
+  @Test
+  void createdContextAndAmbientSqlRefuseBeforeSourceAndTerminalWriteFailureStaysClosed()
+      throws Exception {
+    var h = createdHarness(1);
+    assertDenied(
+        h.service()
+            .select(
+                h.context().toBuilder().setCharacterId(FIRST_ACTOR.toString()).build(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_CONTEXT);
+    assertDenied(
+        h.service()
+            .select(
+                h.context().toBuilder().setRealmId(UUID.randomUUID().toString()).build(),
+                null,
+                null),
+        CanonicalGameplayRosterSelectionService.Denial.ROUTE_MISMATCH);
+    try {
+      TransactionSynchronizationManager.initSynchronization();
+      assertDenied(
+          h.service().select(h.context(), null, null),
+          CanonicalGameplayRosterSelectionService.Denial.AMBIENT_TRANSACTION);
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+    verifyNoInteractions(h.sources(), h.client());
+    for (int count : List.of(0, 1, 2)) {
+      var terminalFailure = createdHarness(count);
+      doThrow(new IllegalStateException("controlled missing terminal readback"))
+          .when(terminalFailure.client())
+          .completeSelection(any(), any(), any());
+      assertDenied(
+          terminalFailure.service().select(terminalFailure.context(), null, null),
+          count == 0
+              ? CanonicalGameplayRosterSelectionService.Denial.NO_PLAYER_CREATED_ACTOR
+              : CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
+    }
+  }
+
+  // These private-view/client-capability doubles establish orchestration, not authentication,
+  // genuine source issuance or SQL. The complete terminal values use the existing controlled
+  // CHARACTER_CREATE vector; actual Common/client grammar and physical owner proofs are separate.
+  private static CreatedHarness createdHarness(int actorCount) throws Exception {
+    var values =
+        ControlledPlayerCreatedRosterValues.forSelection(
+            actorCount, SNAPSHOT, FIRST_ACTOR, SECOND_ACTOR);
+    var target = values.target();
+    var identity = values.source();
+    var actors = values.actors();
+    String digest = values.roster().getRoster().getSnapshotDigest();
+    var r = PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute().route();
+    var route =
+        new CanonicalPlayableTarget(
+            values.namespace(),
+            r.tenantSlug(),
+            UUID.fromString(target.getTenantUuid()),
+            target.getWorldSlug(),
+            r.worldDisplayName(),
+            UUID.fromString(target.getRealmUuid()),
+            target.getRealmSlug(),
+            r.realmDisplayName(),
+            r.gameSessionTenantId(),
+            r.gameInstanceId(),
+            UUID.fromString(target.getPlayableStateNamespaceUuid()),
+            "SHARED",
+            UUID.fromString(target.getGameInstanceUuid()),
+            UUID.fromString(target.getCanonicalVersionUuid()),
+            r.runtimeVersionId(),
+            target.getCatalogRevision(),
+            target.getPointerVersion(),
+            target.getAdmissionPointerSnapshotDigest(),
+            target.getActiveWorldEpoch(),
+            r.initialAdmissionRequestId(),
+            r.initialAdmissionRequestDigest(),
+            r.initialAdmissionOriginKind(),
+            r.expectedPriorPointerVersion(),
+            r.holdId(),
+            r.holdFence(),
+            r.holdBindingDigest(),
+            r.auditEventId(),
+            "sha256:" + target.getPublishedOwnerProofDigest(),
+            r.ownerProofOutcome(),
+            false,
+            r.ownerProofTerminalAt(),
+            "PLAYER_CREATED");
+    var context =
+        context(route, values.context().getRequestId()).toBuilder()
+            .setAccountId(values.context().getAccountId())
+            .setSessionId(values.context().getSessionId())
+            .build();
+    var source = mock(ResolvedPlayerCreatedRosterSource.class);
+    when(source.route()).thenReturn(route);
+    when(source.target()).thenReturn(target);
+    when(source.sourceIdentity()).thenReturn(identity);
+    var roster = mock(VerifiedPlayerCreatedRoster.class);
+    when(roster.response()).thenReturn(values.roster());
+    when(roster.resolvedSource()).thenReturn(source);
+    when(roster.originalSelection()).thenReturn(values.original());
+    when(roster.canonicalAccountUuid()).thenReturn(UUID.fromString(context.getAccountId()));
+    when(roster.target()).thenReturn(target);
+    when(roster.sourceIdentity()).thenReturn(identity);
+    when(roster.snapshotUuid())
+        .thenReturn(UUID.fromString(values.roster().getRoster().getSnapshotUuid()));
+    when(roster.snapshotDigest()).thenReturn(digest);
+    when(roster.actors()).thenReturn(actors);
+    var references = new java.util.HashMap<UUID, VerifiedPlayerCreatedCharacter>();
+    for (var actor : actors) {
+      UUID actorUuid = UUID.fromString(actor.getCharacterUuid());
+      var response = values.selected().get(actorUuid);
+      var verified = mock(VerifiedPlayerCreatedCharacter.class);
+      when(verified.roster()).thenReturn(roster);
+      when(verified.response()).thenReturn(response);
+      when(verified.selectedCharacterUuid()).thenReturn(actorUuid);
+      when(verified.creationOperationUuid())
+          .thenReturn(UUID.fromString(response.getCreationOperationUuid()));
+      when(verified.mutationDigest()).thenReturn(response.getMutationDigest());
+      when(verified.terminal()).thenReturn(response.getTerminal());
+      references.put(actorUuid, verified);
+    }
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var publications = mock(CanonicalPublishedPlayerRouteReadService.class);
+    var preseeded = mock(CanonicalGameplayRosterClient.class);
+    var sources = mock(GameSessionCharacterCreatePublicSourceService.class);
+    var client = mock(CanonicalPlayerCreatedRosterClient.class);
+    when(routes.readCurrentTarget(route.canonicalTenantId()))
+        .thenAnswer(
+            call -> {
+              assertNoAmbientSql();
+              return route;
+            });
+    when(sources.resolvePlayerCreatedRosterSource(any()))
+        .thenAnswer(
+            call -> {
+              assertNoAmbientSql();
+              return source;
+            });
+    when(client.listPlayerCreatedRoster(source, context))
+        .thenAnswer(
+            call -> {
+              assertNoAmbientSql();
+              return roster;
+            });
+    when(client.readSelectedPlayerCreatedCharacter(org.mockito.ArgumentMatchers.eq(roster), any()))
+        .thenAnswer(
+            call -> {
+              assertNoAmbientSql();
+              PlayerExecutionContext selectedContext = call.getArgument(1);
+              return references.get(UUID.fromString(selectedContext.getCharacterId()));
+            });
+    return new CreatedHarness(
+        new CanonicalGameplayRosterSelectionService(
+            routes, publications, preseeded, sources, client),
+        route,
+        context,
+        routes,
+        publications,
+        preseeded,
+        sources,
+        source,
+        client,
+        roster,
+        references.get(FIRST_ACTOR));
+  }
+
+  private static CanonicalPlayableTarget withPolicy(CanonicalPlayableTarget r, String policy) {
+    return new CanonicalPlayableTarget(
+        r.targetNamespace(),
+        r.tenantSlug(),
+        r.canonicalTenantId(),
+        r.worldSlug(),
+        r.worldDisplayName(),
+        r.realmId(),
+        r.realmSlug(),
+        r.realmDisplayName(),
+        r.gameSessionTenantId(),
+        r.gameInstanceId(),
+        r.playableStateNamespaceId(),
+        r.playableStateScope(),
+        r.canonicalGameInstanceId(),
+        r.canonicalVersionId(),
+        r.runtimeVersionId(),
+        r.catalogRevision(),
+        r.pointerVersion(),
+        r.admissionPointerSnapshotDigest(),
+        r.activeWorldEpoch(),
+        r.initialAdmissionRequestId(),
+        r.initialAdmissionRequestDigest(),
+        r.initialAdmissionOriginKind(),
+        r.expectedPriorPointerVersion(),
+        r.holdId(),
+        r.holdFence(),
+        r.holdBindingDigest(),
+        r.auditEventId(),
+        r.ownerProofDigest(),
+        r.ownerProofOutcome(),
+        r.positiveDurableAbort(),
+        r.ownerProofTerminalAt(),
+        policy);
+  }
+
+  private static void assertNoAmbientSql() {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+  }
+
+  private record CreatedHarness(
+      CanonicalGameplayRosterSelectionService service,
+      CanonicalPlayableTarget route,
+      PlayerExecutionContext context,
+      CanonicalPlayerRouteReadService routes,
+      CanonicalPublishedPlayerRouteReadService publications,
+      CanonicalGameplayRosterClient preseeded,
+      GameSessionCharacterCreatePublicSourceService sources,
+      ResolvedPlayerCreatedRosterSource source,
+      CanonicalPlayerCreatedRosterClient client,
+      VerifiedPlayerCreatedRoster roster,
+      VerifiedPlayerCreatedCharacter reference) {}
 
   private static TestHarness harness(List<CanonicalGameplayRosterClient.RosterActor> actors)
       throws Exception {

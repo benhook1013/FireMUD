@@ -20,6 +20,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorStagingEligibilityPort;
 
 /** Read-only Entity Management client for non-admitting Account actor-staging evidence. */
@@ -163,7 +164,7 @@ public final class AccountPreseededActorStagingEligibilityClient
         || !requestUuid.equals(evidence.requestId())
         || !accountUuid.equals(evidence.canonicalAccountId())
         || !tenantUuid.equals(evidence.canonicalTenantId())) {
-      throw new IllegalStateException(
+      throw new PreseededActorAssignmentService.PreconditionException(
           "Account actor-staging eligibility response does not match the exact request");
     }
     return evidence;

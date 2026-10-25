@@ -29,9 +29,11 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
@@ -224,7 +226,155 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
     }
   }
 
+  @Test
+  void createdOriginalAndRetirementPreserveCompleteTerminalAboveDefaultReceiveLimit()
+      throws Exception {
+    // Controlled foreign proofs; actual file-backed Entity client and socket mTLS only.
+    boolean maximum = Boolean.getBoolean("firemud.test.created-retirement.maximum-payload");
+    boolean highEntropy =
+        Boolean.parseBoolean(
+            System.getProperty("firemud.test.created-retirement.high-entropy", "true"));
+    var fixture =
+        maximum
+            ? ControlledPlayerCreatedRosterTerminalFixtures.withMaximumOpaqueProtections(
+                NAMESPACE, highEntropy)
+            : ControlledPlayerCreatedRosterTerminalFixtures.withFiveMebibyteAccountProtection(
+                NAMESPACE);
+    if (maximum) {
+      System.out.println(
+          "created-purpose-bytes terminal="
+              + fixture.selected().getTerminal().getSerializedSize()
+              + " selected="
+              + fixture.selected().getSerializedSize()
+              + " original="
+              + fixture.original().getSerializedSize()
+              + " retired="
+              + fixture.acknowledgementRequest().getObservedRetirement().getSerializedSize()
+              + " ack="
+              + fixture.acknowledgementRequest().getSerializedSize()
+              + " confirmation="
+              + fixture.confirmation().getSerializedSize()
+              + " action="
+              + fixture.selected().getTerminal().getAccountOriginal().getOriginalAction().size()
+              + " terminalSlack="
+              + (CanonicalPlayerCreatedRosterEvidence.MAX_TERMINAL_BYTES
+                  - fixture.selected().getTerminal().getSerializedSize())
+              + " ownerSlack="
+              + (CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES
+                  - fixture.original().getSerializedSize())
+              + " ackSlack="
+              + (CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES
+                  - fixture.acknowledgementRequest().getSerializedSize())
+              + " highEntropy="
+              + highEntropy);
+      assertThat(fixture.selected().getTerminal().getOriginalGameSessionProtection().size())
+          .isEqualTo(48 * 1024 * 1024);
+      assertThat(fixture.selected().getTerminal().getOriginalWorldProtection().size())
+          .isEqualTo(48 * 1024 * 1024);
+      assertThat(
+              fixture
+                  .selected()
+                  .getTerminal()
+                  .getAccountOriginal()
+                  .getOriginalSourceReadback()
+                  .size())
+          .isEqualTo(32 * 1024 * 1024);
+    }
+    int defaultReceiveLimit = 4 * 1024 * 1024;
+    assertThat(fixture.selected().getTerminal().getOriginalAccountProtection().size())
+        .isEqualTo((maximum ? 40 : 5) * 1024 * 1024);
+    assertThat(fixture.selected().getTerminal().getSerializedSize())
+        .isGreaterThan(defaultReceiveLimit);
+    assertThat(fixture.original().getSerializedSize()).isGreaterThan(defaultReceiveLimit);
+    assertThat(fixture.acknowledgementRequest().getSerializedSize())
+        .isGreaterThan(defaultReceiveLimit);
+    assertThat(fixture.confirmation().getSerializedSize()).isGreaterThan(defaultReceiveLimit);
+    start(
+        "server",
+        fixture,
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+    SessionContext.setContext(
+        UUID.randomUUID().toString(),
+        List.of("platformAdmin"),
+        Map.of(),
+        true,
+        "account-service",
+        "ambient-instance");
+    try (var client = client()) {
+      client.init();
+      // The production client selects its 194 MiB receive bound from this created request.
+      long started = System.nanoTime();
+      var original = client.getCanonicalGameplayRosterReference(fixture.originalRequest());
+      if (maximum) reportPurposeCall("read", started);
+      assertThat(original).isEqualTo(fixture.original());
+      assertThat(
+              CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(
+                      original)
+                  .getTerminal()
+                  .toByteString())
+          .isEqualTo(fixture.selected().getTerminal().toByteString());
+      assertThat(observedRequest.get()).isEqualTo(fixture.originalRequest());
+      assertThat(authorization.get()).isNull();
+      started = System.nanoTime();
+      var acknowledgement =
+          client.acknowledgeCanonicalGameplayRosterRetirement(fixture.acknowledgementRequest());
+      if (maximum) reportPurposeCall("ack", started);
+      assertThat(acknowledgement).isEqualTo(fixture.acknowledgement());
+      assertThat(observedAcknowledgement.get()).isEqualTo(fixture.acknowledgementRequest());
+      assertThat(
+              observedAcknowledgement
+                  .get()
+                  .getObservedRetirement()
+                  .getCanonicalSelectedPlayerCreatedCharacterReceipt())
+          .isEqualTo(fixture.selected().toByteString());
+      assertThat(authorization.get()).isNull();
+      started = System.nanoTime();
+      var confirmed =
+          client.confirmCanonicalGameplayRosterRetirementAcknowledgement(fixture.confirmation());
+      if (maximum) reportPurposeCall("confirmation", started);
+      assertThat(confirmed)
+          .isEqualTo(
+              CanonicalGameplayRosterRetirementEvidence.confirmationResponse(
+                  fixture.confirmation()));
+      assertThat(observedConfirmation.get()).isEqualTo(fixture.confirmation());
+      assertThat(
+              observedConfirmation
+                  .get()
+                  .getAcknowledgementRequest()
+                  .getObservedRetirement()
+                  .getCanonicalSelectedPlayerCreatedCharacterReceipt())
+          .isEqualTo(fixture.selected().toByteString());
+      assertThat(authorization.get()).isNull();
+      assertThat(callerUri.get()).isEqualTo(ENTITY_URI);
+      assertThat(receivedCalls.get()).isEqualTo(3);
+      assertThat(handlerReads.get()).isEqualTo(3);
+      assertThat(SessionContext.getServiceName()).isEqualTo("account-service");
+    } finally {
+      SessionContext.clear();
+    }
+  }
+
+  private static void reportPurposeCall(String purpose, long started) {
+    System.out.println(
+        "created-purpose-call purpose="
+            + purpose
+            + " apiElapsedNanos="
+            + (System.nanoTime() - started)
+            + " usedHeapBytes="
+            + java.lang.management.ManagementFactory.getMemoryMXBean()
+                .getHeapMemoryUsage()
+                .getUsed());
+  }
+
   private void start(String alias) throws Exception {
+    start(alias, null, 0);
+  }
+
+  private void start(
+      String alias,
+      ControlledPlayerCreatedRosterTerminalFixtures.Bundle controlled,
+      int maxInboundBytes)
+      throws Exception {
     var identity = pki.identity(alias);
     var service =
         new CanonicalGameplayRosterOwnerReadServiceGrpc
@@ -237,8 +387,10 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
             observedRequest.set(request);
             callerUri.set(GrpcPeerIdentity.current().uri());
             responseObserver.onNext(
-                CanonicalGameplayRosterReferenceEvidence.response(
-                    request, 1L, UUID.fromString("12121212-1212-4212-8212-121212121212"), null));
+                controlled == null
+                    ? CanonicalGameplayRosterReferenceEvidence.response(
+                        request, 1L, UUID.fromString("12121212-1212-4212-8212-121212121212"), null)
+                    : controlled.original());
             responseObserver.onCompleted();
           }
 
@@ -250,8 +402,10 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
             observedAcknowledgement.set(request);
             callerUri.set(GrpcPeerIdentity.current().uri());
             observer.onNext(
-                CanonicalGameplayRosterRetirementEvidence.response(
-                    request, UUID.fromString("34343434-3434-4434-8434-343434343434"), 1000));
+                controlled == null
+                    ? CanonicalGameplayRosterRetirementEvidence.response(
+                        request, UUID.fromString("34343434-3434-4434-8434-343434343434"), 1000)
+                    : controlled.acknowledgement());
             observer.onCompleted();
           }
 
@@ -286,8 +440,10 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
             return next.startCall(call, headers);
           }
         };
+    var serverBuilder = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0));
+    if (maxInboundBytes > 0) serverBuilder.maxInboundMessageSize(maxInboundBytes);
     server =
-        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        serverBuilder
             .sslContext(
                 GrpcSslContexts.configure(
                         SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))

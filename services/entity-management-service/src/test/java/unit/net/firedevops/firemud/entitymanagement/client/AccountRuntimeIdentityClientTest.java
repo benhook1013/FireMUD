@@ -29,6 +29,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.client.AccountRuntimeIdentityClient;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
@@ -120,15 +121,16 @@ class AccountRuntimeIdentityClientTest {
   void rejectsSchemaMismatchAndEveryResponseFieldOutsideTheExactRequest() throws Exception {
     ResolveRuntimeAccountIdentityResponse valid = validResponse("ACCOUNT_V29_MIGRATION");
     assertRejected(valid.toBuilder().setSchemaVersion(2).build());
-    assertRejected(valid.toBuilder().setTargetNamespace("other").build());
+    assertPreconditionRejected(valid.toBuilder().setTargetNamespace("other").build());
     assertRejected(valid.toBuilder().setTargetNamespace("").build());
     assertRejected(
         valid.toBuilder().setCanonicalAccountId("AB426BB3-A733-43F0-9C8E-2E379CBDF7EC").build());
-    assertRejected(
+    assertPreconditionRejected(
         valid.toBuilder().setCanonicalAccountId("33333333-3333-4333-8333-333333333333").build());
     assertRejected(
         valid.toBuilder().setCanonicalAccountId("00000000-0000-0000-0000-000000000000").build());
-    assertRejected(valid.toBuilder().setRequestId("33333333-3333-4333-8333-333333333333").build());
+    assertPreconditionRejected(
+        valid.toBuilder().setRequestId("33333333-3333-4333-8333-333333333333").build());
     assertRejected(valid.toBuilder().setRequestId("22222222-2222-4222-8222-22222222222").build());
     assertRejected(valid.toBuilder().setRequestId("00000000-0000-0000-0000-000000000000").build());
     assertRejected(valid.toBuilder().setSourceAccountRowId(0L).build());
@@ -285,6 +287,19 @@ class AccountRuntimeIdentityClientTest {
             () ->
                 client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  private static void assertPreconditionRejected(ResolveRuntimeAccountIdentityResponse response)
+      throws Exception {
+    RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub stub = mockStub();
+    when(stub.resolveRuntimeAccountIdentity(any())).thenReturn(response);
+    AccountRuntimeIdentityClient client = newClient(stub);
+
+    assertThatThrownBy(
+            () ->
+                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
+        .hasMessage("Account runtime identity response does not match the exact request");
   }
 
   private static AccountRuntimeIdentityClient newClient(

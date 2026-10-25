@@ -86,6 +86,7 @@ class GameSessionApplicationIntegrationTest {
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
     PostgresBackedServiceTestSupport.registerPostgresService(
         registry, postgres, "game_session_service");
     PostgresBackedServiceTestSupport.registerRedisService(registry, redis);
