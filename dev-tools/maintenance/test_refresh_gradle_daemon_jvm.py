@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 from unittest.mock import patch
@@ -279,7 +280,8 @@ class DaemonCriteriaTest(unittest.TestCase):
             self.assertEqual(query, {
                 "architecture": [architecture], "heap_size": ["normal"],
                 "image_type": ["jdk"], "jvm_impl": ["hotspot"], "os": [os_name],
-                "page": ["0"], "page_size": ["100"], "vendor": ["eclipse"],
+                "page": ["0"], "page_size": ["20"], "sort_method": ["DEFAULT"],
+                "sort_order": ["DESC"], "vendor": ["eclipse"],
             })
             self.assertEqual(request.get_header("User-agent"), "FireMUD-dependency-maintenance/1.0")
             observed_platforms.add((query["os"][0], query["architecture"][0]))
@@ -325,6 +327,19 @@ class DaemonCriteriaTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "within 10 pages"):
                 refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
         self.assertEqual(urlopen.call_count, refresh_daemon.MAX_FEATURE_RELEASE_PAGES)
+
+        not_found = HTTPError("https://api.adoptium.net/page/1", 404, "Not Found", None, None)
+        with patch.object(refresh_daemon.urllib.request, "urlopen",
+                          side_effect=[JsonResponse(full_page), not_found]) as urlopen:
+            with self.assertRaisesRegex(ValueError, "within 10 pages"):
+                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        self.assertEqual(urlopen.call_count, 2)
+
+        server_error = HTTPError("https://api.adoptium.net/page/0", 503, "Unavailable", None, None)
+        with patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=server_error):
+            with self.assertRaises(HTTPError) as raised:
+                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        self.assertEqual(raised.exception.code, 503)
 
         duplicate = feature_metadata(metadata())[0]
         with patch.object(refresh_daemon.urllib.request, "urlopen",

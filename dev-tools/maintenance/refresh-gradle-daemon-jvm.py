@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import quote, unquote, urlencode, urlsplit
@@ -19,7 +20,7 @@ ARTIFACT = "gradle/gradle-daemon-jvm.properties"
 LATEST_METADATA_URL = "https://api.adoptium.net/v3/assets/latest/21/hotspot"
 FEATURE_RELEASES_URL = "https://api.adoptium.net/v3/assets/feature_releases/21/ga"
 MAX_METADATA_BYTES = 8 * 1024 * 1024
-MAX_FEATURE_RELEASES = 100
+MAX_FEATURE_RELEASES = 20
 MAX_FEATURE_RELEASE_PAGES = 10
 ADOPTIUM_RELEASE_PREFIX = "/adoptium/temurin21-binaries/releases/download/"
 RESOURCE_SESSION_ENV = (
@@ -215,14 +216,21 @@ def fetch_release_metadata(release):
                 "os": os_name,
                 "page": str(page),
                 "page_size": str(MAX_FEATURE_RELEASES),
+                "sort_method": "DEFAULT",
+                "sort_order": "DESC",
                 "vendor": "eclipse",
             }
             request = urllib.request.Request(
                 f"{FEATURE_RELEASES_URL}?{urlencode(params)}",
                 headers={"User-Agent": "FireMUD-dependency-maintenance/1.0", "Accept": "application/json"},
             )
-            with urllib.request.urlopen(request, timeout=30) as response:
-                entries = read_metadata(response)
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    entries = read_metadata(response)
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                break
             if not isinstance(entries, list):
                 raise TypeError("Adoptium feature-release metadata must be an array")
             if len(entries) > MAX_FEATURE_RELEASES:
