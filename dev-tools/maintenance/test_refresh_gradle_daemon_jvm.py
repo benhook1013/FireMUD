@@ -429,6 +429,7 @@ class DaemonCriteriaTest(unittest.TestCase):
             with patch.object(refresh_daemon, "ROOT", root):
                 initial = refresh_daemon.outside_artifact_state()
                 untracked.write_text("second content\n")
+                untracked.chmod(0o644)
                 changed_contents = refresh_daemon.outside_artifact_state()
                 untracked.chmod(0o600)
                 changed_mode = refresh_daemon.outside_artifact_state()
