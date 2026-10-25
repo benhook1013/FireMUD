@@ -297,6 +297,33 @@ class CanonicalGameplayRosterSelectionServiceTest {
   }
 
   @Test
+  void rejectsOversizedSelectorsBeforeAnyRouteOrRosterOperationAndAllows128CharacterInput()
+      throws Exception {
+    var published = PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute();
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var publications = mock(CanonicalPublishedPlayerRouteReadService.class);
+    var client = mock(CanonicalGameplayRosterClient.class);
+    var service = new CanonicalGameplayRosterSelectionService(routes, publications, client);
+
+    assertDenied(
+        service.select(
+            context(published.route(), UUID.randomUUID().toString()), "x".repeat(129), null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_SELECTOR);
+    verifyNoInteractions(routes, publications, client);
+
+    var boundary = harness(twoActors());
+    String boundarySelector = "x".repeat(128);
+    assertDenied(
+        boundary
+            .service()
+            .select(
+                context(boundary.route(), UUID.randomUUID().toString()), boundarySelector, null),
+        CanonicalGameplayRosterSelectionService.Denial.MISSING_MENU_IDENTITY);
+    verify(boundary.stub()).listPreseededRoster(any());
+    verify(boundary.stub(), never()).readSelectedPreseededAssignment(any());
+  }
+
+  @Test
   void requiresASelectionMenuIdentityForValidExplicitOrdinals() throws Exception {
     var harness = harness(twoActors());
     var menu =
