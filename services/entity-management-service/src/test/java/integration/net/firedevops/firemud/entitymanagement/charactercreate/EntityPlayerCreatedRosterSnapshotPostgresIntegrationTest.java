@@ -747,6 +747,64 @@ class EntityPlayerCreatedRosterSnapshotPostgresIntegrationTest {
                 UUID.fromString(snapshot.getRoster().getSnapshotUuid())))
         .isEqualTo(beforeQuarantineSnapshot);
 
+    var originalReceiptReplay =
+        snapshotRepository.capture(inputs.request(), inputs.source(), inputs.original(), admission);
+    assertThat(originalReceiptReplay.toByteArray()).containsExactly(snapshot.toByteArray());
+    var freshInputs = inputs(inputs.source(), accountId);
+    UUID freshAdmission = reserveAdmission(freshInputs.request());
+    var actorBeforeFreshCapture =
+        dsl.fetchSingle(
+            "SELECT xmin::text AS row_version, to_jsonb(c)::text AS row_json FROM characters c WHERE character_uuid = ?",
+            actorId);
+    var terminalBeforeFreshCapture =
+        dsl.fetchSingle(
+            "SELECT xmin::text AS row_version, original_request, terminal_bytes, entity_source_receipt FROM entity_character_create_operations WHERE target_namespace = ? AND operation_id = ?",
+            proof.action().scope().targetNamespace(),
+            UUID.fromString(proof.original().getOperationId()));
+    assertThatThrownBy(
+            () ->
+                snapshotRepository.capture(
+                    freshInputs.request(),
+                    freshInputs.source(),
+                    freshInputs.original(),
+                    freshAdmission))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("FAILED_PRECONDITION")
+        .hasMessageContaining("Fresh PLAYER_CREATED roster is unavailable");
+    assertThat(rosterRowCounts()).isEqualTo(beforeQuarantineCounts);
+    assertThat(
+            dsl.fetchSingle(
+                "SELECT to_jsonb(s)::text AS row_json, xmin::text AS row_version FROM entity_canonical_gameplay_roster_snapshots s WHERE snapshot_uuid = ?",
+                UUID.fromString(snapshot.getRoster().getSnapshotUuid())))
+        .isEqualTo(beforeQuarantineSnapshot);
+    var actorAfterFreshCapture =
+        dsl.fetchSingle(
+            "SELECT xmin::text AS row_version, to_jsonb(c)::text AS row_json FROM characters c WHERE character_uuid = ?",
+            actorId);
+    assertThat(actorAfterFreshCapture.get("row_version", String.class))
+        .isEqualTo(actorBeforeFreshCapture.get("row_version", String.class));
+    assertThat(actorAfterFreshCapture.get("row_json", String.class))
+        .isEqualTo(actorBeforeFreshCapture.get("row_json", String.class));
+    var terminalAfterFreshCapture =
+        dsl.fetchSingle(
+            "SELECT xmin::text AS row_version, original_request, terminal_bytes, entity_source_receipt FROM entity_character_create_operations WHERE target_namespace = ? AND operation_id = ?",
+            proof.action().scope().targetNamespace(),
+            UUID.fromString(proof.original().getOperationId()));
+    assertThat(terminalAfterFreshCapture.get("row_version", String.class))
+        .isEqualTo(terminalBeforeFreshCapture.get("row_version", String.class));
+    assertThat(terminalAfterFreshCapture.get("original_request", byte[].class))
+        .containsExactly(terminalBeforeFreshCapture.get("original_request", byte[].class));
+    assertThat(terminalAfterFreshCapture.get("terminal_bytes", byte[].class))
+        .containsExactly(terminalBeforeFreshCapture.get("terminal_bytes", byte[].class));
+    assertThat(terminalAfterFreshCapture.get("entity_source_receipt", byte[].class))
+        .containsExactly(terminalBeforeFreshCapture.get("entity_source_receipt", byte[].class));
+    var failedAdmission =
+        dsl.fetchSingle(
+            "SELECT snapshot_uuid, admission_state FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+            UUID.fromString(freshInputs.request().getRequestUuid()));
+    assertThat(failedAdmission.get("snapshot_uuid", UUID.class)).isNull();
+    assertThat(failedAdmission.get("admission_state", String.class)).isEqualTo("OPEN");
+
     UUID recoveryId = UUID.randomUUID();
     var recoveryRequest =
         CanonicalGameplayRosterRecoveryRequest.newBuilder()

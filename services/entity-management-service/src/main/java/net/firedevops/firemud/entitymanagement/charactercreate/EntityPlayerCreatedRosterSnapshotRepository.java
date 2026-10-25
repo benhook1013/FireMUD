@@ -124,8 +124,8 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
               lockCreationRoster(tx, currentTarget, account.accountId());
 
               List<CanonicalGameplayRosterActor> actors =
-                  EntityCharacterCreateRepository.readPlayerCreatedRosterWithinOwnerTransaction(
-                      tx, account, published);
+                  EntityCharacterCreateRepository
+                      .readFreshPlayerCreatedRosterWithinOwnerTransaction(tx, account, published);
               List<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor>
                   wireActors =
                       actors.stream()

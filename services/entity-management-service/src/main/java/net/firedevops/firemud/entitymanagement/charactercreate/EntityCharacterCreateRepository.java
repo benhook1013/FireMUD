@@ -73,6 +73,9 @@ public final class EntityCharacterCreateRepository {
                   published.tenantId(),
                   account.accountId(),
                   published.playableStateNamespaceId());
+          if (actors.isEmpty()) {
+            requireNoPersistedPlayerCreatedRosterActors(tx, account, published);
+          }
           var result = new java.util.ArrayList<CanonicalGameplayRosterActor>(actors.size());
           for (Record actor : actors) {
             readStoredPlayerCreatedTerminal(tx, account, published, actor, false);
@@ -139,6 +142,46 @@ public final class EntityCharacterCreateRepository {
               actor.get("character_uuid", UUID.class), actor.get("name", String.class)));
     }
     return List.copyOf(result);
+  }
+
+  /** Reads a fresh roster capture and refuses empty results that hide retained actors. */
+  static List<CanonicalGameplayRosterActor> readFreshPlayerCreatedRosterWithinOwnerTransaction(
+      DSLContext tx,
+      EntityPlayerCreatedRosterReadService.AuthenticatedAccountSelector account,
+      EntityPlayerCreatedRosterReadService.PublishedIdentity published) {
+    List<CanonicalGameplayRosterActor> actors =
+        readPlayerCreatedRosterWithinOwnerTransaction(tx, account, published);
+    if (actors.isEmpty()) {
+      requireNoPersistedPlayerCreatedRosterActors(tx, account, published);
+    }
+    return actors;
+  }
+
+  /**
+   * Empty fresh discovery is valid only when no actor is retained for this exact owner scope.
+   * Quarantined and otherwise ineligible actors remain counted by creation and cannot be replaced.
+   */
+  static void requireNoPersistedPlayerCreatedRosterActors(
+      DSLContext tx,
+      EntityPlayerCreatedRosterReadService.AuthenticatedAccountSelector account,
+      EntityPlayerCreatedRosterReadService.PublishedIdentity published) {
+    Objects.requireNonNull(tx, "tx");
+    Objects.requireNonNull(account, "account");
+    Objects.requireNonNull(published, "published");
+    boolean hasPersistedActor =
+        Boolean.TRUE.equals(
+            tx.fetchSingle(
+                    "SELECT EXISTS (SELECT 1 FROM characters WHERE tenant_uuid = ? AND account_uuid = ? AND playable_state_namespace_id = ?)",
+                    published.tenantId(),
+                    account.accountId(),
+                    published.playableStateNamespaceId())
+                .get(0, Boolean.class));
+    if (hasPersistedActor) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription(
+              "Fresh PLAYER_CREATED roster is unavailable while retained characters are ineligible")
+          .asRuntimeException();
+    }
   }
 
   /** Reads one selected created terminal inside the caller's writable owner transaction. */

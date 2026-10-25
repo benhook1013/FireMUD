@@ -517,13 +517,52 @@ class EntityCharacterCreatePostgresIntegrationTest {
   }
 
   @Test
-  void emptyDiscoveryAllocatesNothingAndOmitsLegacyQuarantinedDecoys() throws Exception {
+  void emptyDiscoveryIgnoresOutOfScopeDecoysAndOmitsInScopeQuarantinedDecoys() throws Exception {
     var proof = proof(UUID.randomUUID(), UUID.randomUUID());
     var published = published(proof);
     var account =
         new AuthenticatedAccountSelector(UUID.fromString(proof.action().target().accountId()));
     assertThat(repository.readPlayerCreatedRoster(account, published)).isEmpty();
     assertThat(dsl.fetchCount(DSL.table("characters"))).isZero();
+    dsl.execute(
+        "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, 'PLAYABLE_STATE_SCOPE_SHARED')",
+        published.tenantId(),
+        published.playableStateNamespaceId());
+    UUID otherTenant = UUID.randomUUID();
+    UUID otherNamespace = UUID.randomUUID();
+    dsl.execute(
+        "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?)", otherTenant);
+    dsl.execute(
+        "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, 'PLAYABLE_STATE_SCOPE_SHARED')",
+        otherTenant,
+        published.playableStateNamespaceId());
+    dsl.execute(
+        "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, 'PLAYABLE_STATE_SCOPE_SHARED')",
+        published.tenantId(),
+        otherNamespace);
+    dsl.execute(
+        "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_id, tenant_id, name) VALUES (?, ?, ?, ?, 'PLAYABLE_STATE_SCOPE_SHARED', 45, 87654, ?)",
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        published.tenantId(),
+        published.playableStateNamespaceId(),
+        "other account decoy");
+    dsl.execute(
+        "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_id, tenant_id, name) VALUES (?, ?, ?, ?, 'PLAYABLE_STATE_SCOPE_SHARED', 45, 87654, ?)",
+        UUID.randomUUID(),
+        account.accountId(),
+        otherTenant,
+        published.playableStateNamespaceId(),
+        "other tenant decoy");
+    dsl.execute(
+        "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_id, tenant_id, name) VALUES (?, ?, ?, ?, 'PLAYABLE_STATE_SCOPE_SHARED', 45, 87654, ?)",
+        UUID.randomUUID(),
+        account.accountId(),
+        published.tenantId(),
+        otherNamespace,
+        "other namespace decoy");
+    assertThat(repository.readPlayerCreatedRoster(account, published)).isEmpty();
+    assertThat(dsl.fetchCount(DSL.table("characters"))).isEqualTo(3);
 
     var terminal = repository.settle(proof, null);
     dsl.execute(
@@ -537,7 +576,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
         .containsExactly(
             new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor(
                 UUID.fromString(terminal.getCharacterId()), "Wayfarer"));
-    assertThat(dsl.fetchCount(DSL.table("characters"))).isEqualTo(2);
+    assertThat(dsl.fetchCount(DSL.table("characters"))).isEqualTo(5);
   }
 
   @Test
@@ -1142,6 +1181,8 @@ class EntityCharacterCreatePostgresIntegrationTest {
                     characterId)
                 .get(0, String.class))
         .isEqualTo(immutableActorBefore);
+    String quarantinedActor = retainedRow(ownerDsl, "characters", "character_uuid", characterId);
+    long characterCountBeforeFreshRead = ownerDsl.fetchCount(DSL.table("characters"));
     assertThat(
             retainedOperationRow(
                 ownerDsl,
@@ -1159,7 +1200,20 @@ class EntityCharacterCreatePostgresIntegrationTest {
         .hasStackTraceContaining("CHARACTER_CREATE authored identity/provenance is immutable");
     var published = published(proof);
     var account = new AuthenticatedAccountSelector(accountId);
-    assertThat(ownerRepository.readPlayerCreatedRoster(account, published)).isEmpty();
+    assertThatThrownBy(() -> ownerRepository.readPlayerCreatedRoster(account, published))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("FAILED_PRECONDITION")
+        .hasMessageContaining("Fresh PLAYER_CREATED roster is unavailable");
+    assertThat(retainedRow(ownerDsl, "characters", "character_uuid", characterId))
+        .isEqualTo(quarantinedActor);
+    assertThat(
+            retainedOperationRow(
+                ownerDsl,
+                proof.action().scope().targetNamespace(),
+                UUID.fromString(proof.original().getOperationId())))
+        .isEqualTo(operationBefore);
+    assertThat(ownerDsl.fetchCount(DSL.table("characters")))
+        .isEqualTo(characterCountBeforeFreshRead);
     assertSelectedActorUnavailable(ownerRepository, account, published, characterId);
     assertThat(ownerRepository.replay(proof.request()).orElseThrow().toByteArray())
         .containsExactly(terminal.toByteArray());
