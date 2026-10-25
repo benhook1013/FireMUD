@@ -26,12 +26,14 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidence;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSelectedAssignmentReference;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterSelectedAssignmentService;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterService;
@@ -331,6 +333,55 @@ class CanonicalGameplayRosterGrpcAdapterTest {
     CharacterRepository staleRepository = mock(CharacterRepository.class);
     when(staleRepository.readCurrentCanonicalGameplayRosterSnapshot(any(), any(), any()))
         .thenThrow(new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_SNAPSHOT_STALE"));
+    var selectedOwner = mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    when(selectedOwner.resolveCurrentTarget(any()))
+        .thenAnswer(
+            call -> {
+              CanonicalGameplayRosterReadRequest request = call.getArgument(0);
+              return new CanonicalGameplayRosterOwnerEvidence(
+                  request.requestUuid(),
+                  request.canonicalAccountUuid(),
+                  request.expectedTarget(),
+                  Instant.parse("2026-10-01T00:00:00Z"));
+            });
+    when(selectedOwner.readOriginalSelection(any()))
+        .thenAnswer(
+            call -> {
+              CanonicalGameplayRosterReadRequest request = call.getArgument(0);
+              var original =
+                  CanonicalGameplayRosterReferenceEvidence.request(
+                      request.requestUuid(),
+                      request.canonicalAccountUuid(),
+                      request.playerExecutionContext().sessionUuid(),
+                      "gameplay",
+                      request.expectedTarget().toWire());
+              var receipt =
+                  net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse
+                      .newBuilder()
+                      .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
+                      .setTarget(request.expectedTarget().toWire())
+                      .setSnapshotUuid(selectedRequest.getExpectedSnapshot().getSnapshotUuid())
+                      .setSnapshotDigest(selectedRequest.getExpectedSnapshot().getSnapshotDigest())
+                      .addActors(
+                          net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor
+                              .newBuilder()
+                              .setCharacterUuid(selectedRequest.getSelectedCharacterUuid())
+                              .setDisplayName("Fixture Actor")
+                              .setActorKind(
+                                  net.firedevops.firemud.entitymanagement.v1
+                                      .CanonicalGameplayRosterActorKind
+                                      .CANONICAL_ROSTER_ACTOR_KIND_PLAYER))
+                      .build();
+              return CanonicalGameplayRosterReferenceEvidence.response(
+                      original, 1L, UUID.randomUUID(), receipt)
+                  .toBuilder()
+                  .setSelectionInput(
+                      net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                          .newBuilder()
+                          .setSchemaVersion(1))
+                  .setSelectedCharacterUuid(selectedRequest.getSelectedCharacterUuid())
+                  .build();
+            });
     CanonicalGameplayRosterGrpcAdapter staleSnapshotAdapter =
         new CanonicalGameplayRosterGrpcAdapter(
             new CanonicalGameplayRosterService(
@@ -338,14 +389,7 @@ class CanonicalGameplayRosterGrpcAdapterTest {
                   throw new AssertionError("selected request must use selected service");
                 },
                 staleRepository),
-            new CanonicalGameplayRosterSelectedAssignmentService(
-                request ->
-                    new CanonicalGameplayRosterOwnerEvidence(
-                        request.requestUuid(),
-                        request.canonicalAccountUuid(),
-                        request.expectedTarget(),
-                        Instant.parse("2026-10-01T00:00:00Z")),
-                staleRepository),
+            new CanonicalGameplayRosterSelectedAssignmentService(selectedOwner, staleRepository),
             new SimpleMeterRegistry());
     RecordingObserver<
             net.firedevops.firemud.entitymanagement.v1
@@ -357,6 +401,7 @@ class CanonicalGameplayRosterGrpcAdapterTest {
             staleSnapshotAdapter.readSelectedPreseededAssignment(
                 selectedRequest, staleSnapshotObserver));
     assertOnlyStatus(staleSnapshotObserver, Status.Code.FAILED_PRECONDITION);
+    verify(staleRepository).readCurrentCanonicalGameplayRosterSnapshot(any(), any(), any());
 
     CanonicalGameplayRosterGrpcAdapter unauthenticatedAdapter =
         new CanonicalGameplayRosterGrpcAdapter(
@@ -381,14 +426,32 @@ class CanonicalGameplayRosterGrpcAdapterTest {
   void unexpectedIllegalStateExceptionReturnsInternalAndRecordsInternalMetric() {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     AtomicInteger failures = new AtomicInteger();
+    var repository = mock(CharacterRepository.class);
+    when(repository.reserveOriginalRosterAdmission(any())).thenReturn(UUID.randomUUID());
+    var owner = mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    when(owner.readOriginalSelection(any()))
+        .thenAnswer(
+            call -> {
+              CanonicalGameplayRosterReadRequest request = call.getArgument(0);
+              var original =
+                  CanonicalGameplayRosterReferenceEvidence.request(
+                      request.requestUuid(),
+                      request.canonicalAccountUuid(),
+                      request.playerExecutionContext().sessionUuid(),
+                      "gameplay",
+                      request.expectedTarget().toWire());
+              return CanonicalGameplayRosterReferenceEvidence.response(
+                  original, 1L, UUID.randomUUID(), null);
+            });
+    when(owner.resolveCurrentTarget(any()))
+        .thenAnswer(
+            call -> {
+              throw new IllegalStateException(
+                  failures.getAndIncrement() == 0 ? null : "unexpected invariant");
+            });
     CanonicalGameplayRosterGrpcAdapter adapter =
         new CanonicalGameplayRosterGrpcAdapter(
-            new CanonicalGameplayRosterService(
-                request -> {
-                  throw new IllegalStateException(
-                      failures.getAndIncrement() == 0 ? null : "unexpected invariant");
-                },
-                mock(CharacterRepository.class)),
+            new CanonicalGameplayRosterService(owner, repository),
             new CanonicalGameplayRosterSelectedAssignmentService(
                 request -> null, mock(CharacterRepository.class)),
             meterRegistry);

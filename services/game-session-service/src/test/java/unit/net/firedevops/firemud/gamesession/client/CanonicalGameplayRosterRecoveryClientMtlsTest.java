@@ -1,0 +1,200 @@
+package net.firedevops.firemud.gamesession.client;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.google.protobuf.ByteString;
+import io.grpc.Metadata;
+import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.grpc.stub.StreamObserver;
+import java.net.InetSocketAddress;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRecoveryServiceGrpc;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+import support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture;
+
+/** Physical client transport proof over controlled PKI and stipulated complete owner evidence. */
+@Timeout(60)
+class CanonicalGameplayRosterRecoveryClientMtlsTest {
+  @TempDir static Path directory;
+  private static LoopbackMtlsTestPki.Pki pki;
+
+  @BeforeAll
+  static void certificates() throws Exception {
+    pki =
+        LoopbackMtlsTestPki.create(
+            directory,
+            "Canonical roster recovery test CA",
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "client", "spiffe://firemud/ns/test/sa/game-session-service", false),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "server", "spiffe://firemud/ns/test/sa/entity-management-service", true),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "wrong-service", "spiffe://firemud/ns/test/sa/world-management-service", true),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "wrong-namespace", "spiffe://firemud/ns/other/sa/entity-management-service", true));
+  }
+
+  @Test
+  void initializedClientReceivesExactOriginalClosureOnlyFromEntityPeer() throws Exception {
+    exercise("server", true);
+  }
+
+  @Test
+  void sameCaWrongServiceAndNamespaceReceiveNoRpc() throws Exception {
+    for (String identity : List.of("wrong-service", "wrong-namespace")) {
+      exercise(identity, false);
+    }
+  }
+
+  private static void exercise(String identity, boolean accepted) throws Exception {
+    var target =
+        CanonicalGameplayRosterClient.expectedTarget(
+            PublishedRealmPolicyEvidenceFixture.canonicalPublishedRoute());
+    var request =
+        CanonicalGameplayRosterRecoveryRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOriginalSelection(
+                CanonicalGameplayRosterReferenceEvidence.request(
+                    UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "test", target))
+            .setRecoveryUuid(UUID.randomUUID().toString())
+            .build();
+    var response =
+        new AtomicReference<>(
+            CanonicalGameplayRosterRecoveryEvidence.response(
+                request, UUID.randomUUID(), 1L, UUID.randomUUID(), null));
+    var rpcStarts = new AtomicInteger();
+    var observedRequest = new AtomicReference<CanonicalGameplayRosterRecoveryRequest>();
+    var observedPeer = new AtomicReference<String>();
+    var service =
+        new CanonicalGameplayRosterRecoveryServiceGrpc
+            .CanonicalGameplayRosterRecoveryServiceImplBase() {
+          @Override
+          public void recoverOriginalSelection(
+              CanonicalGameplayRosterRecoveryRequest request,
+              StreamObserver<CanonicalGameplayRosterRecoveryResponse> observer) {
+            observedRequest.set(request);
+            observedPeer.set(GrpcPeerIdentity.current().uri());
+            observer.onNext(response.get());
+            observer.onCompleted();
+          }
+        };
+    var count =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+            rpcStarts.incrementAndGet();
+            return next.startCall(call, headers);
+          }
+        };
+    var serverIdentity = pki.identity(identity);
+    Server server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            serverIdentity.privateKey(), serverIdentity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(
+                ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor(), count))
+            .build()
+            .start();
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setEntityManagementService("localhost:" + server.getPort());
+    try (var client =
+        new CanonicalGameplayRosterRecoveryClient(
+            endpoints,
+            pki.clientProperties(directory, pki.identity("client")),
+            new GrpcChannelFactory(),
+            "test")) {
+      client.init();
+      if (accepted) {
+        var invalidCallerRequest = request.toBuilder().setSchemaVersion(2).build();
+        assertThatThrownBy(() -> client.read(invalidCallerRequest))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(rpcStarts).hasValue(0);
+
+        var result = client.read(request);
+        assertThat(result.request()).isEqualTo(request);
+        assertThat(result.response()).isEqualTo(response.get());
+        assertThat(rpcStarts).hasValue(1);
+        assertThat(observedPeer.get())
+            .isEqualTo("spiffe://firemud/ns/test/sa/game-session-service");
+        assertThat(observedRequest.get().getOriginalSelection().getTargetNamespace())
+            .isEqualTo("test");
+        var originalResponse = response.get();
+        for (var malformed :
+            List.of(
+                originalResponse.toBuilder().setOwnerFence(0L).build(),
+                originalResponse.toBuilder()
+                    .setRequest(request.toBuilder().setRecoveryUuid(UUID.randomUUID().toString()))
+                    .build())) {
+          response.set(malformed);
+          assertThatThrownBy(() -> client.read(request))
+              .isInstanceOfSatisfying(
+                  IllegalStateException.class,
+                  failure -> {
+                    assertThat(failure.getMessage())
+                        .isEqualTo("Entity recovery response is invalid");
+                    assertThat(failure.getCause()).isInstanceOf(IllegalArgumentException.class);
+                  });
+        }
+        response.set(
+            originalResponse.toBuilder()
+                .setCanonicalRosterReceipt(
+                    ByteString.copyFrom(
+                        new byte[CanonicalGameplayRosterRecoveryEvidence.MAX_RESPONSE_BYTES]))
+                .build());
+        assertThatThrownBy(() -> client.read(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+      } else {
+        assertThatThrownBy(() -> client.read(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+        assertThat(rpcStarts).hasValue(0);
+        assertThat(observedRequest.get()).isNull();
+        assertThat(observedPeer.get()).isNull();
+      }
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+}

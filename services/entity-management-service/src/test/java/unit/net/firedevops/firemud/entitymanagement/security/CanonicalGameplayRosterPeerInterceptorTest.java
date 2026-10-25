@@ -123,6 +123,46 @@ class CanonicalGameplayRosterPeerInterceptorTest {
   }
 
   @Test
+  void recoveryMethodRequiresTheExactGameSessionCertificateAndNoEndUserContext() {
+    var interceptor = new CanonicalGameplayRosterPeerInterceptor(WORKLOAD_NAMESPACE);
+    for (SSLSession session :
+        Arrays.asList(
+            null,
+            peerSession("spiffe://firemud/ns/other/sa/game-session-service"),
+            peerSession("spiffe://firemud/ns/gameplay/sa/entity-management-service"))) {
+      var call = callFor(CanonicalGameplayRosterPeerInterceptor.RECOVERY_METHOD_NAME, session);
+      ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
+      interceptor.interceptCall(call, new Metadata(), next);
+      verify(next, never()).startCall(any(), any());
+      verify(call)
+          .close(
+              org.mockito.ArgumentMatchers.argThat(
+                  status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+              any());
+    }
+    var trusted =
+        callFor(
+            CanonicalGameplayRosterPeerInterceptor.RECOVERY_METHOD_NAME,
+            peerSession("spiffe://firemud/ns/gameplay/sa/game-session-service"));
+    ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
+    interceptor.interceptCall(trusted, new Metadata(), next);
+    verify(next).startCall(any(), any());
+    SessionContext.setContext("player-claim", List.of(), java.util.Map.of());
+    var claimed =
+        callFor(
+            CanonicalGameplayRosterPeerInterceptor.RECOVERY_METHOD_NAME,
+            peerSession("spiffe://firemud/ns/gameplay/sa/game-session-service"));
+    ServerCallHandler<String, String> claimedNext = mock(ServerCallHandler.class);
+    interceptor.interceptCall(claimed, new Metadata(), claimedNext);
+    verify(claimedNext, never()).startCall(any(), any());
+    verify(claimed)
+        .close(
+            org.mockito.ArgumentMatchers.argThat(
+                status -> status.getCode() == Status.Code.PERMISSION_DENIED),
+            any(Metadata.class));
+  }
+
+  @Test
   void applicationYamlKeepsRosterMethodsOutsideJwtBypassAllowlist() {
     var yaml = new YamlPropertiesFactoryBean();
     yaml.setResources(new FileSystemResource("src/main/resources/application.yml"));
@@ -141,7 +181,8 @@ class CanonicalGameplayRosterPeerInterceptorTest {
         .containsExactly("entity_management.v1.EntityManagementService/Ping")
         .doesNotContain(
             CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
-            CanonicalGameplayRosterPeerInterceptor.SELECTED_ASSIGNMENT_METHOD_NAME);
+            CanonicalGameplayRosterPeerInterceptor.SELECTED_ASSIGNMENT_METHOD_NAME,
+            CanonicalGameplayRosterPeerInterceptor.RECOVERY_METHOD_NAME);
     assertThat(publicMethods).noneMatch(method -> method.contains("*"));
   }
 

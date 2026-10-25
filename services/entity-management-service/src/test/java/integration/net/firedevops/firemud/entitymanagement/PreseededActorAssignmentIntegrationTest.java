@@ -29,6 +29,7 @@ import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
+import net.firedevops.firemud.entitymanagement.repository.CanonicalGameplayRosterRetentionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterEquipmentRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
@@ -66,7 +67,9 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -225,8 +228,11 @@ class PreseededActorAssignmentIntegrationTest {
     String schema = "ph_" + UUID.randomUUID().toString().replace("-", "");
     UUID historicalSnapshot = UUID.randomUUID();
     UUID v8Snapshot = UUID.randomUUID();
+    UUID historicalAccount = UUID.randomUUID();
     UUID historicalTenant = UUID.randomUUID();
     UUID historicalNamespace = UUID.randomUUID();
+    UUID historicalRealm = UUID.randomUUID();
+    UUID historicalGameInstance = UUID.randomUUID();
     UUID v8CanonicalVersion = UUID.randomUUID();
 
     migrationFlyway(schema).target(MigrationVersion.fromVersion("1008")).load().migrate();
@@ -260,10 +266,10 @@ class PreseededActorAssignmentIntegrationTest {
                   + "'release/test', ?, ?, ?, ?, 'PRESEEDED_ONLY', 0, 'SEALED')")) {
         snapshot.setObject(1, historicalSnapshot);
         snapshot.setString(2, "a".repeat(64));
-        snapshot.setObject(3, UUID.randomUUID());
+        snapshot.setObject(3, historicalAccount);
         snapshot.setObject(4, historicalTenant);
-        snapshot.setObject(5, UUID.randomUUID());
-        snapshot.setObject(6, UUID.randomUUID());
+        snapshot.setObject(5, historicalRealm);
+        snapshot.setObject(6, historicalGameInstance);
         snapshot.setString(7, "b".repeat(64));
         snapshot.setString(8, "c".repeat(64));
         snapshot.setString(9, "d".repeat(64));
@@ -290,10 +296,10 @@ class PreseededActorAssignmentIntegrationTest {
                     + "'PRESEEDED_ONLY', 0, 'SEALED')")) {
       snapshot.setObject(1, v8Snapshot);
       snapshot.setString(2, "e".repeat(64));
-      snapshot.setObject(3, UUID.randomUUID());
+      snapshot.setObject(3, historicalAccount);
       snapshot.setObject(4, historicalTenant);
-      snapshot.setObject(5, UUID.randomUUID());
-      snapshot.setObject(6, UUID.randomUUID());
+      snapshot.setObject(5, historicalRealm);
+      snapshot.setObject(6, historicalGameInstance);
       snapshot.setObject(7, v8CanonicalVersion);
       snapshot.setString(8, "f".repeat(64));
       snapshot.setString(9, "a".repeat(64));
@@ -303,7 +309,17 @@ class PreseededActorAssignmentIntegrationTest {
       snapshot.executeUpdate();
     }
 
+    List<AppliedMigration> retainedHistory = appliedMigrationHistory(schema);
+    List<String> retainedSnapshotColumns = canonicalRosterSnapshotColumns(schema);
+    List<String> retainedSnapshotRows =
+        retainedCanonicalRosterSnapshotRows(schema, retainedSnapshotColumns);
+
     migrationFlyway(schema).load().migrate();
+    List<AppliedMigration> upgradedHistory = appliedMigrationHistory(schema);
+    assertThat(upgradedHistory.subList(0, retainedHistory.size()))
+        .containsExactlyElementsOf(retainedHistory);
+    assertThat(retainedCanonicalRosterSnapshotRows(schema, retainedSnapshotColumns))
+        .containsExactlyElementsOf(retainedSnapshotRows);
     try (Connection connection = connectToSchema(schema);
         PreparedStatement retained =
             connection.prepareStatement(
@@ -342,6 +358,83 @@ class PreseededActorAssignmentIntegrationTest {
         assertThat(row.getObject(7)).isNull();
       }
     }
+
+    DriverManagerDataSource retentionDataSource = dataSource(schema);
+    DSLContext retentionDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(retentionDataSource), SQLDialect.POSTGRES);
+    TransactionTemplate retentionTransaction =
+        new TransactionTemplate(new DataSourceTransactionManager(retentionDataSource));
+    CanonicalGameplayRosterRetentionRepository retentionRepository =
+        new CanonicalGameplayRosterRetentionRepository(retentionDsl);
+    assertThat(
+            retentionTransaction.<Integer>execute(
+                ignored -> retentionRepository.classifyRetainedDependencies(10)))
+        .isZero();
+    assertThat(
+            retentionDsl
+                .fetch(
+                    "SELECT snapshot_uuid, classification_state FROM entity_canonical_roster_snapshot_targets WHERE snapshot_uuid IN (?, ?) ORDER BY snapshot_uuid",
+                    historicalSnapshot,
+                    v8Snapshot)
+                .getValues(1, String.class))
+        .containsExactly("UNKNOWN", "UNKNOWN");
+    assertThat(
+            retentionDsl
+                .fetchSingle("SELECT entity_roster_target_classification_pending()")
+                .get(0, Boolean.class))
+        .isTrue();
+
+    UUID newAccount = UUID.randomUUID();
+    UUID newOperation = UUID.randomUUID();
+    CanonicalGameplayRosterTarget validTarget =
+        new CanonicalGameplayRosterTarget(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "world",
+            "realm",
+            UUID.randomUUID(),
+            7,
+            1,
+            1,
+            UUID.randomUUID(),
+            "1".repeat(64),
+            "release/current",
+            "2".repeat(64),
+            "3".repeat(64),
+            UUID.randomUUID(),
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY);
+    CanonicalGameplayRosterReadRequest otherwiseValidRequest =
+        new CanonicalGameplayRosterReadRequest(
+            newOperation,
+            newAccount,
+            validTarget,
+            new CanonicalGameplayRosterExecutionContext(
+                newAccount,
+                validTarget.tenantUuid(),
+                validTarget.playableStateNamespaceId(),
+                validTarget.gameInstanceUuid(),
+                null,
+                UUID.randomUUID(),
+                validTarget.realmUuid(),
+                newOperation,
+                validTarget.playableStateScope()));
+    assertThatThrownBy(
+            () ->
+                retentionTransaction.execute(
+                    ignored -> retentionRepository.reserveAdmission(otherwiseValidRequest)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+    assertThat(
+            retentionDsl.fetchExists(
+                retentionDsl
+                    .selectOne()
+                    .from("entity_canonical_roster_admissions")
+                    .where("operation_uuid = ?", newOperation)))
+        .isFalse();
+    assertThat(retainedCanonicalRosterSnapshotRows(schema, retainedSnapshotColumns))
+        .containsExactlyElementsOf(retainedSnapshotRows);
+    assertThat(appliedMigrationHistory(schema)).containsExactlyElementsOf(upgradedHistory);
   }
 
   @Test
@@ -410,7 +503,9 @@ class PreseededActorAssignmentIntegrationTest {
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
     assertThat(successorHistory)
         .extracting(AppliedMigration::version)
-        .containsExactly("1006", "1007", "1008", "1009", "1010", "1011");
+        .containsExactly(
+            "1006", "1007", "1008", "1009", "1010", "1011", "1012", "1014", "1015", "1016", "1017",
+            "1018", "1019");
     assertThat(successorHistory)
         .extracting(AppliedMigration::script)
         .containsExactly(
@@ -419,7 +514,14 @@ class PreseededActorAssignmentIntegrationTest {
             "V1008__canonical_gameplay_roster_snapshots.sql",
             "V1009__canonical_publication_uuid_actor_evidence.sql",
             "V1010__canonical_roster_owner_counters.sql",
-            "V1011__fresh_selected_empty_source_catalogue.sql");
+            "V1011__fresh_selected_empty_source_catalogue.sql",
+            "V1012__canonical_roster_retention.sql",
+            "V1014__canonical_roster_retirement_observation.sql",
+            "V1015__entity_character_create_terminal.sql",
+            "V1016__player_created_roster_snapshot_receipts.sql",
+            "V1017__player_created_actor_quarantine.sql",
+            "V1018__canonical_roster_staged_retirement.sql",
+            "V1019__canonical_roster_snapshot_retirement_seals.sql");
     assertThat(successorHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
 
     try (Connection connection = connectToSchema(schema)) {
@@ -709,7 +811,7 @@ class PreseededActorAssignmentIntegrationTest {
                 sourceFixture.authorization().versionId());
 
         if (captureEmptyRosterBeforeSource) {
-          assertEmptyCanonicalRosterCreatedTenantMapping(isolatedDsl, owner);
+          assertEmptyCanonicalRosterCreatedTenantMapping(isolatedDsl, owner, schema);
         }
 
         var sourceReceipt =
@@ -722,7 +824,7 @@ class PreseededActorAssignmentIntegrationTest {
         assertThat(sourceReceipt.localTenantKey()).isEqualTo(1L);
 
         if (!captureEmptyRosterBeforeSource) {
-          assertEmptyCanonicalRosterCreatedTenantMapping(isolatedDsl, owner);
+          assertEmptyCanonicalRosterCreatedTenantMapping(isolatedDsl, owner, schema);
         }
 
         Long entityTenantRowId =
@@ -1586,7 +1688,7 @@ class PreseededActorAssignmentIntegrationTest {
   }
 
   private void assertEmptyCanonicalRosterCreatedTenantMapping(
-      DSLContext isolatedDsl, PreseededActorAssignmentOwnerEvidence owner) {
+      DSLContext isolatedDsl, PreseededActorAssignmentOwnerEvidence owner, String schema) {
     UUID gameInstanceUuid = UUID.randomUUID();
     CanonicalGameplayRosterTarget target =
         new CanonicalGameplayRosterTarget(
@@ -1622,10 +1724,19 @@ class PreseededActorAssignmentIntegrationTest {
                 target.realmUuid(),
                 requestUuid,
                 target.playableStateScope()));
+    var ownerDataSource = dataSource(schema);
+    var ownerDsl =
+        DSL.using(
+            new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(
+                ownerDataSource),
+            SQLDialect.POSTGRES);
+    var ownerTransaction =
+        new TransactionTemplate(
+            new org.springframework.jdbc.datasource.DataSourceTransactionManager(ownerDataSource));
     var snapshot =
-        isolatedDsl.transactionResult(
-            configuration ->
-                new CharacterRepository(DSL.using(configuration))
+        ownerTransaction.execute(
+            ignored ->
+                new CharacterRepository(ownerDsl)
                     .captureCanonicalGameplayRosterSnapshot(
                         request,
                         new CanonicalGameplayRosterOwnerEvidence(
@@ -1800,6 +1911,45 @@ class PreseededActorAssignmentIntegrationTest {
       }
     }
     return migrations;
+  }
+
+  private List<String> canonicalRosterSnapshotColumns(String schema) throws SQLException {
+    List<String> columns = new ArrayList<>();
+    try (Connection connection = connectToSchema(schema);
+        PreparedStatement statement =
+            connection.prepareStatement(
+                "SELECT column_name FROM information_schema.columns "
+                    + "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position")) {
+      statement.setString(1, schema);
+      statement.setString(2, "entity_canonical_gameplay_roster_snapshots");
+      try (ResultSet result = statement.executeQuery()) {
+        while (result.next()) {
+          columns.add(result.getString(1));
+        }
+      }
+    }
+    return columns;
+  }
+
+  private List<String> retainedCanonicalRosterSnapshotRows(
+      String schema, List<String> retainedColumns) throws SQLException {
+    List<String> rows = new ArrayList<>();
+    try (Connection connection = connectToSchema(schema);
+        PreparedStatement statement =
+            connection.prepareStatement(
+                "SELECT (SELECT jsonb_object_agg(e.key, e.value ORDER BY e.key) "
+                    + "FROM jsonb_each(to_jsonb(s)) AS e(key, value) "
+                    + "WHERE e.key = ANY (?::text[]))::text || ':' || s.xmin::text "
+                    + "FROM entity_canonical_gameplay_roster_snapshots s "
+                    + "ORDER BY snapshot_uuid")) {
+      statement.setArray(1, connection.createArrayOf("text", retainedColumns.toArray()));
+      try (ResultSet result = statement.executeQuery()) {
+        while (result.next()) {
+          rows.add(result.getString(1));
+        }
+      }
+    }
+    return rows;
   }
 
   private record AppliedMigration(

@@ -6,16 +6,25 @@ option java_multiple_files = true;
 option java_package = "net.firedevops.firemud.gamesession.v1";
 option java_outer_classname = "CanonicalGameplayRosterOwnerReadProto";
 
-// Entity-only source read for a fresh public-production SHARED route and its complete sealed
-// PRESEEDED_ONLY Game Design policy set. This read is not Account membership, PLAY admission, or
-// actor-entry authorization.
+// Entity-only source reads and retirement-observation transfer operations. These operations are
+// not Account membership, PLAY admission, or actor-entry authorization.
 service CanonicalGameplayRosterOwnerReadService {
+  // Fresh public-production SHARED route and complete sealed PRESEEDED_ONLY policy source.
   rpc GetCanonicalGameplayRosterOwnerRead(
       GetCanonicalGameplayRosterOwnerReadRequest)
       returns (GetCanonicalGameplayRosterOwnerReadResponse);
+  // Reads a pre-existing immutable GS selection. Entity cannot create or close it through this RPC.
+  rpc GetCanonicalGameplayRosterReference(GetCanonicalGameplayRosterReferenceRequest)
+      returns (GetCanonicalGameplayRosterReferenceResponse);
   rpc GetPreseededActorAssignmentOwnerRead(
       GetPreseededActorAssignmentOwnerReadRequest)
       returns (GetPreseededActorAssignmentOwnerReadResponse);
+  rpc AcknowledgeCanonicalGameplayRosterRetirement(
+      CanonicalGameplayRosterRetirementAcknowledgementRequest)
+      returns (CanonicalGameplayRosterRetirementAcknowledgementResponse);
+  rpc ConfirmCanonicalGameplayRosterRetirementAcknowledgement(
+      CanonicalGameplayRosterRetirementConfirmationRequest)
+      returns (CanonicalGameplayRosterRetirementConfirmationResponse);
 }
 
 // All UUID selectors are canonical non-nil UUID strings. Counters are positive signed int64s;
@@ -80,4 +89,92 @@ message GetPreseededActorAssignmentOwnerReadResponse {
   bytes game_session_owner_proof = 2;
   bytes published_policy_set_evidence = 3;
   string admission_pointer_snapshot_digest = 4;
+}
+
+// Purpose-bound original selection identity. canonical_target is the closed canonical wire bytes
+// of entity_management.v1.CanonicalGameplayRosterTarget, including all source digests/counters.
+message GetCanonicalGameplayRosterReferenceRequest {
+  uint32 schema_version = 1;
+  string operation_uuid = 2;
+  string canonical_account_uuid = 3;
+  string session_uuid = 4;
+  string target_namespace = 5;
+  bytes canonical_target = 6;
+}
+
+enum CanonicalGameplayRosterReferenceState {
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_STATE_UNSPECIFIED = 0;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED = 1;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED = 2;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED = 3;
+  CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED = 4;
+}
+
+message GetCanonicalGameplayRosterReferenceResponse {
+  GetCanonicalGameplayRosterReferenceRequest request = 1;
+  int64 owner_fence = 2;
+  CanonicalGameplayRosterReferenceState state = 3;
+  // Canonical Entity snapshot response bytes, present only after receipt binding. Recording a
+  // receipt does not release its retained selection/session/recovery/restore dependencies.
+  bytes canonical_roster_receipt = 4;
+  CanonicalGameplayRosterSelectionInput selection_input = 5;
+  string selected_character_uuid = 6;
+  bytes canonical_selected_assignment_receipt = 7;
+  string target_fence_uuid = 8;
+  string terminal_outcome = 9;
+  string retirement_uuid = 10;
+  string superseding_pointer_digest = 11;
+  int64 superseding_pointer_version = 12;
+  int64 superseding_catalog_revision = 13;
+  int64 superseding_world_epoch = 14;
+  string retirement_proof_digest = 15;
+  // Owner-local recovery fence: normal reads/writes cannot restart this original operation.
+  string recovery_uuid = 16;
+}
+
+// Original selection input is frozen before any Entity roster read. A later ordinal choice is a
+// new authenticated request operation naming the exact menu snapshot it displayed.
+message CanonicalGameplayRosterSelectionInput {
+  uint32 schema_version = 1;
+  string selector = 2;
+  string menu_snapshot_uuid = 3;
+  string menu_snapshot_digest = 4;
+}
+
+// Entity sends this only after its owner transaction durably observes the exact retirement
+// and fences the applicable original nonce/snapshot against late capture. Values do not
+// authenticate their sender; the receiver requires the exact same-namespace Entity workload.
+message CanonicalGameplayRosterRetirementAcknowledgementRequest {
+  uint32 schema_version = 1;
+  GetCanonicalGameplayRosterReferenceRequest original_selection = 2;
+  // A different anchor operation is valid only for the same immutable snapshot and sealed
+  // full account/target fence. An unbound observation requires its own original proof.
+  GetCanonicalGameplayRosterReferenceResponse observed_retirement = 3;
+  // Stable Entity-owned identities retained before any acknowledgement RPC.
+  string observation_uuid = 4;
+  string admission_uuid = 5;
+  string snapshot_uuid = 6;
+  string snapshot_digest = 7;
+  int64 minimum_retention_millis = 8;
+}
+
+message CanonicalGameplayRosterRetirementAcknowledgementResponse {
+  uint32 schema_version = 1;
+  string observation_uuid = 2;
+  string acknowledgement_uuid = 3;
+  string request_digest = 4;
+  int64 minimum_retention_millis = 5;
+}
+
+// Entity persists the actual first acknowledgement response before sending confirmation.
+// Replay after qualified receipt disposal is a no-op, never new ACK or release authority.
+message CanonicalGameplayRosterRetirementConfirmationRequest {
+  uint32 schema_version = 1;
+  CanonicalGameplayRosterRetirementAcknowledgementRequest acknowledgement_request = 2;
+  CanonicalGameplayRosterRetirementAcknowledgementResponse acknowledgement = 3;
+}
+
+message CanonicalGameplayRosterRetirementConfirmationResponse {
+  uint32 schema_version = 1;
+  string request_digest = 2;
 }

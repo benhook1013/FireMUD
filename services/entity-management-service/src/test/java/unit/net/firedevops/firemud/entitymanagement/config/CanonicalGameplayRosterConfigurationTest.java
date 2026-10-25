@@ -3,7 +3,9 @@ package unit.net.firedevops.firemud.entitymanagement.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -147,11 +149,13 @@ class CanonicalGameplayRosterConfigurationTest {
     CanonicalGameplayRosterService service =
         configuration.canonicalGameplayRosterService(ownerEvidencePort, repository);
 
-    assertThatThrownBy(() -> service.read(request(target())))
+    var readRequest = request(target());
+    assertThatThrownBy(() -> service.read(readRequest))
         .isInstanceOf(
             CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException.class)
         .hasMessage("CANONICAL_GAMEPLAY_ROSTER_OWNER_EVIDENCE_UNAVAILABLE");
-    verifyNoInteractions(repository);
+    verify(repository).reserveOriginalRosterAdmission(readRequest);
+    verifyNoMoreInteractions(repository);
   }
 
   @Test
