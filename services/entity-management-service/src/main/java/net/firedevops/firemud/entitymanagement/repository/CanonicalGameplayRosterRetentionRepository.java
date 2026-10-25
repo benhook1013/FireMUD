@@ -187,6 +187,9 @@ public final class CanonicalGameplayRosterRetentionRepository {
       throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
     }
     var receipt = originalReceipt(owner).orElse(null);
+    if (receipt == null && !owner.getCanonicalRosterReceipt().isEmpty()) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_LOCAL_RECEIPT_UNAVAILABLE");
+    }
     UUID snapshot = admission.get("snapshot_uuid", UUID.class);
     if ((snapshot == null) != (receipt == null)
         || (snapshot != null && !snapshot.toString().equals(receipt.getSnapshotUuid()))) {

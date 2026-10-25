@@ -1060,6 +1060,249 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
   }
 
   @Test
+  void targetCandidateCursorAdvancesAcrossMalformedAndWronglyBoundRetainedOriginals() {
+    var originals = new ArrayList<GetCanonicalGameplayRosterReferenceRequest>();
+    for (long operationId = 100L; operationId < 104L; operationId++) {
+      originals.add(
+          request().toBuilder().setOperationUuid(new UUID(0L, operationId).toString()).build());
+    }
+    transaction.executeWithoutResult(ignored -> originals.forEach(repository::begin));
+    var originalFences =
+        originals.stream()
+            .map(original -> UUID.fromString(repository.read(original).getTargetFenceUuid()))
+            .toList();
+
+    var malformedOperation = new UUID(0L, 1L);
+    var invalidOperation = new UUID(0L, 2L);
+    var wrongBindingOperation = new UUID(0L, 3L);
+    var malformedBytes = new byte[] {0x0a, (byte) 0x80};
+    var semanticallyInvalidBytes =
+        originals.get(1).toBuilder()
+            .setOperationUuid(invalidOperation.toString())
+            .setTargetNamespace("")
+            .build()
+            .toByteArray();
+    var wrongBindingTarget =
+        CanonicalGameplayRosterReferenceEvidence.target(originals.get(2)).toBuilder()
+            .setTenantUuid(UUID.randomUUID().toString())
+            .build();
+    var wrongBindingBytes =
+        originals.get(2).toBuilder()
+            .setOperationUuid(wrongBindingOperation.toString())
+            .setCanonicalTarget(wrongBindingTarget.toByteString())
+            .build()
+            .toByteArray();
+    transaction.executeWithoutResult(
+        ignored -> {
+          insertRestoreShapedOriginal(malformedOperation, originalFences.get(0), malformedBytes);
+          insertRestoreShapedOriginal(
+              invalidOperation, originalFences.get(1), semanticallyInvalidBytes);
+          insertRestoreShapedOriginal(
+              wrongBindingOperation, originalFences.get(2), wrongBindingBytes);
+        });
+
+    var first = targetCandidatePage(null);
+    var second = targetCandidatePage(first.operationUuid());
+    var third = targetCandidatePage(second.operationUuid());
+    var fourth = targetCandidatePage(third.operationUuid());
+
+    assertThat(List.of(first, second, third))
+        .allSatisfy(candidate -> assertThat(candidate.hasValidOriginal()).isFalse());
+    assertThat(first.operationUuid()).isEqualTo(malformedOperation);
+    assertThat(first.fenceUuid()).isEqualTo(originalFences.get(0));
+    assertThat(second.operationUuid()).isEqualTo(invalidOperation);
+    assertThat(second.fenceUuid()).isEqualTo(originalFences.get(1));
+    assertThat(third.operationUuid()).isEqualTo(wrongBindingOperation);
+    assertThat(third.fenceUuid()).isEqualTo(originalFences.get(2));
+    assertThat(fourth.operationUuid())
+        .isEqualTo(UUID.fromString(originals.get(0).getOperationUuid()));
+    assertThat(fourth.fenceUuid()).isEqualTo(originalFences.get(0));
+    assertThat(fourth.hasValidOriginal()).isTrue();
+    assertThat(fourth.original()).isEqualTo(originals.get(0));
+    assertThat(retainedOriginalBytes(malformedOperation)).isEqualTo(malformedBytes);
+    assertThat(retainedOriginalBytes(invalidOperation)).isEqualTo(semanticallyInvalidBytes);
+    assertThat(retainedOriginalBytes(wrongBindingOperation)).isEqualTo(wrongBindingBytes);
+
+    var owner =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    org.mockito.Mockito.when(owner.retireTarget(originals.get(0))).thenReturn(false);
+    var retention =
+        new net.firedevops.firemud.gamesession.service
+            .CanonicalGameplayRosterReferenceRetentionService(
+            owner,
+            repository,
+            transaction,
+            new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
+                java.time.Duration.ofMillis(5_000L),
+                java.time.Duration.ofMillis(1L),
+                java.time.Duration.ofMillis(1L),
+                java.time.Duration.ofSeconds(1L),
+                1),
+            new SimpleMeterRegistry());
+    retention.sweep();
+    retention.sweep();
+    retention.sweep();
+    org.mockito.Mockito.verifyNoInteractions(owner);
+    retention.sweep();
+    org.mockito.Mockito.verify(owner).retireTarget(originals.get(0));
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT fence_state FROM game_session_canonical_roster_target_fences WHERE target_fence_uuid = ?",
+                    originalFences.get(0))
+                .get("fence_state", String.class))
+        .isEqualTo("ACTIVE");
+    assertThat(retainedOriginalBytes(malformedOperation)).isEqualTo(malformedBytes);
+  }
+
+  @Test
+  void malformedRecoveryOriginalKeepsItsBytesAndCannotStarveLaterBoundedPages() throws Exception {
+    repository = repository(policy(5000L, 1L, 1L));
+    var request = request().toBuilder().setOperationUuid(new UUID(0L, 100L).toString()).build();
+    var originals = new ArrayList<GetCanonicalGameplayRosterReferenceRequest>();
+    transaction.executeWithoutResult(
+        ignored -> {
+          for (int i = 0; i < 9; i++) {
+            var original =
+                request.toBuilder().setOperationUuid(new UUID(0L, 100L + i).toString()).build();
+            originals.add(original);
+            repository.begin(original);
+            repository.reserveSelectionInput(original, selectionInput());
+            repository.markRosterReadStarted(original);
+          }
+        });
+    UUID fenceUuid = UUID.fromString(repository.read(request).getTargetFenceUuid());
+    UUID malformedOperation = new UUID(0L, 1L);
+    byte[] malformedBytes = new byte[] {0x0a, (byte) 0x80};
+    transaction.executeWithoutResult(
+        ignored -> insertRestoreShapedOriginal(malformedOperation, fenceUuid, malformedBytes));
+    Thread.sleep(5L);
+
+    var routes =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService.class);
+    var admissions = org.mockito.Mockito.mock(CanonicalInitialAdmissionRepository.class);
+    var current = current(request);
+    var snapshot = currentSnapshot(request);
+    org.mockito.Mockito.when(routes.readCurrentTarget(current.canonicalTenantId()))
+        .thenReturn(current);
+    org.mockito.Mockito.when(
+            admissions.readCurrentOpenSnapshotForRealm(
+                request.getTargetNamespace(), current.canonicalTenantId(), current.realmId()))
+        .thenReturn(snapshot);
+    org.mockito.Mockito.when(admissions.lockExactCurrentOpenSnapshot(snapshot))
+        .thenReturn(snapshot);
+    var client = org.mockito.Mockito.mock(CanonicalGameplayRosterRecoveryClient.class);
+    var dispatched = new ArrayList<CanonicalGameplayRosterRecoveryRequest>();
+    org.mockito.Mockito.when(client.read(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call -> {
+              CanonicalGameplayRosterRecoveryRequest recovery = call.getArgument(0);
+              dispatched.add(recovery);
+              throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+            });
+    var owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            client,
+            new SimpleMeterRegistry());
+    var retentionPolicy =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicy(
+            java.time.Duration.ofMillis(5_000L),
+            java.time.Duration.ofMillis(1L),
+            java.time.Duration.ofMillis(1L),
+            java.time.Duration.ofSeconds(1L),
+            1);
+    var retention =
+        new net.firedevops.firemud.gamesession.service
+            .CanonicalGameplayRosterReferenceRetentionService(
+            owner, repository, transaction, retentionPolicy, new SimpleMeterRegistry());
+
+    // The first bounded sweep sees only the malformed operation and skips it by its real key.
+    retention.sweep();
+    assertThat(dispatched).isEmpty();
+    assertThat(
+            recoveryScheduleRow(malformedOperation.toString()).get("recovery_uuid", String.class))
+        .isNull();
+
+    // Reconstruct both owners. The next bounded sweep may revisit the bad key, then continues.
+    repository = repository(policy(5000L, 1L, 1L));
+    owner =
+        new net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner(
+            repository,
+            transaction,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService
+                    .class),
+            routes,
+            admissions,
+            client,
+            new SimpleMeterRegistry());
+    retention =
+        new net.firedevops.firemud.gamesession.service
+            .CanonicalGameplayRosterReferenceRetentionService(
+            owner, repository, transaction, retentionPolicy, new SimpleMeterRegistry());
+    retention.sweep();
+    assertThat(dispatched).isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(client);
+
+    // This candidate is the next original on the same target fence. Owner recovery skips the
+    // malformed row while dispatching the other originals in its bounded recovery page.
+    retention.sweep();
+    assertThat(dispatched).hasSize(7);
+    var firstPageOperationIds =
+        dispatched.stream()
+            .map(recovery -> recovery.getOriginalSelection().getOperationUuid())
+            .collect(java.util.stream.Collectors.toSet());
+    assertThat(firstPageOperationIds).doesNotContain(malformedOperation.toString());
+    var malformedFirstAttempt = recoveryScheduleRow(malformedOperation.toString());
+    assertThat(malformedFirstAttempt.get("recovery_uuid", String.class)).isNotNull();
+    assertThat(malformedFirstAttempt.get("recovery_started_at", String.class)).isNotNull();
+    assertThat(repository.read(originals.getFirst()).getTerminalOutcome()).isEmpty();
+    assertThat(retainedOriginalBytes(malformedOperation)).isEqualTo(malformedBytes);
+
+    retention.sweep();
+    assertThat(dispatched).hasSize(14);
+
+    var allDispatchedOperationIds =
+        dispatched.stream()
+            .map(recovery -> recovery.getOriginalSelection().getOperationUuid())
+            .collect(java.util.stream.Collectors.toSet());
+    assertThat(allDispatchedOperationIds)
+        .containsAll(
+            originals.stream()
+                .map(GetCanonicalGameplayRosterReferenceRequest::getOperationUuid)
+                .toList());
+    assertThat(allDispatchedOperationIds).doesNotContain(malformedOperation.toString());
+    var malformedAfterRetry = recoveryScheduleRow(malformedOperation.toString());
+    assertThat(malformedAfterRetry.get("recovery_uuid", String.class))
+        .isEqualTo(malformedFirstAttempt.get("recovery_uuid", String.class));
+    assertThat(malformedAfterRetry.get("recovery_started_at", String.class))
+        .isEqualTo(malformedFirstAttempt.get("recovery_started_at", String.class));
+    assertThat(malformedAfterRetry.get("recovery_last_attempt_at", String.class))
+        .isNotEqualTo(malformedFirstAttempt.get("recovery_last_attempt_at", String.class));
+    assertThat(retainedOriginalBytes(malformedOperation)).isEqualTo(malformedBytes);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT recovery_receipt IS NULL AND terminal_outcome IS NULL FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+                    malformedOperation)
+                .get(0, Boolean.class))
+        .isTrue();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT fence_state FROM game_session_canonical_roster_target_fences WHERE target_fence_uuid = ?",
+                    fenceUuid)
+                .get("fence_state", String.class))
+        .isEqualTo("ACTIVE");
+  }
+
+  @Test
   void frozenActorWithoutAssignmentReceiptClosesOnlyWithExactRecoveredRoster() throws Exception {
     var request = request();
     var actor = UUID.randomUUID();
@@ -1921,7 +2164,10 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     assertThat(retiredFence.get("fence_state", String.class)).isEqualTo("RETIRED");
     var candidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
-            UUID.fromString(repository.read(first).getTargetFenceUuid()), first, "RETIRED");
+            UUID.fromString(first.getOperationUuid()),
+            UUID.fromString(repository.read(first).getTargetFenceUuid()),
+            first,
+            "RETIRED");
     assertThat(
             dsl.fetchSingle(
                     "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers")
@@ -2120,7 +2366,10 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         ignored -> repository.confirmRetirementAcknowledgement(confirmation, entityPrincipal()));
     var candidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
-            UUID.fromString(repository.read(original).getTargetFenceUuid()), original, "RETIRED");
+            UUID.fromString(original.getOperationUuid()),
+            UUID.fromString(repository.read(original).getTargetFenceUuid()),
+            original,
+            "RETIRED");
     assertThat(
             dsl.fetchSingle(
                     "SELECT retired_at + minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
@@ -2264,7 +2513,10 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
     var request = acknowledgement(original, repository.read(original), UUID.randomUUID(), 1L);
     var candidate =
         new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
-            UUID.fromString(repository.read(original).getTargetFenceUuid()), original, "RETIRED");
+            UUID.fromString(original.getOperationUuid()),
+            UUID.fromString(repository.read(original).getTargetFenceUuid()),
+            original,
+            "RETIRED");
     var locked = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var purgeStarted = new CountDownLatch(1);
@@ -2365,7 +2617,10 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
                 ignored -> repository.sealTargetRetirement(request, current(request))))
         .isTrue();
     return new CanonicalGameplayRosterReferenceRepository.TargetCandidate(
-        UUID.fromString(repository.read(request).getTargetFenceUuid()), request, "RETIRED");
+        UUID.fromString(request.getOperationUuid()),
+        UUID.fromString(repository.read(request).getTargetFenceUuid()),
+        request,
+        "RETIRED");
   }
 
   private void assertNoOriginalOrFence() {
@@ -2538,6 +2793,31 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
             + "recovery_last_attempt_at::text AS recovery_last_attempt_at "
             + "FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
         UUID.fromString(operationUuid));
+  }
+
+  private CanonicalGameplayRosterReferenceRepository.TargetCandidate targetCandidatePage(
+      UUID afterOperation) {
+    return transaction
+        .<List<CanonicalGameplayRosterReferenceRepository.TargetCandidate>>execute(
+            ignored -> repository.targetCandidates(afterOperation, 1))
+        .getFirst();
+  }
+
+  private void insertRestoreShapedOriginal(
+      UUID operationUuid, UUID targetFenceUuid, byte[] originalRequest) {
+    dsl.execute(
+        "INSERT INTO game_session_canonical_roster_selection "
+            + "(operation_uuid, target_fence_uuid, original_request) VALUES (?, ?, ?)",
+        operationUuid,
+        targetFenceUuid,
+        originalRequest);
+  }
+
+  private byte[] retainedOriginalBytes(UUID operationUuid) {
+    return dsl.fetchSingle(
+            "SELECT original_request FROM game_session_canonical_roster_selection WHERE operation_uuid = ?",
+            operationUuid)
+        .get("original_request", byte[].class);
   }
 
   private List<Object> fencePolicy(GetCanonicalGameplayRosterReferenceRequest request) {
