@@ -256,7 +256,7 @@ public final class StartSessionTemplateAssociationReadEvidence {
             "World published selector differs from exact association and release identity");
       }
       requireNoUnknownFields(releaseBundle, "PublishedReleaseBundle");
-      requireCompleteRelease(releaseBundle, worldPublishedStartLocationEvidence);
+      releaseContent(releaseBundle, worldPublishedStartLocationEvidence);
       if (request.selection() instanceof ExactReplay replay
           && (!replay.canonicalVersionId().equals(association.canonicalVersionId())
               || !replay.selectedCommitId().equals(association.selectedCommitId())
@@ -311,7 +311,8 @@ public final class StartSessionTemplateAssociationReadEvidence {
     }
   }
 
-  private static void requireCompleteRelease(
+  /** Maps the complete original bundle through the canonical immutable release-content contract. */
+  public static GameDesignPublicationTerminalEvidence.ReleaseContent releaseContent(
       PublishedReleaseBundle bundle, WorldPublishedStartLocationEvidence worldEvidence) {
     if (bundle.getId() <= 0L
         || bundle.getVersionId() <= 0L
@@ -346,7 +347,7 @@ public final class StartSessionTemplateAssociationReadEvidence {
                         null,
                         null))
             .toList();
-    new GameDesignPublicationTerminalEvidence.ReleaseContent(
+    return new GameDesignPublicationTerminalEvidence.ReleaseContent(
         UUID.fromString(bundle.getCanonicalTenantId()),
         UUID.fromString(bundle.getCanonicalVersionId()),
         bundle.getPublishedReleaseBundleRef(),
