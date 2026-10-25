@@ -261,6 +261,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
         List.of(
             Status.Code.UNAVAILABLE,
             Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.PERMISSION_DENIED,
             Status.Code.RESOURCE_EXHAUSTED,
             Status.Code.ABORTED,
             Status.Code.CANCELLED,
