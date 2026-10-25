@@ -1,0 +1,32 @@
+---
+- id: Maven:io.javaoperatorsdk:operator-framework:5.6.2
+  curations:
+    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.2/java-operator-sdk-5.6.2.pom'
+    declared_license_mapping:
+      Apache 2 License: Apache-2.0
+- id: Maven:io.javaoperatorsdk:operator-framework-core:5.6.2
+  curations:
+    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.2/java-operator-sdk-5.6.2.pom'
+    declared_license_mapping:
+      Apache 2 License: Apache-2.0
+- id: Maven:io.javaoperatorsdk:operator-framework-spring-boot-starter:6.7.1
+  curations:
+    comment: 'The published POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.7.1/operator-framework-spring-boot-starter-6.7.1.pom'
+    declared_license_mapping:
+      Apache 2 License: Apache-2.0
+- id: Maven:jaxen:jaxen:2.0.6
+  curations:
+    comment: 'The tagged source license has the three BSD clauses, including non-endorsement; the POM''s BSD License 2.0 label
+      is not the SPDX BSD-2-Clause license: https://github.com/jaxen-xpath/jaxen/blob/v2.0.6/LICENSE.txt'
+    declared_license_mapping:
+      BSD License 2.0: BSD-3-Clause
+- id: Maven:io.gatling.highcharts:gatling-charts-highcharts:3.16.0
+  curations:
+    comment: >-
+      The exact published 3.16.0 JAR (SHA-1 d415db5ef3cc13f5bc7b45504a5dd0b247e8b17e)
+      contains this custom license text in META-INF/LICENSE. Preserve the text
+      verbatim under a package-specific LicenseRef; this metadata does not grant
+      rights or change the terms. Retention of the report generator remains
+      subject to human policy approval.
+    declared_license_mapping:
+      Gatling Highcharts: LicenseRef-Gatling-Highcharts-3.16.0

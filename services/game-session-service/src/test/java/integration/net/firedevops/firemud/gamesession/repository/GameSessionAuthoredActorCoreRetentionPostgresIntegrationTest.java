@@ -113,7 +113,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
       RowSnapshot sagaBefore =
           retainedRowSnapshot(fixture, "saga_instance", "id = ?", retainedSaga.getId());
 
-      migrationFlyway(fixture.dataSource(), fixture.schema(), null).migrate();
+      migrationFlyway(fixture.dataSource(), fixture.schema(), "1013").migrate();
 
       List<Map<String, Object>> historyAfter = appliedMigrationHistory(fixture);
       assertThat(historyAfter).hasSize(historyBefore.size() + 1);

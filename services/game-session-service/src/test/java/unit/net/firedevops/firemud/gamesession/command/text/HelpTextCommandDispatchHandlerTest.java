@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -18,9 +19,7 @@ class HelpTextCommandDispatchHandlerTest {
 
   @Test
   void publishesCommandEventForGameplayScopedHelp() {
-    SessionContext context =
-        new SessionContext(
-            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
 
     TextCommandInterpretationResult result =
         handler.handle(

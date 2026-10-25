@@ -5,6 +5,7 @@ import com.google.protobuf.Message;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.worldmanagement.v1.CompleteVersionPublicationRequest;
@@ -184,6 +185,9 @@ public final class WorldPublicationTerminalCompletionGrpcCodec {
       gameDesignTerminalEvidence = gameDesignTerminalEvidence.clone();
       GameDesignPublicationTerminalEvidence terminal;
       try {
+        // Historical decoding must not widen this complete-v2 completion transport.
+        new DraftAuthorizationFenceBinding.FrameReader(originalOperation)
+            .expect(GameDesignPublicationOperationBinding.SCHEMA);
         terminal = GameDesignPublicationTerminalEvidence.fromStored(gameDesignTerminalEvidence);
       } catch (RuntimeException malformed) {
         throw new IllegalArgumentException(

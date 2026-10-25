@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered producer for the distinct Entity and Automation intake authorization.
+service AccountSelectedOwnerIntakeAuthorizationProducerService {
+  rpc AuthorizeSelectedOwnerIntake(SelectedOwnerIntakeAuthorizationProducerRequest)
+      returns (SelectedOwnerIntakeAuthorizationProducerResponse);
+}
+
+enum SelectedOwnerIntakeAuthorizationProducerOwner {
+  SELECTED_OWNER_INTAKE_AUTHORIZATION_PRODUCER_OWNER_UNSPECIFIED = 0;
+  SELECTED_OWNER_INTAKE_AUTHORIZATION_PRODUCER_OWNER_ENTITY_MANAGEMENT = 1;
+  SELECTED_OWNER_INTAKE_AUTHORIZATION_PRODUCER_OWNER_AUTOMATION_SCRIPTING = 2;
+}
+
+message SelectedOwnerIntakeAuthorizationProducerRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Independent per-transport correlation; not the stable intake or selected Draft identity.
+  string transport_request_id = 3;
+  string intake_request_id = 4;
+  SelectedOwnerIntakeAuthorizationProducerOwner owner = 5;
+  // Complete canonical DraftCommitBinding JSON bytes.
+  bytes selected_draft_binding = 6;
+}
+
+message SelectedOwnerIntakeAuthorizationProducerResponse {
+  // Exact unchanged request echo.
+  SelectedOwnerIntakeAuthorizationProducerRequest request = 1;
+  // Complete canonical SelectedOwnerIntakeAuthorizationBinding bytes and its SHA-256 digest.
+  bytes intake_authorization_binding = 2;
+  string intake_authorization_digest = 3;
+}

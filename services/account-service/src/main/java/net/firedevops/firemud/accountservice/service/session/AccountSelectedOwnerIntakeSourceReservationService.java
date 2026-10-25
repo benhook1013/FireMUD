@@ -13,6 +13,8 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -20,11 +22,26 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Unregistered preliminary source-read producer; it grants no owner retention authority. */
 public final class AccountSelectedOwnerIntakeSourceReservationService {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(AccountSelectedOwnerIntakeSourceReservationService.class);
+
   private final AccountControlUiActorService actors;
   private final DraftAuthorizationFenceRepository fences;
   private final AccountSelectedOwnerIntakeSourceReservationRepository repository;
   private final String namespace;
   private final TransactionTemplate ownerTransaction;
+
+  /** Outcome of one bounded recovery page; zero aborts does not mean the sweep is complete. */
+  public record RecoveryPage(
+      int abortedCount,
+      int examinedCount,
+      AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor nextCursor) {
+    public RecoveryPage {
+      if (abortedCount < 0 || examinedCount < 0 || abortedCount > examinedCount) {
+        throw new IllegalArgumentException("Invalid expired preliminary recovery result");
+      }
+    }
+  }
 
   public AccountSelectedOwnerIntakeSourceReservationService(
       AccountControlUiActorService actors,
@@ -135,6 +152,56 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
                         .withDescription("Original source-read reservation is unavailable")
                         .asRuntimeException());
     return abortSourceRead(scope);
+  }
+
+  /**
+   * Performs one bounded Account-internal reconciliation page before any receiver is registered. It
+   * is not a transport or scheduled job: the caller owns invocation and readiness policy. Each
+   * candidate is rechecked and, if still eligible, durably aborted in its own independent
+   * READ_COMMITTED owner transaction. Finalized and concurrently changed candidates are skipped.
+   *
+   * @return counts and caller-owned continuation; a zero abort count is not global completion
+   */
+  public RecoveryPage recoverExpiredPreliminarySourceReads(
+      int maximumCandidates,
+      AccountSelectedOwnerIntakeSourceReservationRepository.RecoveryCursor after) {
+    if (maximumCandidates <= 0) {
+      throw new IllegalArgumentException("Expired preliminary recovery batch must be positive");
+    }
+    requireNoAmbientTransaction();
+    int boundedCandidates =
+        Math.min(
+            maximumCandidates,
+            AccountSelectedOwnerIntakeSourceReservationRepository
+                .MAX_EXPIRED_PRELIMINARY_RECOVERY_BATCH_SIZE);
+
+    var page =
+        Objects.requireNonNull(
+            ownerTransaction.execute(
+                ignored ->
+                    repository.findExpiredPreliminarySourceReadScopes(
+                        boundedCandidates, namespace, after)),
+            "Expired source-read candidate lookup returned no result");
+    int aborted = 0;
+    int candidateNumber = 0;
+    for (SelectedOwnerIntakeSourceReadScope scope : page.scopes()) {
+      candidateNumber++;
+      try {
+        if (Objects.requireNonNull(
+            ownerTransaction.execute(
+                ignored -> repository.abortExpiredPreliminarySourceRead(scope, namespace)),
+            "Expired source-read recovery returned no result")) {
+          aborted++;
+        }
+      } catch (RuntimeException candidateFailure) {
+        LOGGER.warn(
+            "Skipped failed expired preliminary source-read candidate {}/{} (failureType={})",
+            candidateNumber,
+            page.scopes().size(),
+            candidateFailure.getClass().getSimpleName());
+      }
+    }
+    return new RecoveryPage(aborted, page.examinedCount(), page.nextCursor());
   }
 
   private Optional<SelectedOwnerIntakeSourceReadScope> findScope(

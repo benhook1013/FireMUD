@@ -3,8 +3,12 @@ FROM ${BASE_IMAGE}
 USER root
 WORKDIR /app
 COPY --chmod=644 *.jar /app/
+# Gradle emits proof-only JARs alongside the executable Spring Boot JAR.
 RUN set -e; \
-    jar="$(find /app -maxdepth 1 -type f -name 'game-session-service-*.jar' ! -name '*-plain.jar' ! -name '*-test-fixtures.jar' | head -n 1)"; \
+    candidates="$(find /app -maxdepth 1 -type f -name 'game-session-service-*.jar' ! -name '*-plain.jar' ! -name '*-test-fixtures.jar' ! -name '*-classes-proof.jar')"; \
+    test -n "${candidates}"; \
+    test "$(printf '%s\n' "${candidates}" | wc -l)" -eq 1; \
+    jar="${candidates}"; \
     test -n "${jar}"; \
     mv "${jar}" /app/app.jar; \
     find /app -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -delete; \

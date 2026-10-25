@@ -2871,20 +2871,44 @@ openssl rsa -in "$bootstrap_ca_key" -traditional \
 openssl pkcs8 -topk8 -in "$bootstrap_ca_key" \
   -out "$bootstrap_encrypted_ca_key" -passout pass:firemud-test >/dev/null 2>&1 || \
   fail "could not generate the encrypted PKCS8 gRPC CA key fixture"
+bootstrap_expired_ca_error="$bootstrap_test_dir/expired-ca-error"
 openssl req -newkey rsa:2048 -nodes \
   -keyout "$bootstrap_expired_ca_key" \
   -out "$bootstrap_expired_ca_request" \
   -subj '/CN=expired-firemud-grpc-ca' \
-  >/dev/null 2>&1 || fail "could not generate the expired RSA gRPC CA request fixture"
-openssl x509 -req \
+  >/dev/null 2>"$bootstrap_expired_ca_error" || {
+    cat "$bootstrap_expired_ca_error" >&2
+    fail "could not generate the expired RSA gRPC CA request fixture"
+  }
+# Explicit historical bounds avoid relying on negative -days support.
+touch "$bootstrap_test_dir/expired-ca-index"
+printf '%s\n' '01' >"$bootstrap_test_dir/expired-ca-serial"
+cat >"$bootstrap_test_dir/expired-ca.cnf" <<EOF
+[ca]
+default_ca = expired_fixture
+[expired_fixture]
+database = $bootstrap_test_dir/expired-ca-index
+serial = $bootstrap_test_dir/expired-ca-serial
+new_certs_dir = $bootstrap_test_dir
+default_md = sha256
+policy = fixture_subject
+x509_extensions = fixture_ca
+[fixture_subject]
+commonName = supplied
+[fixture_ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+EOF
+openssl ca -selfsign -batch -notext \
+  -config "$bootstrap_test_dir/expired-ca.cnf" \
   -in "$bootstrap_expired_ca_request" \
-  -signkey "$bootstrap_expired_ca_key" \
+  -keyfile "$bootstrap_expired_ca_key" \
   -out "$bootstrap_expired_ca_cert" \
-  -days -1 \
-  -extfile <(printf '%s\n' \
-    'basicConstraints=critical,CA:TRUE' \
-    'keyUsage=critical,keyCertSign,cRLSign') \
-  >/dev/null 2>&1 || fail "could not generate the expired RSA gRPC CA fixture"
+  -startdate 20000101000000Z -enddate 20000102000000Z \
+  >/dev/null 2>"$bootstrap_expired_ca_error" || {
+    cat "$bootstrap_expired_ca_error" >&2
+    fail "could not generate the expired RSA gRPC CA fixture"
+  }
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$bootstrap_non_ca_key" \
   -out "$bootstrap_non_ca_cert" \

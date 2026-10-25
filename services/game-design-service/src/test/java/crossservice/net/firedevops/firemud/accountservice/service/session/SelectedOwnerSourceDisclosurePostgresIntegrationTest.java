@@ -141,7 +141,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
             temporary.resolve("account"),
             local.binding().target().canonicalTenantId(),
             Clock.systemUTC(),
-            "1007")) {
+            null)) {
       var issued = fixture.preparedOriginalCreator();
       var f = issued.sources();
       assertThat(
@@ -149,7 +149,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                   .fetchSingle(
                       "SELECT count(*) FROM flyway_schema_history WHERE version IN ('1008','1009','1010')")
                   .get(0, Integer.class))
-          .isZero();
+          .isEqualTo(3);
       retainControlledSelectedAuthorAdmission(issued, local.binding());
       var reservations =
           new AccountSelectedOwnerIntakeSourceReservationService(

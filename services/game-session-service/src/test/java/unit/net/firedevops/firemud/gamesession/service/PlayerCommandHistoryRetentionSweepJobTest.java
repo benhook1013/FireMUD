@@ -8,6 +8,7 @@ import java.util.List;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolver;
 import net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepository;
+import net.firedevops.firemud.gamesession.test.GameplayHistoryTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -20,7 +21,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     EffectiveCommandHistorySettingsResolver settingsResolver =
         Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
     PlayerCommandHistoryRepository.HistoryScope scope =
-        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 13L);
+        GameplayHistoryTestFixtures.retainedPlayerScope();
     when(repository.tryLockRetentionSweep()).thenReturn(true);
     when(repository.retentionSweepState())
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
@@ -32,7 +33,9 @@ class PlayerCommandHistoryRetentionSweepJobTest {
 
     job.trimInactiveHistory();
 
-    verify(storageService).trimToMaxEntries(22L, 7L, 13L, 4);
+    verify(storageService)
+        .trimToMaxEntries(
+            22L, 7L, GameplayHistoryTestFixtures.retainedPlayerScope().characterId(), 4);
     verify(repository)
         .saveRetentionSweepState(new PlayerCommandHistoryRepository.RetentionSweepState(scope, 1));
   }
@@ -62,9 +65,9 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     EffectiveCommandHistorySettingsResolver settingsResolver =
         Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
     PlayerCommandHistoryRepository.HistoryScope failingScope =
-        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 13L);
+        GameplayHistoryTestFixtures.retainedPlayerScope();
     PlayerCommandHistoryRepository.HistoryScope succeedingScope =
-        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 14L);
+        GameplayHistoryTestFixtures.nextRetainedPlayerScope();
     when(repository.tryLockRetentionSweep()).thenReturn(true);
     when(repository.retentionSweepState())
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(null, 0));
@@ -74,14 +77,19 @@ class PlayerCommandHistoryRetentionSweepJobTest {
         .thenReturn(new FiremudCommandHistoryProperties(4));
     Mockito.doThrow(new IllegalStateException("database unavailable"))
         .when(storageService)
-        .trimToMaxEntries(22L, 7L, 13L, 4);
+        .trimToMaxEntries(
+            22L, 7L, GameplayHistoryTestFixtures.retainedPlayerScope().characterId(), 4);
     PlayerCommandHistoryRetentionSweepJob job =
         new PlayerCommandHistoryRetentionSweepJob(repository, storageService, settingsResolver);
 
     job.trimInactiveHistory();
 
-    verify(storageService).trimToMaxEntries(22L, 7L, 13L, 4);
-    verify(storageService).trimToMaxEntries(22L, 7L, 14L, 4);
+    verify(storageService)
+        .trimToMaxEntries(
+            22L, 7L, GameplayHistoryTestFixtures.retainedPlayerScope().characterId(), 4);
+    verify(storageService)
+        .trimToMaxEntries(
+            22L, 7L, GameplayHistoryTestFixtures.nextRetainedPlayerScope().characterId(), 4);
   }
 
   @Test
@@ -92,11 +100,11 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     EffectiveCommandHistorySettingsResolver settingsResolver =
         Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
     PlayerCommandHistoryRepository.HistoryScope cursor =
-        new PlayerCommandHistoryRepository.HistoryScope(21L, 7L, 12L);
+        GameplayHistoryTestFixtures.retentionCursor();
     PlayerCommandHistoryRepository.HistoryScope first =
-        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 13L);
+        GameplayHistoryTestFixtures.retainedPlayerScope();
     PlayerCommandHistoryRepository.HistoryScope second =
-        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 14L);
+        GameplayHistoryTestFixtures.nextRetainedPlayerScope();
     when(repository.tryLockRetentionSweep()).thenReturn(true);
     when(repository.retentionSweepState())
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(cursor, 3));
@@ -109,8 +117,12 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     job.trimInactiveHistory();
 
     verify(settingsResolver).commandHistory(22L, 7L);
-    verify(storageService).trimToMaxEntries(22L, 7L, 13L, 4);
-    verify(storageService).trimToMaxEntries(22L, 7L, 14L, 4);
+    verify(storageService)
+        .trimToMaxEntries(
+            22L, 7L, GameplayHistoryTestFixtures.retainedPlayerScope().characterId(), 4);
+    verify(storageService)
+        .trimToMaxEntries(
+            22L, 7L, GameplayHistoryTestFixtures.nextRetainedPlayerScope().characterId(), 4);
     verify(repository)
         .saveRetentionSweepState(new PlayerCommandHistoryRepository.RetentionSweepState(second, 4));
   }
@@ -128,7 +140,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     when(repository.retentionSweepState())
         .thenReturn(
             new PlayerCommandHistoryRepository.RetentionSweepState(
-                new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 13L), 3));
+                GameplayHistoryTestFixtures.retainedPlayerScope(), 3));
     when(repository.findDistinctScopesAfter(Mockito.any(), Mockito.anyInt())).thenReturn(List.of());
 
     job.trimInactiveHistory();
@@ -146,7 +158,7 @@ class PlayerCommandHistoryRetentionSweepJobTest {
     EffectiveCommandHistorySettingsResolver settingsResolver =
         Mockito.mock(EffectiveCommandHistorySettingsResolver.class);
     PlayerCommandHistoryRepository.HistoryScope scope =
-        new PlayerCommandHistoryRepository.HistoryScope(22L, 7L, 13L);
+        GameplayHistoryTestFixtures.retainedPlayerScope();
     when(repository.tryLockRetentionSweep()).thenReturn(true);
     when(repository.retentionSweepState())
         .thenReturn(new PlayerCommandHistoryRepository.RetentionSweepState(scope, 19));

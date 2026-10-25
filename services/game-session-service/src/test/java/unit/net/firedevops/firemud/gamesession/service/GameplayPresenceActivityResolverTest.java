@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
+import net.firedevops.firemud.gamesession.test.GameplayPresenceTestFixtures;
 import org.junit.jupiter.api.Test;
 
 class GameplayPresenceActivityResolverTest {
@@ -16,21 +17,7 @@ class GameplayPresenceActivityResolverTest {
     GameplayPresenceActivityResolver resolver =
         new GameplayPresenceActivityResolver(properties, () -> 500L);
 
-    GameplayPresence presence =
-        new GameplayPresence(
-            1L,
-            22L,
-            7L,
-            "demo",
-            "production",
-            "2",
-            102L,
-            "Ben",
-            GameplayPresenceRole.PLAYER,
-            100L,
-            300L,
-            250L,
-            250L);
+    GameplayPresence presence = GameplayPresenceTestFixtures.activityBen(100L, 300L, 250L, 250L);
 
     assertEquals(GameplayPresenceActivityState.EXPLICIT_AFK, resolver.resolve(presence));
   }
@@ -44,55 +31,14 @@ class GameplayPresenceActivityResolverTest {
     GameplayPresenceActivityResolver resolver =
         new GameplayPresenceActivityResolver(properties, now::get);
 
-    GameplayPresence acceptedOnly =
-        new GameplayPresence(
-            1L,
-            22L,
-            7L,
-            "demo",
-            "production",
-            "2",
-            102L,
-            "Ben",
-            GameplayPresenceRole.PLAYER,
-            50L,
-            null,
-            150L,
-            null);
+    GameplayPresence acceptedOnly = GameplayPresenceTestFixtures.activityBen(50L, null, 150L, null);
     assertEquals(GameplayPresenceActivityState.AUTO_AFK, resolver.resolve(acceptedOnly));
 
     GameplayPresence activeFromMeaningful =
-        new GameplayPresence(
-            1L,
-            22L,
-            7L,
-            "demo",
-            "production",
-            "2",
-            102L,
-            "Ben",
-            GameplayPresenceRole.PLAYER,
-            50L,
-            null,
-            60L,
-            150L);
+        GameplayPresenceTestFixtures.activityBen(50L, null, 60L, 150L);
     assertEquals(GameplayPresenceActivityState.ACTIVE, resolver.resolve(activeFromMeaningful));
 
-    GameplayPresence autoAfk =
-        new GameplayPresence(
-            1L,
-            22L,
-            7L,
-            "demo",
-            "production",
-            "2",
-            102L,
-            "Ben",
-            GameplayPresenceRole.PLAYER,
-            50L,
-            null,
-            60L,
-            60L);
+    GameplayPresence autoAfk = GameplayPresenceTestFixtures.activityBen(50L, null, 60L, 60L);
     assertEquals(GameplayPresenceActivityState.AUTO_AFK, resolver.resolve(autoAfk));
   }
 
@@ -104,21 +50,7 @@ class GameplayPresenceActivityResolverTest {
     GameplayPresenceActivityResolver resolver =
         new GameplayPresenceActivityResolver(properties, () -> 200L);
 
-    GameplayPresence presence =
-        new GameplayPresence(
-            1L,
-            22L,
-            7L,
-            "demo",
-            "production",
-            "2",
-            102L,
-            "Ben",
-            GameplayPresenceRole.PLAYER,
-            150L,
-            null,
-            190L,
-            null);
+    GameplayPresence presence = GameplayPresenceTestFixtures.activityBen(150L, null, 190L, null);
 
     assertEquals(GameplayPresenceActivityState.ACTIVE, resolver.resolve(presence));
   }

@@ -10,6 +10,7 @@ import net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettings
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -28,10 +29,11 @@ class HistoryTextCommandDispatchHandlerTest {
 
   @Test
   void dispatchesToHistoryHandler() {
-    Mockito.when(historyStorageService.findRecent(7L, 9L, 7001L, 2))
+    Mockito.when(
+            historyStorageService.findRecent(
+                7L, 9L, GameplayCommandTestFixtures.historyEmberline().characterId(), 2))
         .thenReturn(List.of("LOOK", "SAY hi"));
-    SessionContext context =
-        new SessionContext(22L, 7L, "99", "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.historyEmberline();
 
     TextCommandInterpretationResult result =
         handler.handle(

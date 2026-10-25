@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -39,8 +40,25 @@ public final class IsolatedPublicationOperationFixtures {
     return fresh(target, PublishedWorldSelectorFixtures.evidence(target, baseReference));
   }
 
+  /** Fresh stipulated selected-full fixture; schema 4 is constructed before operation retention. */
+  public static GameDesignPublicationOperation freshSelectedFull(
+      DraftCommitBinding.TargetProof target, String baseReference) throws Exception {
+    return fresh(
+        target,
+        PublishedWorldSelectorFixtures.selectedFullSeed(target, baseReference),
+        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+  }
+
   private static GameDesignPublicationOperation fresh(
       DraftCommitBinding.TargetProof target, WorldPublishedStartLocationEvidence seed)
+      throws Exception {
+    return fresh(target, seed, 3);
+  }
+
+  private static GameDesignPublicationOperation fresh(
+      DraftCommitBinding.TargetProof target,
+      WorldPublishedStartLocationEvidence seed,
+      int worldDigestSchemaVersion)
       throws Exception {
     var originalDraftAccount =
         DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
@@ -110,12 +128,22 @@ public final class IsolatedPublicationOperationFixtures {
                 draft.digest(),
                 vector,
                 OffsetDateTime.parse("2026-10-07T00:00:00Z")));
-    return forSelection(selected, seed);
+    return selection(selected, seed, false, worldDigestSchemaVersion);
   }
 
   public static GameDesignPublicationOperation forSelection(
       AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
-    return selection(selected, seed, false);
+    return selection(selected, seed, false, 3);
+  }
+
+  /** Builds a fresh selected-full operation without reinterpreting retained schema-3 history. */
+  public static GameDesignPublicationOperation forSelectedFullSelection(
+      AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
+    return selection(
+        selected,
+        seed,
+        false,
+        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
   }
 
   /**
@@ -124,13 +152,14 @@ public final class IsolatedPublicationOperationFixtures {
    */
   public static GameDesignPublicationOperation historicalV1ForSelection(
       AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
-    return selection(selected, seed, true);
+    return selection(selected, seed, true, 3);
   }
 
   private static GameDesignPublicationOperation selection(
       AuthoredDraftPublishSelectionBinding selected,
       WorldPublishedStartLocationEvidence seed,
-      boolean historicalV1) {
+      boolean historicalV1,
+      int worldDigestSchemaVersion) {
     var originalDraftAccount =
         DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var target = selected.target();
@@ -181,7 +210,7 @@ public final class IsolatedPublicationOperationFixtures {
                     intent.publishRequestId()),
                 draft.commitId().toString(),
                 seed.request().contentDigest(),
-                3,
+                worldDigestSchemaVersion,
                 seed.request().worldAffectedTuples()),
             seed.selectorReceiptBytes(),
             seed.originalAccountBindingBytes(),

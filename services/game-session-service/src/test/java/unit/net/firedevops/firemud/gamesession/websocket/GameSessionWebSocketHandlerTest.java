@@ -39,6 +39,7 @@ import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -851,9 +852,7 @@ class GameSessionWebSocketHandlerTest {
   void handleMessageDoesNotAppendScreenBufferForNormalizedLoggedInShell() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
     PlayerOutput output = PlayerOutput.message("Recent room line");
-    SessionContext clearedShell =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    SessionContext clearedShell = GameplayCommandTestFixtures.bootstrapDemo();
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -921,9 +920,7 @@ class GameSessionWebSocketHandlerTest {
   void handleMessageForcesPromptBurstByUiActionMetadata() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.WHO, List.of(), "WHO");
     PlayerOutput output = PlayerOutput.message("Presence: online in Demo World / Live Realm");
-    SessionContext context =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    SessionContext context = GameplayCommandTestFixtures.webSocketEmberline();
     when(parser.parse("WHO")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -958,9 +955,7 @@ class GameSessionWebSocketHandlerTest {
   void handleMessageForcesPromptBurstForGameplayEntryMetadata() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     PlayerOutput output = PlayerOutput.message("Entering Demo World");
-    SessionContext context =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    SessionContext context = GameplayCommandTestFixtures.webSocketEmberline();
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1002,9 +997,7 @@ class GameSessionWebSocketHandlerTest {
             "custom-play",
             null);
     PlayerOutput output = PlayerOutput.message("Custom session response");
-    SessionContext context =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    SessionContext context = GameplayCommandTestFixtures.webSocketEmberline();
     when(parser.parse("CUSTOM-PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1039,9 +1032,7 @@ class GameSessionWebSocketHandlerTest {
         new TextCommand(TextCommandType.SAY, List.of("hello travelers"), "SAY hello travelers");
     PlayerOutput output = PlayerOutput.message("You say, \"hello travelers\"");
     WebSocketSession decoratedSession = Mockito.mock(WebSocketSession.class);
-    SessionContext context =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    SessionContext context = GameplayCommandTestFixtures.webSocketEmberline();
     when(session.getId()).thenReturn("session-41");
     when(decoratedSession.getId()).thenReturn("session-41");
     when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(decoratedSession));
@@ -1087,9 +1078,7 @@ class GameSessionWebSocketHandlerTest {
   @Test
   void handleMessageDoesNotReplayReconnectBufferForNormalizedLoggedInShell() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
-    SessionContext clearedShell =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    SessionContext clearedShell = GameplayCommandTestFixtures.bootstrapDemo();
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1157,9 +1146,7 @@ class GameSessionWebSocketHandlerTest {
                 "22"));
     TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
     PlayerOutput output = PlayerOutput.message("Recent room line");
-    SessionContext clearedShell =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    SessionContext clearedShell = GameplayCommandTestFixtures.bootstrapDemo();
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1753,7 +1740,7 @@ class GameSessionWebSocketHandlerTest {
 
   @Test
   void sendFailureCloseCallbackOwnsCleanup() throws Exception {
-    SessionContext context = new SessionContext(41L, 22L, "123", 123L, 1L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.unnamedOutputActor();
     PlayerOutput output = PlayerOutput.notice("hello");
     PresentationProperties presentation = new PresentationProperties();
     when(settingsResolver.presentation(context)).thenReturn(presentation);

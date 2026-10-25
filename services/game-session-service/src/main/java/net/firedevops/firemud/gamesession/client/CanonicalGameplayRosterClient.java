@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.client;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import jakarta.annotation.PostConstruct;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
@@ -39,7 +41,9 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -62,12 +66,14 @@ public final class CanonicalGameplayRosterClient
       "firemud.entity.canonical-gameplay-roster.v3";
 
   private final String workloadNamespace;
+  private final ObjectProvider<CanonicalGameplayRosterReferenceOwner> referenceOwnerProvider;
 
   public CanonicalGameplayRosterClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace,
+      ObjectProvider<CanonicalGameplayRosterReferenceOwner> referenceOwnerProvider) {
     super(
         endpoints,
         requireGameSessionMtls(tlsProperties),
@@ -77,6 +83,8 @@ public final class CanonicalGameplayRosterClient
       throw new IllegalArgumentException("Game Session workload namespace must be one DNS label");
     }
     this.workloadNamespace = workloadNamespace;
+    this.referenceOwnerProvider =
+        Objects.requireNonNull(referenceOwnerProvider, "referenceOwnerProvider");
   }
 
   @PostConstruct
@@ -104,17 +112,88 @@ public final class CanonicalGameplayRosterClient
         .withCompression("gzip");
   }
 
+  /** Freezes the exact ordinal/menu input under the original request before any Entity read. */
+  public void reserveSelectionInput(
+      CanonicalPublishedPlayerRoute route,
+      PlayerExecutionContext context,
+      String selector,
+      UUID menuSnapshotUuid,
+      String menuSnapshotDigest) {
+    requireOutsideTransactionAndSynchronization();
+    var target = expectedTarget(Objects.requireNonNull(route, "route"));
+    UUID account = validatePlayerExecutionContext(context, target, false);
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.request(
+            parseContextUuid(context.getRequestId(), "request_id"),
+            account,
+            parseContextUuid(context.getSessionId(), "session_id"),
+            workloadNamespace,
+            target);
+    var input =
+        net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()
+            .setSchemaVersion(1)
+            .setSelector(selector == null ? "" : selector);
+    if (menuSnapshotUuid != null || menuSnapshotDigest != null) {
+      input
+          .setMenuSnapshotUuid(
+              Objects.requireNonNull(menuSnapshotUuid, "menuSnapshotUuid").toString())
+          .setMenuSnapshotDigest(Objects.requireNonNull(menuSnapshotDigest, "menuSnapshotDigest"));
+    }
+    requireReferenceOwner()
+        .reserveSelectionInput(
+            original,
+            CanonicalGameplayRosterReferenceEvidence.requireSelectionInput(input.build()));
+  }
+
+  public void completeSelection(
+      CanonicalPublishedPlayerRoute route,
+      PlayerExecutionContext context,
+      net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository
+              .SelectionOutcome
+          outcome) {
+    requireOutsideTransactionAndSynchronization();
+    var target = expectedTarget(Objects.requireNonNull(route, "route"));
+    UUID account = validatePlayerExecutionContext(context, target, false);
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.request(
+            parseContextUuid(context.getRequestId(), "request_id"),
+            account,
+            parseContextUuid(context.getSessionId(), "session_id"),
+            workloadNamespace,
+            target);
+    requireReferenceOwner().completeSelection(original, outcome);
+  }
+
   /**
    * Reads one complete Entity snapshot for an exact current published route. The result is
    * discovery evidence only: it does not establish Account membership, admission, or PLAY.
    */
   public PreseededRosterSnapshot listPreseededRoster(
       CanonicalPublishedPlayerRoute publishedRoute, PlayerExecutionContext playerExecutionContext) {
+    requireOutsideTransactionAndSynchronization();
     Objects.requireNonNull(publishedRoute, "publishedRoute");
     CanonicalGameplayRosterTarget expectedTarget = expectedTarget(publishedRoute);
     UUID canonicalAccountUuid =
         validatePlayerExecutionContext(playerExecutionContext, expectedTarget, false);
     UUID requestUuid = parseContextUuid(playerExecutionContext.getRequestId(), "request_id");
+    var originalRequest =
+        CanonicalGameplayRosterReferenceEvidence.request(
+            requestUuid,
+            canonicalAccountUuid,
+            parseContextUuid(playerExecutionContext.getSessionId(), "session_id"),
+            workloadNamespace,
+            expectedTarget);
+    var referenceOwner = requireReferenceOwner();
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.requireResponse(
+            originalRequest, referenceOwner.begin(originalRequest));
+    CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
+    if (!original.getCanonicalRosterReceipt().isEmpty()) {
+      return validateResponse(
+          canonicalAccountUuid,
+          expectedTarget,
+          CanonicalGameplayRosterReferenceEvidence.receipt(original));
+    }
     CanonicalGameplayRosterRequest request =
         CanonicalGameplayRosterRequest.newBuilder()
             .setRequestUuid(requestUuid.toString())
@@ -127,11 +206,14 @@ public final class CanonicalGameplayRosterClient
     if (currentStub == null) {
       throw new IllegalStateException("Entity canonical gameplay roster client is not initialized");
     }
+    referenceOwner.markRosterReadStarted(originalRequest);
     CanonicalGameplayRosterResponse response =
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .listPreseededRoster(request);
-    return validateResponse(canonicalAccountUuid, expectedTarget, response);
+    var validated = validateResponse(canonicalAccountUuid, expectedTarget, response);
+    referenceOwner.record(originalRequest, response);
+    return validated;
   }
 
   /**
@@ -164,6 +246,31 @@ public final class CanonicalGameplayRosterClient
     }
 
     UUID requestUuid = parseContextUuid(playerExecutionContext.getRequestId(), "request_id");
+    var originalRequest =
+        CanonicalGameplayRosterReferenceEvidence.request(
+            requestUuid,
+            roster.canonicalAccountUuid(),
+            parseContextUuid(playerExecutionContext.getSessionId(), "session_id"),
+            workloadNamespace,
+            expectedTarget);
+    var referenceOwner = requireReferenceOwner();
+    var original =
+        CanonicalGameplayRosterReferenceEvidence.requireResponse(
+            originalRequest, referenceOwner.selectOriginal(originalRequest, selectedCharacterUuid));
+    CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
+    var originalReceipt = CanonicalGameplayRosterReferenceEvidence.receipt(original);
+    if (!selectedCharacterUuid.toString().equals(original.getSelectedCharacterUuid())
+        || !roster.snapshotUuid().toString().equals(originalReceipt.getSnapshotUuid())
+        || !roster.snapshotDigest().equals(originalReceipt.getSnapshotDigest())) {
+      throw new IllegalArgumentException("Selected roster differs from its original operation");
+    }
+    if (!original.getCanonicalSelectedAssignmentReceipt().isEmpty()) {
+      return validateSelectedAssignmentResponse(
+          requestUuid,
+          roster,
+          selectedCharacterUuid,
+          CanonicalGameplayRosterReferenceEvidence.selectedAssignmentReceipt(original));
+    }
     CanonicalGameplayRosterSelectedAssignmentRequest request =
         CanonicalGameplayRosterSelectedAssignmentRequest.newBuilder()
             .setRequestUuid(requestUuid.toString())
@@ -185,7 +292,28 @@ public final class CanonicalGameplayRosterClient
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readSelectedPreseededAssignment(request);
-    return validateSelectedAssignmentResponse(requestUuid, roster, selectedCharacterUuid, response);
+    var validated =
+        validateSelectedAssignmentResponse(requestUuid, roster, selectedCharacterUuid, response);
+    referenceOwner.recordSelectedAssignment(originalRequest, response);
+    return validated;
+  }
+
+  private CanonicalGameplayRosterReferenceOwner requireReferenceOwner() {
+    CanonicalGameplayRosterReferenceOwner owner;
+    try {
+      owner = referenceOwnerProvider.getIfAvailable();
+    } catch (RuntimeException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Canonical roster reference owner is unavailable")
+          .withCause(unavailable)
+          .asRuntimeException();
+    }
+    if (owner == null) {
+      throw Status.UNAVAILABLE
+          .withDescription("Canonical roster reference owner is unavailable")
+          .asRuntimeException();
+    }
+    return owner;
   }
 
   private static UUID validatePlayerExecutionContext(
@@ -463,7 +591,7 @@ public final class CanonicalGameplayRosterClient
     return value != null
         && !value.isBlank()
         && value.equals(value.trim())
-        && value.length() <= 100
+        && value.codePointCount(0, value.length()) <= 100
         && value.codePoints().noneMatch(Character::isISOControl);
   }
 

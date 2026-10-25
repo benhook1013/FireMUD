@@ -1,0 +1,2852 @@
+package net.firedevops.firemud.accountservice.service.session;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.io.ByteArrayOutputStream;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationRepository.State;
+import net.firedevops.firemud.common.account.sourceintake.AccountSelectedOwnerIntakeSettlementReceipt;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerEmptySourceInputs;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt.FamilyCensus;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind;
+import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt.FamilyState;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.gamedesign.AssetSnapshot;
+import net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSnapshot;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
+import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence.AppliedEpoch;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot;
+import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.TemplateConfigOwnerSourceInventoryDeclaration;
+import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceSnapshot;
+import net.firedevops.firemud.common.gamedesign.TemplateConfigSourceValues;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.VisibilityFence;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.SelectedOwnerWorldInventoryReadEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.ArtifactDecision;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Checkpoint;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.FamilyCount;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.Freeze;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceFamilyCount;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicAccountOrder;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.PublicOwnerScope;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.RegionGeneratorInput;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.SelectedApplication;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence.SourceModel;
+import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+/**
+ * Real Account creator/currentness, PostgreSQL finalization, immutable source participation and
+ * pending source guards. Six-family content and the Game Design caller are stipulated test inputs;
+ * the settlement case supplies explicitly synthetic upstream Automation terminal evidence (with no
+ * authentication proof) and proves real Account storage only, not producer transport or peer
+ * authentication, activation, or runtime behavior.
+ */
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
+class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
+  private static final Network NETWORK = Network.newNetwork();
+
+  @Container
+  static final PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final GenericContainer<?> redis =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(NETWORK)
+          .withNetworkAliases("intake-primary")
+          .withExposedPorts(6379)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always");
+
+  @Container
+  static final GenericContainer<?> replica =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(NETWORK)
+          .dependsOn(redis)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--replicaof",
+              "intake-primary",
+              "6379");
+
+  @TempDir Path temporary;
+
+  @Test
+  void finalizesBothOwnersExactlyAndKeepsTheirFullSourceVectorsPending() throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selected(f.tenant);
+      settleOriginal(issued, selected);
+      var expectedSources =
+          f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()).sources());
+
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservationService =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var finalized = new ArrayList<SelectedOwnerIntakeAuthorizationBinding>();
+      var scopes = new ArrayList<SelectedOwnerIntakeSourceReadScope>();
+
+      for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
+        UUID requestId = UUID.randomUUID();
+        var scope =
+            asGameDesign(
+                () ->
+                    reservationService.reserveSourceRead(
+                        issued.compact(), requestId, owner, selected, issued.environment()));
+        var content = content(scope, "stipulated-original");
+        var authorization =
+            asGameDesign(
+                () ->
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current ->
+                                repository.finalizeSourceRead(
+                                    scope,
+                                    content,
+                                    current,
+                                    () ->
+                                        f.fences.requireSelectedOwnerIntakeAdmission(
+                                            current.source().sources(), selected))));
+
+        assertThat(authorization.owner()).isEqualTo(owner);
+        assertThat(authorization.content().canonicalBytes()).isEqualTo(content.canonicalBytes());
+        assertThat(authorization.sources()).hasSize(expectedSources.size());
+        for (int index = 0; index < expectedSources.size(); index++) {
+          assertThat(authorization.sources().get(index).key())
+              .isEqualTo(expectedSources.get(index).key());
+          assertThat(authorization.sources().get(index).canonicalBytes())
+              .isEqualTo(expectedSources.get(index).canonicalBytes());
+        }
+        assertThat(f.tx(() -> repository.recoverSourceRead(scope)).state())
+            .isEqualTo(State.FINALIZED);
+        var readback = f.tx(() -> repository.findFinalAuthorization(scope)).orElseThrow();
+        assertThat(readback.canonicalBytes()).isEqualTo(authorization.canonicalBytes());
+        assertThat(readback.digest()).isEqualTo(authorization.digest());
+        var exactRetry =
+            asGameDesign(
+                () ->
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current ->
+                                repository.finalizeSourceRead(
+                                    scope,
+                                    content,
+                                    current,
+                                    () -> {
+                                      throw new AssertionError(
+                                          "Exact finalization retry must not re-admit");
+                                    })));
+        assertThat(exactRetry.canonicalBytes()).isEqualTo(authorization.canonicalBytes());
+        f.tx(
+            () -> {
+              repository.readFinalAuthorization(authorization);
+              return null;
+            });
+        assertThatThrownBy(() -> f.tx(() -> repository.sourceReadCurrentness(scope)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("preliminary source read");
+        assertThatThrownBy(() -> f.tx(() -> repository.abortSourceRead(scope)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("cannot be preliminarily aborted");
+
+        var changedContent = content(scope, "stipulated-changed");
+        assertThatThrownBy(
+                () ->
+                    asGameDesign(
+                        () ->
+                            issued
+                                .actors()
+                                .withCurrent(
+                                    issued.compact(),
+                                    f.tenant,
+                                    issued.environment(),
+                                    current ->
+                                        repository.finalizeSourceRead(
+                                            scope, changedContent, current, () -> {}))))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("conflicts with original selected content");
+
+        scopes.add(scope);
+        finalized.add(authorization);
+      }
+
+      UUID abortedRequest = UUID.randomUUID();
+      var abortedScope =
+          asGameDesign(
+              () ->
+                  reservationService.reserveSourceRead(
+                      issued.compact(),
+                      abortedRequest,
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
+      assertThat(f.tx(() -> repository.abortSourceRead(abortedScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      abortedScope.operationId())
+                  .get(0, Boolean.class))
+          .isFalse();
+      var abortedContent = content(abortedScope, "stipulated-aborted");
+      assertThatThrownBy(
+              () ->
+                  asGameDesign(
+                      () ->
+                          issued
+                              .actors()
+                              .withCurrent(
+                                  issued.compact(),
+                                  f.tenant,
+                                  issued.environment(),
+                                  current ->
+                                      repository.finalizeSourceRead(
+                                          abortedScope, abortedContent, current, () -> {}))))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("scope aborted");
+      assertThat(
+              f.dsl.fetchOne(
+                  "SELECT operation_id FROM account_selected_owner_intake_authorizations WHERE operation_id = ?",
+                  abortedScope.operationId()))
+          .isNull();
+
+      var sourceChange =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), finalized.getFirst().sources(), new byte[] {2});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(sourceChange))).isFalse();
+      assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(sourceChange))).isFalse();
+      assertThat(scopes).hasSize(2);
+    }
+  }
+
+  @Test
+  void expiredRecoveryUsesDatabaseCutoffAndPreservesFinalizedOwnerUntilExactSettlement()
+      throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            null,
+            Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-270)))) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var preliminary =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.AUTOMATION_SCRIPTING,
+                      selected,
+                      issued.environment()));
+      var finalizingScope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
+      var alreadyFinalized =
+          finalizeEntityBinding(issued, reservations, repository, selected, "recovery-committed");
+      UUID issuanceOperationId =
+          f.dsl
+              .fetchSingle(
+                  "SELECT issuance_operation_id FROM account_selected_owner_intake_source_read_reservations"
+                      + " WHERE operation_id = ?",
+                  preliminary.operationId())
+              .get("issuance_operation_id", UUID.class);
+
+      assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isZero();
+      assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
+          .isEqualTo(State.RESERVED);
+      assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isTrue();
+      var finalizationContent = content(finalizingScope, "recovery-race-finalized");
+      var authorizationInserted = new CountDownLatch(1);
+      var allowFinalizationCommit = new CountDownLatch(1);
+      var recoveryStarted = new CountDownLatch(1);
+      var finalizationBackendPid = new AtomicInteger();
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      try {
+        var finalizing =
+            executor.submit(
+                () ->
+                    asGameDesign(
+                        () ->
+                            issued
+                                .actors()
+                                .withCurrent(
+                                    issued.compact(),
+                                    f.tenant,
+                                    issued.environment(),
+                                    current -> {
+                                      var binding =
+                                          repository.finalizeSourceRead(
+                                              finalizingScope,
+                                              finalizationContent,
+                                              current,
+                                              () ->
+                                                  f.fences.requireSelectedOwnerIntakeAdmission(
+                                                      current.source().sources(), selected));
+                                      finalizationBackendPid.set(
+                                          f.dsl
+                                              .fetchSingle("SELECT pg_backend_pid()")
+                                              .get(0, Integer.class));
+                                      authorizationInserted.countDown();
+                                      awaitFinalizationCommit(allowFinalizationCommit);
+                                      return binding;
+                                    })));
+        assertThat(authorizationInserted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
+
+        awaitIssuerExpiry(f.dsl, issuanceOperationId);
+        var recovering =
+            executor.submit(
+                () -> {
+                  recoveryStarted.countDown();
+                  return reservations
+                      .recoverExpiredPreliminarySourceReads(128, null)
+                      .abortedCount();
+                });
+        assertThat(recoveryStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        awaitRecoverySourceLockWait(f.dsl, finalizationBackendPid.get());
+        assertThat(recovering.isDone()).isFalse();
+
+        allowFinalizationCommit.countDown();
+        Throwable finalizationFailure = null;
+        try {
+          finalizing.get(10, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.ExecutionException expected) {
+          finalizationFailure = expected;
+        }
+        assertThat(finalizationFailure).isNotNull();
+        Throwable rootCause = finalizationFailure;
+        while (rootCause.getCause() != null) rootCause = rootCause.getCause();
+        assertThat(rootCause.getMessage())
+            .contains("Finalized authorization requires exact current committed creator evidence");
+        assertThat(recovering.get(10, TimeUnit.SECONDS)).isEqualTo(2);
+      } finally {
+        allowFinalizationCommit.countDown();
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isZero();
+      assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(f.tx(() -> repository.recoverSourceRead(finalizingScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isFalse();
+      assertThat(sourceReadPending(f.dsl, finalizingScope.operationId())).isFalse();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT scope_bytes FROM account_selected_owner_intake_source_read_reservations"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get("scope_bytes", byte[].class))
+          .isEqualTo(preliminary.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      finalizingScope.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+
+      var committedScope = alreadyFinalized.content().scope();
+      assertThat(f.tx(() -> repository.recoverSourceRead(committedScope).state()))
+          .isEqualTo(State.FINALIZED);
+      assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT binding_bytes FROM account_selected_owner_intake_authorizations"
+                          + " WHERE operation_id = ?",
+                      alreadyFinalized.operationId())
+                  .get("binding_bytes", byte[].class))
+          .isEqualTo(alreadyFinalized.canonicalBytes());
+      var terminal = entityTerminalEvidence(alreadyFinalized, 9851, 9852);
+      var settlement = f.tx(() -> repository.settleEntityCommittedEmpty(terminal));
+      assertThat(
+              f.tx(
+                  () -> repository.findSettlement(alreadyFinalized).orElseThrow().canonicalBytes()))
+          .isEqualTo(settlement.canonicalBytes());
+      assertThat(f.tx(() -> repository.settleEntityCommittedEmpty(terminal).canonicalBytes()))
+          .isEqualTo(settlement.canonicalBytes());
+      assertThat(sourceReadPending(f.dsl, alreadyFinalized.operationId())).isFalse();
+    }
+  }
+
+  @Test
+  void expiredPreliminaryRecoveryContinuesAcrossSameExpiryRowsByKeyset() throws Exception {
+    var serviceClock = new MutableOffsetClock(Clock.systemUTC(), -270L);
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            null,
+            serviceClock)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var firstScope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
+      var secondScope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.AUTOMATION_SCRIPTING,
+                      selected,
+                      issued.environment()));
+      UUID issuanceOperationId =
+          f.dsl
+              .fetchSingle(
+                  "SELECT issuance_operation_id FROM account_selected_owner_intake_source_read_reservations"
+                      + " WHERE operation_id = ?",
+                  firstScope.operationId())
+              .get("issuance_operation_id", UUID.class);
+
+      awaitIssuerExpiry(f.dsl, issuanceOperationId);
+
+      var firstPage = reservations.recoverExpiredPreliminarySourceReads(1, null);
+      assertThat(firstPage.examinedCount()).isEqualTo(1);
+      assertThat(firstPage.abortedCount()).isEqualTo(1);
+      assertThat(firstPage.nextCursor()).isNotNull();
+      assertThat(firstPage.nextCursor().expiresAtEpochSecond())
+          .isEqualTo(issuerExpiryEpochSecond(f.dsl, issuanceOperationId));
+
+      var secondPage = reservations.recoverExpiredPreliminarySourceReads(1, firstPage.nextCursor());
+      assertThat(secondPage.examinedCount()).isEqualTo(1);
+      assertThat(secondPage.abortedCount()).isEqualTo(1);
+      assertThat(secondPage.nextCursor()).isNotNull();
+      assertThat(secondPage.nextCursor().expiresAtEpochSecond())
+          .isEqualTo(firstPage.nextCursor().expiresAtEpochSecond());
+      assertThat(secondPage.nextCursor().operationId())
+          .isNotEqualTo(firstPage.nextCursor().operationId());
+
+      var emptyPage = reservations.recoverExpiredPreliminarySourceReads(1, secondPage.nextCursor());
+      assertThat(emptyPage.examinedCount()).isZero();
+      assertThat(emptyPage.abortedCount()).isZero();
+      assertThat(emptyPage.nextCursor()).isNull();
+      assertThat(f.tx(() -> repository.recoverSourceRead(firstScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(f.tx(() -> repository.recoverSourceRead(secondScope).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(sourceReadPending(f.dsl, firstScope.operationId())).isFalse();
+      assertThat(sourceReadPending(f.dsl, secondScope.operationId())).isFalse();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"REVOKING", "REVOKED"})
+  void expiredPreliminaryRecoveryAcceptsRetainedExpiredIssuersAndKeepsFinalAuthorization(
+      String issuerStatus) throws Exception {
+    var serviceClock = new MutableOffsetClock(Clock.systemUTC(), -270L);
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            null,
+            serviceClock)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var preliminary =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.AUTOMATION_SCRIPTING,
+                      selected,
+                      issued.environment()));
+      var finalized =
+          finalizeEntityBinding(issued, reservations, repository, selected, issuerStatus);
+      var finalizedScope = finalized.content().scope();
+      UUID issuanceOperationId =
+          f.dsl
+              .fetchSingle(
+                  "SELECT issuance_operation_id FROM account_selected_owner_intake_source_read_reservations"
+                      + " WHERE operation_id = ?",
+                  preliminary.operationId())
+              .get("issuance_operation_id", UUID.class);
+
+      assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
+      awaitIssuerExpiry(f.dsl, issuanceOperationId);
+      var issuanceRepository = new AccountControlUiIssuanceRepository(f.dsl);
+      if ("REVOKING".equals(issuerStatus)) {
+        var original =
+            f.tx(
+                () ->
+                    issuanceRepository.findToken(
+                        AccountControlUiIssuanceRepository.hash(
+                            issued.compact().getBytes(StandardCharsets.US_ASCII))));
+        assertThat(original).isNotNull();
+        var revoking = f.tx(() -> issuanceRepository.beginRecoveryFailure(original));
+        assertThat(revoking.status).isEqualTo("REVOKING");
+      } else {
+        serviceClock.advance(Duration.ofSeconds(31));
+        assertThatThrownBy(fixture::issueCreator).isInstanceOf(IllegalStateException.class);
+      }
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT status FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+                      issuanceOperationId)
+                  .get("status", String.class))
+          .isEqualTo(issuerStatus);
+
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isEqualTo(1);
+
+      assertThat(f.tx(() -> repository.recoverSourceRead(preliminary).state()))
+          .isEqualTo(State.ABORTED);
+      assertThat(f.tx(() -> repository.recoverSourceRead(finalizedScope).state()))
+          .isEqualTo(State.FINALIZED);
+      assertThat(sourceReadPending(f.dsl, preliminary.operationId())).isFalse();
+      assertThat(sourceReadPending(f.dsl, finalizedScope.operationId())).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT scope_bytes FROM account_selected_owner_intake_source_read_reservations"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get("scope_bytes", byte[].class))
+          .isEqualTo(preliminary.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT binding_bytes FROM account_selected_owner_intake_authorizations"
+                          + " WHERE operation_id = ?",
+                      finalizedScope.operationId())
+                  .get("binding_bytes", byte[].class))
+          .isEqualTo(finalized.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      preliminary.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_selected_owner_intake_source_read_aborts"
+                          + " WHERE operation_id = ?",
+                      finalizedScope.operationId())
+                  .get(0, Long.class))
+          .isZero();
+
+      var sourceChange =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), finalized.sources(), new byte[] {2});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(sourceChange))).isFalse();
+      assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(sourceChange))).isFalse();
+      assertThat(reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount())
+          .isZero();
+    }
+  }
+
+  @Test
+  void commitsExactAutomationEmptySettlementAndReleasesOnlyThatOperation() throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservationService =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var bindings = new ArrayList<SelectedOwnerIntakeAuthorizationBinding>();
+      var terminals = new ArrayList<AutomationSelectedSourceIntakeTerminalReadEvidence>();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      UUID.randomUUID())
+                  .get(0, Boolean.class))
+          .isTrue();
+
+      for (int index = 0; index < 2; index++) {
+        UUID requestId = UUID.randomUUID();
+        var scope =
+            asGameDesign(
+                () ->
+                    reservationService.reserveSourceRead(
+                        issued.compact(),
+                        requestId,
+                        Owner.AUTOMATION_SCRIPTING,
+                        selected,
+                        issued.environment()));
+        var content = content(scope, "automation-settlement-" + index);
+        var binding =
+            asGameDesign(
+                () ->
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current ->
+                                repository.finalizeSourceRead(
+                                    scope,
+                                    content,
+                                    current,
+                                    () ->
+                                        f.fences.requireSelectedOwnerIntakeAdmission(
+                                            current.source().sources(), selected))));
+        bindings.add(binding);
+        terminals.add(terminalEvidence(binding, 9001L + index, 9002L + index));
+      }
+
+      var firstBinding = bindings.getFirst();
+      var secondBinding = bindings.getLast();
+      var firstTerminal = terminals.getFirst();
+      assertThat(f.<Boolean>tx(() -> repository.findSettlement(firstBinding).isEmpty())).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      firstBinding.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+
+      var writerBeforeSettlement =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), firstBinding.sources(), new byte[] {3});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(writerBeforeSettlement)))
+          .isFalse();
+
+      var committed = f.tx(() -> repository.settleCommittedEmpty(firstTerminal));
+      assertThat(committed.authorizationBinding().canonicalBytes())
+          .isEqualTo(firstBinding.canonicalBytes());
+      assertThat(committed.terminalEvidence().receipt().canonicalBytes())
+          .isEqualTo(firstTerminal.receipt().canonicalBytes());
+      var stored =
+          f.dsl.fetchOne(
+              "SELECT * FROM account_selected_owner_intake_settlements WHERE operation_id = ?",
+              firstBinding.operationId());
+      assertThat(stored.get("receipt_bytes", byte[].class)).isEqualTo(committed.canonicalBytes());
+      assertThat(stored.get("receipt_digest", String.class)).isEqualTo(committed.digest());
+      assertThat(stored.get("terminal_receipt_bytes", byte[].class))
+          .isEqualTo(firstTerminal.receipt().canonicalBytes());
+      assertThat(stored.get("terminal_read_request_id", UUID.class))
+          .isEqualTo(firstTerminal.request().readRequestId());
+
+      var exactReadback = f.tx(() -> repository.findSettlement(firstBinding).orElseThrow());
+      assertThat(exactReadback.canonicalBytes()).isEqualTo(committed.canonicalBytes());
+      f.tx(
+          () -> {
+            repository.readFinalAuthorization(firstBinding);
+            return null;
+          });
+      assertThatThrownBy(
+              () ->
+                  f.tx(
+                      () -> {
+                        repository.readHeldFinalAuthorization(firstBinding);
+                        return null;
+                      }))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("no longer held");
+
+      var freshRead =
+          new AutomationSelectedSourceIntakeTerminalReadEvidence(
+              AutomationSelectedSourceIntakeTerminalReadEvidence.Request.create(
+                  "test", firstBinding),
+              firstTerminal.receipt());
+      assertThat(freshRead.request().readRequestId())
+          .isNotEqualTo(firstTerminal.request().readRequestId());
+      var retry = f.tx(() -> repository.settleCommittedEmpty(freshRead));
+      assertThat(retry.canonicalBytes()).isEqualTo(committed.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT terminal_read_request_id FROM account_selected_owner_intake_settlements "
+                          + "WHERE operation_id = ?",
+                      firstBinding.operationId())
+                  .get(0, UUID.class))
+          .isEqualTo(firstTerminal.request().readRequestId());
+      var changedReceipt = terminalEvidence(firstBinding, 9101L, 9102L);
+      assertThatThrownBy(() -> f.tx(() -> repository.settleCommittedEmpty(changedReceipt)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Changed Automation owner terminal receipt");
+
+      var changedSources = new ArrayList<>(firstBinding.sources());
+      var originalSource = changedSources.getFirst();
+      changedSources.set(
+          0,
+          new DraftAuthorizationFenceBinding.SourceEvidence(
+              originalSource.kind(),
+              originalSource.scopeId(),
+              originalSource.generation(),
+              originalSource.sourceVersion(),
+              originalSource.checkpointStream(),
+              originalSource.checkpointSequence(),
+              new byte[] {99}));
+      var changedBinding =
+          new SelectedOwnerIntakeAuthorizationBinding(firstBinding.content(), changedSources);
+      var changedBindingEvidence = terminalEvidence(changedBinding, 9201L, 9202L);
+      assertThatThrownBy(() -> f.tx(() -> repository.settleCommittedEmpty(changedBindingEvidence)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Original finalized owner authorization absent or changed");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "UPDATE account_selected_owner_intake_settlements "
+                          + "SET receipt_digest = ? WHERE operation_id = ?",
+                      DraftAuthorizationFenceBinding.digest(new byte[] {1}),
+                      firstBinding.operationId()))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT receipt_bytes FROM account_selected_owner_intake_settlements "
+                          + "WHERE operation_id = ?",
+                      firstBinding.operationId())
+                  .get(0, byte[].class))
+          .isEqualTo(committed.canonicalBytes());
+
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      firstBinding.operationId())
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      secondBinding.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+      var writerWhileOtherOperationHeld = writerBeforeSettlement;
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(writerWhileOtherOperationHeld)))
+          .isFalse();
+
+      var settlementInserted = new CountDownLatch(1);
+      var allowSettlementCommit = new CountDownLatch(1);
+      var writerStarted = new CountDownLatch(1);
+      var writerBackendPid = new AtomicInteger();
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      try {
+        var settling =
+            executor.submit(
+                () ->
+                    f.transactions.execute(
+                        ignored -> {
+                          var result = repository.settleCommittedEmpty(terminals.getLast());
+                          settlementInserted.countDown();
+                          awaitLatch(allowSettlementCommit);
+                          return result;
+                        }));
+        assertThat(settlementInserted.await(10, TimeUnit.SECONDS)).isTrue();
+
+        var waitingWriter =
+            executor.submit(
+                () ->
+                    f.transactions.execute(
+                        ignored -> {
+                          writerBackendPid.set(
+                              f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                          writerStarted.countDown();
+                          return f.fences.requestSourceChange(writerWhileOtherOperationHeld);
+                        }));
+        assertThat(writerStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(writerBackendPid.get()).isPositive();
+        awaitSourceLockWait(f.dsl, writerBackendPid.get());
+        assertThat(waitingWriter.isDone()).isFalse();
+
+        allowSettlementCommit.countDown();
+        assertThat(settling.get(10, TimeUnit.SECONDS).authorizationBinding().canonicalBytes())
+            .isEqualTo(secondBinding.canonicalBytes());
+        assertThat(waitingWriter.get(10, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        allowSettlementCommit.countDown();
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      secondBinding.operationId())
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(writerWhileOtherOperationHeld)))
+          .isTrue();
+
+      String settlementGuard =
+          f.dsl
+              .fetchSingle(
+                  "SELECT pg_get_functiondef('account_selected_owner_intake_settlement_guard()'::regprocedure)")
+              .get(0, String.class);
+      assertThat(settlementGuard)
+          .contains(
+              "ORDER BY account_publication_authorization_source_sort_key(lock_row.source_key)",
+              "FOR UPDATE OF lock_row");
+    }
+  }
+
+  @Test
+  void commitsExactEntityEmptySettlementAndReleasesOnlyThatOperation() throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservationService =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var bindings = new ArrayList<SelectedOwnerIntakeAuthorizationBinding>();
+      var terminals = new ArrayList<EntitySelectedSourceIntakeTerminalReadEvidence>();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      UUID.randomUUID())
+                  .get(0, Boolean.class))
+          .isTrue();
+
+      for (int index = 0; index < 2; index++) {
+        UUID requestId = UUID.randomUUID();
+        var scope =
+            asGameDesign(
+                () ->
+                    reservationService.reserveSourceRead(
+                        issued.compact(),
+                        requestId,
+                        Owner.ENTITY_MANAGEMENT,
+                        selected,
+                        issued.environment()));
+        var content = content(scope, "automation-settlement-" + index);
+        var binding =
+            asGameDesign(
+                () ->
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current ->
+                                repository.finalizeSourceRead(
+                                    scope,
+                                    content,
+                                    current,
+                                    () ->
+                                        f.fences.requireSelectedOwnerIntakeAdmission(
+                                            current.source().sources(), selected))));
+        bindings.add(binding);
+        terminals.add(entityTerminalEvidence(binding, 9001L + index, 9002L + index));
+      }
+
+      var firstBinding = bindings.getFirst();
+      var secondBinding = bindings.getLast();
+      var firstTerminal = terminals.getFirst();
+      assertThat(f.<Boolean>tx(() -> repository.findSettlement(firstBinding).isEmpty())).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      firstBinding.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+
+      var writerBeforeSettlement =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), firstBinding.sources(), new byte[] {3});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(writerBeforeSettlement)))
+          .isFalse();
+
+      var committed = f.tx(() -> repository.settleEntityCommittedEmpty(firstTerminal));
+      assertThat(committed.authorizationBinding().canonicalBytes())
+          .isEqualTo(firstBinding.canonicalBytes());
+      assertThat(committed.entityTerminalEvidence().receipt().canonicalBytes())
+          .isEqualTo(firstTerminal.receipt().canonicalBytes());
+      var stored =
+          f.dsl.fetchOne(
+              "SELECT * FROM account_selected_owner_intake_settlements WHERE operation_id = ?",
+              firstBinding.operationId());
+      assertThat(stored.get("receipt_bytes", byte[].class)).isEqualTo(committed.canonicalBytes());
+      assertThat(stored.get("receipt_digest", String.class)).isEqualTo(committed.digest());
+      assertThat(stored.get("terminal_receipt_bytes", byte[].class))
+          .isEqualTo(firstTerminal.receipt().canonicalBytes());
+      assertThat(stored.get("terminal_read_request_id", UUID.class))
+          .isEqualTo(firstTerminal.request().readRequestId());
+
+      var exactReadback = f.tx(() -> repository.findSettlement(firstBinding).orElseThrow());
+      assertThat(exactReadback.canonicalBytes()).isEqualTo(committed.canonicalBytes());
+      f.tx(
+          () -> {
+            repository.readFinalAuthorization(firstBinding);
+            return null;
+          });
+      assertThatThrownBy(
+              () ->
+                  f.tx(
+                      () -> {
+                        repository.readHeldFinalAuthorization(firstBinding);
+                        return null;
+                      }))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("no longer held");
+
+      var freshRead =
+          new EntitySelectedSourceIntakeTerminalReadEvidence(
+              EntitySelectedSourceIntakeTerminalReadEvidence.Request.create("test", firstBinding),
+              firstTerminal.receipt());
+      assertThat(freshRead.request().readRequestId())
+          .isNotEqualTo(firstTerminal.request().readRequestId());
+      var retry = f.tx(() -> repository.settleEntityCommittedEmpty(freshRead));
+      assertThat(retry.canonicalBytes()).isEqualTo(committed.canonicalBytes());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT terminal_read_request_id FROM account_selected_owner_intake_settlements "
+                          + "WHERE operation_id = ?",
+                      firstBinding.operationId())
+                  .get(0, UUID.class))
+          .isEqualTo(firstTerminal.request().readRequestId());
+      var changedReceipt = entityTerminalEvidence(firstBinding, 9101L, 9102L);
+      assertThatThrownBy(() -> f.tx(() -> repository.settleEntityCommittedEmpty(changedReceipt)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Changed Entity owner terminal receipt");
+
+      var changedSources = new ArrayList<>(firstBinding.sources());
+      var originalSource = changedSources.getFirst();
+      changedSources.set(
+          0,
+          new DraftAuthorizationFenceBinding.SourceEvidence(
+              originalSource.kind(),
+              originalSource.scopeId(),
+              originalSource.generation(),
+              originalSource.sourceVersion(),
+              originalSource.checkpointStream(),
+              originalSource.checkpointSequence(),
+              new byte[] {99}));
+      var changedBinding =
+          new SelectedOwnerIntakeAuthorizationBinding(firstBinding.content(), changedSources);
+      var changedBindingEvidence = entityTerminalEvidence(changedBinding, 9201L, 9202L);
+      assertThatThrownBy(
+              () -> f.tx(() -> repository.settleEntityCommittedEmpty(changedBindingEvidence)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Original finalized owner authorization absent or changed");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "UPDATE account_selected_owner_intake_settlements "
+                          + "SET receipt_digest = ? WHERE operation_id = ?",
+                      DraftAuthorizationFenceBinding.digest(new byte[] {1}),
+                      firstBinding.operationId()))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT receipt_bytes FROM account_selected_owner_intake_settlements "
+                          + "WHERE operation_id = ?",
+                      firstBinding.operationId())
+                  .get(0, byte[].class))
+          .isEqualTo(committed.canonicalBytes());
+
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      firstBinding.operationId())
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      secondBinding.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+      var writerWhileOtherOperationHeld = writerBeforeSettlement;
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(writerWhileOtherOperationHeld)))
+          .isFalse();
+
+      var settlementInserted = new CountDownLatch(1);
+      var allowSettlementCommit = new CountDownLatch(1);
+      var writerStarted = new CountDownLatch(1);
+      var writerBackendPid = new AtomicInteger();
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      try {
+        var settling =
+            executor.submit(
+                () ->
+                    f.transactions.execute(
+                        ignored -> {
+                          var result = repository.settleEntityCommittedEmpty(terminals.getLast());
+                          settlementInserted.countDown();
+                          awaitLatch(allowSettlementCommit);
+                          return result;
+                        }));
+        assertThat(settlementInserted.await(10, TimeUnit.SECONDS)).isTrue();
+
+        var waitingWriter =
+            executor.submit(
+                () ->
+                    f.transactions.execute(
+                        ignored -> {
+                          writerBackendPid.set(
+                              f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                          writerStarted.countDown();
+                          return f.fences.requestSourceChange(writerWhileOtherOperationHeld);
+                        }));
+        assertThat(writerStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(writerBackendPid.get()).isPositive();
+        awaitSourceLockWait(f.dsl, writerBackendPid.get());
+        assertThat(waitingWriter.isDone()).isFalse();
+
+        allowSettlementCommit.countDown();
+        assertThat(settling.get(10, TimeUnit.SECONDS).authorizationBinding().canonicalBytes())
+            .isEqualTo(secondBinding.canonicalBytes());
+        assertThat(waitingWriter.get(10, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        allowSettlementCommit.countDown();
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      secondBinding.operationId())
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(writerWhileOtherOperationHeld)))
+          .isTrue();
+
+      String settlementGuard =
+          f.dsl
+              .fetchSingle(
+                  "SELECT pg_get_functiondef('account_selected_owner_intake_settlement_guard()'::regprocedure)")
+              .get(0, String.class);
+      assertThat(settlementGuard)
+          .contains(
+              "ORDER BY account_publication_authorization_source_sort_key(lock_row.source_key)",
+              "FOR UPDATE OF lock_row");
+    }
+  }
+
+  @Test
+  void upgradesCombinedV1007ParentThroughFinalAuthorizationAndBothTerminalOwnersWithoutBackfill()
+      throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            "1007")) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      assertThat(
+              f.dsl
+                  .fetch("SELECT version FROM flyway_schema_history WHERE success")
+                  .getValues(0, String.class))
+          .contains("1000", "1001", "1002", "1005", "1006", "1007")
+          .doesNotContain("1008", "1009", "1010");
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var scope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
+      seedRetainedCombinedParentRows(f.dsl);
+      var retainedRows = retainedCombinedParentRows(f.dsl);
+      assertThat(retainedRows.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
+      String historyQuery =
+          "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+              + "FROM flyway_schema_history h WHERE version IS NULL "
+              + "OR version NOT IN ('1008', '1009', '1010') ORDER BY installed_rank";
+      var retainedHistory = f.dsl.fetch(historyQuery).getValues(0, String.class);
+      var inheritedGuards = retainedInheritedGuardDefinitions(f.dsl);
+      assertThat(inheritedGuards.get("account_ss_activation_settlement_insert_guard()"))
+          .contains(
+              "terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')");
+      Flyway upgrade = intakeMigration(f, "1010");
+      assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(3);
+      upgrade.validate();
+      assertThat(f.dsl.fetch(historyQuery).getValues(0, String.class)).isEqualTo(retainedHistory);
+      assertThat(retainedCombinedParentRows(f.dsl)).isEqualTo(retainedRows);
+      assertThat(retainedInheritedGuardDefinitions(f.dsl)).isEqualTo(inheritedGuards);
+      for (String table :
+          List.of(
+              "account_selected_owner_intake_authorizations",
+              "account_selected_owner_intake_sources",
+              "account_selected_owner_intake_settlements")) {
+        assertThat(f.dsl.fetchCount(org.jooq.impl.DSL.table(table))).isZero();
+      }
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      scope.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+    }
+  }
+
+  @Test
+  void migratesRetainedV1009AutomationBytesWithoutReleasingPendingEntity() throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            "1009")) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var automation =
+          finalizeAutomationBinding(issued, reservations, repository, selected, "retained-v1009");
+      var original =
+          f.tx(() -> repository.settleCommittedEmpty(terminalEvidence(automation, 8801, 8802)));
+      var entity =
+          finalizeEntityBinding(issued, reservations, repository, selected, "pending-v1009-entity");
+      var terminal = entityTerminalEvidence(entity, 8901, 8902);
+      byte[] retainedAuthorization =
+          f.dsl
+              .fetchSingle(
+                  "SELECT binding_bytes FROM account_selected_owner_intake_authorizations WHERE operation_id = ?",
+                  automation.operationId())
+              .get(0, byte[].class);
+      byte[] retainedTerminal = original.ownerReceiptBytes();
+      String pendingDefinition =
+          f.dsl
+              .fetchSingle(
+                  "SELECT pg_get_functiondef('account_selected_owner_intake_source_read_is_pending(uuid)'::regprocedure)")
+              .get(0, String.class);
+      assertRejectedSettlementByPostgres(
+          issued,
+          entity,
+          terminal,
+          terminal.receipt().canonicalBytes(),
+          "active Automation authorization");
+
+      seedRetainedCombinedParentRows(f.dsl);
+      var retainedParents = retainedCombinedParentRows(f.dsl);
+      String historyQuery =
+          "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+              + "FROM flyway_schema_history h WHERE version IS NULL OR version <> '1010' "
+              + "ORDER BY installed_rank";
+      var retainedHistory = f.dsl.fetch(historyQuery).getValues(0, String.class);
+      Map<String, List<String>> retainedRows = retainedSelectedOwnerRows(f.dsl);
+
+      Flyway upgrade = intakeMigration(f, "1010");
+      assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+      upgrade.validate();
+
+      assertThat(f.dsl.fetch(historyQuery).getValues(0, String.class)).isEqualTo(retainedHistory);
+      assertThat(retainedSelectedOwnerRows(f.dsl)).isEqualTo(retainedRows);
+      assertThat(retainedCombinedParentRows(f.dsl)).isEqualTo(retainedParents);
+
+      var recovered = f.tx(() -> repository.findSettlement(automation).orElseThrow());
+      assertThat(recovered.canonicalBytes()).isEqualTo(original.canonicalBytes());
+      assertThat(recovered.digest()).isEqualTo(original.digest());
+      assertThat(recovered.ownerReceiptBytes()).isEqualTo(retainedTerminal);
+      assertThat(recovered.terminalReadRequestId()).isEqualTo(original.terminalReadRequestId());
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT binding_bytes FROM account_selected_owner_intake_authorizations WHERE operation_id = ?",
+                      automation.operationId())
+                  .get(0, byte[].class))
+          .isEqualTo(retainedAuthorization);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT pg_get_functiondef('account_selected_owner_intake_source_read_is_pending(uuid)'::regprocedure)")
+                  .get(0, String.class))
+          .isEqualTo(pendingDefinition);
+      assertThat(f.tx(() -> repository.findSettlement(entity))).isEmpty();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      entity.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+      var writer =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), entity.sources(), new byte[] {7});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(writer))).isFalse();
+      var settledEntity = f.tx(() -> repository.settleEntityCommittedEmpty(terminal));
+      assertThat(settledEntity.ownerReceiptBytes()).isEqualTo(terminal.receipt().canonicalBytes());
+      assertThatThrownBy(() -> f.tx(() -> repository.abortSourceRead(entity.content().scope())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("cannot be preliminarily aborted");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "DELETE FROM account_selected_owner_intake_settlements WHERE operation_id = ?",
+                      automation.operationId()))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(f.tx(() -> repository.findSettlement(automation).orElseThrow()).canonicalBytes())
+          .isEqualTo(original.canonicalBytes());
+    }
+  }
+
+  @Test
+  void postgresRejectsMalformedEntityFramesWithoutReleasingItsParticipation() throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var binding =
+          finalizeEntityBinding(issued, reservations, repository, selected, "entity-malformed");
+      var terminal = entityTerminalEvidence(binding, 8701, 8702);
+      byte[] bytes = terminal.receipt().canonicalBytes();
+      for (var invalid :
+          Map.of(
+                  2, "sha256:" + "0".repeat(64),
+                  7, "sha256:" + "0".repeat(64),
+                  16, "22",
+                  17, "UNKNOWN_ENTITY_FAMILY",
+                  18, "UNKNOWN",
+                  19, "V1_SOURCE_CENSUS",
+                  20, "1",
+                  201, "00000000-0000-0000-0000-000000000000",
+                  203, "not-a-uuid",
+                  204, "2026-10-10T00:00:00.000Z")
+              .entrySet()) {
+        assertRejectedSettlementByPostgres(
+            issued,
+            binding,
+            terminal,
+            replaceFrame(
+                bytes, invalid.getKey(), invalid.getValue().getBytes(StandardCharsets.UTF_8)),
+            "Entity");
+      }
+      assertRejectedSettlementByPostgres(
+          issued,
+          binding,
+          terminal,
+          replaceFrame(bytes, 4, new byte[] {1}),
+          "Entity terminal changed original authorization");
+      assertRejectedSettlementByPostgres(
+          issued,
+          binding,
+          terminal,
+          replaceFrame(bytes, 8, "{}".getBytes(StandardCharsets.UTF_8)),
+          "Entity terminal changed original source revision binding");
+      assertRejectedSettlementByPostgres(
+          issued,
+          binding,
+          terminal,
+          replaceLastFrame(bytes, null, true),
+          "Entity terminal timestamp or trailing bytes are invalid");
+      var writer =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), binding.sources(), new byte[] {8});
+      assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(writer))).isFalse();
+      var settled = f.tx(() -> repository.settleEntityCommittedEmpty(terminal));
+      assertThat(
+              AccountSelectedOwnerIntakeSettlementReceipt.fromStored(settled.canonicalBytes())
+                  .canonicalBytes())
+          .isEqualTo(settled.canonicalBytes());
+      assertThat(f.tx(() -> repository.findSettlement(binding).orElseThrow()).ownerReceiptBytes())
+          .isEqualTo(bytes);
+    }
+  }
+
+  private static byte[] replaceFrame(byte[] bytes, int selectedFrame, byte[] replacement) {
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(bytes);
+    var out = new ByteArrayOutputStream();
+    int index = 0;
+    while (reader.remaining() > 0) {
+      byte[] original = reader.bytes();
+      DraftAuthorizationFenceBinding.frame(out, index++ == selectedFrame ? replacement : original);
+    }
+    reader.requireEnd();
+    return out.toByteArray();
+  }
+
+  @Test
+  void postgresPreservesCanonicalAutomationTimestampBytesAndRejectsNoncanonicalFrames()
+      throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservationService =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+
+      var rejectedBinding =
+          finalizeAutomationBinding(
+              issued, reservationService, repository, selected, "timestamp-invalid");
+      var validBase =
+          terminalEvidence(
+              rejectedBinding, 9301L, 9302L, OffsetDateTime.parse("2026-10-10T00:00Z"));
+      var validOwnerBytes = validBase.receipt().canonicalBytes();
+      assertThat(lastFrame(validOwnerBytes)).isEqualTo("2026-10-10T00:00Z");
+
+      for (String noncanonicalTimestamp :
+          List.of(
+              "2026-10-10T24:00Z",
+              "2026-10-10T00:00:60Z",
+              "2026-10-10T00:00:00Z",
+              "2026-10-10T00:00:00.000Z",
+              "2026-10-10T00:00:00.123450000Z",
+              "2026-10-10T00:00:00.12Z",
+              "2026-10-10T00:00:00.120000Z",
+              "2026-10-10T00:00:00+01:00")) {
+        assertRejectedSettlementByPostgres(
+            issued,
+            rejectedBinding,
+            validBase,
+            replaceLastFrame(validOwnerBytes, noncanonicalTimestamp, false),
+            "Automation terminal receipt timestamp or trailing bytes are invalid");
+      }
+      assertRejectedSettlementByPostgres(
+          issued,
+          rejectedBinding,
+          validBase,
+          replaceLastFrame(validOwnerBytes, null, true),
+          "Automation terminal receipt timestamp or trailing bytes are invalid");
+
+      var canonicalTimestamps =
+          List.of(
+              "2026-10-10T00:00Z",
+              "2026-10-10T00:00:01Z",
+              "2026-10-10T00:00:00.120Z",
+              "2026-10-10T00:00:00.123450Z",
+              "2026-10-10T00:00:00.123456780Z");
+      for (int index = 0; index < canonicalTimestamps.size(); index++) {
+        String timestamp = canonicalTimestamps.get(index);
+        var binding =
+            index == 0
+                ? rejectedBinding
+                : finalizeAutomationBinding(
+                    issued,
+                    reservationService,
+                    repository,
+                    selected,
+                    "timestamp-canonical-" + index);
+        var terminal =
+            index == 0
+                ? validBase
+                : terminalEvidence(
+                    binding, 9401L + index, 9402L + index, OffsetDateTime.parse(timestamp));
+        assertThat(lastFrame(terminal.receipt().canonicalBytes())).isEqualTo(timestamp);
+
+        var committed = f.tx(() -> repository.settleCommittedEmpty(terminal));
+        assertThat(committed.terminalEvidence().receipt().canonicalBytes())
+            .isEqualTo(terminal.receipt().canonicalBytes());
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT terminal_receipt_bytes FROM account_selected_owner_intake_settlements "
+                            + "WHERE operation_id = ?",
+                        binding.operationId())
+                    .get(0, byte[].class))
+            .isEqualTo(terminal.receipt().canonicalBytes());
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                        binding.operationId())
+                    .get(0, Boolean.class))
+            .isFalse();
+      }
+    }
+  }
+
+  @Test
+  void postgresRejectsChangedNamespaceUnknownFamilyAndSelectedScopeEvidence() throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var selected = selected(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservationService =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var scopes = new ArrayList<SelectedOwnerIntakeSourceReadScope>();
+      for (int index = 0; index < 3; index++) {
+        scopes.add(
+            asGameDesign(
+                () ->
+                    reservationService.reserveSourceRead(
+                        issued.compact(),
+                        UUID.randomUUID(),
+                        Owner.ENTITY_MANAGEMENT,
+                        selected,
+                        issued.environment())));
+      }
+
+      var original = scopes.get(0);
+      var changedNamespace =
+          new SelectedOwnerIntakeSourceReadScope(
+              original.owner(),
+              "different-namespace",
+              original.operationId(),
+              original.fenceId(),
+              original.intakeRequestId(),
+              original.actorAccountId(),
+              original.selected());
+      var namespaceContent = content(changedNamespace, "stipulated-namespace-mismatch");
+      var namespaceBinding =
+          new SelectedOwnerIntakeAuthorizationBinding(
+              namespaceContent,
+              f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()).sources()));
+      assertRejectedByPostgres(
+          issued,
+          original,
+          namespaceContent.canonicalBytes(),
+          namespaceBinding.canonicalBytes(),
+          "Selected content scope differs from original reservation");
+
+      var familyScope = scopes.get(1);
+      var familyContent = content(familyScope, "stipulated-family-mismatch");
+      byte[] unknownFamilyContent = replaceFirstFamily(familyContent.canonicalBytes(), "UNKNOWN");
+      var familySources =
+          f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()).sources());
+      assertRejectedByPostgres(
+          issued,
+          familyScope,
+          unknownFamilyContent,
+          authorizationBytes(familyScope, unknownFamilyContent, familySources),
+          "Selected owner content family is missing, unknown, or changed");
+
+      var selectedScope = scopes.get(2);
+      var changedSelectedScope =
+          new SelectedOwnerIntakeSourceReadScope(
+              selectedScope.owner(),
+              selectedScope.targetNamespace(),
+              selectedScope.operationId(),
+              selectedScope.fenceId(),
+              selectedScope.intakeRequestId(),
+              selectedScope.actorAccountId(),
+              selected(f.tenant));
+      var changedSelectedContent = content(changedSelectedScope, "stipulated-scope-mismatch");
+      var changedSelectedBinding =
+          new SelectedOwnerIntakeAuthorizationBinding(
+              changedSelectedContent,
+              f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()).sources()));
+      assertRejectedByPostgres(
+          issued,
+          selectedScope,
+          changedSelectedContent.canonicalBytes(),
+          changedSelectedBinding.canonicalBytes(),
+          "Selected content scope differs from original reservation");
+    }
+  }
+
+  private static void assertRejectedByPostgres(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      SelectedOwnerIntakeSourceReadScope reservationScope,
+      byte[] contentBytes,
+      byte[] bindingBytes,
+      String expectedDiagnostic) {
+    var f = issued.sources();
+    assertThatThrownBy(
+            () ->
+                asGameDesign(
+                    () ->
+                        issued
+                            .actors()
+                            .withCurrent(
+                                issued.compact(),
+                                f.tenant,
+                                issued.environment(),
+                                current -> {
+                                  insertRawAuthorization(
+                                      f.dsl, reservationScope, contentBytes, bindingBytes, current);
+                                  return null;
+                                })))
+        .isInstanceOf(RuntimeException.class)
+        .satisfies(
+            failure -> {
+              Throwable root = failure;
+              while (root.getCause() != null) root = root.getCause();
+              assertThat(root)
+                  .isInstanceOfSatisfying(
+                      java.sql.SQLException.class,
+                      sql -> {
+                        assertThat(sql.getSQLState()).isEqualTo("23514");
+                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                      });
+            });
+    assertThat(
+            f.dsl.fetchOne(
+                "SELECT operation_id FROM account_selected_owner_intake_authorizations "
+                    + "WHERE operation_id = ?",
+                reservationScope.operationId()))
+        .isNull();
+  }
+
+  private static void insertRawAuthorization(
+      org.jooq.DSLContext dsl,
+      SelectedOwnerIntakeSourceReadScope reservationScope,
+      byte[] contentBytes,
+      byte[] bindingBytes,
+      AccountControlUiActorService.Current current) {
+    dsl.execute(
+        "INSERT INTO account_selected_owner_intake_authorizations "
+            + "(operation_id, fence_id, intake_request_id, owner, target_namespace, "
+            + "actor_account_uuid, tenant_uuid, version_uuid, content_bytes, content_digest, "
+            + "binding_bytes, binding_digest, issuance_operation_id, issuance_fence, source_payload, "
+            + "issuance_bundle, outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        reservationScope.operationId(),
+        reservationScope.fenceId(),
+        reservationScope.intakeRequestId(),
+        reservationScope.owner().name(),
+        reservationScope.targetNamespace(),
+        reservationScope.actorAccountId(),
+        reservationScope.selected().target().canonicalTenantId(),
+        reservationScope.selected().target().canonicalVersionId(),
+        contentBytes,
+        DraftAuthorizationFenceBinding.digest(contentBytes),
+        bindingBytes,
+        DraftAuthorizationFenceBinding.digest(bindingBytes),
+        current.stored().operationId,
+        current.source().issuanceFence(),
+        current.stored().sources,
+        current.stored().bundle,
+        AccountControlUiAuthority.canonical(current.source().outboxCheckpoints()));
+    var sources =
+        current.source().sources().stream()
+            .sorted(Comparator.comparing(DraftAuthorizationFenceBinding.SourceEvidence::key))
+            .toList();
+    for (var source : sources) {
+      dsl.execute(
+          "INSERT INTO account_selected_owner_intake_sources "
+              + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+          reservationScope.operationId(),
+          source.key(),
+          source.canonicalBytes());
+    }
+  }
+
+  private static byte[] authorizationBytes(
+      SelectedOwnerIntakeSourceReadScope scope,
+      byte[] contentBytes,
+      List<DraftAuthorizationFenceBinding.SourceEvidence> sources) {
+    var out = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, authorizationSchema(scope.owner()));
+    DraftAuthorizationFenceBinding.frame(out, contentBytes);
+    DraftAuthorizationFenceBinding.frame(out, DraftAuthorizationFenceBinding.digest(contentBytes));
+    DraftAuthorizationFenceBinding.frame(
+        out,
+        scope.owner() == Owner.ENTITY_MANAGEMENT
+            ? "spiffe://firemud/ns/" + scope.targetNamespace() + "/sa/entity-management-service"
+            : "spiffe://firemud/ns/"
+                + scope.targetNamespace()
+                + "/sa/automation-scripting-service");
+    DraftAuthorizationFenceBinding.frame(
+        out,
+        scope.owner() == Owner.ENTITY_MANAGEMENT
+            ? "ENTITY_INTAKE_RETENTION"
+            : "AUTOMATION_INTAKE_RETENTION");
+    var sorted =
+        sources.stream()
+            .sorted(Comparator.comparing(DraftAuthorizationFenceBinding.SourceEvidence::key))
+            .toList();
+    DraftAuthorizationFenceBinding.frame(out, Integer.toString(sorted.size()));
+    for (var source : sorted) DraftAuthorizationFenceBinding.frame(out, source.canonicalBytes());
+    return out.toByteArray();
+  }
+
+  private static String authorizationSchema(Owner owner) {
+    return owner == Owner.ENTITY_MANAGEMENT
+        ? "account-entity-intake-authorization/v1"
+        : "account-automation-intake-authorization/v1";
+  }
+
+  private static byte[] replaceFirstFamily(byte[] contentBytes, String replacement) {
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(contentBytes);
+    var out = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, reader.text());
+    DraftAuthorizationFenceBinding.frame(out, reader.bytes());
+    DraftAuthorizationFenceBinding.frame(out, reader.text());
+    for (int index = 0; index < 6; index++) {
+      String family = reader.text();
+      DraftAuthorizationFenceBinding.frame(out, index == 0 ? replacement : family);
+      DraftAuthorizationFenceBinding.frame(out, reader.bytes());
+      DraftAuthorizationFenceBinding.frame(out, reader.text());
+    }
+    reader.requireEnd();
+    return out.toByteArray();
+  }
+
+  private static void settleOriginal(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued, DraftCommitBinding selected) {
+    var f = issued.sources();
+    var captured = f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()));
+    var original =
+        new DraftAuthorizationFenceBinding(
+                UUID.randomUUID(),
+                selected.requestId(),
+                selected.commitId(),
+                UUID.randomUUID(),
+                f.account.getAccountUuid(),
+                f.tenant,
+                selected.target().canonicalVersionId(),
+                selected.baseCommitId(),
+                "0",
+                selected.canonicalBytes(),
+                selected.canonicalBytes(),
+                selected.digest(),
+                captured.sources())
+            .withRequiredOwners();
+    issued.actors().claimOriginalDraft(issued.compact(), original, issued.environment());
+    f.tx(
+        () -> {
+          for (var owner : original.requiredOwners()) {
+            f.fences.recordOwnerReadback(
+                original,
+                new DraftAuthorizationFenceBinding.OwnerReadback(
+                    owner,
+                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                    original.operationId(),
+                    original.commitId(),
+                    original.fenceId(),
+                    original.inputDigest(),
+                    original.canonicalBytes(),
+                    new byte[] {1}));
+          }
+          return null;
+        });
+  }
+
+  private static SelectedOwnerIntakeSourceContent content(
+      SelectedOwnerIntakeSourceReadScope scope, String marker) {
+    var selected = scope.selected();
+    UUID genesis = UUID.nameUUIDFromBytes(marker.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    String markerEpoch = Integer.toUnsignedString(marker.hashCode());
+    var gameplay =
+        new GameplayRuleSelectedSource(
+            GameplayRuleManifest.canonical(
+                Map.of(
+                    "schema", "game-design-gameplay-rule-source-snapshot/v1",
+                    "bindingJson", selected.canonicalJson(),
+                    "bindingDigest", selected.digest(),
+                    "sourceEpoch", "0",
+                    "inheritedCommitId", "",
+                    "genesisReceiptId", genesis.toString(),
+                    "manifestJson", GameplayRuleManifest.explicitEmpty().canonicalJson(),
+                    "entries", List.of())));
+    var template = templateSnapshot(scope.owner(), selected, genesis);
+    var snapshots =
+        Map.of(
+            "COMMAND",
+            new CommandSnapshot(
+                    selected,
+                    "0",
+                    null,
+                    DraftAuthorizationFenceBinding.digest(
+                        marker.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    List.of())
+                .canonicalBytes(),
+            "REALM_POLICY",
+            new RealmPolicySnapshot(selected, markerEpoch, List.of()).canonicalBytes(),
+            "ASSET",
+            new AssetSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes(),
+            "BRANDING",
+            new BrandingSourceSnapshot(selected, "0", null, genesis, List.of()).canonicalBytes());
+    var out = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, SelectedOwnerIntakeSourceContent.DOMAIN);
+    DraftAuthorizationFenceBinding.frame(out, scope.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, scope.digest());
+    for (String family :
+        List.of(
+            "COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG")) {
+      byte[] snapshot =
+          switch (family) {
+            case "GAMEPLAY_RULE" -> gameplay.canonicalBytes();
+            case "TEMPLATE_CONFIG" -> template.canonicalBytes();
+            default -> snapshots.get(family);
+          };
+      DraftAuthorizationFenceBinding.frame(out, family);
+      DraftAuthorizationFenceBinding.frame(out, snapshot);
+      DraftAuthorizationFenceBinding.frame(out, DraftAuthorizationFenceBinding.digest(snapshot));
+    }
+    byte[] bytes = out.toByteArray();
+    return SelectedOwnerIntakeSourceContent.fromStored(
+        bytes, scope, DraftAuthorizationFenceBinding.digest(bytes));
+  }
+
+  private static TemplateConfigSourceSnapshot templateSnapshot(
+      Owner owner, DraftCommitBinding selected, UUID genesis) {
+    String payload;
+    if (owner == Owner.ENTITY_MANAGEMENT) {
+      payload = TemplateConfigSourceValues.ownerInventoryPayload(owner, emptyEntityDeclaration());
+    } else {
+      var inventory =
+          AutomationAuthoredSourceInventoryDeclaration.parse(
+              "{\"schema\":\"automation-authored-source-inventory/v1\",\"families\":{"
+                  + "\"SCRIPT_DEFINITIONS\":[],\"EVENT_BINDINGS\":[],"
+                  + "\"SCRIPT_PATCH_SOURCES\":[]}}");
+      payload = TemplateConfigSourceValues.ownerInventoryPayload(owner, inventory);
+    }
+    DraftCommitBinding authored =
+        DraftCommitBinding.create(
+            selected.target(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "synthetic-template-config-base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE, payload)),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    TemplateConfigSourceValues.SCOPE,
+                    selected.target().canonicalVersionId().toString(),
+                    TemplateConfigSourceValues.SCOPE,
+                    TemplateConfigSourceValues.SCOPE_ID,
+                    "0")));
+    TemplateConfigOwnerSourceInventoryDeclaration declaration =
+        TemplateConfigSourceValues.mutations(authored).stream()
+            .filter(
+                mutation ->
+                    mutation.operation()
+                        == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .map(TemplateConfigSourceValues.Mutation::ownerInventoryDeclaration)
+            .findFirst()
+            .orElseThrow();
+    return new TemplateConfigSourceSnapshot(
+        selected, "0", null, genesis, List.of(), List.of(declaration));
+  }
+
+  private static SelectedOwnerIntakeAuthorizationBinding finalizeAutomationBinding(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      AccountSelectedOwnerIntakeSourceReservationService reservationService,
+      AccountSelectedOwnerIntakeSourceReservationRepository repository,
+      DraftCommitBinding selected,
+      String marker) {
+    var f = issued.sources();
+    var scope =
+        asGameDesign(
+            () ->
+                reservationService.reserveSourceRead(
+                    issued.compact(),
+                    UUID.randomUUID(),
+                    Owner.AUTOMATION_SCRIPTING,
+                    selected,
+                    issued.environment()));
+    var selectedContent = content(scope, marker);
+    return asGameDesign(
+        () ->
+            issued
+                .actors()
+                .withCurrent(
+                    issued.compact(),
+                    f.tenant,
+                    issued.environment(),
+                    current ->
+                        repository.finalizeSourceRead(
+                            scope,
+                            selectedContent,
+                            current,
+                            () ->
+                                f.fences.requireSelectedOwnerIntakeAdmission(
+                                    current.source().sources(), selected))));
+  }
+
+  private static SelectedOwnerIntakeAuthorizationBinding finalizeEntityBinding(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      AccountSelectedOwnerIntakeSourceReservationService reservationService,
+      AccountSelectedOwnerIntakeSourceReservationRepository repository,
+      DraftCommitBinding selected,
+      String marker) {
+    var f = issued.sources();
+    var scope =
+        asGameDesign(
+            () ->
+                reservationService.reserveSourceRead(
+                    issued.compact(),
+                    UUID.randomUUID(),
+                    Owner.ENTITY_MANAGEMENT,
+                    selected,
+                    issued.environment()));
+    var selectedContent = content(scope, marker);
+    return asGameDesign(
+        () ->
+            issued
+                .actors()
+                .withCurrent(
+                    issued.compact(),
+                    f.tenant,
+                    issued.environment(),
+                    current ->
+                        repository.finalizeSourceRead(
+                            scope,
+                            selectedContent,
+                            current,
+                            () ->
+                                f.fences.requireSelectedOwnerIntakeAdmission(
+                                    current.source().sources(), selected))));
+  }
+
+  private static void assertRejectedSettlementByPostgres(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      AutomationSelectedSourceIntakeTerminalReadEvidence validEvidence,
+      byte[] changedOwnerReceiptBytes,
+      String expectedDiagnostic) {
+    var f = issued.sources();
+    assertThatThrownBy(
+            () ->
+                f.tx(
+                    () -> {
+                      insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
+                      return null;
+                    }))
+        .isInstanceOf(RuntimeException.class)
+        .satisfies(
+            failure -> {
+              Throwable root = failure;
+              while (root.getCause() != null) root = root.getCause();
+              assertThat(root)
+                  .isInstanceOfSatisfying(
+                      java.sql.SQLException.class,
+                      sql -> {
+                        assertThat(sql.getSQLState()).isEqualTo("23514");
+                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                      });
+            });
+    assertThat(
+            f.dsl.fetchOne(
+                "SELECT operation_id FROM account_selected_owner_intake_settlements "
+                    + "WHERE operation_id = ?",
+                binding.operationId()))
+        .isNull();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                    binding.operationId())
+                .get(0, Boolean.class))
+        .isTrue();
+  }
+
+  private static void insertRawSettlement(
+      org.jooq.DSLContext dsl,
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      AutomationSelectedSourceIntakeTerminalReadEvidence evidence,
+      byte[] ownerReceiptBytes) {
+    String ownerReceiptDigest = DraftAuthorizationFenceBinding.digest(ownerReceiptBytes);
+    byte[] receiptBytes =
+        settlementReceiptBytes(binding, evidence, ownerReceiptBytes, ownerReceiptDigest);
+    dsl.execute(
+        "INSERT INTO account_selected_owner_intake_settlements "
+            + "(operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
+            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
+            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        binding.operationId(),
+        binding.fenceId(),
+        binding.intakeRequestId(),
+        binding.owner().name(),
+        binding.targetNamespace(),
+        binding.tenantId(),
+        binding.versionId(),
+        binding.canonicalBytes(),
+        binding.digest(),
+        evidence.request().readRequestId(),
+        ownerReceiptBytes,
+        ownerReceiptDigest,
+        receiptBytes,
+        DraftAuthorizationFenceBinding.digest(receiptBytes));
+  }
+
+  private static byte[] settlementReceiptBytes(
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      AutomationSelectedSourceIntakeTerminalReadEvidence evidence,
+      byte[] ownerReceiptBytes,
+      String ownerReceiptDigest) {
+    var request = evidence.request();
+    var out = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, AccountSelectedOwnerIntakeSettlementReceipt.DOMAIN);
+    DraftAuthorizationFenceBinding.frame(out, "1");
+    DraftAuthorizationFenceBinding.frame(out, binding.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, binding.digest());
+    DraftAuthorizationFenceBinding.frame(out, Integer.toString(request.schemaVersion()));
+    DraftAuthorizationFenceBinding.frame(out, request.targetNamespace());
+    DraftAuthorizationFenceBinding.frame(out, request.readRequestId().toString());
+    DraftAuthorizationFenceBinding.frame(out, request.intendedReader());
+    DraftAuthorizationFenceBinding.frame(out, request.terminalReadPurpose());
+    DraftAuthorizationFenceBinding.frame(out, request.binding().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, request.binding().digest());
+    DraftAuthorizationFenceBinding.frame(out, ownerReceiptBytes);
+    DraftAuthorizationFenceBinding.frame(out, ownerReceiptDigest);
+    return out.toByteArray();
+  }
+
+  private static void assertRejectedSettlementByPostgres(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      EntitySelectedSourceIntakeTerminalReadEvidence validEvidence,
+      byte[] changedOwnerReceiptBytes,
+      String expectedDiagnostic) {
+    var f = issued.sources();
+    assertThatThrownBy(
+            () ->
+                f.tx(
+                    () -> {
+                      insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
+                      return null;
+                    }))
+        .isInstanceOf(RuntimeException.class)
+        .satisfies(
+            failure -> {
+              Throwable root = failure;
+              while (root.getCause() != null) root = root.getCause();
+              assertThat(root)
+                  .isInstanceOfSatisfying(
+                      java.sql.SQLException.class,
+                      sql -> {
+                        assertThat(sql.getSQLState()).isEqualTo("23514");
+                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                      });
+            });
+    assertThat(
+            f.dsl.fetchOne(
+                "SELECT operation_id FROM account_selected_owner_intake_settlements "
+                    + "WHERE operation_id = ?",
+                binding.operationId()))
+        .isNull();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                    binding.operationId())
+                .get(0, Boolean.class))
+        .isTrue();
+  }
+
+  private static void insertRawSettlement(
+      org.jooq.DSLContext dsl,
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      EntitySelectedSourceIntakeTerminalReadEvidence evidence,
+      byte[] ownerReceiptBytes) {
+    String ownerReceiptDigest = DraftAuthorizationFenceBinding.digest(ownerReceiptBytes);
+    byte[] receiptBytes =
+        settlementReceiptBytes(binding, evidence, ownerReceiptBytes, ownerReceiptDigest);
+    dsl.execute(
+        "INSERT INTO account_selected_owner_intake_settlements "
+            + "(operation_id, fence_id, intake_request_id, owner, target_namespace, tenant_uuid, "
+            + "version_uuid, binding_bytes, binding_digest, terminal_read_request_id, "
+            + "terminal_receipt_bytes, terminal_receipt_digest, receipt_bytes, receipt_digest) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        binding.operationId(),
+        binding.fenceId(),
+        binding.intakeRequestId(),
+        binding.owner().name(),
+        binding.targetNamespace(),
+        binding.tenantId(),
+        binding.versionId(),
+        binding.canonicalBytes(),
+        binding.digest(),
+        evidence.request().readRequestId(),
+        ownerReceiptBytes,
+        ownerReceiptDigest,
+        receiptBytes,
+        DraftAuthorizationFenceBinding.digest(receiptBytes));
+  }
+
+  private static byte[] settlementReceiptBytes(
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      EntitySelectedSourceIntakeTerminalReadEvidence evidence,
+      byte[] ownerReceiptBytes,
+      String ownerReceiptDigest) {
+    var request = evidence.request();
+    var out = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(out, AccountSelectedOwnerIntakeSettlementReceipt.DOMAIN);
+    DraftAuthorizationFenceBinding.frame(out, "1");
+    DraftAuthorizationFenceBinding.frame(out, binding.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, binding.digest());
+    DraftAuthorizationFenceBinding.frame(out, Integer.toString(request.schemaVersion()));
+    DraftAuthorizationFenceBinding.frame(out, request.targetNamespace());
+    DraftAuthorizationFenceBinding.frame(out, request.readRequestId().toString());
+    DraftAuthorizationFenceBinding.frame(out, request.intendedReader());
+    DraftAuthorizationFenceBinding.frame(out, request.terminalReadPurpose());
+    DraftAuthorizationFenceBinding.frame(out, request.binding().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, request.binding().digest());
+    DraftAuthorizationFenceBinding.frame(out, ownerReceiptBytes);
+    DraftAuthorizationFenceBinding.frame(out, ownerReceiptDigest);
+    return out.toByteArray();
+  }
+
+  private static byte[] replaceLastFrame(
+      byte[] canonicalBytes, String replacement, boolean appendTrailingByte) {
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(canonicalBytes);
+    var frames = new ArrayList<byte[]>();
+    while (reader.remaining() > 0) frames.add(reader.bytes());
+    reader.requireEnd();
+    if (replacement != null) {
+      frames.set(frames.size() - 1, replacement.getBytes(StandardCharsets.UTF_8));
+    }
+    var out = new ByteArrayOutputStream();
+    for (byte[] frame : frames) DraftAuthorizationFenceBinding.frame(out, frame);
+    if (appendTrailingByte) out.write(0x5a);
+    return out.toByteArray();
+  }
+
+  private static String lastFrame(byte[] canonicalBytes) {
+    var reader = new DraftAuthorizationFenceBinding.FrameReader(canonicalBytes);
+    byte[] last = null;
+    while (reader.remaining() > 0) last = reader.bytes();
+    reader.requireEnd();
+    byte[] timestampFrame =
+        Objects.requireNonNull(last, "Complete Automation receipt must contain a timestamp frame");
+    return new String(timestampFrame, StandardCharsets.UTF_8);
+  }
+
+  private static final List<String> ENTITY_FAMILIES =
+      List.of(
+          "ACTOR_BODY_LAYOUT_ASSIGNMENTS",
+          "ARCHETYPE_ASSIGNMENTS",
+          "ARCHETYPE_CONSTRAINTS",
+          "ARCHETYPE_ROOTS",
+          "BALANCE_CURVE_ATTACHMENTS",
+          "BALANCE_CURVE_ROOTS",
+          "BODY_LAYOUT_MEMBERSHIPS",
+          "BODY_LAYOUT_ROOTS",
+          "CRAFTING_INGREDIENT_BINDINGS",
+          "CRAFTING_RECIPE_RESULT_BINDINGS",
+          "CRAFTING_RECIPE_ROOTS",
+          "EQUIPMENT_ATTACHMENT_RULES",
+          "EQUIPMENT_CAPABILITIES",
+          "EQUIPMENT_COMPATIBILITY_RULES",
+          "EQUIPMENT_OCCUPANCY_RULES",
+          "EQUIPMENT_SLOT_GROUPS",
+          "EQUIPMENT_SLOT_ROOTS",
+          "INBOUND_LOOT_BINDINGS",
+          "ITEM_TEMPLATE_ROOTS",
+          "LOOT_ITEM_MAPPINGS",
+          "LOOT_TABLE_ROOTS",
+          "NPC_TEMPLATE_ROOTS",
+          "OTHER_ACTOR_TEMPLATE_ROOTS");
+  private static final java.util.Set<String> ENTITY_V1_FAMILIES =
+      java.util.Set.of(
+          "ITEM_TEMPLATE_ROOTS",
+          "NPC_TEMPLATE_ROOTS",
+          "CRAFTING_RECIPE_ROOTS",
+          "CRAFTING_RECIPE_RESULT_BINDINGS",
+          "CRAFTING_INGREDIENT_BINDINGS",
+          "EQUIPMENT_SLOT_ROOTS",
+          "EQUIPMENT_SLOT_GROUPS",
+          "BODY_LAYOUT_ROOTS",
+          "BODY_LAYOUT_MEMBERSHIPS");
+
+  private static EntityAuthoredSourceInventoryDeclaration emptyEntityDeclaration() {
+    String families =
+        ENTITY_FAMILIES.stream()
+            .map(name -> "\"" + name + "\":[]")
+            .collect(java.util.stream.Collectors.joining(","));
+    return EntityAuthoredSourceInventoryDeclaration.parse(
+        "{\"schema\":\"entity-authored-source-inventory/v1\","
+            + "\"equipmentApplicability\":\"NOT_APPLICABLE\",\"families\":{"
+            + families
+            + "}}");
+  }
+
+  private static EntitySelectedSourceIntakeTerminalReadEvidence entityTerminalEvidence(
+      SelectedOwnerIntakeAuthorizationBinding binding, long localTenantKey, long localVersionKey) {
+    var freeze = freezeEvidence(binding);
+    var request =
+        SelectedOwnerWorldInventoryReadEvidence.create(binding.targetNamespace(), binding, freeze);
+    var inventory =
+        WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+            freeze, publicInventory(freeze));
+    var inputs =
+        new SelectedOwnerEmptySourceInputs(
+            binding, new SelectedOwnerWorldInventoryReadEvidence(request, inventory));
+    var states =
+        ENTITY_FAMILIES.stream()
+            .map(
+                family ->
+                    new FamilyCensus(
+                        family,
+                        FamilyState.EMPTY,
+                        ENTITY_V1_FAMILIES.contains(family)
+                            ? FamilyEvidenceKind.V1_SOURCE_CENSUS
+                            : FamilyEvidenceKind.EMPTY_ONLY_OWNER_PROVIDER,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0))
+            .toList();
+    var receipt =
+        EntityEmptySelectedSourceIntakeReceipt.create(
+            inputs,
+            UUID.randomUUID(),
+            localTenantKey,
+            localVersionKey,
+            EntityEmptySelectedSourceIntakeReceipt.requestDigest(
+                binding.targetNamespace(), binding, freeze),
+            states,
+            OffsetDateTime.parse("2026-10-10T00:00:00.120Z"));
+    return new EntitySelectedSourceIntakeTerminalReadEvidence(
+        EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(
+            binding.targetNamespace(), binding),
+        receipt);
+  }
+
+  private static AutomationSelectedSourceIntakeTerminalReadEvidence terminalEvidence(
+      SelectedOwnerIntakeAuthorizationBinding binding, long localTenantKey, long localVersionKey) {
+    return terminalEvidence(
+        binding, localTenantKey, localVersionKey, OffsetDateTime.parse("2026-10-10T00:00:00Z"));
+  }
+
+  private static AutomationSelectedSourceIntakeTerminalReadEvidence terminalEvidence(
+      SelectedOwnerIntakeAuthorizationBinding binding,
+      long localTenantKey,
+      long localVersionKey,
+      OffsetDateTime retainedAt) {
+    var freeze = freezeEvidence(binding);
+    var worldRequest =
+        SelectedOwnerWorldInventoryReadEvidence.create(binding.targetNamespace(), binding, freeze);
+    var inventory =
+        WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+            freeze, publicInventory(freeze));
+    var worldEvidence = new SelectedOwnerWorldInventoryReadEvidence(worldRequest, inventory);
+    var inputs = new SelectedOwnerEmptySourceInputs(binding, worldEvidence);
+    var receipt =
+        AutomationEmptySelectedSourceIntakeReceipt.create(
+            inputs,
+            localTenantKey,
+            localVersionKey,
+            AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
+                binding.targetNamespace(), binding, freeze),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            retainedAt);
+    return new AutomationSelectedSourceIntakeTerminalReadEvidence(
+        AutomationSelectedSourceIntakeTerminalReadEvidence.Request.create(
+            binding.targetNamespace(), binding),
+        receipt);
+  }
+
+  private static WorldSelectedDraftPublicationFreezeEvidence freezeEvidence(
+      SelectedOwnerIntakeAuthorizationBinding binding) {
+    var selected = binding.selected();
+    var selection =
+        AuthoredDraftPublishSelectionBinding.capture(
+            new PublishIntent(
+                binding.tenantId(),
+                binding.versionId(),
+                "settlement-publication-request",
+                "9",
+                "synthetic selected-owner settlement fixture",
+                selected.requestId(),
+                selected.commitId(),
+                selected.digest()),
+            selected.target(),
+            selected,
+            new VisibilityFence(
+                selected.target(),
+                selected.requestId(),
+                selected.commitId(),
+                selected.digest(),
+                "[]",
+                OffsetDateTime.parse("2026-10-01T00:00:00Z")));
+    var account =
+        new AccountPublicationAuthorizationBinding(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            new AccountPublicationAuthorizationBinding.PreallocationInput(
+                binding.actorAccountId(), selection),
+            List.of(accountSource(binding.actorAccountId())));
+    var request =
+        WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+            binding.targetNamespace(),
+            binding.tenantId(),
+            binding.versionId(),
+            selection.intent().publishRequestId(),
+            9,
+            selection.digest().substring("sha256:".length()),
+            account);
+    var acknowledgement =
+        new Acknowledgement(
+            request,
+            UUID.randomUUID(),
+            9,
+            UUID.randomUUID(),
+            OwnerFreezePhase.FROZEN,
+            selected.commitId().toString(),
+            "a".repeat(64),
+            4);
+    return WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+        request, WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
+  }
+
+  private static PublicEvidence publicInventory(
+      WorldSelectedDraftPublicationFreezeEvidence freezeEvidence) {
+    var request = freezeEvidence.request();
+    var acknowledgement = freezeEvidence.acknowledgement();
+    var account = request.accountBinding();
+    var selection = account.input().selection();
+    var selected = selection.selectedCommit();
+    var closure =
+        new InboundSourceClosureDeclaration(
+            1,
+            List.of(
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING", 0),
+                new InboundSourceFamilyCount("WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE", 0),
+                new InboundSourceFamilyCount(
+                    "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING", 0)));
+    var sourceModel =
+        new SourceModel(
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SOURCE_MODEL,
+            WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_GRAPH_SCHEMA_VERSION,
+            "sha256:" + "4".repeat(64),
+            "sha256:" + "5".repeat(64),
+            List.of(
+                new FamilyCount("REGION", 1),
+                new FamilyCount("ZONE", 1),
+                new FamilyCount("ROOM", 1),
+                new FamilyCount("ROOM_EXIT", 1),
+                new FamilyCount("GENERATION_RULE", 0),
+                new FamilyCount("WORLD_ENTITY_SPAWN_BINDING", 0)),
+            List.of(new RegionGeneratorInput(UUID.randomUUID(), "", "")),
+            List.of("id", "name", "scopeType", "scopeId", "value"),
+            List.of(
+                "id",
+                "shardId",
+                "name",
+                "weather",
+                "generationSeed",
+                "generatorType",
+                "generatorParams",
+                "spacingMultiplier"),
+            List.of("id", "regionId", "name"),
+            List.of(
+                "id",
+                "zoneId",
+                "name",
+                "description",
+                "nameLocalizedVariantsJson",
+                "descriptionLocalizedVariantsJson"),
+            List.of("id", "fromRoomId", "toRoomId", "direction", "cost"),
+            List.of(
+                "id",
+                "roomId",
+                "entityTemplateType",
+                "entityReference.kind",
+                "entityReference.tenantId",
+                "entityReference.versionId",
+                "entityReference.templateId",
+                "spawnCount",
+                "respawnDelaySeconds"),
+            List.of(),
+            0,
+            0,
+            selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+                .map(
+                    unit ->
+                        new AppliedEpoch(
+                            unit.aggregateType(),
+                            unit.aggregateId(),
+                            unit.scopeType(),
+                            unit.scopeId(),
+                            unit.expectedEpoch(),
+                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .toList(),
+            closure);
+    var ownerScope =
+        new PublicOwnerScope(
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.canonicalVersionId(),
+            UUID.randomUUID(),
+            acknowledgement.intakeRequestId(),
+            UUID.randomUUID(),
+            "sha256:" + "1".repeat(64),
+            UUID.randomUUID(),
+            "sha256:" + "2".repeat(64),
+            "sha256:" + "3".repeat(64));
+    return new PublicEvidence(
+        WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA,
+        WorldSelectedPublicationArtifactInventoryEvidence.INBOUND_CLOSURE_SCHEMA_VERSION,
+        "COMPLETE",
+        ownerScope,
+        new SelectedApplication(
+            UUID.randomUUID(),
+            selected.requestId(),
+            selected.commitId().toString(),
+            selected.digest(),
+            "sha256:" + "6".repeat(64)),
+        new PublicAccountOrder(
+            account.operationId(),
+            account.fenceId(),
+            account.input().actorAccountId(),
+            selection.intent().publishRequestId(),
+            selection.digest(),
+            selected.commitId().toString(),
+            DraftAuthorizationFenceBinding.digest(account.canonicalBytes())),
+        new Freeze(
+            acknowledgement.publicationFence(),
+            request.publicationRequestId(),
+            request.requestDigest(),
+            Long.toString(acknowledgement.versionStateEpoch()),
+            PublicationDigestRequestBinding.full(
+                    request.canonicalTenantId().toString(),
+                    Long.toString(selection.target().gameDesignVersionRowId()),
+                    request.publicationRequestId())
+                .derivedWorkflowIdentity()),
+        new Checkpoint(acknowledgement.appliedCommitId(), acknowledgement.contentDigest(), 4),
+        sourceModel,
+        List.of(
+            new ArtifactDecision(
+                "NAVMESH", "NOT_REQUIRED", "ROOM_LOGICAL_TOPOLOGY_HAS_NO_SPATIAL_NAVMESH_INPUT"),
+            new ArtifactDecision(
+                "PATH_GRAPH",
+                "NOT_REQUIRED",
+                "AUTHORED_ROOM_EXIT_EDGES_ARE_THE_SUPPORTED_TRAVERSAL_GRAPH")));
+  }
+
+  private static SourceEvidence accountSource(UUID accountId) {
+    return new SourceEvidence(
+        SourceKind.ACCOUNT,
+        accountId.toString(),
+        null,
+        "1",
+        null,
+        null,
+        "synthetic-account-publication".getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static DraftCommitBinding selected(UUID tenant) {
+    var target =
+        new DraftCommitBinding.TargetProof(
+            tenant, UUID.randomUUID(), 17, "private", 11, "private", "NEW_GAME_ROW");
+    return DraftCommitBinding.create(
+        target,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "genesis",
+        List.of(
+            new DraftCommitBinding.RevisionPayload(
+                "0",
+                UUID.randomUUID(),
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                CommandSource.deletePayload("synthetic-fixture-command"))),
+        List.of(
+            new DraftCommitBinding.AffectedUnit(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                "GAMEPLAY_RULE_SET",
+                target.canonicalVersionId().toString(),
+                "GAMEPLAY_RULE_SET",
+                "effective",
+                "0")));
+  }
+
+  private static DraftCommitBinding selectedForSettlement(UUID tenant) {
+    var target =
+        new DraftCommitBinding.TargetProof(
+            tenant, UUID.randomUUID(), 17, "private", 11, "private", "NEW_GAME_ROW");
+    return DraftCommitBinding.create(
+        target,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "genesis",
+        List.of(
+            new DraftCommitBinding.RevisionPayload(
+                "0", UUID.randomUUID(), Owner.WORLD_MANAGEMENT, "{}")),
+        List.of(
+            new DraftCommitBinding.AffectedUnit(
+                Owner.WORLD_MANAGEMENT, "REGION", "region-1", "AGGREGATE", "region-1", "0")));
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Expected concurrent settlement boundary");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted concurrent settlement boundary", interrupted);
+    }
+  }
+
+  private static boolean sourceReadPending(DSLContext dsl, UUID operationId) {
+    return dsl.fetchSingle(
+            "SELECT account_selected_owner_intake_source_read_is_pending(?)", operationId)
+        .get(0, Boolean.class);
+  }
+
+  private static final class MutableOffsetClock extends Clock {
+    private final Clock base;
+    private final AtomicLong offsetSeconds;
+
+    MutableOffsetClock(Clock base, long offsetSeconds) {
+      this.base = base;
+      this.offsetSeconds = new AtomicLong(offsetSeconds);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return base.getZone();
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new MutableOffsetClock(base.withZone(zone), offsetSeconds.get());
+    }
+
+    @Override
+    public Instant instant() {
+      return base.instant().plusSeconds(offsetSeconds.get());
+    }
+
+    void advance(Duration duration) {
+      offsetSeconds.addAndGet(duration.getSeconds());
+    }
+  }
+
+  private static boolean issuerExpiryReached(DSLContext dsl, UUID issuanceOperationId) {
+    return dsl.fetchSingle(
+            "SELECT extract(epoch FROM clock_timestamp()) >= expires_at_epoch_second"
+                + " FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+            issuanceOperationId)
+        .get(0, Boolean.class);
+  }
+
+  private static long issuerExpiryEpochSecond(DSLContext dsl, UUID issuanceOperationId) {
+    return dsl.fetchSingle(
+            "SELECT expires_at_epoch_second FROM account_control_ui_issuance_operations "
+                + "WHERE operation_id = ?",
+            issuanceOperationId)
+        .get("expires_at_epoch_second", Long.class);
+  }
+
+  private static void awaitIssuerExpiry(DSLContext dsl, UUID issuanceOperationId)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+    do {
+      if (issuerExpiryReached(dsl, issuanceOperationId)) return;
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Original Account issuance did not reach its immutable DB expiry");
+  }
+
+  private static void awaitRecoverySourceLockWait(DSLContext dsl, int finalizationBackendPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    do {
+      if (Boolean.TRUE.equals(
+          dsl.fetchSingle(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                      + " WHERE pid <> pg_backend_pid() AND datname = current_database()"
+                      + " AND wait_event_type = 'Lock'"
+                      + " AND ? = ANY(pg_blocking_pids(pid))"
+                      + " AND query LIKE '%account_draft_authorization_source_locks%'"
+                      + " AND query LIKE '%FOR UPDATE%')",
+                  finalizationBackendPid)
+              .get(0, Boolean.class))) {
+        return;
+      }
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Expired recovery did not wait on finalization-held source locks");
+  }
+
+  private static void awaitFinalizationCommit(CountDownLatch latch) {
+    try {
+      if (!latch.await(90, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Finalization commit was not released");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted finalization lock race", interrupted);
+    }
+  }
+
+  private static void awaitSourceLockWait(DSLContext dsl, int writerBackendPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    do {
+      if (Boolean.TRUE.equals(
+          dsl.fetchSingle(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                      + " WHERE pid = ? AND datname = current_database()"
+                      + " AND wait_event_type = 'Lock'"
+                      + " AND query LIKE '%account_draft_authorization_source_locks%')",
+                  writerBackendPid)
+              .get(0, Boolean.class))) {
+        return;
+      }
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Source writer did not block on settlement-held source locks");
+  }
+
+  private static Flyway intakeMigration(AccountControlUiOwnerSourcesFixture f, String target) {
+    String schema = f.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    Path root = Path.of("").toAbsolutePath();
+    while (root != null
+        && !java.nio.file.Files.isDirectory(
+            root.resolve("services/account-service/src/main/resources/db/migration"))) {
+      root = root.getParent();
+    }
+    Path repositoryRoot = Objects.requireNonNull(root, "Account migrations must be available");
+    return Flyway.configure()
+        .dataSource(Objects.requireNonNull(f.manager.getDataSource()))
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(
+            "filesystem:"
+                + repositoryRoot.resolve(
+                    "services/account-service/src/main/resources/db/migration"),
+            "filesystem:"
+                + repositoryRoot.resolve(
+                    "services/common-saga/src/main/resources/db/migration/saga"))
+        .target(target)
+        .load();
+  }
+
+  private static void seedRetainedCombinedParentRows(DSLContext dsl) {
+    Long sagaId =
+        dsl.fetchSingle(
+                "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
+                "retained-final-intake-upgrade",
+                "PENDING")
+            .get(0, Long.class);
+    dsl.execute(
+        "INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
+        sagaId,
+        "retained-step",
+        "PENDING",
+        3);
+    dsl.execute(
+        "INSERT INTO account_initial_gameplay_login_disposals(request_id, disposal_operation_id, "
+            + "caller_workload, caller_context_id, disposal_digest, witness_canonical_bytes) "
+            + "VALUES (?, ?, ?, ?, ?, ?)",
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "spiffe://firemud/ns/test/sa/game-session-service",
+        UUID.randomUUID(),
+        "a".repeat(64),
+        "retained parent disposal witness".getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static Map<String, List<String>> retainedCombinedParentRows(DSLContext dsl) {
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "accounts",
+            "account_authority_source_records",
+            "account_initial_gameplay_login_disposals",
+            "saga_instance",
+            "saga_step",
+            "account_selected_owner_intake_source_read_reservations",
+            "account_selected_owner_intake_source_read_sources")) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
+    }
+    return rows;
+  }
+
+  private static Map<String, String> retainedInheritedGuardDefinitions(DSLContext dsl) {
+    Map<String, String> definitions = new LinkedHashMap<>();
+    for (String signature :
+        List.of(
+            "account_ss_admission_assert_no_pending(text[])",
+            "account_ss_activation_insert_guard()",
+            "account_ss_activation_settlement_insert_guard()",
+            "account_initial_gameplay_login_disposal_immutable()",
+            "account_initial_gameplay_login_writer_guard()",
+            "account_control_ui_hold_required_sources(text[])",
+            "account_draft_authorization_source_change_guard()",
+            "account_hosted_terms_disclosure_handoff_guard()")) {
+      definitions.put(
+          signature,
+          dsl.fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", signature)
+              .get(0, String.class));
+    }
+    return definitions;
+  }
+
+  private static Map<String, List<String>> retainedSelectedOwnerRows(DSLContext dsl) {
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "account_selected_owner_intake_source_read_reservations",
+            "account_selected_owner_intake_source_read_sources",
+            "account_selected_owner_intake_source_read_aborts",
+            "account_selected_owner_intake_authorizations",
+            "account_selected_owner_intake_sources",
+            "account_selected_owner_intake_settlements")) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
+    }
+    return rows;
+  }
+
+  private static <T> T asGameDesign(java.util.function.Supplier<T> action) {
+    var context =
+        io.grpc.Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-design-service")
+                    .orElseThrow());
+    var previous = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(previous);
+    }
+  }
+}

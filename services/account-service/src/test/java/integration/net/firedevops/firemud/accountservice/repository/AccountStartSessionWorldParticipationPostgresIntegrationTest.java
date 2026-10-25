@@ -150,8 +150,10 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               "tuple-recovery-world",
               GAME_TEMPLATE_ID);
       String preparationDigest = digest(preparationInput);
+      // Bounded synthetic headroom lets initial retention reach its currentness gate; later reads
+      // use this same expiry.
       Instant leaseExpiresAt =
-          Instant.ofEpochMilli(databaseNow(proof.sourceDsl()).toEpochMilli()).plusSeconds(4L);
+          Instant.ofEpochMilli(databaseNow(proof.sourceDsl()).toEpochMilli()).plusSeconds(10L);
       // The Game Session point-in-time observation is stipulated; Account's original issue,
       // redemption, source capture, acquisition gates, and PostgreSQL retention are real.
       var acquisition =
@@ -496,7 +498,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
   }
 
   private static void awaitDatabaseExpiry(DSLContext dsl, Instant expiresAt) throws Exception {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10L);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15L);
     while (!databaseNow(dsl).isAfter(expiresAt)) {
       if (System.nanoTime() >= deadline) {
         throw new IllegalStateException("PostgreSQL clock did not pass the retained lease expiry");

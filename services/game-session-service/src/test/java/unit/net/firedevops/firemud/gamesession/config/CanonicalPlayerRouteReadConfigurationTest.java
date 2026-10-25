@@ -1,12 +1,14 @@
 package unit.net.firedevops.firemud.gamesession.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -62,8 +64,9 @@ class CanonicalPlayerRouteReadConfigurationTest {
             });
   }
 
-  // Composition proof only: repositories and the channel are controlled doubles; no owner read or
-  // database read is performed. The client-level test owns RPC identity and deadline proof.
+  // Composition proof only: repositories and channels are controlled doubles with file-backed
+  // TLS inputs. Actual clients initialize, but the unregistered reference owner prevents calls.
+  // The client-level tests retain separate RPC identity and deadline proof.
   @Test
   void enabledConfigurationComposesRealRouteSourcesWithFileBackedTlsAndExactTarget(
       @TempDir Path directory) throws IOException {
@@ -72,6 +75,7 @@ class CanonicalPlayerRouteReadConfigurationTest {
     Path serverCa = Files.createFile(directory.resolve("game-design-ca.crt"));
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setGameDesignService("game-design.test:7654");
+    endpoints.setEntityManagementService("entity.test:7655");
     var tlsProperties = new CommonGrpcClientProperties();
     tlsProperties.setCertChain(clientCertificate.toString());
     tlsProperties.setPrivateKey(clientKey.toString());
@@ -83,12 +87,11 @@ class CanonicalPlayerRouteReadConfigurationTest {
         .thenReturn(channel);
 
     new ApplicationContextRunner()
-        .withUserConfiguration(CanonicalPlayerRouteReadConfiguration.class)
+        .withUserConfiguration(
+            CanonicalPlayerRouteReadConfiguration.class, CanonicalGameplayRosterClient.class)
         .withBean(ServiceEndpointsProperties.class, () -> endpoints)
         .withBean(CommonGrpcClientProperties.class, () -> tlsProperties)
         .withBean(GrpcChannelFactory.class, () -> channelFactory)
-        .withBean(
-            CanonicalGameplayRosterClient.class, () -> mock(CanonicalGameplayRosterClient.class))
         .withBean(
             GameSessionCanonicalRealmCatalogRepository.class,
             () -> mock(GameSessionCanonicalRealmCatalogRepository.class))
@@ -108,6 +111,35 @@ class CanonicalPlayerRouteReadConfigurationTest {
               assertThat(context).hasSingleBean(CanonicalPlayerRouteReadService.class);
               assertThat(context).hasSingleBean(CanonicalPublishedPlayerRouteReadService.class);
               assertThat(context).hasSingleBean(CanonicalGameplayRosterSelectionService.class);
+              assertThat(context).hasSingleBean(CanonicalGameplayRosterClient.class);
+              assertThat(context)
+                  .doesNotHaveBean(
+                      net.firedevops.firemud.gamesession.service
+                          .CanonicalGameplayRosterReferenceOwner.class);
+              var rosterClient = context.getBean(CanonicalGameplayRosterClient.class);
+              assertThat(Mockito.mockingDetails(rosterClient).isMock()).isFalse();
+              var published =
+                  support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+                      .canonicalPublishedRoute();
+              var route = published.route();
+              var player =
+                  net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                      .setAccountId("66666666-6666-4666-8666-666666666666")
+                      .setSessionId("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+                      .setRequestId("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+                      .setTenantId(route.canonicalTenantId().toString())
+                      .setRealmId(route.realmId().toString())
+                      .setPlayableStateNamespaceId(route.playableStateNamespaceId().toString())
+                      .setPlayableStateScope(route.playableStateScope())
+                      .setGameInstanceId(route.canonicalGameInstanceId().toString())
+                      .build();
+              assertThatThrownBy(() -> rosterClient.listPreseededRoster(published, player))
+                  .isInstanceOfSatisfying(
+                      io.grpc.StatusRuntimeException.class,
+                      failure ->
+                          assertThat(failure.getStatus().getCode())
+                              .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
+              verify(channel, never()).newCall(any(), any());
               assertThat(
                       Mockito.mockingDetails(
                               context.getBean(GameDesignPublishedRealmPolicyClient.class))
@@ -124,6 +156,8 @@ class CanonicalPlayerRouteReadConfigurationTest {
                   .isFalse();
               verify(channelFactory)
                   .buildChannel(eq("game-design.test:7654"), eq(6565), eq(tlsProperties), eq(true));
+              verify(channelFactory)
+                  .buildChannel(eq("entity.test:7655"), eq(6565), eq(tlsProperties), eq(true));
               verifyNoInteractions(
                   context.getBean(GameSessionCanonicalRealmCatalogRepository.class),
                   context.getBean(CanonicalInitialAdmissionRepository.class),
