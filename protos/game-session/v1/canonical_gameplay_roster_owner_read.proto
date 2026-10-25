@@ -100,6 +100,8 @@ message GetCanonicalGameplayRosterReferenceRequest {
   string session_uuid = 4;
   string target_namespace = 5;
   bytes canonical_target = 6;
+  // Canonical CanonicalPlayerCreatedRosterSourceIdentity bytes, required only for PLAYER_CREATED.
+  bytes canonical_player_created_source_identity = 7;
 }
 
 enum CanonicalGameplayRosterReferenceState {
@@ -116,6 +118,7 @@ message GetCanonicalGameplayRosterReferenceResponse {
   CanonicalGameplayRosterReferenceState state = 3;
   // Canonical Entity snapshot response bytes, present only after receipt binding. Recording a
   // receipt does not release its retained selection/session/recovery/restore dependencies.
+  // PRESEEDED_ONLY receipt; mutually exclusive with the PLAYER_CREATED carrier below.
   bytes canonical_roster_receipt = 4;
   CanonicalGameplayRosterSelectionInput selection_input = 5;
   string selected_character_uuid = 6;
@@ -130,6 +133,10 @@ message GetCanonicalGameplayRosterReferenceResponse {
   string retirement_proof_digest = 15;
   // Owner-local recovery fence: normal reads/writes cannot restart this original operation.
   string recovery_uuid = 16;
+  // Canonical typed PLAYER_CREATED roster and selected original creation terminal receipts.
+  // PRESEEDED_ONLY roster/assignment fields must be absent for this distinct policy branch.
+  bytes canonical_player_created_roster_receipt = 17;
+  bytes canonical_selected_player_created_character_receipt = 18;
 }
 
 // Original selection input is frozen before any Entity roster read. A later ordinal choice is a

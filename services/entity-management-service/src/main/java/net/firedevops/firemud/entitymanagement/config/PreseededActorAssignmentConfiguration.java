@@ -10,6 +10,7 @@ import net.firedevops.firemud.entitymanagement.client.AccountPreseededActorStagi
 import net.firedevops.firemud.entitymanagement.client.AccountRuntimeIdentityClient;
 import net.firedevops.firemud.entitymanagement.client.GameSessionPreseededActorAssignmentOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.security.CanonicalPreseededActorAssignmentPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAccountIdentityPort;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
@@ -19,6 +20,7 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentS
 import net.firedevops.firemud.entitymanagement.service.PreseededActorStagingEligibilityPort;
 import net.firedevops.firemud.entitymanagement.service.RunOwnedPreseededActorAssignmentAuthorityAdapter;
 import net.firedevops.firemud.entitymanagement.service.RunOwnedPreseededAssignmentAuthority;
+import net.firedevops.firemud.entitymanagement.service.impl.CanonicalPreseededActorAssignmentGrpcService;
 import net.firedevops.firemud.entitymanagement.service.impl.GameSessionPreseededActorAssignmentOwnerEvidenceAdapter;
 import org.springframework.boot.ssl.SslBundles;
 
@@ -31,7 +33,7 @@ import org.springframework.boot.ssl.SslBundles;
 public class PreseededActorAssignmentConfiguration {
   public PreseededActorAccountIdentityPort disabledPreseededActorAccountIdentityPort() {
     return (accountUuid, assignmentUuid) -> {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_UNAVAILABLE");
+      throw new PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException();
     };
   }
 
@@ -52,7 +54,7 @@ public class PreseededActorAssignmentConfiguration {
 
   public PreseededActorStagingEligibilityPort disabledPreseededActorStagingEligibilityPort() {
     return (accountUuid, tenantUuid, assignmentUuid) -> {
-      throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_UNAVAILABLE");
+      throw new PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException();
     };
   }
 
@@ -151,6 +153,18 @@ public class PreseededActorAssignmentConfiguration {
         stagingEligibilityPort,
         ownerEvidencePort,
         characterRepository);
+  }
+
+  /** Creates the assignment RPC handler only for an explicitly controlled composition. */
+  public CanonicalPreseededActorAssignmentGrpcService canonicalPreseededActorAssignmentGrpcService(
+      String trustedNamespace, PreseededActorAssignmentService assignmentService) {
+    return new CanonicalPreseededActorAssignmentGrpcService(trustedNamespace, assignmentService);
+  }
+
+  /** Creates the method-specific certificate guard without registering either object. */
+  public CanonicalPreseededActorAssignmentPeerInterceptor
+      canonicalPreseededActorAssignmentPeerInterceptor(String trustedNamespace) {
+    return new CanonicalPreseededActorAssignmentPeerInterceptor(trustedNamespace);
   }
 
   /** Receipt reads are read-only and remain available when assignment creation is disabled. */

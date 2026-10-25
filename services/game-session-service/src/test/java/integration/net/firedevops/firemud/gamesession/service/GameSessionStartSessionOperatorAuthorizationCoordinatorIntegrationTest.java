@@ -33,12 +33,14 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.ReservationResult;
 import net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinator;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -73,6 +75,11 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @BeforeAll
+  static void awaitPostgresJdbcReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
 
   @Test
   void postgresClaimIsCommittedBeforeAccountAndExactRetryDoesNotRedeemAgain() throws Exception {

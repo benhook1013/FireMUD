@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package entity_management.v1;
+option java_package = "net.firedevops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+import "account/v1/character_create_source_service.proto";
+
+// Unregistered exact-purpose owner boundary. Only Account may commit or explicitly abort;
+// Account, Game Session and World independently authenticate to read the immutable terminal.
+service EntityCharacterCreateService {
+  rpc CommitProtectedCharacterCreate(CommitProtectedCharacterCreateRequest)
+      returns (EntityCharacterCreateTerminal);
+  rpc AbortProtectedCharacterCreate(AbortProtectedCharacterCreateRequest)
+      returns (EntityCharacterCreateTerminal);
+  rpc ReadEntityCharacterCreateTerminal(ReadEntityCharacterCreateTerminalRequest)
+      returns (EntityCharacterCreateTerminal);
+}
+
+message CharacterCreateProtectionReference {
+  string protection_id = 1;
+  int64 protection_fence = 2;
+}
+
+// References only: the receiver reads each original directly from its authenticated owner.
+message CommitProtectedCharacterCreateRequest {
+  account.v1.ReadOriginalCharacterCreateRequest original = 1;
+  CharacterCreateProtectionReference account_protection = 2;
+  CharacterCreateProtectionReference game_session_protection = 3;
+  CharacterCreateProtectionReference world_protection = 4;
+}
+
+message AbortProtectedCharacterCreateRequest {
+  CommitProtectedCharacterCreateRequest creation = 1;
+  string abort_request_id = 2;
+}
+
+message ReadEntityCharacterCreateTerminalRequest {
+  account.v1.ReadOriginalCharacterCreateRequest original = 1;
+}
+
+enum EntityCharacterCreateOutcome {
+  ENTITY_CHARACTER_CREATE_OUTCOME_UNSPECIFIED = 0;
+  ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED = 1;
+  ENTITY_CHARACTER_CREATE_OUTCOME_ABORTED = 2;
+}
+
+message EntityCharacterCreateTerminal {
+  CommitProtectedCharacterCreateRequest original_request = 1;
+  account.v1.ReadOriginalCharacterCreateResponse account_original = 2;
+  bytes original_account_protection = 3;
+  bytes original_game_session_protection = 4;
+  bytes original_world_protection = 5;
+  // Full Entity selected-source receipt stays local under its existing 80 MiB bound.
+  string entity_intake_request_id = 6;
+  EntityCharacterCreateOutcome outcome = 7;
+  string character_id = 8;
+  string terminal_id = 9;
+  int64 terminal_fence = 10;
+  string completed_at = 11;
+  string abort_request_id = 12;
+  string entity_source_receipt_digest = 13;
+}

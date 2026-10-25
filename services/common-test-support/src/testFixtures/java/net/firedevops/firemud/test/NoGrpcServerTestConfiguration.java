@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.grpc.server.service.GrpcServiceConfigurer;
 import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
 
 /** Shared test configuration for contexts that should not start or discover real gRPC servers. */
@@ -16,6 +17,12 @@ public class NoGrpcServerTestConfiguration {
   @Primary
   GrpcServerLifecycle grpcServerLifecycle() {
     return mock(GrpcServerLifecycle.class);
+  }
+
+  @Bean
+  @Primary
+  GrpcServiceConfigurer grpcServiceConfigurer() {
+    return mock(GrpcServiceConfigurer.class);
   }
 
   @Bean

@@ -180,7 +180,7 @@ class PreseededActorAssignmentServiceTest {
             runAuthority, accountClient, stagingPort(), ownerPort, characterRepository);
 
     assertThatThrownBy(() -> service.assign(request()))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_PROOF_MISMATCH");
 
     verify(ownerPort, never()).resolveCurrentEligibleTarget(any(), any(), any());
@@ -208,7 +208,7 @@ class PreseededActorAssignmentServiceTest {
             runAuthority, accountClient, stagingPort, ownerPort, characterRepository);
 
     assertThatThrownBy(() -> service.assign(request()))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_ACCOUNT_NOT_CURRENTLY_ELIGIBLE");
 
     verifyNoInteractions(ownerPort, characterRepository);
@@ -236,7 +236,7 @@ class PreseededActorAssignmentServiceTest {
             runAuthority, accountClient, stagingPort(), ownerPort, characterRepository);
 
     assertThatThrownBy(() -> service.assign(request))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_MISMATCH");
 
     verify(runAuthority, never()).requireTargetBoundAuthorized(any(), any(), any());
@@ -286,7 +286,7 @@ class PreseededActorAssignmentServiceTest {
             runAuthority, accountClient, stagingPort(), ownerPort, characterRepository);
 
     assertThatThrownBy(() -> service.assign(request()))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_ACCOUNT_NOT_CURRENTLY_ELIGIBLE");
 
     verify(runAuthority, never()).requireTargetBoundAuthorized(any(), any(), any());
@@ -312,7 +312,7 @@ class PreseededActorAssignmentServiceTest {
             runAuthority, accountClient, stagingPort(), ownerPort, characterRepository);
 
     assertThatThrownBy(() -> service.assign(request()))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("PRESEEDED_ASSIGNMENT_OWNER_PROOF_MISMATCH");
 
     verify(characterRepository, never()).assignPreseededActor(any(), any(), any(), any());
@@ -366,7 +366,7 @@ class PreseededActorAssignmentServiceTest {
 
       assertThatThrownBy(() -> service.assign(request()))
           .as("changed expected target field index %s", changedField)
-          .isInstanceOf(IllegalStateException.class)
+          .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
           .hasMessage("PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
 
       verify(runAuthority, never()).requireTargetBoundAuthorized(any(), any(), any());

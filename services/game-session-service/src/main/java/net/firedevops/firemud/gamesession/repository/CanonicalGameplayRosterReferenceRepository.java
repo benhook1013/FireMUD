@@ -5,7 +5,10 @@ import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementRequest;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementAcknowledgementResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterRetirementConfirmationRequest;
@@ -74,11 +77,12 @@ public final class CanonicalGameplayRosterReferenceRepository {
       throw new IllegalStateException("CANONICAL_ROSTER_TARGET_FENCE_RETIRED");
     }
     dsl.execute(
-        "INSERT INTO game_session_canonical_roster_selection (operation_uuid, original_request, target_fence_uuid) "
-            + "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+        "INSERT INTO game_session_canonical_roster_selection (operation_uuid, original_request, target_fence_uuid, entry_policy) "
+            + "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
         request.toByteArray(),
-        fence.get("target_fence_uuid", java.util.UUID.class));
+        fence.get("target_fence_uuid", java.util.UUID.class),
+        entryPolicy(request));
     Record replay =
         dsl.fetchSingle(
             "SELECT terminal_at IS NOT NULL AND terminal_at + ? * interval '1 millisecond' <= clock_timestamp() AS closed "
@@ -151,6 +155,34 @@ public final class CanonicalGameplayRosterReferenceRepository {
     return readExact(request, true);
   }
 
+  public GetCanonicalGameplayRosterReferenceResponse recordPlayerCreated(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      CanonicalPlayerCreatedRosterResponse receipt) {
+    requireWritableTransaction();
+    var original = readExact(request, true);
+    CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+        request,
+        original.getOwnerFence(),
+        java.util.UUID.fromString(original.getTargetFenceUuid()),
+        Objects.requireNonNull(receipt, "receipt"));
+    if (!original.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
+      if (!original.getCanonicalPlayerCreatedRosterReceipt().equals(receipt.toByteString())) {
+        throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
+      }
+      return original;
+    }
+    int changed =
+        dsl.execute(
+            "UPDATE game_session_canonical_roster_selection "
+                + "SET canonical_player_created_roster_receipt = ?, receipt_recorded_at = clock_timestamp() "
+                + "WHERE operation_uuid = ? AND owner_fence = ? AND entry_policy = 'PLAYER_CREATED' AND canonical_player_created_roster_receipt IS NULL",
+            receipt.toByteArray(),
+            CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
+            original.getOwnerFence());
+    if (changed != 1) throw new IllegalStateException("CANONICAL_ROSTER_OWNER_FENCE_CHANGED");
+    return readExact(request, true);
+  }
+
   public void reserveSelectionInput(
       GetCanonicalGameplayRosterReferenceRequest request,
       net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput input) {
@@ -163,7 +195,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
       }
       return;
     }
-    if (!original.getCanonicalRosterReceipt().isEmpty()) {
+    if (hasRoster(original)) {
       throw new IllegalStateException("CANONICAL_ROSTER_SELECTION_INPUT_NOT_RESERVED_BEFORE_READ");
     }
     dsl.execute(
@@ -184,7 +216,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
         && !"SELECTED".equals(original.getTerminalOutcome())) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_TERMINAL_NOT_SELECTED");
     }
-    var roster = CanonicalGameplayRosterReferenceEvidence.receipt(original);
+    var roster = CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(original);
     var input = original.getSelectionInput();
     int ordinal = 1;
     if (input.getSelector().isBlank()) {
@@ -224,10 +256,14 @@ public final class CanonicalGameplayRosterReferenceRepository {
       net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse
           receipt) {
     requireWritableTransaction();
+    CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
+    if (isPlayerCreated(request))
+      throw new IllegalArgumentException("PRESEEDED_ONLY assignment receipt required");
     var original = readExact(request, true);
-    CanonicalGameplayRosterReferenceEvidence.requireResponse(
-        request,
-        original.toBuilder().setCanonicalSelectedAssignmentReceipt(receipt.toByteString()).build());
+    var candidate =
+        original.toBuilder().setCanonicalSelectedAssignmentReceipt(receipt.toByteString()).build();
+    CanonicalGameplayRosterReferenceEvidence.requireResponse(request, candidate);
+    CanonicalGameplayRosterReferenceEvidence.selectedAssignmentReceipt(candidate);
     if (!original.getCanonicalSelectedAssignmentReceipt().isEmpty()) {
       if (!original.getCanonicalSelectedAssignmentReceipt().equals(receipt.toByteString())) {
         throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_ASSIGNMENT_RECEIPT_CONFLICT");
@@ -236,6 +272,36 @@ public final class CanonicalGameplayRosterReferenceRepository {
     }
     dsl.execute(
         "UPDATE game_session_canonical_roster_selection SET canonical_selected_assignment_receipt = ? WHERE operation_uuid = ? AND owner_fence = ?",
+        receipt.toByteArray(),
+        CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
+        original.getOwnerFence());
+  }
+
+  public void recordSelectedPlayerCreatedCharacter(
+      GetCanonicalGameplayRosterReferenceRequest request,
+      CanonicalSelectedPlayerCreatedCharacterResponse receipt) {
+    requireWritableTransaction();
+    CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
+    if (!isPlayerCreated(request))
+      throw new IllegalArgumentException("PLAYER_CREATED selected terminal required");
+    var original = readExact(request, true);
+    var candidate =
+        original.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(receipt.toByteString())
+            .build();
+    CanonicalGameplayRosterReferenceEvidence.requireResponse(request, candidate);
+    CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(candidate);
+    if (!original.getCanonicalSelectedPlayerCreatedCharacterReceipt().isEmpty()) {
+      if (!original
+          .getCanonicalSelectedPlayerCreatedCharacterReceipt()
+          .equals(receipt.toByteString())) {
+        throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_CREATED_RECEIPT_CONFLICT");
+      }
+      return;
+    }
+    dsl.execute(
+        "UPDATE game_session_canonical_roster_selection SET canonical_selected_player_created_character_receipt = ? "
+            + "WHERE operation_uuid = ? AND owner_fence = ? AND entry_policy = 'PLAYER_CREATED'",
         receipt.toByteArray(),
         CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
         original.getOwnerFence());
@@ -266,15 +332,28 @@ public final class CanonicalGameplayRosterReferenceRepository {
     if (lock && row.get("recovery_uuid", java.util.UUID.class) != null) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECOVERY_FENCED");
     }
+    if (!entryPolicy(request).equals(row.get("entry_policy", String.class))) {
+      throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_POLICY_CONFLICT");
+    }
     byte[] receipt = row.get("canonical_roster_receipt", byte[].class);
+    byte[] createdReceipt = row.get("canonical_player_created_roster_receipt", byte[].class);
     try {
       var result =
-          CanonicalGameplayRosterReferenceEvidence.response(
-              request,
-              row.get("owner_fence", Long.class),
-              row.get("target_fence_uuid", java.util.UUID.class),
-              receipt == null ? null : CanonicalGameplayRosterResponse.parseFrom(receipt))
-              .toBuilder();
+          GetCanonicalGameplayRosterReferenceResponse.newBuilder()
+              .setRequest(request)
+              .setOwnerFence(row.get("owner_fence", Long.class))
+              .setTargetFenceUuid(row.get("target_fence_uuid", java.util.UUID.class).toString())
+              .setState(
+                  receipt == null && createdReceipt == null
+                      ? net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                          .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RESERVED
+                      : net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState
+                          .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED);
+      if (receipt != null)
+        result.setCanonicalRosterReceipt(com.google.protobuf.ByteString.copyFrom(receipt));
+      if (createdReceipt != null)
+        result.setCanonicalPlayerCreatedRosterReceipt(
+            com.google.protobuf.ByteString.copyFrom(createdReceipt));
       byte[] input = row.get("selection_input", byte[].class);
       if (input != null) {
         result.setSelectionInput(
@@ -290,6 +369,11 @@ public final class CanonicalGameplayRosterReferenceRepository {
         result.setCanonicalSelectedAssignmentReceipt(
             com.google.protobuf.ByteString.copyFrom(selectedReceipt));
       }
+      byte[] selectedCreated =
+          row.get("canonical_selected_player_created_character_receipt", byte[].class);
+      if (selectedCreated != null)
+        result.setCanonicalSelectedPlayerCreatedCharacterReceipt(
+            com.google.protobuf.ByteString.copyFrom(selectedCreated));
       java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
       if (recovery != null) {
         result.setRecoveryUuid(recovery.toString());
@@ -325,7 +409,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
     requireWritableTransaction();
     var original = readExact(request, true);
     CanonicalGameplayRosterReferenceEvidence.requireDereference(original);
-    if (original.getCanonicalRosterReceipt().isEmpty()) {
+    if (!hasRoster(original)) {
       if (!original.hasSelectionInput()) {
         throw new IllegalStateException("CANONICAL_ROSTER_SELECTION_INPUT_UNAVAILABLE");
       }
@@ -347,7 +431,7 @@ public final class CanonicalGameplayRosterReferenceRepository {
     dsl.execute(
         "UPDATE game_session_canonical_roster_selection SET terminal_outcome = 'DENIED', terminal_at = clock_timestamp() "
             + "WHERE operation_uuid = ? AND original_request = ? AND NOT roster_read_started AND terminal_outcome IS NULL AND recovery_uuid IS NULL "
-            + "AND canonical_roster_receipt IS NULL AND selected_character_uuid IS NULL",
+            + "AND canonical_roster_receipt IS NULL AND canonical_player_created_roster_receipt IS NULL AND selected_character_uuid IS NULL",
         CanonicalGameplayRosterReferenceEvidence.uuid(request.getOperationUuid()),
         request.toByteArray());
   }
@@ -367,15 +451,23 @@ public final class CanonicalGameplayRosterReferenceRepository {
       }
       return;
     }
+    boolean created = "PLAYER_CREATED".equals(row.get("entry_policy", String.class));
+    byte[] roster =
+        row.get(
+            created ? "canonical_player_created_roster_receipt" : "canonical_roster_receipt",
+            byte[].class);
+    byte[] selected =
+        row.get(
+            created
+                ? "canonical_selected_player_created_character_receipt"
+                : "canonical_selected_assignment_receipt",
+            byte[].class);
     if (row.get("selection_input", byte[].class) == null
-        || (Boolean.TRUE.equals(row.get("roster_read_started", Boolean.class))
-            && row.get("canonical_roster_receipt", byte[].class) == null)
-        || (row.get("selected_character_uuid", java.util.UUID.class) != null
-            && row.get("canonical_selected_assignment_receipt", byte[].class) == null)
-        || (outcome == SelectionOutcome.SELECTED
-            && row.get("canonical_selected_assignment_receipt", byte[].class) == null)
+        || (Boolean.TRUE.equals(row.get("roster_read_started", Boolean.class)) && roster == null)
+        || (row.get("selected_character_uuid", java.util.UUID.class) != null && selected == null)
+        || (outcome == SelectionOutcome.SELECTED && selected == null)
         || (outcome == SelectionOutcome.MENU
-            && (row.get("canonical_roster_receipt", byte[].class) == null
+            && (roster == null
                 || row.get("selected_character_uuid", java.util.UUID.class) != null))) {
       throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECOVERY_REQUIRED");
     }
@@ -412,8 +504,8 @@ public final class CanonicalGameplayRosterReferenceRepository {
                 + "superseding_catalog_revision = ?, superseding_world_epoch = ? WHERE target_binding_digest = ? AND fence_state = 'ACTIVE' "
                 + "AND NOT EXISTS (SELECT 1 FROM game_session_canonical_roster_selection s WHERE s.target_fence_uuid = f.target_fence_uuid "
                 + "AND (s.terminal_at IS NULL OR s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' > clock_timestamp() "
-                + "OR ((s.roster_read_started AND s.canonical_roster_receipt IS NULL "
-                + "OR s.selected_character_uuid IS NOT NULL AND s.canonical_selected_assignment_receipt IS NULL) "
+                + "OR ((s.roster_read_started AND s.canonical_roster_receipt IS NULL AND s.canonical_player_created_roster_receipt IS NULL "
+                + "OR s.selected_character_uuid IS NOT NULL AND s.canonical_selected_assignment_receipt IS NULL AND s.canonical_selected_player_created_character_receipt IS NULL) "
                 + "AND NOT (s.recovery_uuid IS NOT NULL AND s.recovery_receipt IS NOT NULL AND s.terminal_outcome = 'DENIED'))))",
             java.util.UUID.randomUUID(),
             current.admissionPointerSnapshotDigest(),
@@ -559,18 +651,28 @@ public final class CanonicalGameplayRosterReferenceRepository {
     if (!original.getTerminalOutcome().isEmpty()) {
       throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_OUTCOME_CONFLICT");
     }
-    if (!original.getCanonicalRosterReceipt().isEmpty()
-        && !original.getCanonicalRosterReceipt().equals(response.getCanonicalRosterReceipt())) {
+    boolean created = isPlayerCreated(request);
+    var originalReceipt =
+        created
+            ? original.getCanonicalPlayerCreatedRosterReceipt()
+            : original.getCanonicalRosterReceipt();
+    var recoveredReceipt =
+        created
+            ? response.getCanonicalPlayerCreatedRosterReceipt()
+            : response.getCanonicalRosterReceipt();
+    if (!originalReceipt.isEmpty() && !originalReceipt.equals(recoveredReceipt)) {
       throw new IllegalStateException("CANONICAL_ROSTER_RECOVERY_ROSTER_CONFLICT");
     }
-    byte[] receipt =
-        response.getCanonicalRosterReceipt().isEmpty()
-            ? null
-            : response.getCanonicalRosterReceipt().toByteArray();
+    byte[] receipt = recoveredReceipt.isEmpty() ? null : recoveredReceipt.toByteArray();
+    String column =
+        created ? "canonical_player_created_roster_receipt" : "canonical_roster_receipt";
     dsl.execute(
         "UPDATE game_session_canonical_roster_selection SET "
-            + "canonical_roster_receipt = COALESCE(canonical_roster_receipt, ?::bytea), "
-            + "receipt_recorded_at = CASE WHEN canonical_roster_receipt IS NULL AND ?::bytea IS NOT NULL THEN clock_timestamp() ELSE receipt_recorded_at END, "
+            + column
+            + " = COALESCE("
+            + column
+            + ", ?::bytea), "
+            + "receipt_recorded_at = CASE WHEN canonical_roster_receipt IS NULL AND canonical_player_created_roster_receipt IS NULL AND ?::bytea IS NOT NULL THEN clock_timestamp() ELSE receipt_recorded_at END, "
             + "recovery_receipt = ?, terminal_outcome = 'DENIED', terminal_at = clock_timestamp() "
             + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
         receipt,
@@ -721,11 +823,11 @@ public final class CanonicalGameplayRosterReferenceRepository {
       throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_OBSERVATION_CONFLICT");
     }
     if (request.getSnapshotUuid().isEmpty()) {
-      if (!original.getCanonicalRosterReceipt().isEmpty()) {
+      if (hasRoster(original)) {
         throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_SNAPSHOT_REQUIRED");
       }
     } else {
-      var roster = CanonicalGameplayRosterReferenceEvidence.receipt(original);
+      var roster = CanonicalGameplayRosterReferenceEvidence.snapshotReceipt(original);
       if (!roster.getSnapshotUuid().equals(request.getSnapshotUuid())
           || !roster.getSnapshotDigest().equals(request.getSnapshotDigest())) {
         throw new IllegalArgumentException("CANONICAL_ROSTER_RETIREMENT_SNAPSHOT_CONFLICT");
@@ -897,7 +999,22 @@ public final class CanonicalGameplayRosterReferenceRepository {
     return new Health(row.get("oldest_blocking", Long.class), row.get("cleanup_lag", Long.class));
   }
 
+  private static boolean hasRoster(GetCanonicalGameplayRosterReferenceResponse original) {
+    return !original.getCanonicalRosterReceipt().isEmpty()
+        || !original.getCanonicalPlayerCreatedRosterReceipt().isEmpty();
+  }
+
+  private static boolean isPlayerCreated(GetCanonicalGameplayRosterReferenceRequest request) {
+    return CanonicalGameplayRosterReferenceEvidence.target(request).getEntryPolicy()
+        == CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED;
+  }
+
+  private static String entryPolicy(GetCanonicalGameplayRosterReferenceRequest request) {
+    return isPlayerCreated(request) ? "PLAYER_CREATED" : "PRESEEDED_ONLY";
+  }
+
   private static byte[] targetBinding(GetCanonicalGameplayRosterReferenceRequest request) {
+    // Keep the complete typed created source identity in the shared namespace/account/target fence.
     return request.toBuilder().clearOperationUuid().clearSessionUuid().build().toByteArray();
   }
 

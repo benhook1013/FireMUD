@@ -26,6 +26,7 @@ import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProper
 import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import net.firedevops.firemud.springcloudgateway.config.TcpProxyTlsListener;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -56,7 +57,9 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
   @Test
   void productionConfigurationMapsHealthAndReadinessWhenInternalTlsIsDisabled() {
-    SpringApplication application = new SpringApplication(SpringCloudGatewayApplication.class);
+    SpringApplication application =
+        new SpringApplication(
+            SpringCloudGatewayApplication.class, NoGrpcServerTestConfiguration.class);
     application.setWebApplicationType(WebApplicationType.REACTIVE);
 
     try (ConfigurableApplicationContext context =

@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -10,6 +11,8 @@ import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.CanonicalPlayerCreatedRosterEvidence;
+import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRosterService;
 import net.firedevops.firemud.entitymanagement.security.CanonicalGameplayRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
@@ -30,6 +33,10 @@ import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelecte
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterSelectedAssignmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.Builder;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRosterResponse;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalSelectedPlayerCreatedCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.validation.CanonicalEntitySourceValues;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
@@ -54,11 +61,29 @@ public final class CanonicalGameplayRosterGrpcAdapter
           "SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH",
           "SELECTED_PRESEEDED_ASSIGNMENT_NOT_IN_EXPECTED_SNAPSHOT",
           "SELECTED_PRESEEDED_ASSIGNMENT_UNAVAILABLE",
-          "SELECTED_PRESEEDED_ASSIGNMENT_RECEIPT_MISMATCH");
+          "SELECTED_PRESEEDED_ASSIGNMENT_RECEIPT_MISMATCH",
+          "CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED",
+          "CANONICAL_ROSTER_ORIGINAL_RECEIPT_UNRETAINED",
+          "CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT",
+          "CANONICAL_ROSTER_ORIGINAL_SELECTION_CHANGED",
+          "CANONICAL_ROSTER_SNAPSHOT_STALE",
+          "CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED",
+          "CANONICAL_ROSTER_LOCAL_ADMISSION_REQUEST_CONFLICT",
+          "CANONICAL_ROSTER_LOCAL_ADMISSION_DISPOSED",
+          "CANONICAL_ROSTER_ORIGINAL_REQUEST_CONFLICT",
+          "CANONICAL_ROSTER_PLAYER_CREATED_SOURCE_CHANGED");
 
   private final CanonicalGameplayRosterService rosterService;
   private final CanonicalGameplayRosterSelectedAssignmentService selectedAssignmentService;
+  private final EntityPlayerCreatedRosterService playerCreatedRosterService;
   private final MeterRegistry meterRegistry;
+
+  public CanonicalGameplayRosterGrpcAdapter(
+      CanonicalGameplayRosterService rosterService,
+      CanonicalGameplayRosterSelectedAssignmentService selectedAssignmentService,
+      MeterRegistry meterRegistry) {
+    this(rosterService, selectedAssignmentService, null, meterRegistry);
+  }
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -66,10 +91,78 @@ public final class CanonicalGameplayRosterGrpcAdapter
   public CanonicalGameplayRosterGrpcAdapter(
       CanonicalGameplayRosterService rosterService,
       CanonicalGameplayRosterSelectedAssignmentService selectedAssignmentService,
+      EntityPlayerCreatedRosterService playerCreatedRosterService,
       MeterRegistry meterRegistry) {
     this.rosterService = rosterService;
     this.selectedAssignmentService = selectedAssignmentService;
+    this.playerCreatedRosterService = playerCreatedRosterService;
     this.meterRegistry = meterRegistry;
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.canonicalGameplayRoster.listPlayerCreated")
+  public void listPlayerCreatedRoster(
+      CanonicalPlayerCreatedRosterRequest request,
+      StreamObserver<CanonicalPlayerCreatedRosterResponse> responseObserver) {
+    CanonicalPlayerCreatedRosterResponse response;
+    try {
+      requireTrustedPeer();
+      CanonicalPlayerCreatedRosterEvidence.requireRequest(request);
+      if (playerCreatedRosterService == null) throw new PlayerCreatedRosterUnavailableException();
+      CanonicalPlayerCreatedRosterResponse serviceResponse;
+      try {
+        serviceResponse = playerCreatedRosterService.list(request);
+      } catch (IllegalArgumentException invalidOwnerEvidence) {
+        throw new CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException(
+            invalidOwnerEvidence);
+      }
+      try {
+        response = CanonicalPlayerCreatedRosterEvidence.requireResponse(request, serviceResponse);
+      } catch (IllegalArgumentException invalidOutput) {
+        throw new IllegalStateException(
+            "PLAYER_CREATED roster service returned an invalid response", invalidOutput);
+      }
+    } catch (Exception failure) {
+      responseObserver.onError(
+          toPlayerCreatedStatus(failure, "CanonicalGameplayRoster.ListPlayerCreatedRoster"));
+      return;
+    }
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.canonicalGameplayRoster.readSelectedPlayerCreated")
+  public void readSelectedPlayerCreatedCharacter(
+      CanonicalSelectedPlayerCreatedCharacterRequest request,
+      StreamObserver<CanonicalSelectedPlayerCreatedCharacterResponse> responseObserver) {
+    CanonicalSelectedPlayerCreatedCharacterResponse response;
+    try {
+      requireTrustedPeer();
+      CanonicalPlayerCreatedRosterEvidence.requireSelectedRequest(request);
+      if (playerCreatedRosterService == null) throw new PlayerCreatedRosterUnavailableException();
+      CanonicalSelectedPlayerCreatedCharacterResponse serviceResponse;
+      try {
+        serviceResponse = playerCreatedRosterService.selected(request);
+      } catch (IllegalArgumentException invalidOwnerEvidence) {
+        throw new CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException(
+            invalidOwnerEvidence);
+      }
+      try {
+        response =
+            CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(request, serviceResponse);
+      } catch (IllegalArgumentException invalidOutput) {
+        throw new IllegalStateException(
+            "PLAYER_CREATED roster service returned an invalid selected response", invalidOutput);
+      }
+    } catch (Exception failure) {
+      responseObserver.onError(
+          toPlayerCreatedStatus(
+              failure, "CanonicalGameplayRoster.ReadSelectedPlayerCreatedCharacter"));
+      return;
+    }
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -277,6 +370,11 @@ public final class CanonicalGameplayRosterGrpcAdapter
           .withDescription("Authenticated Game Session peer required")
           .asRuntimeException();
     }
+    if (failure instanceof PlayerCreatedRosterUnavailableException) {
+      return Status.UNAVAILABLE
+          .withDescription("PLAYER_CREATED roster owner is unavailable")
+          .asRuntimeException();
+    }
     if (failure instanceof AdminAuthorizationException) {
       return Status.PERMISSION_DENIED
           .withDescription("Trusted Game Session caller required")
@@ -308,6 +406,35 @@ public final class CanonicalGameplayRosterGrpcAdapter
     }
     GrpcAppErrors.internal(meterRegistry, LOGGER, operation, failure);
     return Status.INTERNAL.withDescription("Internal error").asRuntimeException();
+  }
+
+  private RuntimeException toPlayerCreatedStatus(Exception failure, String operation) {
+    if (failure instanceof StatusRuntimeException grpcFailure) {
+      return switch (grpcFailure.getStatus().getCode()) {
+        case INVALID_ARGUMENT ->
+            Status.INVALID_ARGUMENT
+                .withDescription("Request is malformed or inconsistent")
+                .asRuntimeException();
+        case FAILED_PRECONDITION ->
+            Status.FAILED_PRECONDITION
+                .withDescription("Request precondition is not satisfied")
+                .asRuntimeException();
+        case UNAVAILABLE ->
+            Status.UNAVAILABLE
+                .withDescription("Owner evidence is unavailable")
+                .asRuntimeException();
+        case DEADLINE_EXCEEDED ->
+            Status.UNAVAILABLE
+                .withDescription("Owner evidence is unavailable")
+                .asRuntimeException();
+        case RESOURCE_EXHAUSTED ->
+            Status.RESOURCE_EXHAUSTED
+                .withDescription("PLAYER_CREATED roster exceeds its bounded size")
+                .asRuntimeException();
+        default -> toStatus(failure, operation);
+      };
+    }
+    return toStatus(failure, operation);
   }
 
   private CanonicalGameplayRosterResponse toResponse(CanonicalGameplayRosterSnapshot snapshot) {
@@ -386,6 +513,10 @@ public final class CanonicalGameplayRosterGrpcAdapter
   }
 
   private static final class UnauthenticatedPeerException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+  }
+
+  private static final class PlayerCreatedRosterUnavailableException extends RuntimeException {
     private static final long serialVersionUID = 1L;
   }
 }

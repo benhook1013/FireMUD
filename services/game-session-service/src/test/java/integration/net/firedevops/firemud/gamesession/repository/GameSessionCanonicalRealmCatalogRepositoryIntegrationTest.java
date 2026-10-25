@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.PreparedInitialPublicProduction;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -30,6 +31,7 @@ import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -55,6 +57,11 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @BeforeAll
+  static void awaitPostgresJdbcReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
 
   @Test
   void persistsExactFreshSelectorsAndSharedNamespaceWithoutChangingRetainedNumericEvidence() {

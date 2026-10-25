@@ -4,10 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.UnknownFieldSet;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
+import net.firedevops.firemud.common.testing.ControlledPlayerCreatedRosterTerminalFixtures;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
@@ -58,6 +63,19 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
         () ->
             CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
                 acknowledgement(original, anchorProof, "", "")));
+  }
+
+  @Test
+  void acknowledgementRequiresRetiredStateEvenWhenTheOwnerResponseBindingsMatch() {
+    var original = original(OPERATION, target());
+    var reserved =
+        CanonicalGameplayRosterReferenceEvidence.response(original, 17L, TARGET_FENCE, null);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                acknowledgement(original, reserved, "", "")));
   }
 
   @Test
@@ -171,6 +189,10 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
     var confirmationResponse =
         CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
     assertEquals(
+        HexFormat.of()
+            .formatHex(MessageDigest.getInstance("SHA-256").digest(confirmation.toByteArray())),
+        confirmationResponse.getRequestDigest());
+    assertEquals(
         confirmationResponse,
         CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(
             confirmation, confirmationResponse));
@@ -187,6 +209,235 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
                 confirmation.toBuilder()
                     .setAcknowledgement(response.toBuilder().setRequestDigest("0".repeat(64)))
                     .build()));
+  }
+
+  @Test
+  void createdFiveMebibyteAcknowledgementStreamsExactDigestsAndRejectsNestedTampering()
+      throws Exception {
+    var fixture =
+        ControlledPlayerCreatedRosterTerminalFixtures.withFiveMebibyteAccountProtection("gameplay");
+    var request = fixture.acknowledgementRequest();
+    var acknowledgement = fixture.acknowledgement();
+    var confirmation = fixture.confirmation();
+
+    assertTrue(request.getSerializedSize() > 5 * 1024 * 1024);
+    var unsignedRetirement =
+        request.getObservedRetirement().toBuilder().clearRetirementProofDigest().build();
+    assertEquals(
+        HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256").digest(unsignedRetirement.toByteArray())),
+        request.getObservedRetirement().getRetirementProofDigest());
+    assertEquals(
+        HexFormat.of()
+            .formatHex(MessageDigest.getInstance("SHA-256").digest(request.toByteArray())),
+        CanonicalGameplayRosterRetirementEvidence.requestDigest(request));
+    assertEquals(
+        acknowledgement,
+        CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
+            request, acknowledgement));
+    var confirmationResponse =
+        CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmation);
+    assertEquals(
+        HexFormat.of()
+            .formatHex(MessageDigest.getInstance("SHA-256").digest(confirmation.toByteArray())),
+        confirmationResponse.getRequestDigest());
+    assertEquals(
+        confirmationResponse,
+        CanonicalGameplayRosterRetirementEvidence.requireConfirmationResponse(
+            confirmation, confirmationResponse));
+
+    var duplicateRequestField =
+        new byte[CodedOutputStream.computeStringSize(1, fixture.selected().getRequestUuid())];
+    var codedOutput = CodedOutputStream.newInstance(duplicateRequestField);
+    codedOutput.writeString(1, fixture.selected().getRequestUuid());
+    codedOutput.checkNoSpaceLeft();
+    var observedRetirement = request.getObservedRetirement();
+    var noncanonicalRetirement =
+        observedRetirement.toBuilder()
+            .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                observedRetirement
+                    .getCanonicalSelectedPlayerCreatedCharacterReceipt()
+                    .concat(ByteString.copyFrom(duplicateRequestField)))
+            .build();
+    // Recompute the wire seal so ACK validation reaches the canonical receipt check. This is a
+    // controlled value fixture and does not establish the owner authority of the proof.
+    var unsignedNoncanonicalRetirement =
+        noncanonicalRetirement.toBuilder().clearRetirementProofDigest().build();
+    var sealedNoncanonicalRetirement =
+        unsignedNoncanonicalRetirement.toBuilder()
+            .setRetirementProofDigest(streamedDigest(unsignedNoncanonicalRetirement))
+            .build();
+    var noncanonicalFailure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                    request.toBuilder()
+                        .setObservedRetirement(sealedNoncanonicalRetirement)
+                        .build()));
+    assertTrue(
+        noncanonicalFailure
+            .getMessage()
+            .contains("Selected PLAYER_CREATED receipt bytes are not canonical"));
+
+    var changedRetirement =
+        request.toBuilder()
+            .setObservedRetirement(
+                request.getObservedRetirement().toBuilder()
+                    .setSupersedingPointerVersion(
+                        request.getObservedRetirement().getSupersedingPointerVersion() + 1L))
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(changedRetirement));
+
+    var changedConfirmation =
+        confirmation.toBuilder()
+            .setAcknowledgement(
+                acknowledgement.toBuilder().setRequestDigest("0".repeat(64)).build())
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> CanonicalGameplayRosterRetirementEvidence.requireConfirmation(changedConfirmation));
+  }
+
+  @Test
+  void createdRetirementCarriesTheCompleteSelectedTerminalAndBindsCrossOriginalSourceIdentity() {
+    var fixture = CanonicalGameplayRosterReferenceEvidenceTest.createdFixture();
+    var original = fixture.original();
+    var menu =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+            original, 17L, TARGET_FENCE, fixture.roster());
+    var selected = CanonicalGameplayRosterReferenceEvidenceTest.selectedOriginal(fixture, menu);
+    var target = CanonicalGameplayRosterReferenceEvidence.target(original);
+    var proof = createdRetirement(selected);
+    var roster = fixture.roster().getRoster();
+    var request =
+        acknowledgement(original, proof, roster.getSnapshotUuid(), roster.getSnapshotDigest());
+    assertEquals(
+        request, CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(request));
+    assertEquals(
+        fixture.selected().toByteString(),
+        request.getObservedRetirement().getCanonicalSelectedPlayerCreatedCharacterReceipt());
+    var ack = CanonicalGameplayRosterRetirementEvidence.response(request, uuid(12), 20_000L);
+    var confirmation = CanonicalGameplayRosterRetirementEvidence.confirmation(request, ack);
+    assertEquals(
+        confirmation, CanonicalGameplayRosterRetirementEvidence.requireConfirmation(confirmation));
+    var otherOriginal =
+        original.toBuilder()
+            .setOperationUuid(uuid(80).toString())
+            .setSessionUuid(uuid(81).toString())
+            .build();
+    var anchored =
+        acknowledgement(otherOriginal, proof, roster.getSnapshotUuid(), roster.getSnapshotDigest());
+    assertEquals(
+        anchored, CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(anchored));
+    var changedSource =
+        CanonicalGameplayRosterReferenceEvidence.playerCreatedSourceIdentity(otherOriginal)
+            .toBuilder()
+            .setAuthoredBindingUuid(uuid(82).toString())
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                anchored.toBuilder()
+                    .setOriginalSelection(
+                        otherOriginal.toBuilder()
+                            .setCanonicalPlayerCreatedSourceIdentity(changedSource.toByteString()))
+                    .build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                anchored.toBuilder().clearSnapshotUuid().clearSnapshotDigest().build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                request.toBuilder().setSnapshotDigest("0".repeat(64)).build()));
+    var unboundProof =
+        createdRetirement(
+            CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                    original, 17L, TARGET_FENCE, null)
+                .toBuilder()
+                .setTerminalOutcome("DENIED")
+                .build());
+    var unbound = acknowledgement(original, unboundProof, "", "");
+    assertEquals(
+        unbound, CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(unbound));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(
+                acknowledgement(otherOriginal, unboundProof, "", "")));
+    assertEquals(
+        target,
+        CanonicalGameplayRosterReferenceEvidence.target(
+            anchored.getObservedRetirement().getRequest()));
+  }
+
+  @Test
+  void acknowledgementPurposeBoundsKeepOldCapsAndFitCompleteCreatedOriginalWithoutHugeArrays() {
+    assertEquals(128 * 1024, CanonicalGameplayRosterRetirementEvidence.MAX_REQUEST_BYTES);
+    assertEquals(4096, CanonicalGameplayRosterRetirementEvidence.MAX_RESPONSE_BYTES);
+    assertEquals(
+        195 * 1024 * 1024,
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES);
+    assertEquals(
+        CanonicalGameplayRosterRetirementEvidence.MAX_REQUEST_BYTES + 4096 + 64,
+        CanonicalGameplayRosterRetirementEvidence.MAX_CONFIRMATION_BYTES);
+    assertEquals(
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES + 4096 + 64,
+        CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+    int original = CanonicalGameplayRosterReferenceEvidence.MAX_PLAYER_CREATED_RESPONSE_BYTES;
+    int encodedOriginal =
+        com.google.protobuf.CodedOutputStream.computeTagSize(3)
+            + com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(original)
+            + original;
+    assertTrue(
+        encodedOriginal + 4096 + 512
+            <= CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_REQUEST_BYTES);
+    var fixture = CanonicalGameplayRosterReferenceEvidenceTest.createdFixture();
+    var request =
+        acknowledgement(
+            fixture.original(),
+            createdRetirement(
+                CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                    fixture.original(), 17L, TARGET_FENCE, fixture.roster())),
+            fixture.roster().getRoster().getSnapshotUuid(),
+            fixture.roster().getRoster().getSnapshotDigest());
+    var oversized =
+        request.toBuilder()
+            .setObservedRetirement(
+                request.getObservedRetirement().toBuilder()
+                    .setCanonicalSelectedPlayerCreatedCharacterReceipt(
+                        CanonicalGameplayRosterReferenceEvidenceTest.logicalBytes(
+                            CanonicalGameplayRosterRetirementEvidence
+                                    .MAX_PLAYER_CREATED_REQUEST_BYTES
+                                + 1)))
+            .build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> CanonicalGameplayRosterRetirementEvidence.requireAcknowledgement(oversized));
+  }
+
+  private static GetCanonicalGameplayRosterReferenceResponse createdRetirement(
+      GetCanonicalGameplayRosterReferenceResponse original) {
+    var target = CanonicalGameplayRosterReferenceEvidence.target(original.getRequest());
+    return CanonicalGameplayRosterReferenceEvidence.sealRetirement(
+        original.toBuilder()
+            .setState(
+                CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED)
+            .setTerminalOutcome(
+                original.getTerminalOutcome().isEmpty() ? "MENU" : original.getTerminalOutcome())
+            .setRetirementUuid(uuid(18).toString())
+            .setSupersedingPointerDigest("9".repeat(64))
+            .setSupersedingPointerVersion(target.getPointerVersion() + 1L)
+            .setSupersedingCatalogRevision(target.getCatalogRevision())
+            .setSupersedingWorldEpoch(target.getActiveWorldEpoch())
+            .build());
   }
 
   private static CanonicalGameplayRosterRetirementAcknowledgementRequest acknowledgement(
@@ -267,5 +518,17 @@ class CanonicalGameplayRosterRetirementEvidenceTest {
 
   private static UUID uuid(long value) {
     return new UUID(0L, value);
+  }
+
+  private static String streamedDigest(GetCanonicalGameplayRosterReferenceResponse response)
+      throws Exception {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    try (DigestOutputStream digestOutput =
+        new DigestOutputStream(OutputStream.nullOutputStream(), digest)) {
+      CodedOutputStream codedOutput = CodedOutputStream.newInstance(digestOutput);
+      response.writeTo(codedOutput);
+      codedOutput.flush();
+    }
+    return HexFormat.of().formatHex(digest.digest());
   }
 }

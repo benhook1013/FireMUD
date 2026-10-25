@@ -17,6 +17,10 @@ public final class CanonicalGameplayRosterPeerInterceptor implements ServerInter
       "entity_management.v1.CanonicalGameplayRosterService/ListPreseededRoster";
   public static final String SELECTED_ASSIGNMENT_METHOD_NAME =
       "entity_management.v1.CanonicalGameplayRosterService/ReadSelectedPreseededAssignment";
+  public static final String PLAYER_CREATED_METHOD_NAME =
+      "entity_management.v1.CanonicalGameplayRosterService/ListPlayerCreatedRoster";
+  public static final String SELECTED_PLAYER_CREATED_METHOD_NAME =
+      "entity_management.v1.CanonicalGameplayRosterService/ReadSelectedPlayerCreatedCharacter";
   public static final String RECOVERY_METHOD_NAME =
       "entity_management.v1.CanonicalGameplayRosterRecoveryService/RecoverOriginalSelection";
   private static final Context.Key<GrpcPeerIdentity> VERIFIED_GAME_SESSION_PEER =
@@ -38,6 +42,8 @@ public final class CanonicalGameplayRosterPeerInterceptor implements ServerInter
     String methodName = call.getMethodDescriptor().getFullMethodName();
     if (!METHOD_NAME.equals(methodName)
         && !SELECTED_ASSIGNMENT_METHOD_NAME.equals(methodName)
+        && !PLAYER_CREATED_METHOD_NAME.equals(methodName)
+        && !SELECTED_PLAYER_CREATED_METHOD_NAME.equals(methodName)
         && !RECOVERY_METHOD_NAME.equals(methodName)) {
       return next.startCall(call, headers);
     }
