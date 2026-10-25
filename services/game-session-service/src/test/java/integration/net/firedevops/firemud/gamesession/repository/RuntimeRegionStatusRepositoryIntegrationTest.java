@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -39,6 +40,8 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
 
   @BeforeAll
   void setUpRepository() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
     dataSource.setUrl(postgres.getJdbcUrl());
