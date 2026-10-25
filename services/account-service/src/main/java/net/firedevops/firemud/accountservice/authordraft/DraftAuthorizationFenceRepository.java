@@ -295,9 +295,9 @@ public final class DraftAuthorizationFenceRepository {
       throw new IllegalArgumentException("Distinct exact disclosure source evidence required");
     }
     for (SourceEvidence source : sources) {
-      if (source.key().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 512) {
+      if (source.key().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 2048) {
         throw new IllegalArgumentException(
-            "Disclosure source key exceeds the existing Account source-lock bound");
+            "Disclosure source key exceeds the Account source-lock bound");
       }
     }
     lockSources(sources);

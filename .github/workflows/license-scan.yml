@@ -43,6 +43,9 @@ jobs:
         with:
           filters: |
             gradle:
+              - 'config/ort/curations/**'
+              - 'config/ort/custom-license-texts/**'
+              - 'config/ort/gatling.ort.yml'
               - 'build.gradle.kts'
               - 'settings.gradle.kts'
               - 'gradle.properties'
@@ -58,6 +61,8 @@ jobs:
               - '.github/workflows/release-notes.yml'
               - '.github/workflows/ort-advisory.yml'
             npm:
+              - 'config/ort/npm.ort.yml'
+              - 'config/ort/curations/**'
               - 'package.json'
               - 'package-lock.json'
               - 'config/openapi/package.json'
@@ -136,16 +141,170 @@ jobs:
         with:
           image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
+          ort-yml-path: ${{ github.workspace }}/config/ort/gatling.ort.yml
+          docker-cli-args: >-
+            -e CI=true
+            --mount type=bind,source=${{ github.workspace }}/config/ort/curations,target=/home/ort/.ort/config/curations/firemud,readonly
+            --mount type=bind,source=${{ github.workspace }}/config/ort/gatling.ort.yml,target=${{ github.workspace }}/config/ort/gatling.ort.yml,readonly
+            --mount type=bind,source=${{ github.workspace }}/config/ort/custom-license-texts/LicenseRef-Gatling-Highcharts-3.16.0,target=/home/ort/.ort/config/custom-license-texts/LicenseRef-Gatling-Highcharts-3.16.0,readonly
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
-          fail-on: policy-violation
+          fail-on: 'violations'
           report-formats: 'CycloneDx,WebApp'
           ort-cli-report-args: '-O CycloneDX=output.file.formats=json,xml'
 
-      - name: Upload ORT results
+      - name: Require complete Gradle ORT analysis
+        id: gradle_analyzer_guard
+        shell: bash
+        run: |
+          if [[ "${ORT_CLI_ANALYZE_EXIT_CODE:-}" != "0" ]]; then
+            echo 'ORT analyzer did not complete successfully.' >&2
+            exit 1
+          fi
+
+      - name: Diagnose Maven Central access after Gradle ORT failure
+        id: gradle_ort_diagnostic
+        if: ${{ failure() && (steps.ort.outcome == 'failure' || steps.gradle_analyzer_guard.outcome == 'failure') }}
+        continue-on-error: true
+        shell: bash
+        env:
+          ORT_DIAGNOSTIC_IMAGE: ${{ steps.workflow-tool-versions.outputs.ort-image }}
+          ORT_DIAGNOSTIC_DIRECTORY: ${{ runner.temp }}/ort-gradle-maven-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          MAVEN_POM_URL: https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom
+          MAVEN_TRACE_URL: https://repo.maven.apache.org/cdn-cgi/trace
+        run: |
+          set +e
+          set -u -o pipefail
+
+          raw_directory="${HOME}/.ort-maven-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          container_raw_directory="/home/ort/.ort-maven-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          summary_file="${ORT_DIAGNOSTIC_DIRECTORY}/summary.txt"
+
+          cleanup_raw_directory() {
+            for raw_file in "${raw_directory}"/*; do
+              if [[ -f "${raw_file}" ]]; then
+                rm -f -- "${raw_file}" || true
+              fi
+            done
+            rmdir -- "${raw_directory}" 2>/dev/null || true
+          }
+          trap cleanup_raw_directory EXIT
+
+          mkdir -p "${raw_directory}" "${ORT_DIAGNOSTIC_DIRECTORY}"
+          setup_exit=$?
+          if (( setup_exit != 0 )); then
+            printf 'diagnostic_setup_exit=%s\n' "${setup_exit}"
+            exit "${setup_exit}"
+          fi
+
+          printf 'Diagnostic only; these probes do not establish license compliance.\n' > "${summary_file}"
+
+          probe_http() {
+            local scope="$1"
+            local label="$2"
+            local url="$3"
+            local header_file="${raw_directory}/${scope}-${label}.headers"
+            local body_file="${raw_directory}/${scope}-${label}.body"
+            local error_file="${raw_directory}/${scope}-${label}.stderr"
+            local artifact_prefix="${ORT_DIAGNOSTIC_DIRECTORY}/${scope}-${label}"
+            local status="000"
+            local command_exit=0
+            local header_bytes=0
+            local body_bytes=0
+            local error_bytes=0
+
+            if [[ "${scope}" == "runner" ]]; then
+              if status=$(curl --disable --silent --show-error \
+                --connect-timeout 4 --max-time 10 --max-filesize 32768 \
+                --dump-header "${header_file}" --output "${body_file}" \
+                --write-out '%{http_code}' "${url}" 2>"${error_file}"); then
+                command_exit=0
+              else
+                command_exit=$?
+              fi
+            elif [[ "${scope}" == "ort-container" ]]; then
+              local container_header_file="${container_raw_directory}/${scope}-${label}.headers"
+              local container_body_file="${container_raw_directory}/${scope}-${label}.body"
+              if [[ "${ORT_DIAGNOSTIC_IMAGE}" != *@sha256:* ]]; then
+                command_exit=90
+                printf 'Refused unpinned ORT image reference.\n' > "${error_file}"
+              elif status=$(timeout --signal=TERM --kill-after=5s 20s docker run --rm \
+                --mount "type=bind,source=${HOME},target=/home/ort" \
+                --user "$(id -u):$(id -g)" \
+                -e "JDK_JAVA_OPTIONS=${ORT_JDK_JAVA_OPTIONS:-}" \
+                -e "ORT_DATA_DIR=/home/ort/${ORT_HOME_PATH:-.ort}" \
+                --entrypoint curl "${ORT_DIAGNOSTIC_IMAGE}" \
+                --disable --silent --show-error \
+                --connect-timeout 4 --max-time 10 --max-filesize 32768 \
+                --dump-header "${container_header_file}" --output "${container_body_file}" \
+                --write-out '%{http_code}' "${url}" 2>"${error_file}"); then
+                command_exit=0
+              else
+                command_exit=$?
+              fi
+            else
+              command_exit=90
+              printf 'Unsupported diagnostic scope.\n' > "${error_file}"
+            fi
+
+            if [[ ! "${status}" =~ ^[0-9]{3}$ ]]; then
+              status="000"
+            fi
+
+            if [[ -f "${header_file}" ]]; then
+              sed -E 's/^(Set-Cookie|Authorization|Proxy-Authorization):.*/\1: <redacted>/I' \
+                "${header_file}" | head -c 8192 > "${artifact_prefix}.headers.txt"
+            else
+              : > "${artifact_prefix}.headers.txt"
+            fi
+            if [[ -f "${body_file}" ]]; then
+              head -c 8192 "${body_file}" > "${artifact_prefix}.body"
+            else
+              : > "${artifact_prefix}.body"
+            fi
+            if [[ -f "${error_file}" ]]; then
+              head -c 1024 "${error_file}" > "${artifact_prefix}.error.txt"
+            else
+              : > "${artifact_prefix}.error.txt"
+            fi
+
+            header_bytes=$(wc -c < "${artifact_prefix}.headers.txt" | tr -d '[:space:]')
+            body_bytes=$(wc -c < "${artifact_prefix}.body" | tr -d '[:space:]')
+            error_bytes=$(wc -c < "${artifact_prefix}.error.txt" | tr -d '[:space:]')
+            printf 'probe=%s-%s command_exit=%s http_status=%s header_bytes=%s body_bytes=%s error_bytes=%s\n' \
+              "${scope}" "${label}" "${command_exit}" "${status}" \
+              "${header_bytes}" "${body_bytes}" "${error_bytes}" | tee -a "${summary_file}"
+
+            last_command_exit="${command_exit}"
+            last_http_status="${status}"
+          }
+
+          probe_http runner jsr305 "${MAVEN_POM_URL}"
+          runner_pom_exit="${last_command_exit}"
+          runner_pom_status="${last_http_status}"
+          probe_http ort-container jsr305 "${MAVEN_POM_URL}"
+          container_pom_exit="${last_command_exit}"
+          container_pom_status="${last_http_status}"
+
+          if [[ "${runner_pom_exit}" != "0" || "${runner_pom_status}" != "200" || \
+                "${container_pom_exit}" != "0" || "${container_pom_status}" != "200" ]]; then
+            probe_http runner cdn-cgi-trace "${MAVEN_TRACE_URL}"
+            probe_http ort-container cdn-cgi-trace "${MAVEN_TRACE_URL}"
+          fi
+
+      - name: Upload ORT results, including partial analysis
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ always() && steps.ort.outcome != 'skipped' }}
         with:
           name: ort-result-gradle-${{ github.sha }}
           path: ${{ steps.ort.outputs.results-path }}
+          if-no-files-found: error
+      - name: Upload Gradle ORT connectivity diagnostics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ always() && (steps.ort.outcome == 'failure' || steps.gradle_analyzer_guard.outcome == 'failure') }}
+        with:
+          name: ort-gradle-maven-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ort-gradle-maven-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
       - name: Summarize ORT report
         if: github.event_name == 'pull_request'
         run: |
@@ -208,16 +367,31 @@ jobs:
         with:
           image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
+          ort-yml-path: ${{ github.workspace }}/config/ort/npm.ort.yml
+          docker-cli-args: >-
+            --mount type=bind,source=${{ github.workspace }}/config/ort/npm.ort.yml,target=${{ github.workspace }}/config/ort/npm.ort.yml,readonly
+            --mount type=bind,source=${{ github.workspace }}/config/ort/curations,target=/home/ort/.ort/config/curations/firemud,readonly
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
-          fail-on: policy-violation
+          fail-on: 'violations'
           report-formats: 'CycloneDx,WebApp'
           ort-cli-report-args: '-O CycloneDX=output.file.formats=json,xml'
 
-      - name: Upload ORT results
+      - name: Require complete NPM ORT analysis
+        id: npm_analyzer_guard
+        shell: bash
+        run: |
+          if [[ "${ORT_CLI_ANALYZE_EXIT_CODE:-}" != "0" ]]; then
+            echo 'ORT analyzer did not complete successfully.' >&2
+            exit 1
+          fi
+
+      - name: Upload ORT results, including partial analysis
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ always() && steps.ort.outcome != 'skipped' }}
         with:
           name: ort-result-npm-${{ github.sha }}
           path: ${{ steps.ort.outputs.results-path }}
+          if-no-files-found: error
       - name: Summarize ORT report
         if: github.event_name == 'pull_request'
         run: |

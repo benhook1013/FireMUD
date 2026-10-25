@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjector;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -36,7 +37,7 @@ class PlayerOutputDeliveryServiceTest {
     var projector = mock(WebSocketOutputProjector.class);
     var bursts = mock(PromptBurstCoordinator.class);
     var session = mock(WebSocketSession.class);
-    var context = new SessionContext(41L, 22L, "123", 123L, 1L, "R-1", "jwt");
+    var context = GameplayCommandTestFixtures.unnamedOutputActor();
     var output = PlayerOutput.notice("hello");
     var presentation = new PresentationProperties();
     when(registry.find(41L)).thenReturn(Optional.of(session));

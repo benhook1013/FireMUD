@@ -4,13 +4,21 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 
 public final class ChatTestFixtures {
   public static final String ROOM_ID = "R-1021";
   public static final String TENANT = "demo";
-  public static final String PLAYER_EMBERLINE = "7";
-  public static final String PLAYER_SORA = "8";
-  public static final String PLAYER_NYX = "9";
+  // Account database coordinates and character coordinates are independent fixture facts.
+  public static final long EMBERLINE_ACCOUNT_ROW_ID = 7L;
+  public static final long SORA_ACCOUNT_ROW_ID = 8L;
+  public static final long NYX_ACCOUNT_ROW_ID = 9L;
+  public static final long EMBERLINE_CHARACTER_ID = 7L;
+  public static final long SORA_CHARACTER_ID = 8L;
+  public static final long NYX_CHARACTER_ID = 9L;
+  public static final String PLAYER_EMBERLINE = Long.toString(EMBERLINE_CHARACTER_ID);
+  public static final String PLAYER_SORA = Long.toString(SORA_CHARACTER_ID);
+  public static final String PLAYER_NYX = Long.toString(NYX_CHARACTER_ID);
 
   private ChatTestFixtures() {}
 
@@ -57,7 +65,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_EMBERLINE)
           .setTenantId("1")
-          .setAccountId("7")
+          .setAccountId(Long.toString(EMBERLINE_ACCOUNT_ROW_ID))
           .setName("Emberline")
           .build();
     }
@@ -65,7 +73,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_SORA)
           .setTenantId("1")
-          .setAccountId("8")
+          .setAccountId(Long.toString(SORA_ACCOUNT_ROW_ID))
           .setName("Sora")
           .build();
     }
@@ -73,11 +81,32 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_NYX)
           .setTenantId("1")
-          .setAccountId("9")
+          .setAccountId(Long.toString(NYX_ACCOUNT_ROW_ID))
           .setName("Nyx")
           .build();
     }
     return Character.getDefaultInstance();
+  }
+
+  public static SessionContext soraRecipientSession(
+      long sessionId, long tenantId, long gameInstanceId) {
+    Character sora = characterByName("Sora");
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        sora.getAccountId(),
+        "sora@example.com",
+        SORA_CHARACTER_ID,
+        sora.getName(),
+        gameInstanceId,
+        ROOM_ID,
+        "target-jwt",
+        null,
+        gameInstanceId,
+        "demo",
+        "production",
+        1L,
+        "SHARED");
   }
 
   public static String canonicalSayText() {

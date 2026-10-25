@@ -3,7 +3,6 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Function;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -13,7 +12,6 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBi
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase;
-import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
@@ -109,26 +107,19 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     }
   }
 
-  /**
-   * Applies and freezes the exact already-retained GDS selection in current World owners.
-   *
-   * <p>The supplied selection is read from GDS's synchronized Version/commit owner before this
-   * method is called. The callback supplies only controlled upstream Account authorization bytes;
-   * its selected binding must be byte-for-byte that retained selection.
-   */
-  public static Result applyFreezeAndCapture(
+  /** Independently reads actual owner rows after the authenticated World begin has committed. */
+  public static Result readCommittedFreeze(
       DSLContext worldDsl,
-      PlatformTransactionManager worldTransactions,
       String namespace,
       AuthoredDraftPublishSelectionBinding selection,
       AppliedGraph worldGraph,
-      Function<AuthoredDraftPublishSelectionBinding, AccountPublicationAuthorizationBinding>
-          controlledAccountBindingFactory) {
+      AccountPublicationAuthorizationBinding accountBinding,
+      WorldSelectedDraftPublicationFreezeEvidence freezeEvidence) {
     Objects.requireNonNull(worldDsl, "worldDsl");
-    Objects.requireNonNull(worldTransactions, "worldTransactions");
     Objects.requireNonNull(selection, "selection");
     Objects.requireNonNull(worldGraph, "worldGraph");
-    Objects.requireNonNull(controlledAccountBindingFactory, "controlledAccountBindingFactory");
+    Objects.requireNonNull(accountBinding, "accountBinding");
+    Objects.requireNonNull(freezeEvidence, "freezeEvidence");
 
     var target = selection.target();
     DraftCommitBinding binding = selection.selectedCommit();
@@ -154,9 +145,6 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var applied = worldGraph.applied();
     requireExactAppliedReadback(applications, topology, application, plan, applied);
 
-    AccountPublicationAuthorizationBinding accountBinding =
-        Objects.requireNonNull(
-            controlledAccountBindingFactory.apply(selection), "controlled Account binding");
     if (!selection.equals(accountBinding.input().selection())) {
       throw new IllegalArgumentException(
           "Controlled Account binding does not retain the exact GDS synchronized selection");
@@ -189,48 +177,8 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var authorizationRepository =
         new WorldSelectedDraftPublicationAuthorizationRepository(worldDsl);
     var inventoryRepository = new WorldSelectedPublicationArtifactInventoryRepository(worldDsl);
-    var checkpointRepository =
-        new WorldSelectedDraftPublicationCheckpointRepository(
-            fence, applications, topology, digestService);
-    var capturedCheckpoint =
-        new java.util.concurrent.atomic.AtomicReference<
-            WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint>();
-    var createdCheckpointInTransaction = new java.util.concurrent.atomic.AtomicBoolean();
-    var frozenAttempt =
-        Objects.requireNonNull(
-            new TransactionTemplate(worldTransactions)
-                .execute(
-                    status -> {
-                      createdCheckpointInTransaction.set(false);
-                      var attempt =
-                          fence.claimFreeze(
-                              freeze,
-                              () -> {
-                                var captured = checkpointRepository.captureWithSource(freeze, plan);
-                                capturedCheckpoint.set(captured);
-                                createdCheckpointInTransaction.set(true);
-                                return captured.checkpoint();
-                              });
-                      var retainedAccount =
-                          authorizationRepository.retainOrRequireExact(
-                              attempt, accountBinding, createdCheckpointInTransaction.get());
-                      if (!java.util.Arrays.equals(
-                          retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
-                        throw new IllegalStateException(
-                            "World did not retain the exact original Account publication binding");
-                      }
-                      inventoryRepository.retainOrRequireExact(
-                          attempt,
-                          retainedAccount,
-                          createdCheckpointInTransaction.get(),
-                          capturedCheckpoint.get());
-                      return attempt;
-                    }));
+    var frozenAttempt = fence.readAttempt(freeze).orElseThrow();
 
-    var checkpoint =
-        Objects.requireNonNull(
-            capturedCheckpoint.get(),
-            "World selected freeze reused an existing checkpoint; fixture requires a fresh capture");
     var retainedAccount = authorizationRepository.readCommitted(frozenAttempt).orElseThrow();
     if (!java.util.Arrays.equals(
         retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
@@ -255,10 +203,11 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
             frozenAttempt.checkpoint().appliedCommitId(),
             frozenAttempt.checkpoint().contentDigest(),
             frozenAttempt.checkpoint().digestSchemaVersion());
-    var freezeEvidence =
-        WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
-            freezeRequest,
-            WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
+    if (!freezeRequest.equals(freezeEvidence.request())
+        || !acknowledgement.equals(freezeEvidence.acknowledgement())) {
+      throw new IllegalStateException(
+          "Authenticated begin differs from independent committed World rows");
+    }
     var inventoryEvidence =
         new WorldSelectedPublicationArtifactInventoryReadService(
                 namespace, fence, authorizationRepository, inventoryRepository)
@@ -268,13 +217,7 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var frozenRepository =
         new WorldCanonicalFrozenTopologyRepository(
             worldDsl, new WorldAuthoredGraphSnapshotRepository(worldDsl), topology, digestService);
-    var captured =
-        new WorldCanonicalFrozenTopologyService(frozenRepository, worldTransactions)
-            .capture(new WorldCanonicalFrozenTopology.Request(plan, captureRequest));
-    var committedCapture = frozenRepository.readCommitted(captureRequest).orElseThrow();
-    if (!java.util.Arrays.equals(committedCapture.graphBytes(), captured.graphBytes())) {
-      throw new IllegalStateException("Committed World frozen-graph readback changed bytes");
-    }
+    var captured = frozenRepository.readCommitted(captureRequest).orElseThrow();
     var publishedSource =
         new WorldPublishedStartLocationRepository(worldDsl, frozenRepository, applications)
             .readCommitted(captureRequest)
@@ -282,8 +225,8 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var worldEvidence = publishedStartLocationEvidence(publishedSource);
     var worldDigest =
         new WorldDraftDesignDigestService.WorldDraftDesignDigest(
-            Long.toString(checkpoint.owner().localTenantKey()),
-            Long.toString(checkpoint.owner().localVersionKey()),
+            Long.toString(worldGraph.sourceIntake().localTenantKey()),
+            Long.toString(worldGraph.versionIdentity().localVersionKey()),
             frozenAttempt.checkpoint().appliedCommitId(),
             frozenAttempt.checkpoint().contentDigest(),
             frozenAttempt.checkpoint().digestSchemaVersion());
@@ -337,6 +280,24 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
       String namespace,
       DraftCommitBinding selectedCommit,
       AuthoredWorldSourceEvidence controlledWorldSource) {
+    return applyGraph(
+        worldDsl,
+        worldTransactions,
+        namespace,
+        selectedCommit,
+        controlledWorldSource,
+        UUID.randomUUID());
+  }
+
+  /** Uses the existing GDS outbox's original World intake identity in composed proof. */
+  public static AppliedGraph applyGraph(
+      DSLContext worldDsl,
+      PlatformTransactionManager worldTransactions,
+      String namespace,
+      DraftCommitBinding selectedCommit,
+      AuthoredWorldSourceEvidence controlledWorldSource,
+      UUID originalIntakeRequestId) {
+    Objects.requireNonNull(originalIntakeRequestId, "originalIntakeRequestId");
     Objects.requireNonNull(worldDsl, "worldDsl");
     Objects.requireNonNull(worldTransactions, "worldTransactions");
     Objects.requireNonNull(selectedCommit, "selectedCommit");
@@ -345,12 +306,14 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(worldDsl);
     var versionRepository = new WorldAuthoredVersionIdentityRepository(worldDsl);
     var write = new TransactionTemplate(worldTransactions);
+    write.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     var intake =
         Objects.requireNonNull(
             write.execute(
                 status ->
                     intakeRepository.acceptFresh(
-                        namespace, UUID.randomUUID(), controlledWorldSource)));
+                        namespace, originalIntakeRequestId, controlledWorldSource)));
     var versionStateRequest =
         new AuthoredWorldVersionStateEvidence.Request(
             1,
@@ -568,5 +531,55 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
         source.selectorReceipt().canonicalBytes(),
         source.appliedResult().application().operation().accountBindingBytes(),
         source.appliedResult().canonicalBytes());
+  }
+
+  /** Explicit test-only composition of existing readers; no runtime registration or authority. */
+  public static java.util.List<io.grpc.BindableService> reservationReadEndpoints(
+      DSLContext dsl,
+      PlatformTransactionManager transactions,
+      String namespace,
+      net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient
+          selectionClient,
+      net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient versionClient,
+      net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient
+          accountClient,
+      net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient sourceClient) {
+    var intake = new WorldAuthoredSourceIntakeRepository(dsl);
+    var fence = new WorldDesignPublicationFenceRepository(dsl, intake);
+    var topology = new WorldDraftTopologyCommitRepository(dsl, fence, JSON);
+    var applications = new WorldDraftGraphApplicationRepository(dsl, fence, JSON);
+    var digest = digestService(dsl);
+    var authorization = new WorldSelectedDraftPublicationAuthorizationRepository(dsl);
+    var inventory = new WorldSelectedPublicationArtifactInventoryRepository(dsl);
+    var frozen =
+        new WorldCanonicalFrozenTopologyRepository(
+            dsl, new WorldAuthoredGraphSnapshotRepository(dsl), topology, digest);
+    var service =
+        new WorldSelectedDraftPublicationFreezeService(
+            namespace,
+            selectionClient,
+            versionClient,
+            accountClient,
+            intake,
+            fence,
+            new WorldSelectedDraftPublicationCheckpointRepository(
+                fence, applications, topology, digest),
+            authorization,
+            inventory,
+            applications,
+            new WorldSelectedPublicationSelectorCapture(
+                namespace, new WorldCanonicalFrozenTopologyService(frozen, transactions)),
+            transactions);
+    return java.util.List.of(
+        new WorldSelectedDraftPublicationFreezeGrpcService(
+            service,
+            new WorldSelectedPublicationArtifactInventoryReadService(
+                namespace, fence, authorization, inventory),
+            namespace),
+        new WorldPublishedStartLocationReadGrpcService(
+            new WorldPublishedStartLocationRepository(dsl, frozen, applications), namespace),
+        new WorldAuthoredSourceIntakeGrpcService(
+            new WorldAuthoredSourceIntakeService(sourceClient, intake, transactions, namespace),
+            namespace));
   }
 }

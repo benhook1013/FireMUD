@@ -2,6 +2,10 @@ package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -17,17 +21,23 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository.StoredProtection;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.Field;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -53,6 +63,134 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private static final JsonMapper JSON = JsonMapper.builder().build();
+
+  @Test
+  void settlementLocksCanonicalSourceKeysBeforeProtectionRowAccess() throws Exception {
+    Fixture fixture = fixture();
+    var first =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            "activation-\uD800\uDC00",
+            null,
+            "1",
+            null,
+            null,
+            bytes("first"));
+    var last =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS, "activation-\uE000", null, "1", null, null, bytes("last"));
+    for (var source : List.of(first, last)) {
+      fixture
+          .dsl()
+          .execute(
+              "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+              source.key());
+    }
+    UUID protectionId = UUID.randomUUID();
+    var evidence = mock(AccountStartSessionActivationProtectionEvidence.class);
+    when(evidence.accountProtectionId()).thenReturn(protectionId);
+    when(evidence.accountProtectionFence()).thenReturn(7L);
+    when(evidence.canonicalBytes()).thenReturn(bytes("controlled protection lookup"));
+    when(evidence.sourceEvidenceVector()).thenReturn(List.of(last, first));
+    var terminal = mock(WorldOriginalStartSessionActivationTerminalEvidence.class);
+    when(terminal.accountProtectionEvidence()).thenReturn(evidence);
+    var repository = spy(new AccountStartSessionActivationProtectionRepository(fixture.dsl()));
+    // Only the lock boundary is physical here; historical lookup and terminal authority are
+    // controlled.
+    doReturn(java.util.Optional.of(new StoredProtection(evidence, 1L)))
+        .when(repository)
+        .findHistoricalExact(protectionId, 7L);
+    var sourceLocks = new java.util.ArrayList<String>();
+    var protectionLocks = new java.util.ArrayList<Object>();
+    fixture
+        .dsl()
+        .configuration()
+        .setAppending(
+            new DefaultExecuteListenerProvider(
+                ExecuteListener.onExecuteStart(
+                    context -> {
+                      String sql = context.sql();
+                      var query = context.query();
+                      if (sql == null || query == null || !sql.contains("FOR UPDATE NOWAIT"))
+                        return;
+                      if (sql.contains("account_draft_authorization_source_locks")) {
+                        sourceLocks.add((String) query.getBindValues().getFirst());
+                      } else if (sql.contains("account_start_session_activation_protections")) {
+                        protectionLocks.add(query.getBindValues().getFirst());
+                      }
+                    })));
+    for (var contended : List.of(first, last)) {
+      sourceLocks.clear();
+      protectionLocks.clear();
+      try (var holder = fixture.dataSource().getConnection()) {
+        holder.setAutoCommit(false);
+        try (var statement =
+            holder.prepareStatement(
+                "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ? FOR UPDATE")) {
+          statement.setString(1, contended.key());
+          try (var rows = statement.executeQuery()) {
+            assertThat(rows.next()).isTrue();
+          }
+        }
+        assertThatThrownBy(
+                () ->
+                    fixture
+                        .transaction()
+                        .executeWithoutResult(ignored -> repository.settleExact(terminal)))
+            .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
+            .satisfies(
+                failure -> {
+                  Throwable root = failure;
+                  while (root.getCause() != null) root = root.getCause();
+                  assertThat(((org.postgresql.util.PSQLException) root).getSQLState())
+                      .isEqualTo("55P03");
+                });
+        assertThat(protectionLocks).isEmpty();
+        assertThat(sourceLocks)
+            .containsExactlyElementsOf(
+                contended == first ? List.of(first.key()) : List.of(first.key(), last.key()));
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetchCount(
+                        DSL.table("account_start_session_activation_protection_settlements")))
+            .isZero();
+        holder.rollback();
+      }
+    }
+    sourceLocks.clear();
+    protectionLocks.clear();
+    // Once both sources are available, row lookup follows them; no parent is manufactured by this
+    // test.
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(ignored -> repository.settleExact(terminal)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Exact original StartSession activation protection unavailable");
+    assertThat(sourceLocks).containsExactly(first.key(), last.key());
+    assertThat(protectionLocks).containsExactly(protectionId);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
+        .isZero();
+    try (var verifier = fixture.dataSource().getConnection()) {
+      verifier.setAutoCommit(false);
+      try (var statement =
+          verifier.prepareStatement(
+              "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ? FOR UPDATE NOWAIT")) {
+        for (var source : List.of(first, last)) {
+          statement.setString(1, source.key());
+          try (var rows = statement.executeQuery()) {
+            assertThat(rows.next()).isTrue();
+          }
+        }
+      }
+      verifier.rollback();
+    }
+  }
 
   @Test
   void digestAlignmentUpgradePreservesRetainedParentAndRequiresCanonicalWorldPrefix()
@@ -1340,6 +1478,59 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     CurrentnessCase expired = currentnessCase(expiredFixture, Instant.now().minusSeconds(1));
     assertCurrentnessRejected(
         expiredFixture, expired.requestBytes(), expired.operationIdentityBytes());
+  }
+
+  @Test
+  void fullTupleDoesNotBypassIndependentActivationIssuanceOperationBinding() throws Exception {
+    Fixture fixture = fixture();
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(60));
+    Map<String, Object> request = readJson(current.requestBytes());
+    byte[] tuple =
+        Base64.getDecoder()
+            .decode((String) request.get("originalPostAuthorizationTupleBytesBase64"));
+    byte[] projection =
+        Base64.getDecoder().decode((String) request.get("accountRedemptionProjectionBytesBase64"));
+    assertThat(projection).containsExactly(tuple);
+    String requestId = (String) readJson(tuple).get("controlPlaneRequestId");
+
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                        current.requestBytes(),
+                        current.operationIdentityBytes(),
+                        current.operationIdentityDigest()));
+    // Stipulate one contradictory retained owner row to isolate the independent SQL conjunct.
+    // Current activation/acquisition guards stay enabled; this is not authenticated producer proof.
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+              assertThat(
+                      fixture
+                          .dsl()
+                          .execute(
+                              "UPDATE account_start_session_operator_authorizations SET issuance_operation_id = ? "
+                                  + "WHERE control_plane_request_id = ?",
+                              UUID.randomUUID(),
+                              requestId))
+                  .isEqualTo(1);
+              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+            });
+    assertThatThrownBy(() -> acquireProtection(fixture, current))
+        .hasMessageContaining(
+            "Activation protection differs from original Account redemption or capture");
+    for (String table :
+        List.of(
+            "account_start_session_activation_protections",
+            "account_start_session_activation_protection_sources")) {
+      assertThat(fixture.dsl().fetchCount(DSL.table(table))).as(table).isZero();
+    }
   }
 
   @Test

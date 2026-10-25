@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package entity_management.v1;
+
+import "game-session/v1/canonical_gameplay_roster_owner_read.proto";
+
+option java_package = "net.firedevops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+// Unregistered workload-only recovery of an already fenced original selection. This cannot
+// allocate an actor, authorize gameplay, or release retained snapshots.
+service CanonicalGameplayRosterRecoveryService {
+  rpc RecoverOriginalSelection(CanonicalGameplayRosterRecoveryRequest)
+      returns (CanonicalGameplayRosterRecoveryResponse);
+}
+
+message CanonicalGameplayRosterRecoveryRequest {
+  uint32 schema_version = 1;
+  game_session.v1.GetCanonicalGameplayRosterReferenceRequest original_selection = 2;
+  // Independently reread from the GS owner; caller echoes are not closure authority.
+  string recovery_uuid = 3;
+}
+
+message CanonicalGameplayRosterRecoveryResponse {
+  uint32 schema_version = 1;
+  CanonicalGameplayRosterRecoveryRequest request = 2;
+  string admission_uuid = 3;
+  int64 owner_fence = 4;
+  string target_fence_uuid = 5;
+  // Exact locally retained original receipt, if capture won before nonce closure. Absence is
+  // positive fenced no-capture evidence only in this authenticated closed-admission response.
+  bytes canonical_roster_receipt = 6;
+}

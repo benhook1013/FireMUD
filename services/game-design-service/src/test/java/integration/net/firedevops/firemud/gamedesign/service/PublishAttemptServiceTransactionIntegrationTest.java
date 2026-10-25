@@ -134,6 +134,119 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
 
   @Test
+  void publishAttemptSaveUsesRevisionCasAndRejectsStaleAndTerminalUpdates() {
+    String tenantId = isolatedTenantId();
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("publish-attempt-revision-proof-game");
+    gameRepository.save(game);
+
+    Version version = new Version();
+    version.setTenantId(tenantId);
+    version.setVersionNumber(1);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    Version savedVersion = versionRepository.save(version);
+
+    PublishAttempt attempt = new PublishAttempt();
+    attempt.setTenantId(tenantId);
+    attempt.setPublishWorkflowId("publish-attempt-revision-cas-integration-test");
+    attempt.setPublishType(PublishType.FULL_VERSION);
+    attempt.setVersionId(savedVersion.getId());
+    attempt.setVersionNumber(savedVersion.getVersionNumber());
+    PublishAttempt inserted = publishAttemptRepository.save(attempt);
+    assertThat(inserted).isNotNull();
+    assertThat(inserted.getId()).isNotNull();
+    assertThat(inserted.getRevision()).isEqualTo(1L);
+    assertThat(inserted.getTenantId()).isEqualTo(tenantId);
+    assertThat(inserted.getPublishWorkflowId()).isEqualTo(attempt.getPublishWorkflowId());
+    assertThat(inserted.getVersionId()).isEqualTo(savedVersion.getId());
+    assertThat(inserted.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    PublishAttempt insertedReadback =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(insertedReadback.getId()).isEqualTo(inserted.getId());
+    assertThat(insertedReadback.getRevision()).isEqualTo(1L);
+    assertThat(insertedReadback.getTenantId()).isEqualTo(tenantId);
+    assertThat(insertedReadback.getVersionId()).isEqualTo(savedVersion.getId());
+    assertThat(insertedReadback.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+
+    PublishAttempt firstWriter =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    PublishAttempt staleWriter =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    firstWriter.setFailureMessage("first revision writer");
+    firstWriter = publishAttemptRepository.save(firstWriter);
+    assertThat(firstWriter.getId()).isEqualTo(inserted.getId());
+    assertThat(firstWriter.getRevision()).isEqualTo(2L);
+    assertThat(firstWriter.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(firstWriter.getFailureMessage()).isEqualTo("first revision writer");
+
+    var beforeStaleWrite =
+        dsl.fetchSingle(
+                "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?", inserted.getId())
+            .intoMap();
+    staleWriter.setFailureMessage("stale revision writer");
+    assertThatThrownBy(() -> publishAttemptRepository.save(staleWriter))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("PUBLISH_ATTEMPT_CAS_CONFLICT");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?",
+                    inserted.getId())
+                .intoMap())
+        .isEqualTo(beforeStaleWrite);
+    PublishAttempt afterStaleWrite =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(afterStaleWrite.getId()).isEqualTo(inserted.getId());
+    assertThat(afterStaleWrite.getRevision()).isEqualTo(2L);
+    assertThat(afterStaleWrite.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(afterStaleWrite.getFailureMessage()).isEqualTo("first revision writer");
+    assertThat(afterStaleWrite.getFailureCode()).isNull();
+    assertThat(afterStaleWrite.getCompletedAt()).isNull();
+
+    afterStaleWrite.setStatus(PublishAttemptStatus.FAILED);
+    afterStaleWrite.setFailureCode("terminal-revision-proof");
+    afterStaleWrite.setCompletedAt(LocalDateTime.now());
+    PublishAttempt terminal = publishAttemptRepository.save(afterStaleWrite);
+    assertThat(terminal.getId()).isEqualTo(inserted.getId());
+    assertThat(terminal.getRevision()).isEqualTo(3L);
+    assertThat(terminal.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(terminal.getFailureMessage()).isEqualTo("first revision writer");
+    assertThat(terminal.getFailureCode()).isEqualTo("terminal-revision-proof");
+    var beforeTerminalWrite =
+        dsl.fetchSingle(
+                "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?", terminal.getId())
+            .intoMap();
+    terminal.setFailureMessage("terminal rows cannot be rewritten");
+    assertThatThrownBy(() -> publishAttemptRepository.save(terminal))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("PUBLISH_ATTEMPT_CAS_CONFLICT");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?",
+                    terminal.getId())
+                .intoMap())
+        .isEqualTo(beforeTerminalWrite);
+    PublishAttempt afterTerminalWrite =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(afterTerminalWrite.getId()).isEqualTo(inserted.getId());
+    assertThat(afterTerminalWrite.getRevision()).isEqualTo(3L);
+    assertThat(afterTerminalWrite.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(afterTerminalWrite.getFailureMessage()).isEqualTo("first revision writer");
+    assertThat(afterTerminalWrite.getFailureCode()).isEqualTo("terminal-revision-proof");
+  }
+
+  @Test
   void fullVersionSealTransactionUsesExplicitReadCommittedIsolation() {
     AtomicReference<Integer> isolation = new AtomicReference<>();
 
@@ -549,18 +662,39 @@ class PublishAttemptServiceTransactionIntegrationTest {
   void selectedMechanicsRetainsCandidatePendingCompletePublicationReadback() {
     String tenantId = isolatedTenantId();
     SelectedPublicationFixture fixture =
-        selectedPublicationFixture(tenantId, "pending-readback-proof-game", false);
+        selectedFullPublicationFixture(tenantId, "pending-readback-proof-game", false);
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    PublicationDigestRequestBinding expectedBinding =
+        PublicationDigestRequestBinding.full(
+            fixture
+                .operation()
+                .account()
+                .input()
+                .selection()
+                .intent()
+                .canonicalTenantId()
+                .toString(),
+            String.valueOf(fixture.version().getId()),
+            publishRequestId);
     ExportedAssetManifest candidate = recordFixtureCandidate(fixture);
     AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
     AtomicInteger artifactReadbackCount = new AtomicInteger();
 
     Mockito.when(
-            publishGateService.collectFullVersionParticipantDigests(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(publishRequestId),
+                Mockito.argThat(
+                    binding ->
+                        binding != null
+                            && binding
+                                .canonicalPreimageHex()
+                                .equals(expectedBinding.canonicalPreimageHex())
+                            && binding.requestDigest().equals(expectedBinding.requestDigest())
+                            && binding
+                                .derivedWorkflowIdentity()
+                                .equals(expectedBinding.derivedWorkflowIdentity())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -568,7 +702,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
               return PublishedWorldSelectorFixtures.participants(
                   selectedVersion.id(),
                   fixture.operation().world(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
             });
     Mockito.doAnswer(
             invocation -> {
@@ -663,10 +797,22 @@ class PublishAttemptServiceTransactionIntegrationTest {
   void fullVersionMechanicsLeavesPostExportFinalizationFailurePendingWithCandidateAndRemap() {
     String tenantId = isolatedTenantId();
     SelectedPublicationFixture fixture =
-        selectedPublicationFixture(tenantId, "failed-remap-proof-game", true);
+        selectedFullPublicationFixture(tenantId, "failed-remap-proof-game", true);
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    PublicationDigestRequestBinding expectedBinding =
+        PublicationDigestRequestBinding.full(
+            fixture
+                .operation()
+                .account()
+                .input()
+                .selection()
+                .intent()
+                .canonicalTenantId()
+                .toString(),
+            String.valueOf(fixture.version().getId()),
+            publishRequestId);
     Version sourceVersion =
         versionRepository.findByTenantIdAndVersionNumber(tenantId, 1).orElseThrow();
     long sourceVersionId = sourceVersion.getId();
@@ -682,9 +828,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
     Mockito.when(
-            publishGateService.collectFullVersionParticipantDigests(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(publishRequestId),
+                Mockito.argThat(
+                    binding ->
+                        binding != null
+                            && binding
+                                .canonicalPreimageHex()
+                                .equals(expectedBinding.canonicalPreimageHex())
+                            && binding.requestDigest().equals(expectedBinding.requestDigest())
+                            && binding
+                                .derivedWorkflowIdentity()
+                                .equals(expectedBinding.derivedWorkflowIdentity())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -694,7 +849,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
               return PublishedWorldSelectorFixtures.participants(
                   candidate.id(),
                   fixture.operation().world(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
             });
     Mockito.doAnswer(
             invocation -> {
@@ -844,16 +999,37 @@ class PublishAttemptServiceTransactionIntegrationTest {
   void privateMechanicsCommitsGdsOwnerButRemainsPendingWithoutWorldProducer() {
     String tenantId = "9002";
     SelectedPublicationFixture fixture =
-        selectedPublicationFixture(tenantId, "successful-transaction-proof-game", false);
+        selectedFullPublicationFixture(tenantId, "successful-transaction-proof-game", false);
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    PublicationDigestRequestBinding expectedBinding =
+        PublicationDigestRequestBinding.full(
+            fixture
+                .operation()
+                .account()
+                .input()
+                .selection()
+                .intent()
+                .canonicalTenantId()
+                .toString(),
+            String.valueOf(fixture.version().getId()),
+            publishRequestId);
     AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
 
     Mockito.when(
-            publishGateService.collectFullVersionParticipantDigests(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(publishRequestId),
+                Mockito.argThat(
+                    binding ->
+                        binding != null
+                            && binding
+                                .canonicalPreimageHex()
+                                .equals(expectedBinding.canonicalPreimageHex())
+                            && binding.requestDigest().equals(expectedBinding.requestDigest())
+                            && binding
+                                .derivedWorkflowIdentity()
+                                .equals(expectedBinding.derivedWorkflowIdentity())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -861,7 +1037,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
               return PublishedWorldSelectorFixtures.participants(
                   version.id(),
                   fixture.operation().world(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
             });
     Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
@@ -974,7 +1150,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   /** Fixture-only Account/World inputs; this exercises GD's actual selected owner transaction. */
-  private SelectedPublicationFixture selectedPublicationFixture(
+  private SelectedPublicationFixture selectedFullPublicationFixture(
       String tenantId, String gameName, boolean includePublishedSource) {
     TransactionTemplate sourceTransaction = new TransactionTemplate(transactionManager);
     sourceTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -1019,7 +1195,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
           GameAsset persistedAsset = gameAssetRepository.save(asset);
           try {
             GameDesignPublicationOperation operation =
-                IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                IsolatedPublicationOwnerSetup.retainFrozenSourceBackedSelectedFull(
                     dsl,
                     target,
                     persisted.getVersionStateEpoch(),

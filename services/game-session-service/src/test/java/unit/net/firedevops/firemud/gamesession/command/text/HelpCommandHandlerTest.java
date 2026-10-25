@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettin
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamesession.service.GameAuthoredHelpReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 
 class HelpCommandHandlerTest {
@@ -223,9 +224,7 @@ class HelpCommandHandlerTest {
     HelpCommandHandler disabledHandler =
         new HelpCommandHandler(
             (context, topic) -> Optional.empty(), null, capabilitiesResolver(false));
-    SessionContext context =
-        new SessionContext(
-            42L, 22L, "123", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.helpCapabilityEmberline();
 
     TextCommandInterpretationResult result =
         disabledHandler.handle(
@@ -242,9 +241,7 @@ class HelpCommandHandlerTest {
             (context, topic) -> Optional.empty(),
             null,
             CommandCapabilitiesTestSupport.resolver(false, false, false, true));
-    SessionContext context =
-        new SessionContext(
-            42L, 22L, "123", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.helpCapabilityEmberline();
 
     TextCommandInterpretationResult result =
         disabledHandler.handle(
@@ -262,9 +259,7 @@ class HelpCommandHandlerTest {
     HelpCommandHandler disabledHandler =
         new HelpCommandHandler(
             (context, topic) -> Optional.empty(), null, capabilitiesResolver(false));
-    SessionContext context =
-        new SessionContext(
-            42L, 22L, "123", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.helpCapabilityEmberline();
 
     TextCommandInterpretationResult result =
         disabledHandler.handle(
@@ -280,9 +275,7 @@ class HelpCommandHandlerTest {
     HelpCommandHandler enabledHandler =
         new HelpCommandHandler(
             (context, topic) -> Optional.empty(), null, capabilitiesResolver(true));
-    SessionContext context =
-        new SessionContext(
-            42L, 22L, "123", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.helpCapabilityEmberline();
 
     TextCommandInterpretationResult result =
         enabledHandler.handle(
@@ -303,9 +296,7 @@ class HelpCommandHandlerTest {
                         "Temple Etiquette", "Bow before entering the moonlit sanctuary."))
                 : Optional.empty();
     HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(reader, null, null);
-    SessionContext context =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+    SessionContext context = GameplayCommandTestFixtures.authoredHelpEmberline();
 
     TextCommandInterpretationResult result =
         authoredHelpHandler.handle(

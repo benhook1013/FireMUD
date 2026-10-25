@@ -47,6 +47,51 @@ public record CanonicalGameplayRosterTarget(
     Objects.requireNonNull(entryPolicy, "entryPolicy");
   }
 
+  public static CanonicalGameplayRosterTarget fromWire(
+      net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget target) {
+    return new CanonicalGameplayRosterTarget(
+        UUID.fromString(target.getTenantUuid()),
+        UUID.fromString(target.getRealmUuid()),
+        target.getWorldSlug(),
+        target.getRealmSlug(),
+        UUID.fromString(target.getGameInstanceUuid()),
+        target.getCatalogRevision(),
+        target.getPointerVersion(),
+        target.getActiveWorldEpoch(),
+        UUID.fromString(target.getCanonicalVersionUuid()),
+        target.getPublishedPolicyDigest(),
+        target.getPublishedReleaseBundleRef(),
+        target.getAdmissionPointerSnapshotDigest(),
+        target.getPublishedOwnerProofDigest(),
+        UUID.fromString(target.getPlayableStateNamespaceUuid()),
+        target.getPlayableStateScope(),
+        CanonicalGameplayRosterEntryPolicy.valueOf(
+            target.getEntryPolicy().name().replace("CANONICAL_ROSTER_ENTRY_POLICY_", "")));
+  }
+
+  public net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget toWire() {
+    return net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget.newBuilder()
+        .setTenantUuid(tenantUuid.toString())
+        .setRealmUuid(realmUuid.toString())
+        .setWorldSlug(worldSlug)
+        .setRealmSlug(realmSlug)
+        .setGameInstanceUuid(gameInstanceUuid.toString())
+        .setCatalogRevision(catalogRevision)
+        .setPointerVersion(pointerVersion)
+        .setActiveWorldEpoch(activeWorldEpoch)
+        .setCanonicalVersionUuid(canonicalVersionUuid.toString())
+        .setPublishedPolicyDigest(publishedPolicyDigest)
+        .setPublishedReleaseBundleRef(publishedReleaseBundleRef)
+        .setAdmissionPointerSnapshotDigest(admissionPointerSnapshotDigest)
+        .setPublishedOwnerProofDigest(publishedOwnerProofDigest)
+        .setPlayableStateNamespaceUuid(playableStateNamespaceId.toString())
+        .setPlayableStateScope(playableStateScope)
+        .setEntryPolicy(
+            net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy.valueOf(
+                "CANONICAL_ROSTER_ENTRY_POLICY_" + entryPolicy.name()))
+        .build();
+  }
+
   private static void requireNonNil(UUID value, String fieldName) {
     Objects.requireNonNull(value, fieldName);
     if (NIL_UUID.equals(value)) {

@@ -153,6 +153,8 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -240,9 +242,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
   @TempDir Path temporary;
 
-  @Test
-  void actualOwnersPrepareAndReplayOneExactOriginalOperation() throws Exception {
-    compose(Refusal.NONE);
+  @ParameterizedTest
+  @ValueSource(longs = {9_007_199_254_740_992L, 9_007_199_254_740_993L, Long.MAX_VALUE})
+  void actualOwnersPrepareAndReplayOneExactOriginalOperation(
+      long reservationClaimFence, @TempDir Path proofDirectory) throws Exception {
+    compose(Refusal.NONE, reservationClaimFence, proofDirectory);
   }
 
   @Test
@@ -328,10 +332,24 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   private void compose(Refusal refusal) throws Exception {
-    compose(refusal, ActivationFailure.NONE);
+    compose(refusal, 9_007_199_254_740_993L, temporary, ActivationFailure.NONE);
+  }
+
+  private void compose(Refusal refusal, long reservationClaimFence, Path proofDirectory)
+      throws Exception {
+    compose(refusal, reservationClaimFence, proofDirectory, ActivationFailure.NONE);
   }
 
   private void compose(Refusal refusal, ActivationFailure activationFailure) throws Exception {
+    compose(refusal, 9_007_199_254_740_993L, temporary, activationFailure);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure)
+      throws Exception {
     UUID tenant = UUID.randomUUID();
     try (var account =
             new AccountControlUiOriginalOrderFixture(
@@ -340,13 +358,13 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 ACCOUNT.getPassword(),
                 REDIS.getHost(),
                 REDIS.getMappedPort(6379),
-                temporary.resolve("account"),
+                proofDirectory.resolve("account"),
                 tenant);
         var world = database(WORLD, "world-management-service", true);
         var gs = database(GS, "game-session-service", false)) {
       var issuer =
           new AccountOriginalStartSessionAuthorizationProofFixture(
-              account, temporary.resolve("issuer"), NAMESPACE);
+              account, proofDirectory.resolve("issuer"), NAMESPACE);
       Duration lease =
           refusal == Refusal.EXPIRED_ATTEMPT
               ? Duration.ofSeconds(30)
@@ -366,7 +384,6 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
               "TEST_ONLY owner composition");
       String requestId = "controlled-original-prepare-" + UUID.randomUUID();
-      long reservationClaimFence = 9_007_199_254_740_993L;
       var original =
           issuer.issueAndRedeemOriginal(
               requestId,
@@ -446,7 +463,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               claim.get().ownerMutationId(),
               input.gameSessionOwnerAttemptId(),
               claim.get().ownerFence());
-      var pki = new WorldOriginalStartSessionPreparationProofPki(temporary.resolve("pki"));
+      var pki = new WorldOriginalStartSessionPreparationProofPki(proofDirectory.resolve("pki"));
       var factory = new GrpcChannelFactory();
       var currentAttemptRefusal = new AtomicReference<Status>();
       var currentAttemptReceiver =
@@ -494,6 +511,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         currentAttempt.init();
         launchAssociation.init();
         if (refusal == Refusal.NONE) {
+          var beforeAuthenticatedRead =
+              rows(gs.dsl(), "game_session_start_session_operator_attempt");
           var authenticatedCurrent =
               currentAttempt.read(
                   new net.firedevops.firemud.common.gamesession
@@ -506,8 +525,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                       claim.get().ownerFence()));
           assertThat(authenticatedCurrent.request().originalTuple().reservationClaimFence())
               .isEqualTo(reservationClaimFence);
+          assertThat(authenticatedCurrent.request().canonicalPostAuthorizationTuple())
+              .containsExactly(tuple.canonicalBytes());
           assertThat(authenticatedCurrent.accountRedemptionProjection())
               .containsExactly(tuple.canonicalBytes());
+          assertThat(rows(gs.dsl(), "game_session_start_session_operator_attempt"))
+              .isEqualTo(beforeAuthenticatedRead);
         }
 
         int accountPort = availablePort();

@@ -2,25 +2,45 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.security.MessageDigest;
+import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
 import net.firedevops.firemud.gamedesign.draft.IsolatedAssetSourceOwnerSetup;
+import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
+import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.VersionAssetPublicationServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.SQLDialect;
+import org.jooq.conf.Settings;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
@@ -30,6 +50,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class VersionAssetExportSnapshotIntegrationTest {
@@ -93,6 +114,264 @@ class VersionAssetExportSnapshotIntegrationTest {
     assertThat(snapshot.items().getFirst().contentDigest()).isEqualTo(sha256(SOURCE_BYTES));
     assertThat(repository.readFrozenAssetBytes(fixture.tenantId, 1, snapshot.items().getFirst()))
         .containsExactly(SOURCE_BYTES);
+  }
+
+  @Test
+  void firstFreezeWithoutEnclosingTransactionRejectsNonemptySelection() throws Exception {
+    assertUnwrappedFirstFreezeDenied(fixture());
+  }
+
+  @Test
+  void firstFreezeWithoutEnclosingTransactionRejectsFoundedEmptySelection() throws Exception {
+    assertUnwrappedFirstFreezeDenied(foundedEmptyFixture());
+  }
+
+  @Test
+  void springOwnerCommitsNonemptySnapshotBeforeIndependentReadback() {
+    Fixture fixture = fixture();
+    var service =
+        new VersionAssetPublicationServiceImpl(
+            new DataSourceTransactionManager(fixture.dataSource),
+            new VersionAssetPublicationRepository(fixture.dsl));
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+    var snapshot = service.freezeOrReadSnapshot(fixture.tenantId, 1);
+
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(snapshot.items()).hasSize(1);
+    assertThat(snapshot.items().getFirst().contentDigest()).isEqualTo(sha256(SOURCE_BYTES));
+    assertThat(independentSnapshot(fixture)).isEqualTo(snapshot);
+    assertThat(service.readFrozenAssetBytes(fixture.tenantId, 1, snapshot.items().getFirst()))
+        .containsExactly(SOURCE_BYTES);
+  }
+
+  @Test
+  void springOwnerCommitsFoundedEmptySnapshotBeforeIndependentReadback() {
+    Fixture fixture = foundedEmptyFixture();
+    var service =
+        new VersionAssetPublicationServiceImpl(
+            new DataSourceTransactionManager(fixture.dataSource),
+            new VersionAssetPublicationRepository(fixture.dsl));
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+    var snapshot = service.freezeOrReadSnapshot(fixture.tenantId, 1);
+
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(snapshot.items()).isEmpty();
+    assertThat(independentSnapshot(fixture)).isEqualTo(snapshot);
+  }
+
+  @Test
+  void jooqOwnerCommitsFoundedEmptySnapshotBeforeIndependentReadback() {
+    Fixture fixture = foundedEmptyFixture();
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+    var snapshot =
+        fixture.dsl.transactionResult(
+            configuration ->
+                new VersionAssetPublicationRepository(DSL.using(configuration))
+                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(snapshot.items()).isEmpty();
+    assertThat(independentSnapshot(fixture)).isEqualTo(snapshot);
+  }
+
+  @Test
+  void retainsCallerSerializableTransactionAndJooqConfigurationAcrossCompleteFreeze()
+      throws Exception {
+    Fixture fixture = fixture();
+    var acquired = new AtomicInteger();
+    var released = new AtomicInteger();
+    var queryConnections = new ArrayList<Connection>();
+    try (var connection = fixture.dataSource.getConnection()) {
+      connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+      connection.setAutoCommit(false);
+      var provider =
+          new ConnectionProvider() {
+            @Override
+            @SuppressFBWarnings(
+                value = "EI_EXPOSE_REP",
+                justification =
+                    "The isolated provider intentionally lends the caller-owned connection")
+            public Connection acquire() {
+              assertThat(acquired.incrementAndGet()).as("one owner connection lease").isEqualTo(1);
+              return connection;
+            }
+
+            @Override
+            public void release(Connection returned) {
+              assertThat(returned).isSameAs(connection);
+              released.incrementAndGet();
+            }
+          };
+      var listener =
+          ExecuteListener.onExecuteStart(
+              context -> {
+                queryConnections.add(context.connection());
+                assertThat(context.configuration().dialect()).isEqualTo(SQLDialect.POSTGRES);
+                assertThat(context.configuration().settings().isRenderFormatted()).isTrue();
+                assertThat(context.configuration().data("asset-freeze-proof"))
+                    .isEqualTo("caller-configuration");
+              });
+      var configuration =
+          fixture
+              .dsl
+              .configuration()
+              .derive(provider)
+              .derive(new Settings().withRenderFormatted(true))
+              .derive(listener);
+      configuration.data("asset-freeze-proof", "caller-configuration");
+
+      var snapshot =
+          new VersionAssetPublicationRepository(DSL.using(configuration))
+              .freezeOrReadSnapshot(fixture.tenantId, 1);
+
+      assertThat(snapshot.items()).hasSize(1);
+      assertThat(snapshot.items().getFirst().contentDigest()).isEqualTo(sha256(SOURCE_BYTES));
+      assertThat(queryConnections).isNotEmpty();
+      for (Connection queryConnection : queryConnections) {
+        assertThat(queryConnection.unwrap(Connection.class)).isSameAs(connection);
+      }
+      assertThat(acquired).hasValue(1);
+      assertThat(released).hasValue(1);
+      assertThat(connection.isClosed()).isFalse();
+      assertThat(connection.getAutoCommit()).isFalse();
+      assertThat(connection.getTransactionIsolation())
+          .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
+      assertThatThrownBy(() -> independentSnapshot(fixture))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("No durable frozen Version asset snapshot exists");
+      connection.rollback();
+    }
+    DSLContext independent = DSL.using(fixture.dataSource, SQLDialect.POSTGRES);
+    assertThat(independent.fetchCount(DSL.table("version_asset_export_snapshot"))).isZero();
+    assertThat(independent.fetchCount(DSL.table("version_asset_export_item"))).isZero();
+  }
+
+  @Test
+  void readsExistingSnapshotInCallerReadOnlyTransaction() throws Exception {
+    Fixture fixture = fixture();
+    var frozen =
+        fixture.dsl.transactionResult(
+            configuration ->
+                new VersionAssetPublicationRepository(DSL.using(configuration))
+                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+
+    try (var connection = fixture.dataSource.getConnection()) {
+      connection.setReadOnly(true);
+      connection.setAutoCommit(false);
+      var readback =
+          new VersionAssetPublicationRepository(
+                  DSL.using(fixture.dsl.configuration().derive(connection)))
+              .freezeOrReadSnapshot(fixture.tenantId, 1);
+
+      assertThat(readback).isEqualTo(frozen);
+      assertThat(connection.isReadOnly()).isTrue();
+      assertThat(connection.getAutoCommit()).isFalse();
+      connection.rollback();
+    }
+    assertThat(independentSnapshot(fixture)).isEqualTo(frozen);
+  }
+
+  private static void assertUnwrappedFirstFreezeDenied(Fixture fixture) throws Exception {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    try (var connection = fixture.dataSource.getConnection()) {
+      assertThat(connection.getAutoCommit()).isTrue();
+    }
+    DSLContext independent = DSL.using(fixture.dataSource, SQLDialect.POSTGRES);
+    assertThat(independent.fetchCount(DSL.table("version_asset_export_snapshot"))).isZero();
+    assertThat(independent.fetchCount(DSL.table("version_asset_export_item"))).isZero();
+    var queries = new AtomicInteger();
+    var observed =
+        DSL.using(
+            fixture
+                .dsl
+                .configuration()
+                .derive(ExecuteListener.onExecuteStart(context -> queries.incrementAndGet())));
+
+    Throwable failure =
+        catchThrowable(
+            () ->
+                new VersionAssetPublicationRepository(observed)
+                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+
+    assertAll(
+        "An unwrapped first freeze must fail without committing snapshot rows",
+        () ->
+            assertThat(failure)
+                .as("unwrapped first-freeze failure")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Version asset snapshot requires an enclosing owner transaction"),
+        () -> assertThat(queries).as("SQL before transaction entry refusal").hasValue(0),
+        () ->
+            assertThat(independent.fetchCount(DSL.table("version_asset_export_snapshot")))
+                .as("independently committed snapshot headers")
+                .isZero(),
+        () ->
+            assertThat(independent.fetchCount(DSL.table("version_asset_export_item")))
+                .as("independently committed snapshot items")
+                .isZero());
+  }
+
+  private static VersionAssetPublicationRepository.ExportSnapshot independentSnapshot(
+      Fixture fixture) {
+    return new VersionAssetPublicationRepository(DSL.using(fixture.dataSource, SQLDialect.POSTGRES))
+        .readFrozenSnapshot(fixture.tenantId, 1);
+  }
+
+  private Fixture foundedEmptyFixture() {
+    Fixture fixture = fixture();
+    var write = new TransactionTemplate(new DataSourceTransactionManager(fixture.dataSource));
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    write.executeWithoutResult(
+        status -> {
+          var selection =
+              new AssetSourceRepository(fixture.dsl)
+                  .requireExportSelection(fixture.tenantId, fixture.versionId);
+          var target = selection.binding().target();
+          var deletion =
+              DraftCommitBinding.create(
+                  target,
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  selection.binding().commitId().toString(),
+                  List.of(
+                      new DraftCommitBinding.RevisionPayload(
+                          "0",
+                          UUID.randomUUID(),
+                          Owner.GAME_DESIGN_CONTROL_PLANE,
+                          AssetSource.deletePayload(USAGE_KEY))),
+                  List.of(
+                      new DraftCommitBinding.AffectedUnit(
+                          Owner.GAME_DESIGN_CONTROL_PLANE,
+                          AssetSource.SCOPE,
+                          target.canonicalVersionId().toString(),
+                          AssetSource.SCOPE,
+                          AssetSource.SCOPE_ID,
+                          selection.sourceEpoch())));
+          var sources = new GameDesignSourceRepository(fixture.dsl);
+          sources.claimReviewed(
+              deletion,
+              new GameDesignReviewedBaseRepository(fixture.dsl)
+                  .resolve(target, DraftBaseReference.parse(deletion.baseCommitId())));
+          var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl);
+          coordinator.claimApplicationSlot(deletion);
+          coordinator.markOwnerInProgress(deletion, Owner.GAME_DESIGN_CONTROL_PLANE);
+          var result = sources.apply(deletion);
+          IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
+              fixture.dsl, deletion, List.of(result.ownerOutcome()));
+          sources.captureSynchronized(deletion);
+          coordinator.releaseApplicationSlot(deletion);
+        });
+    // This is a real reviewed source deletion and synchronized projection, not missing history.
+    assertThat(
+            new AssetSourceRepository(fixture.dsl)
+                .requireExportSelection(fixture.tenantId, fixture.versionId)
+                .items())
+        .isEmpty();
+    assertThat(fixture.dsl.fetchCount(DSL.table("version_asset"))).isZero();
+    return fixture;
   }
 
   @Test

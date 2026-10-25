@@ -145,6 +145,12 @@ Entry format:
   - Observation: The global-ID update rewrote a retained row's tenant before returning it under the supplied tenant; tenant-filtered readback did not protect the original row. The native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions.
   - Expected pattern: Test controlled pre-phase rows as well as later guarded owners. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
 
+- `2026-10-16`: Check existing successor repairs before reworking a failed fixture.
+  - Context: While fixing the three #3251 publication transaction failures, two focused local gates failed before the worker noticed that the already-reconciled #2967 tree contained the complete selected-full schema-4 fixture repair.
+  - Observation: The first attempts corrected stale collector stubs but missed the dependent fixture profile.
+  - Expected pattern: Compare the bounded failing test and its called helpers against known receiving successors before changing or rerunning it; reuse the complete canonical repair without removing assertions.
+  - Outcome: The exact four-path backport at `4265a81f008d0dbd343cd9adf6413bd3ac5c8904` then passed 66 unit and 10 native cases. The failed attempts retain their original outcomes; this lesson does not establish a general infrastructure cause.
+
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
   - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
   - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
@@ -195,6 +201,17 @@ Entry format:
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
 
+- `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
+  - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
+  - Observation: one focused five-store reproduction passed with zero failures, errors or skips and no endpoint refusal. All five exact containers were observed running with host-port bindings and absent after the Gradle child ended. Six inspect errors and 20 unparsed records arose only after the case completed during sequential teardown, so continuous ownership through cleanup is not established.
+  - Expected pattern: retain the original failed test evidence and capture only exact run-owned container states and ports before teardown when a new refusal justifies focused reproduction; keep a successful reproduction distinct from an explained cause.
+  - Outcome: the preceding Automation Flyway refusal remains failed evidence with unknown cause; the passing reproduction does not explain it. No speculative host or readiness change is selected.
+  - Reconsideration trigger: a later physical test-time endpoint refusal, or separately retained evidence that identifies the refused endpoint's failure mechanism.
+
+- `2026-10-18`: Verify LOC report identity after a PR fast-forward
+  - Context: `cloc-report.py pr 3248` ran immediately after the existing branch advanced from `6c3eed5d651b` to `eb40332cdb9f`.
+  - Observation: GitHub still returned the preceding PR head/base payload, so the canonical helper completed successfully with LOC metadata for the old candidate. The worker caught the mismatch before editing the body and regenerated after payload convergence; no stale report was published. The tool-level consistency guard remains an improvement reported to Overseer.
+  - Expected pattern: compare generated head/base metadata with verified current remote refs before publication; a mismatch must refresh or fail closed. A successful LOC command alone does not prove current candidate attribution.
 - 2026-10-18: In the CI maintenance PR #3264 Hosted retry, an ad hoc multiline shell read a snapshot file before its producer finished; the JSON check failed but the following provider POST still executed because that shell did not enable errexit. The prior and completed fresh snapshots both showed no active Hosted request, so no conflict was observed. Keep a dependent external mutation in a separate tool call after checking producer completion and validated output; use explicit `set -euo pipefail` for dependent shell batches.
 
 - 2026-10-18: CodeRabbit full review 5560170943 for PR #3264 emitted a complete 1/1 publication with one outside-diff Major but no bounded actionable-comment count. The existing manual adoption correctly refused automatic attribution with `Hosted publication has no unique bounded actionable-comment count`. Exact trigger 6241278398, reviewed head `187ab53426caf78cd6a01b61e092b800186aaec2`, provider result and accepted obligation were retained in the CI validation throughput controller job history without invented Hosted credit; no controller adapter change was made in this CI patch. Reconsider format support only in a separately scoped controller maintenance task.
@@ -242,6 +259,59 @@ Entry format:
   - Expected pattern: Preserve the immutable capture and original attempt identity, report the recording gap, and use an explicitly bounded canonical recovery before adjudication and finalization. Do not rerun a completed review, invent credit, or use an unrelated schema migration to repair its record.
   - Status and reconsideration: Overseer owns bounded recovery in #3271; no live recovery or migration is authorized yet. The exact persistence cause remains unconfirmed. Revisit after that maintenance change is qualified and promoted and the original capture is recovered through its exact native command.
 
+- `2026-10-15`: Normalize nested fixture payloads before computing a digest golden
+  - Context: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source.
+  - Observation: The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order.
+  - Expected pattern: Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof.
+  - Outcome: No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
+
+- `2026-10-15`: Separate selected-publication owner proofs missed an Account settlement profile gap.
+  - Context: The actual GDS terminal → authenticated World completion → both real terminal reads composition reached Account V94 and failed with SQLSTATE 23514 because its inventory validator still admitted only inventory/1 + World/3, while the current canonical producer retains closure inventory/2 + World/4.
+  - Observation: Correction and qualification are in progress.
+  - Outcome: Forward V1011 converges both validation profiles; the following selected-publication settlement entry records the R14/R16 qualification and its controlled-proof limits.
+  - Expected pattern: Preserve that failed composition beside prior component passes; a forward validator correction needs exact profile/refusal and existing-settlement byte/row-version upgrade proof. Do not rewrite installed migrations or treat controlled terminal readbacks as actual producer composition.
+
+- `2026-10-15`: Selected-publication settlement profile follow-up.
+  - Context: Account's forward V1011 now converges the exact inventory/1 + World/3 and closure inventory/2 + World/4 validation profiles while retaining the original framing, digest, source and artifact guards.
+  - Observation: R14 passes the actual six-store terminal-to-settlement composition and nine malformed-profile refusals; R16 passes original PUBLISHED and NO_PUBLICATION settlement upgrade/replay with unchanged stored bytes and row versions.
+  - Outcome: A test-only V1010 predecessor allowlist omission was corrected separately.
+  - Expected pattern: These controlled component proofs supply no genuine creator, issuer, environment or deployed authority.
+
+- `2026-10-16`: Keep FireController briefs within the size limit
+  - Context: FireController job briefs are capped at 200,000 characters.
+  - Observation: Repeatedly prepending completed and running checkpoints caused a revision to be rejected before the active execution state could be saved.
+  - Expected pattern: Archive the full previous brief, retain standing instructions and superseding decisions, replace the active execution section, and put milestones in native updates/checkpoints. Consolidation restored guarded updates without losing source history or standing authority.
+
+- `2026-10-16`: Keep the original Logging claim-read client workload-only
+  - Context: A generic gRPC channel and stub customizer did not establish the original Logging claim-read client's workload-only boundary: the common customizer attaches bearer metadata, and a trusted TLS channel alone does not pin the expected SPIFFE workload.
+  - Observation: The corrected client uses the existing Common peer credentials and response verifier, preserves default-off composition, and rejects ambient SQL, synchronization and caller context before RPC. Controlled loopback mTLS and the existing native owner consumer now prove this bounded behavior; they do not establish genuine upstream authority.
+  - Expected pattern: Keep the configured server identity separate from mutation target data, and follow canonical usable TLS-material policy rather than copying a donor's regular-file predicate.
+
+- `2026-10-16`: Bound subprocess output and waits in the original claim-read test PKI fixture
+  - Context: Reading subprocess output to EOF before a timed wait leaves the supposed deadline unbounded.
+  - Observation: The original claim-read test PKI helper now redirects output to an owned temporary file, waits before reading it, and terminates/reaps a timed-out or interrupted child with interrupt preservation. Actual stalled-keytool timeout and interruption cases pass alongside the affected TLS and native owner proofs.
+  - Expected pattern: Keep this correction in the purpose-specific fixture; it does not require a general command framework or change production TLS material policy.
+
+- `2026-10-16`: Recheck original ControlUI expiry after owner locks
+  - Context: An initial ControlUI token expiry check became stale across later owner locks in both current-actor paths. Registry cleanup retention and authorization-reference expiry did not replace the original token's validity boundary.
+  - Observation: The focused native fixture advances the existing actor clock at the real locking read: the old code entered both callbacks after expiry; the correction rejects them without changing the original row while preserving exact held-order recovery.
+  - Expected pattern: Keep current authorization and historical recovery distinct when reconciling displaced guards.
+
+- `2026-10-16`: Compare the complete original validity interval at one owner boundary
+  - Context: original creator callbacks can wait for Account owner locks after initial token verification.
+  - Observation: an expiry-only final check misses a clock observation before the original not-before bound; registry cleanup retention and authorization-reference expiry do not define the original token's full interval.
+  - Expected pattern: use one existing-clock observation for the canonical original `issuedAt <= now < expiresAt` interval, test both denial bounds and exact lower-bound equality, preserve immutable evidence, and keep historical exact-order recovery separate from fresh authorization.
+
+- `2026-10-16`: Separate original signer provenance from present public-key acceptance
+  - Context: fresh signed and committed-JTI creator callbacks must retain their original key identity.
+  - Observation: an immutable source pin, historical committed-signer receipt and still-fresh signature cache do not independently establish that the original key remains in the current protected public snapshot.
+  - Expected pattern: load the existing trusted source outside SQL and synchronization, compare the original key ID and RFC 7638 fingerprint, preserve accepted retiring-key membership and historical exact recovery, and state the per-invocation snapshot limit beside the proof.
+
+- `2026-10-16`: Bound child waits in standalone receiver PKI fixtures
+  - Context: The standalone activation and World participation receiver PKI fixtures had the same output-before-wait pattern, leaving child execution unbounded.
+  - Observation: Both use the existing purpose-specific bounded-child pattern; four actual stalled-JDK-child timeout/interruption cases and all eight consuming receiver cases pass.
+  - Expected pattern: Compare each remaining fixture owner independently; an earlier Logging fixture pass does not prove these locations, and controlled socket proof does not establish real Account settlement or genuine PKI.
+
 - `2026-10-19`: Independent maintenance temporarily becomes the product queue's parent
   - Context: Controller recovery maintenance PR #3271 was inserted before the existing product front to obtain the next admissible shared review slot.
   - Observation: the current controller queue is strictly linear and has no independent maintenance root. Inserting an open maintenance PR before the product front changes the product front's effective parent even though the patches are independent, creating an integration fence until maintenance merges.
@@ -262,3 +332,63 @@ Entry format:
   - Context: The focused canonical gate at `54e9ef35454f669a1f07cec73d13511febe12233` passed eight native cases across the two previously failing Account integration classes in 78.543 seconds, with zero failures, errors or skips; no Redis source or readiness change was made for this rerun.
   - Observation: Testcontainers 2.0.5 `HostPortWaitStrategy` checks internal container and external mapped-port reachability concurrently, then reports a generic timeout without preserving the subcheck cause. Redis-ready logs alone do not isolate host forwarding. A child-command timeout or Future cancellation does not prove the Docker exec RPC ended.
   - Expected pattern: Match exact container, fixture and mapped-port evidence before assigning a cause. Credit a focused rerun as its own proof; it neither erases the original failed aggregate nor proves a repair.
+
+- `2026-10-23`: Give expired-certificate fixtures explicit past validity dates
+  - Context: [#3269's dev-tool contract job](https://github.com/benhook1013/FireMUD/actions/runs/39914844923/job/120286735224) failed while generating its expired RSA CA fixture with `openssl x509 -days -1`, before the bootstrap denial assertion could run.
+  - Expected pattern: Use an explicitly ordered past validity interval for an expired test certificate, retaining its CA/key-usage constraints and the assertion that expired authority cannot enable active mode. A fixture-generation failure is not evidence that the production expiry check failed; qualify the replacement fixture and the complete owning contract separately.
+  - Status: The corrected fixture, complete owning contract and ShellCheck passed locally on OpenSSL 3.0.2. Current-head CI remains required, and the earlier failed job remains failed evidence.
+
+- `2026-10-23`: Isolate uv managed-Python launchers as well as installations
+  - Observation: A temporary docs-lock generator set `UV_PYTHON_INSTALL_DIR` inside its task directory, but uv 0.13.5 also created `~/.local/bin/python3.15`. The exact newly created task-owned symlink was verified and removed; no preexisting launcher was overwritten.
+  - Expected pattern: Set `UV_PYTHON_BIN_DIR` to a task-private path before temporary installation and confirm it with `uv python dir --bin`; this override was verified locally. Alternatively, `uv python install --no-bin` is supported by the installed help. Installation-directory isolation alone does not isolate launchers.
+
+- `2026-10-23`: Preserve incomplete ORT license-scan evidence after Maven Central 403s
+  - Context: PR #3251 License Gate run `39934774515`, job `120353147724`, recorded 403 responses for 392 distinct Maven Central URLs during Gradle analysis; the response origin remains unknown.
+  - Observation: ORT exited with analyzer errors, emitted unknown-dependency rule warnings, and could not create the WebApp report within its 5120 MiB heap. CycloneDX reports were generated, but artifact upload did not run, so the scan supplies no qualified license proof.
+  - Expected pattern: Keep the required gate fail-closed and establish the 403 response origin before selecting a correction; do not infer a fix from the secondary reporter OOM or unknown-dependency warnings.
+  - Status: Root informed for recurrence and recovery tracking; no cause or repository correction established.
+
+- `2026-10-24`: Enforce ORT analyzer completion separately from report generation
+  - Observation: The pinned ORT CI action accepts `violations`, while both license jobs supplied the unrecognized `policy-violation` value. The action also intentionally tolerates analyzer exit code 2 so evaluation and reporting can continue; a successful report therefore does not establish complete dependency analysis or enforced policy.
+  - Correction and proof: Use the supported violation gate and explicitly require analyzer exit code 0 in both jobs, retaining partial results and Gradle failure diagnostics. Focused tests execute the actual workflow guards for successful, failed, missing and malformed statuses. This repairs enforcement independently of the earlier Maven Central 403 incident; its response origin remains unknown and local tests do not establish hosted scan success.
+
+- `2026-10-24`: Preserve uncertain coordination delivery during controller response failures
+  - Observation: Gameplay's own bound CLI inbox read and native inbox/job reads returned `invalid_response`; the native attempt to notify FireController Worker returned the same error. The message delivery outcome is unknown, so no successful report or handled inbox state is claimed.
+  - Expected pattern: Retain the original notification key and request for supported recovery, avoid debugging or changing the service, and continue independent local work. Fresh instructions, review capture and official progress recording remain unavailable until the owning connection recovers.
+
+- `2026-10-24`: Carry the build environment and explicit package metadata into ORT containers
+  - Observation: The ORT analyzer container did not inherit `CI`, so this project's Node Gradle plugin enabled a download repository that ORT cannot analyze. ORT 97 also disables repository package curations by default, even when it discovers a valid `.ort.yml`.
+  - Expected pattern: Forward the existing CI environment contract explicitly and enable the documented repository-curation option while retaining global providers. Normalize only exact package/version metadata supported by upstream license text, and record a package-specific choice for an explicitly offered alternative. Custom licenses require their own policy decision; do not relabel them as SPDX aliases or waive unresolved policy errors.
+  - Proof limit: Workflow wiring, YAML, failure guards and upstream metadata are checked locally. Only actual analyzer/evaluator results can qualify the hosted correction; the earlier Maven Central 403 response origin remains unknown.
+  - Live-policy correction: The default evaluator rejects package curations inside `.ort.yml` even when the analyzer supports them. Keep exact package metadata in a read-only child mount under the existing global `DefaultDir` provider instead, preserving its other entries and rules; keep the valid OR-license choice in an NPM-scoped repository configuration so Gradle-only scans do not reject an absent package choice. Configuration-schema support alone did not establish policy acceptance, and actual hosted proof remains required.
+
+- `2026-10-24`: Distinguish PostgreSQL health from the Docker-published connection path
+  - Context: A forced Account integration run at `3534f58291439f7c059759cc57a7385106051e39` ran 333 cases with 13 mapped-localhost connection failures and no skips. One failed fixture recorded a running PostgreSQL container, successful internal Unix-socket `SELECT 1`, IPv4 localhost resolution and a Docker host-port binding while the test JVM's mapped JDBC connection was refused. The other twelve failures shared a different fixture without equivalent internal-health diagnostics.
+  - Observation: Those facts isolate the first failure to the test-to-published-port path without identifying a Docker Desktop, WSL, fixture or cleanup cause. Successful internal SQL or published binding metadata alone is insufficient host-path readiness proof.
+  - Outcome: A later focused run passed all seven source-evidence and twelve selected-owner cases without a Docker, host-setting or fixture change. This qualifies those nineteen cases separately; it neither turns the earlier failed aggregate green nor proves the connection problem repaired.
+  - Expected pattern: Retain exact fixture, host, mapped-port and internal SQL evidence beside the original failed run; qualify a focused retry independently and investigate recurrence without weakening readiness or cleaning unrelated containers.
+
+- `2026-10-25`: Local wrapper disappearance recurred without an established cause
+  - Context: #3294 R191 repeated the command-session loss recorded on 2026-10-16. The canonical supervisor reported `Gradle wrapper exited; cancelling its owned run.` and exit 143 during PostgreSQL validation; the single-use daemon recorded client disconnection and a broken pipe.
+  - Observation: the wrapper disappeared in under two minutes, below the configured 7,200-second budget. A bounded readable kernel-log check found no OOM evidence. The cause remains unknown; neither timeout nor OOM is established. Only the owned invocation was cancelled, and its partial or stale test artifacts earned no aggregate pass. The same canonical checks under a retained terminal session passed as R192 in 2m48s. Fresh-image R193 then passed held-edge and isolated-backend checks with authenticated teardown and independent confirmation of zero remaining run-owned containers, networks and volumes. The retry does not establish that terminal allocation corrected the cause.
+  - Expected pattern: on recurrence, retain the wrapper's parent/terminal lifecycle and delivered signal or exit evidence before attributing the disappearance or changing the [canonical wrapper](../../dev-tools/validation/run-locked-gradle.sh).
+
+- `2026-10-25`: Read workflow guidance from the active worktree
+  - Context: #3294's active checkout already used FireController readiness, but an older dirty root checkout and injected chat instructions still named the retired `check-coderabbit-review.py`. An attempted invocation failed because that script was absent.
+  - Observation: FireController verified that the active commit's documentation was already correct; this was a context mismatch, not a missing tool or runtime defect. The lane reread the active worktree's instructions and retained the failed attempt without recreating the retired script or claiming it passed.
+  - Expected pattern: pin the active worktree and revision before selecting workflow commands; use the installed release's explicit readiness observation and native assessment, while independently consuming complete review summaries and findings as required by [PR lifecycle](../developer-workflows/pr-lifecycle.md).
+
+- `2026-10-25`: Focused service checks can compile another helper's unfinished dependency
+  - Context: Gameplay R206 selected Game Session checks while a disjoint Entity helper was still editing its repository; Gradle transitively compiled Entity and failed on newly referenced classification methods that had not yet been added.
+  - Observation: this was an incomplete shared working tree, not evidence against a completed correction. Serializing Gradle processes does not stabilize concurrently edited source dependencies.
+  - Expected pattern: wait for every helper editing a transitive source dependency to hand off before launching dependent checks. The lane owner stopped further launches and consolidated proof after handoff; preserve the failed run without attributing it to a qualified candidate.
+
+- `2026-10-25`: PostgreSQL published-port refusal recurred in Entity proof
+  - Context: Gameplay R217 ran the full Entity gate after focused R211 proof. All four `EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest` cases failed in `@BeforeEach` against the same mapped localhost port after Testcontainers reported startup; their assertions never ran. The exact container was gone before inspection, while other fixtures used distinct containers and ports.
+  - Observation: this meets the endpoint-refusal reconsideration trigger recorded on 2026-10-18 and 2026-10-24. Available evidence does not identify container exit, cleanup, startup timing, or the published-port path as the cause; no shared-container or parallelism defect was established.
+  - Expected pattern: retain R217's failed aggregate and XML, capture state, port and internal SQL evidence for only that exact run-owned fixture during the next justified execution, and keep any passing retry separate from a diagnosed repair. Do not change host settings, weaken readiness or clean unrelated containers on this evidence.
+
+- `2026-10-25`: Reduce commit-status history before assessing current CI
+  - Context: the shared Gameplay observer inspected paginated GitHub commit-status records for the PR train.
+  - Observation: `/statuses` retained superseded pending and failed entries even after the same gate had published success. Treating every historical entry as current briefly misclassified a green candidate; the direct combined `/status` response and latest entry per context established the actual state before any CI mutation or escalation.
+  - Expected pattern: use the current combined-status response and latest status per context for readiness; preserve pagination for full check-run coverage, and treat raw status history as history. Verify a reported failure against its exact run and job before retrying or attributing a CI defect.

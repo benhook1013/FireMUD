@@ -1,0 +1,11 @@
+resolutions:
+  rule_violations:
+    - message: '^The license LicenseRef-Gatling-Highcharts-3\.16\.0 is currently not covered by policy rules\. The license was declared in package ''Maven:io\.gatling\.highcharts:gatling-charts-highcharts:3\.16\.0''\.$'
+      reason: NOT_MODIFIED_EXCEPTION
+      comment: >-
+        User-approved exception for the exact UNHANDLED_LICENSE message for
+        Gatling Highcharts 3.16.0. This covers internal use of the delivered,
+        unchanged report generator, without
+        distributing, copying, reusing, or modifying its code or generated
+        components. This resolution does not change the LicenseRef text or
+        generated notices.

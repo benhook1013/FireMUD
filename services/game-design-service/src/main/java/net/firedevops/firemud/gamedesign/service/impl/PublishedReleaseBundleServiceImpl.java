@@ -111,6 +111,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       }
       return stored;
     }
+    PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
+        version.id(), worldEvidence.request().appliedCommitId(), participantDigests);
     var identitySource =
         versionRepository
             .findByTenantIdAndId(version.tenantId(), version.id())
@@ -133,7 +135,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     entity.setCanonicalVersionId(canonicalVersionId);
     entity.setVersionNumber(version.versionNumber());
     entity.setAttestationSchemaVersion(
-        PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION);
+        PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION);
     entity.setWorldPublishedStartLocationEvidenceJson(
         new String(worldEvidence.canonicalBytes(), StandardCharsets.UTF_8));
     entity.setPublishWorkflowId(publishWorkflowId);
@@ -201,6 +203,9 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
         dto.attestationSchemaVersion())) {
       PublishedReleaseBundleContract.requireSelectorBinding(dto);
+    } else if (PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(
+        dto.attestationSchemaVersion())) {
+      PublishedReleaseBundleContract.requireSelectedFullBinding(dto);
     }
     return dto;
   }

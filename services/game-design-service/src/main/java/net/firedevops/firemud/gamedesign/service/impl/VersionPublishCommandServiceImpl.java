@@ -267,8 +267,13 @@ public class VersionPublishCommandServiceImpl {
     try {
       dto = versionMapper.toDto(version);
       participantDigests =
-          publishGateService.collectFullVersionParticipantDigests(
-              dto, request.publishRequestId(), request.publishWorkflowId());
+          publishGateService.collectSelectedFullVersionParticipantDigests(
+              dto,
+              PublicationDigestRequestBinding.full(
+                  requireSelectedIntent(request).intent().canonicalTenantId().toString(),
+                  String.valueOf(version.getId()),
+                  request.publishRequestId()),
+              request.publishWorkflowId());
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
@@ -278,8 +283,12 @@ public class VersionPublishCommandServiceImpl {
       return failDefinitively(request, attempt, version, null, ex);
     }
     try {
+      publishGateService.assertSelectedGatePassed(dto, participantDigests);
       assertSelectedCommit(request, participantDigests);
-      publishGateService.assertGatePassed(dto, participantDigests);
+      PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
+          dto.id(),
+          requireSelectedIntent(request).selectedCommit().commitId().toString(),
+          participantDigests);
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
@@ -501,8 +510,12 @@ public class VersionPublishCommandServiceImpl {
 
     VersionDto dto = versionMapper.toDto(version);
     requireSelectedDraftEpoch(request, version);
+    publishGateService.assertSelectedGatePassed(dto, participantDigests);
     assertSelectedCommit(request, participantDigests);
-    publishGateService.assertGatePassed(dto, participantDigests);
+    PublishedReleaseBundleContract.requireFreshSelectedFullParticipantVector(
+        dto.id(),
+        requireSelectedIntent(request).selectedCommit().commitId().toString(),
+        participantDigests);
     publishAttemptService.recordFullVersionParticipantDigests(
         request.publishWorkflowId(), participantDigests);
     VersionAssetArtifactStateDto exportedState =
@@ -646,7 +659,13 @@ public class VersionPublishCommandServiceImpl {
     VersionDto versionDto = versionMapper.toDto(readback.version());
     PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
     assertSelectedCommit(request, readback.bundle().participantDigests());
-    publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(
+        readback.bundle().attestationSchemaVersion())) {
+      publishGateService.assertSelectedGatePassed(
+          versionDto, readback.bundle().participantDigests());
+    } else {
+      publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    }
     recordedParticipantDigestService.assertMatchesRecordedDigests(
         request.tenantId(), PublishType.FULL_VERSION, readback.bundle().participantDigests());
   }
@@ -933,8 +952,7 @@ public class VersionPublishCommandServiceImpl {
     if (!Objects.equals(version.getTenantId(), bundle.tenantId())
         || version.getVersionNumber() != bundle.versionNumber()
         || version.isScriptOnly()
-        || (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
-                bundle.attestationSchemaVersion())
+        || (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())
             && (!Objects.equals(version.getCanonicalTenantId(), bundle.canonicalTenantId())
                 || !Objects.equals(
                     version.getCanonicalVersionId(), bundle.canonicalVersionId())))) {
@@ -952,8 +970,7 @@ public class VersionPublishCommandServiceImpl {
         || bundle.scriptPatchVersion() != null) {
       throw new IllegalStateException("PUBLISH_ATTEMPT_BUNDLE_SCOPE_MISMATCH");
     }
-    if (PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(
-        bundle.attestationSchemaVersion())) {
+    if (PublishedReleaseBundleDto.isSelectedAttestationSchema(bundle.attestationSchemaVersion())) {
       PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       requireExactSelectedWorldEvidence(request, bundle);
     }

@@ -23,4 +23,59 @@ public record CanonicalGameplayRosterSnapshot(
       throw new IllegalArgumentException("Roster snapshot exceeds its bounded size");
     }
   }
+
+  public net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse toWire() {
+    var result =
+        net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse.newBuilder()
+            .setCanonicalAccountUuid(canonicalAccountUuid.toString())
+            .setSnapshotUuid(snapshotUuid.toString())
+            .setSnapshotDigest(snapshotDigest)
+            .setTarget(target.toWire());
+    for (var actor : actors) {
+      result.addActors(
+          net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor.newBuilder()
+              .setCharacterUuid(actor.characterUuid().toString())
+              .setDisplayName(actor.displayName())
+              .setActorKind(
+                  net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
+                      .CANONICAL_ROSTER_ACTOR_KIND_PLAYER));
+    }
+    return result.build();
+  }
+
+  public static CanonicalGameplayRosterSnapshot fromWire(
+      net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse receipt,
+      CanonicalGameplayRosterTarget target) {
+    if (!target.toWire().equals(receipt.getTarget())) {
+      throw new IllegalArgumentException("Retained roster target differs from original selection");
+    }
+    var actors =
+        receipt.getActorsList().stream()
+            .map(
+                actor -> {
+                  if (actor.getActorKind()
+                      != net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
+                          .CANONICAL_ROSTER_ACTOR_KIND_PLAYER) {
+                    throw new IllegalArgumentException("Retained roster actor kind is invalid");
+                  }
+                  return new CanonicalGameplayRosterActor(
+                      UUID.fromString(actor.getCharacterUuid()), actor.getDisplayName());
+                })
+            .toList();
+    var snapshot =
+        new CanonicalGameplayRosterSnapshot(
+            UUID.fromString(receipt.getCanonicalAccountUuid()),
+            UUID.fromString(receipt.getSnapshotUuid()),
+            receipt.getSnapshotDigest(),
+            target,
+            actors);
+    if (!snapshot
+        .snapshotDigest()
+        .equals(
+            CanonicalGameplayRosterSnapshotDigest.compute(
+                snapshot.canonicalAccountUuid(), target, actors))) {
+      throw new IllegalArgumentException("Retained roster digest is invalid");
+    }
+    return snapshot;
+  }
 }

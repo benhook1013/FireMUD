@@ -7,6 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collections;
@@ -178,6 +179,83 @@ public class CanonicalInitialAdmissionRepository {
     return new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(before, proof));
   }
 
+  /**
+   * Revalidates an already committed outside-transaction snapshot under exact owner row locks. This
+   * grants no new admission authority and never calls a remote owner from SQL.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CurrentOpenSnapshot lockExactCurrentOpenSnapshot(CurrentOpenSnapshot qualified) {
+    Objects.requireNonNull(qualified, "qualified");
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+        || !"read committed"
+            .equals(dsl.fetchSingle("SHOW transaction_isolation").get(0, String.class))) {
+      throw new IllegalStateException(
+          "Exact current OPEN lock requires a joined writable READ COMMITTED owner transaction");
+    }
+    dsl.connectionResult(
+        connection -> {
+          if (connection.getAutoCommit()) {
+            throw new IllegalStateException(
+                "Exact current OPEN lock requires the DSL connection to join the owner transaction");
+          }
+          if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+            throw new IllegalStateException(
+                "Exact current OPEN lock requires READ COMMITTED isolation");
+          }
+          return null;
+        });
+    if (!"off"
+        .equalsIgnoreCase(
+            dsl.fetchSingle("SHOW transaction_read_only").get(0, String.class).trim())) {
+      throw new IllegalStateException(
+          "Exact current OPEN lock requires a writable owner transaction");
+    }
+    var expected = qualified.ownerProof();
+    CanonicalRealmCatalogSnapshot lockedCatalog =
+        catalogRepository.lockCurrentOpenAdmissionTargetForShare(
+            expected.targetNamespace(),
+            expected.canonicalTenantId(),
+            expected.realmId(),
+            expected.expectedCatalogRevision());
+    var rows =
+        dsl.fetch(
+            "SELECT * FROM gameplay_admission_pointer WHERE target_namespace = ? "
+                + "AND canonical_tenant_id = ? AND realm_id = ? AND representation_version = 3 "
+                + "AND admission_state = 'OPEN' FOR SHARE",
+            expected.targetNamespace(),
+            expected.canonicalTenantId(),
+            expected.realmId());
+    if (rows.size() != 1)
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Exact current OPEN pointer is unavailable under owner lock");
+    CurrentOpenPointer pointer = CurrentOpenPointer.from(rows.getFirst());
+    pointer.requireCanonicalOpen(
+        expected.targetNamespace(), expected.canonicalTenantId(), expected.realmId());
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + OPERATION_TABLE
+                + " WHERE target_namespace = ? AND initial_admission_request_id = ? FOR SHARE",
+            expected.targetNamespace(),
+            expected.initialAdmissionRequestId());
+    if (row == null)
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Exact committed initial-admission attempt is unavailable under owner lock");
+    Attempt attempt = toAttempt(row);
+    if (!COMMITTED.equals(attempt.status()))
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Exact initial-admission attempt is no longer committed");
+    verifyCommittedReadback(attempt, lockedCatalog, true);
+    var proof = toProof(attempt, CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+    var actual = new CurrentOpenSnapshot(proof, snapshotDigestOrReconciliation(pointer, proof));
+    if (!pointer.matches(proof) || !actual.equals(qualified)) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Current OPEN target changed after committed qualification");
+    }
+    return actual;
+  }
+
   /** Package-private same-package test seam for malformed persisted projection evidence. */
   @SuppressFBWarnings(
       value = "DCN_NULLPOINTER_EXCEPTION",
@@ -243,8 +321,13 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   private void verifyCommittedReadback(Attempt attempt) {
+    verifyCommittedReadback(attempt, readExactCatalog(attempt.asRequest()), false);
+  }
+
+  private void verifyCommittedReadback(
+      Attempt attempt, CanonicalRealmCatalogSnapshot catalog, boolean ownerLocked) {
     CanonicalInitialAdmissionRequest request = attempt.asRequest();
-    CanonicalRealmCatalogSnapshot catalog = readExactCatalog(request);
+    requireRequestMatchesCatalog(request, catalog);
     Record evidence =
         dsl.fetchOne(
             "SELECT pointer.*, pointer.updated_at AS pointer_updated_at, "
@@ -415,7 +498,7 @@ public class CanonicalInitialAdmissionRepository {
           "Committed initial-admission pointer, audit, request and catalog readback disagree");
     }
     if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED) {
-      verifyOriginalClosedOrigin(attempt);
+      verifyOriginalClosedOrigin(attempt, ownerLocked);
     }
     String expectedProof =
         commitProofDigest(
@@ -467,6 +550,10 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   private void verifyOriginalClosedOrigin(Attempt attempt) {
+    verifyOriginalClosedOrigin(attempt, false);
+  }
+
+  private void verifyOriginalClosedOrigin(Attempt attempt, boolean ownerLocked) {
     if (attempt.priorPointerRequestId() == null
         || attempt.priorPointerRequestDigest() == null
         || attempt.priorPointerAuditEventId() == null
@@ -475,8 +562,11 @@ public class CanonicalInitialAdmissionRepository {
           "EXPECT_CLOSED terminal result has no exact original CLOSED origin identity");
     }
     CanonicalClosedAdmissionPointerSnapshot origin =
-        pointerRepository
-            .readOriginalClosedOrigin(attempt.targetNamespace(), attempt.priorPointerRequestId())
+        (ownerLocked
+                ? pointerRepository.lockOriginalClosedOrigin(
+                    attempt.targetNamespace(), attempt.priorPointerRequestId())
+                : pointerRepository.readOriginalClosedOrigin(
+                    attempt.targetNamespace(), attempt.priorPointerRequestId()))
             .orElseThrow(
                 () ->
                     new CanonicalInitialAdmissionReconciliationRequiredException(

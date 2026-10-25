@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -53,9 +54,7 @@ class EffectiveSettingsControllerTest {
 
   @Test
   void effectiveSettingsUsesNormalizedPersistedSessionContext() {
-    SessionContext cleared =
-        new SessionContext(
-            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+    SessionContext cleared = GameplayCommandTestFixtures.bootstrapDemo();
     PresentationProperties presentation = new PresentationProperties();
     MovementProperties movement = new MovementProperties();
     WorldTopologyProperties worldTopology = new WorldTopologyProperties();

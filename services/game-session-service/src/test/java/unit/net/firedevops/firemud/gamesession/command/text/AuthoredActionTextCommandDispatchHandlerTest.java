@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.AuthoredCommandAdmission;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -86,8 +87,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
   }
 
   private static SessionContext context() {
-    return new SessionContext(
-        7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+    return GameplayCommandTestFixtures.authoredDispatchEmberline();
   }
 
   private static TextCommand authoredAction(String commandId, String rawLine, List<String> args) {

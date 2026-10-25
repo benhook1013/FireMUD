@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -37,6 +38,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterResponse;
@@ -51,8 +53,11 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterReferenceState;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture;
 
@@ -120,6 +125,146 @@ class CanonicalGameplayRosterClientTest {
     assertThat(request.getPlayerExecutionContext()).isEqualTo(listContext());
     assertThat(request.getExpectedTarget().getPublishedPolicyDigest())
         .isEqualTo(route.selectedPolicyEvidence().policyDigest().substring("sha256:".length()));
+  }
+
+  @Test
+  void closedStoredRosterReferencesFailBeforeEntityRpcOrReceiptWrites() throws Exception {
+    for (var state : closedDereferenceStates()) {
+      var stub = mockStub();
+      var owner = mockReferenceOwner();
+      when(owner.begin(any()))
+          .thenAnswer(call -> closedOriginal(call.getArgument(0), state, false));
+      var client = newClient(stub, owner);
+
+      assertThatThrownBy(() -> client.listPreseededRoster(publishedRoute(), listContext()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED");
+
+      verify(stub, never()).listPreseededRoster(any());
+      verify(owner, never()).markRosterReadStarted(any());
+      verify(owner, never()).record(any(), any());
+    }
+  }
+
+  @Test
+  void closedStoredAssignmentReferencesFailBeforeEntityRpcOrReceiptWrites() throws Exception {
+    for (var state : closedDereferenceStates()) {
+      var stub = mockStub();
+      var owner = mockReferenceOwner();
+      when(owner.begin(any()))
+          .thenAnswer(
+              call ->
+                  CanonicalGameplayRosterReferenceEvidence.response(
+                      call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
+      when(owner.selectOriginal(any(), any()))
+          .thenAnswer(call -> closedOriginal(call.getArgument(0), state, true));
+      var client = newClient(stub, owner);
+      var roster = validatedRoster(client, stub);
+      clearInvocations(stub, owner);
+
+      assertThatThrownBy(() -> client.readSelectedPreseededAssignment(roster, selectedContext()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("CANONICAL_ROSTER_ORIGINAL_DEREFERENCE_CLOSED");
+
+      verify(stub, never()).readSelectedPreseededAssignment(any());
+      verify(owner, never()).recordSelectedAssignment(any(), any());
+    }
+  }
+
+  @Test
+  void recordedStoredRosterAndAssignmentReceiptsStillReplayWithoutEntityRpc() throws Exception {
+    var rosterStub = mockStub();
+    var rosterOwner = mockReferenceOwner();
+    when(rosterOwner.begin(any()))
+        .thenAnswer(
+            call ->
+                closedOriginal(
+                    call.getArgument(0),
+                    new ClosedDereferenceState(
+                        CanonicalGameplayRosterReferenceState
+                            .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
+                        "",
+                        false),
+                    false));
+    var replayedRoster =
+        newClient(rosterStub, rosterOwner).listPreseededRoster(publishedRoute(), listContext());
+    assertThat(replayedRoster.snapshotUuid()).isEqualTo(SNAPSHOT_UUID);
+    verify(rosterStub, never()).listPreseededRoster(any());
+    verify(rosterOwner, never()).markRosterReadStarted(any());
+    verify(rosterOwner, never()).record(any(), any());
+
+    var assignmentStub = mockStub();
+    var assignmentOwner = mockReferenceOwner();
+    when(assignmentOwner.begin(any()))
+        .thenAnswer(
+            call ->
+                CanonicalGameplayRosterReferenceEvidence.response(
+                    call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
+    when(assignmentOwner.selectOriginal(any(), any()))
+        .thenAnswer(
+            call ->
+                closedOriginal(
+                    call.getArgument(0),
+                    new ClosedDereferenceState(
+                        CanonicalGameplayRosterReferenceState
+                            .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
+                        "",
+                        false),
+                    true));
+    var assignmentClient = newClient(assignmentStub, assignmentOwner);
+    var roster = validatedRoster(assignmentClient, assignmentStub);
+    clearInvocations(assignmentStub, assignmentOwner);
+
+    var assignment = assignmentClient.readSelectedPreseededAssignment(roster, selectedContext());
+    assertThat(assignment.assignmentOperationId()).isEqualTo(ASSIGNMENT_UUID);
+    verify(assignmentStub, never()).readSelectedPreseededAssignment(any());
+    verify(assignmentOwner, never()).recordSelectedAssignment(any(), any());
+  }
+
+  @Test
+  void rosterDispatchStopsWhenOriginalClosesBeforeReadStartedMark() throws Exception {
+    var stub = mockStub();
+    var owner = mockReferenceOwner();
+    var closedBeforeDispatch = new IllegalStateException("original closed before dispatch");
+    when(owner.begin(any()))
+        .thenAnswer(
+            call ->
+                CanonicalGameplayRosterReferenceEvidence.response(
+                    call.getArgument(0), 1L, uuid("12121212-1212-4212-8212-121212121212"), null));
+    doThrow(closedBeforeDispatch).when(owner).markRosterReadStarted(any());
+    var client = newClient(stub, owner);
+
+    assertThatThrownBy(() -> client.listPreseededRoster(publishedRoute(), listContext()))
+        .isSameAs(closedBeforeDispatch);
+
+    verify(owner).markRosterReadStarted(any());
+    verify(owner, never()).record(any(), any());
+    verify(stub, never()).listPreseededRoster(any());
+  }
+
+  @Test
+  void acceptsOneHundredCodePointDisplayNameAndRejectsOneHundredOne() throws Exception {
+    String acceptedDisplayName = "\uD83D\uDE00".repeat(100);
+    var acceptedStub = mockStub();
+    when(acceptedStub.listPreseededRoster(any()))
+        .thenAnswer(invocation -> rosterResponse(invocation.getArgument(0), acceptedDisplayName));
+
+    var acceptedRoster =
+        newClient(acceptedStub).listPreseededRoster(publishedRoute(), listContext());
+
+    assertThat(acceptedRoster.actors())
+        .containsExactly(
+            new CanonicalGameplayRosterClient.RosterActor(ACTOR_UUID, acceptedDisplayName));
+
+    String rejectedDisplayName = "\uD83D\uDE00".repeat(101);
+    var rejectedStub = mockStub();
+    when(rejectedStub.listPreseededRoster(any()))
+        .thenAnswer(invocation -> rosterResponse(invocation.getArgument(0), rejectedDisplayName));
+
+    assertThatThrownBy(
+            () -> newClient(rejectedStub).listPreseededRoster(publishedRoute(), listContext()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("display name is malformed");
   }
 
   @Test
@@ -750,13 +895,21 @@ class CanonicalGameplayRosterClientTest {
     assertThatThrownBy(
             () ->
                 new CanonicalGameplayRosterClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, NAMESPACE))
+                    new ServiceEndpointsProperties(),
+                    plaintext,
+                    factory,
+                    NAMESPACE,
+                    referenceOwner()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
     assertThatThrownBy(
             () ->
                 new CanonicalGameplayRosterClient(
-                    new ServiceEndpointsProperties(), mtlsProperties(), factory, "invalid.ns"))
+                    new ServiceEndpointsProperties(),
+                    mtlsProperties(),
+                    factory,
+                    "invalid.ns",
+                    referenceOwner()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(factory);
@@ -795,6 +948,77 @@ class CanonicalGameplayRosterClientTest {
     assertThatThrownBy(() -> client.listPreseededRoster(publishedRoute(), listContext()))
         .isInstanceOf(StatusRuntimeException.class)
         .hasMessageContaining("UNAUTHENTICATED");
+  }
+
+  @Test
+  void missingOrFailedOwnerProviderRefusesEveryOwnerOperationBeforeEntityRpc() throws Exception {
+    var beans = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+    var provider =
+        beans.getBeanProvider(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    var client =
+        new CanonicalGameplayRosterClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            NAMESPACE,
+            provider);
+    var stub = mockStub();
+    Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    stubField.setAccessible(true);
+    stubField.set(client, stub);
+    var route = publishedRoute();
+    var target = CanonicalGameplayRosterClient.expectedTarget(route);
+    var roster =
+        new CanonicalGameplayRosterClient.PreseededRosterSnapshot(
+            ACCOUNT_UUID,
+            SNAPSHOT_UUID,
+            snapshotDigest(ACCOUNT_UUID, target, List.of(ACTOR_UUID.toString(), "Pilot One")),
+            target,
+            List.of(new CanonicalGameplayRosterClient.RosterActor(ACTOR_UUID, "Pilot One")));
+    for (Runnable operation :
+        List.<Runnable>of(
+            () -> client.reserveSelectionInput(route, listContext(), null, null, null),
+            () ->
+                client.completeSelection(
+                    route,
+                    listContext(),
+                    net.firedevops.firemud.gamesession.repository
+                        .CanonicalGameplayRosterReferenceRepository.SelectionOutcome.DENIED),
+            () -> client.listPreseededRoster(route, listContext()),
+            () -> client.readSelectedPreseededAssignment(roster, selectedContext()))) {
+      assertThatThrownBy(operation::run)
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+    }
+    verifyNoInteractions(stub);
+    // A provider failure is also unavailable, rather than permission to bypass owner custody.
+    beans.registerBeanDefinition(
+        "unavailableReferenceOwner",
+        org.springframework.beans.factory.support.BeanDefinitionBuilder.genericBeanDefinition(
+                net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+                    .class,
+                () -> {
+                  throw new org.springframework.beans.factory.BeanCreationException(
+                      "controlled unavailable owner");
+                })
+            .getBeanDefinition());
+    var unavailable =
+        new CanonicalGameplayRosterClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            NAMESPACE,
+            provider);
+    stubField.set(unavailable, stub);
+    assertThatThrownBy(() -> unavailable.listPreseededRoster(route, listContext()))
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+    verifyNoInteractions(stub);
   }
 
   private static PlayerExecutionContext listContext() {
@@ -870,6 +1094,21 @@ class CanonicalGameplayRosterClientTest {
         .setCharacterUuid(characterUuid.toString())
         .setDisplayName(displayName)
         .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+        .build();
+  }
+
+  private static CanonicalGameplayRosterResponse rosterResponse(
+      CanonicalGameplayRosterRequest request, String displayName) throws Exception {
+    return CanonicalGameplayRosterResponse.newBuilder()
+        .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+        .setTarget(request.getExpectedTarget())
+        .setSnapshotUuid(SNAPSHOT_UUID.toString())
+        .setSnapshotDigest(
+            snapshotDigest(
+                ACCOUNT_UUID,
+                request.getExpectedTarget(),
+                List.of(ACTOR_UUID.toString(), displayName)))
+        .addActors(actor(ACTOR_UUID, displayName))
         .build();
   }
 
@@ -979,6 +1218,119 @@ class CanonicalGameplayRosterClientTest {
     return client;
   }
 
+  private static CanonicalGameplayRosterClient newClient(
+      CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub stub,
+      net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner owner)
+      throws Exception {
+    var beans = new StaticListableBeanFactory();
+    beans.addBean("controlledReferenceOwner", owner);
+    var client =
+        new CanonicalGameplayRosterClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            NAMESPACE,
+            beans.getBeanProvider(
+                net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+                    .class));
+    Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    stubField.setAccessible(true);
+    stubField.set(client, stub);
+    return client;
+  }
+
+  private static List<ClosedDereferenceState> closedDereferenceStates() {
+    return List.of(
+        new ClosedDereferenceState(
+            CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED,
+            "MENU",
+            false),
+        new ClosedDereferenceState(
+            CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED,
+            "MENU",
+            false),
+        new ClosedDereferenceState(
+            CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
+            "",
+            true),
+        new ClosedDereferenceState(
+            CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RECORDED,
+            "DENIED",
+            true));
+  }
+
+  private static net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceResponse
+      closedOriginal(
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request,
+          ClosedDereferenceState closedState,
+          boolean includeSelectedAssignment)
+          throws Exception {
+    var roster =
+        rosterResponse(
+            CanonicalGameplayRosterRequest.newBuilder()
+                .setExpectedTarget(CanonicalGameplayRosterReferenceEvidence.target(request))
+                .build(),
+            "Pilot One");
+    var response =
+        CanonicalGameplayRosterReferenceEvidence.response(
+            request, 1L, uuid("12121212-1212-4212-8212-121212121212"), roster)
+            .toBuilder();
+    if (includeSelectedAssignment) {
+      var selectedRequest =
+          CanonicalGameplayRosterSelectedAssignmentRequest.newBuilder()
+              .setRequestUuid(request.getOperationUuid())
+              .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+              .setSelectedCharacterUuid(ACTOR_UUID.toString())
+              .setExpectedTarget(roster.getTarget())
+              .setExpectedSnapshot(
+                  CanonicalGameplayRosterSnapshotReference.newBuilder()
+                      .setSnapshotUuid(roster.getSnapshotUuid())
+                      .setSnapshotDigest(roster.getSnapshotDigest()))
+              .build();
+      response
+          .setSelectionInput(
+              net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput
+                  .newBuilder()
+                  .setSchemaVersion(1))
+          .setSelectedCharacterUuid(ACTOR_UUID.toString())
+          .setCanonicalSelectedAssignmentReceipt(
+              selectedAssignmentResponse(selectedRequest).toByteString());
+    }
+    response.setState(closedState.state());
+    if (!closedState.terminalOutcome().isEmpty()) {
+      response.setTerminalOutcome(closedState.terminalOutcome());
+    }
+    if (closedState.state()
+        == CanonicalGameplayRosterReferenceState
+            .CANONICAL_GAMEPLAY_ROSTER_REFERENCE_REPLAY_CLOSED) {
+      response.setTerminalOutcome("MENU");
+    } else if (closedState.state()
+        == CanonicalGameplayRosterReferenceState.CANONICAL_GAMEPLAY_ROSTER_REFERENCE_RETIRED) {
+      response
+          .setTerminalOutcome("MENU")
+          .setRetirementUuid("13131313-1313-4313-8313-131313131313")
+          .setSupersedingPointerDigest("d".repeat(64))
+          .setSupersedingPointerVersion(roster.getTarget().getPointerVersion() + 1)
+          .setSupersedingCatalogRevision(roster.getTarget().getCatalogRevision())
+          .setSupersedingWorldEpoch(roster.getTarget().getActiveWorldEpoch());
+      return CanonicalGameplayRosterReferenceEvidence.sealRetirement(response.build());
+    } else if (closedState.recoveryMarked()) {
+      response.setRecoveryUuid("14141414-1414-4414-8414-141414141414");
+    }
+    return CanonicalGameplayRosterReferenceEvidence.requireResponse(request, response.build());
+  }
+
+  private record ClosedDereferenceState(
+      CanonicalGameplayRosterReferenceState state,
+      String terminalOutcome,
+      boolean recoveryMarked) {}
+
+  private static net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+      mockReferenceOwner() {
+    return mock(
+        net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+  }
+
   private static CanonicalGameplayRosterClient newClientWithChannel(ManagedChannel channel)
       throws Exception {
     var client = newClientWithoutStub(mock(GrpcChannelFactory.class));
@@ -993,7 +1345,7 @@ class CanonicalGameplayRosterClientTest {
 
   private static CanonicalGameplayRosterClient newClientWithoutStub(GrpcChannelFactory factory) {
     return new CanonicalGameplayRosterClient(
-        new ServiceEndpointsProperties(), mtlsProperties(), factory, NAMESPACE);
+        new ServiceEndpointsProperties(), mtlsProperties(), factory, NAMESPACE, referenceOwner());
   }
 
   private static CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub
@@ -1002,6 +1354,65 @@ class CanonicalGameplayRosterClientTest {
         mock(CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     return stub;
+  }
+
+  private static ObjectProvider<
+          net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner>
+      referenceOwner() {
+    var owner =
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
+    when(owner.begin(any()))
+        .thenAnswer(
+            call ->
+                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                    .response(
+                        call.getArgument(0),
+                        1L,
+                        java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                        null));
+    when(owner.read(any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              var receipt =
+                  rosterResponse(
+                      CanonicalGameplayRosterRequest.newBuilder()
+                          .setExpectedTarget(
+                              net.firedevops.firemud.common.world
+                                  .CanonicalGameplayRosterReferenceEvidence.target(request))
+                          .build(),
+                      "Pilot One");
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .response(
+                      request,
+                      1L,
+                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                      receipt);
+            });
+    when(owner.selectOriginal(any(), any()))
+        .thenAnswer(
+            call -> {
+              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                  request = call.getArgument(0);
+              UUID selectedCharacter = call.getArgument(1);
+              var original = owner.read(request);
+              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+                  .requireResponse(
+                      request,
+                      original.toBuilder()
+                          .setSelectionInput(
+                              net.firedevops.firemud.gamesession.v1
+                                  .CanonicalGameplayRosterSelectionInput.newBuilder()
+                                  .setSchemaVersion(1))
+                          .setSelectedCharacterUuid(selectedCharacter.toString())
+                          .build());
+            });
+    var beans = new StaticListableBeanFactory();
+    beans.addBean("controlledReferenceOwner", owner);
+    return beans.getBeanProvider(
+        net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner.class);
   }
 
   private static CommonGrpcClientProperties mtlsProperties() {
