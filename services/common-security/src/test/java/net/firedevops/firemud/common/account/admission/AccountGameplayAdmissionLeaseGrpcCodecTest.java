@@ -478,6 +478,116 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void enforcesAcquireOriginalLeaseRequestAndResponseWireBounds() {
+    var lease = lease();
+    var candidate = candidate(lease);
+    var target = target(lease);
+    var acquire = wireRequest(lease, candidate, target);
+    UnknownFieldSet oversizedAcquireField =
+        UnknownFieldSet.newBuilder()
+            .addField(
+                99,
+                UnknownFieldSet.Field.newBuilder()
+                    .addLengthDelimited(
+                        ByteString.copyFrom(
+                            new byte
+                                [AccountGameplayAdmissionLeaseGrpcCodec
+                                    .MAX_ACQUIRE_REQUEST_WIRE_BYTES]))
+                    .build())
+            .build();
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                    acquire.toBuilder().setUnknownFields(oversizedAcquireField).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+
+    byte[] originalLease = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var finalizeRequest =
+        AccountGameplayAdmissionLeaseGrpcCodec.toFinalizeRequest(JWT, originalLease, DECISION_ID);
+    var readRequest = AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(JWT, originalLease);
+    var abortRequest =
+        AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(JWT, originalLease, null);
+    UnknownFieldSet oversizedOriginalLeaseField =
+        UnknownFieldSet.newBuilder()
+            .addField(
+                99,
+                UnknownFieldSet.Field.newBuilder()
+                    .addLengthDelimited(
+                        ByteString.copyFrom(
+                            new byte
+                                [AccountGameplayAdmissionLeaseGrpcCodec
+                                    .MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES]))
+                    .build())
+            .build();
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(
+                    finalizeRequest.toBuilder()
+                        .setUnknownFields(oversizedOriginalLeaseField)
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(
+                    readRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(
+                    abortRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+
+    var parsedAcquire = AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(acquire);
+    var parsedFinalize =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(finalizeRequest);
+    var parsedRead = AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(readRequest);
+    var parsedAbort = AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(abortRequest);
+    var oversizedResponse =
+        pendingResponse(lease).toBuilder()
+            .setUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(
+                        99,
+                        UnknownFieldSet.Field.newBuilder()
+                            .addLengthDelimited(
+                                ByteString.copyFrom(
+                                    new byte
+                                        [AccountGameplayAdmissionLeaseGrpcCodec
+                                            .MAX_RESPONSE_WIRE_BYTES]))
+                            .build())
+                    .build())
+            .build();
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
+                    parsedAcquire, oversizedResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(
+                    parsedFinalize, oversizedResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(
+                    parsedRead, oversizedResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(
+                    parsedAbort, oversizedResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
+  }
+
   private static void assertRejected(
       AcquireRequest request, AccountGameplayAdmissionLeaseResponse response) {
     assertThatThrownBy(
