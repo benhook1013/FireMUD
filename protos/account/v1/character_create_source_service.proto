@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Unregistered receiving contract. Reads require an exact same-namespace creation protection
+// owner workload: Entity Management, Game Session, or World Management.
+// This API supplies original Account source readback, never Entity terminal/release authority.
+service CharacterCreateSourceService {
+  rpc ReadOriginalCharacterCreate(ReadOriginalCharacterCreateRequest)
+      returns (ReadOriginalCharacterCreateResponse);
+  rpc ReadOriginalCharacterCreateProtection(ReadOriginalCharacterCreateProtectionRequest)
+      returns (ReadOriginalCharacterCreateProtectionResponse);
+}
+
+message ReadOriginalCharacterCreateRequest {
+  string target_namespace = 1;
+  string operation_id = 2;
+  string mutation_digest = 3;
+}
+
+message ReadOriginalCharacterCreateResponse {
+  string target_namespace = 1;
+  string operation_id = 2;
+  string create_character_request_id = 3;
+  string connect_scope_id = 4;
+  string authenticated_account_id = 5;
+  string purpose = 6;
+  bytes original_action = 7;
+  string mutation_digest = 8;
+  bytes original_source_readback = 9;
+}
+
+message ReadOriginalCharacterCreateProtectionRequest {
+  ReadOriginalCharacterCreateRequest original = 1;
+  string account_protection_id = 2;
+  int64 account_protection_fence = 3;
+}
+
+message ReadOriginalCharacterCreateProtectionResponse {
+  ReadOriginalCharacterCreateResponse original = 1;
+  string account_protection_id = 2;
+  int64 account_protection_fence = 3;
+  string acquired_at = 4;
+  bytes original_membership_snapshot = 5;
+  bytes original_entitlement_snapshot = 6;
+}
