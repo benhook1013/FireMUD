@@ -1,1 +1,2 @@
 net.firedevops.firemud.common.config.CommonCoreAutoConfiguration
+net.firedevops.firemud.common.config.CommonGrpcRequestBoundsAutoConfiguration
