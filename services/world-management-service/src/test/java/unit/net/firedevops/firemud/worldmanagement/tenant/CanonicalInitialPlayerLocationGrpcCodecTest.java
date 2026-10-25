@@ -147,7 +147,7 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
             CanonicalInitialPlayerLocationOutcome
                 .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED);
     assertThat(appliedResponse.hasStartLocation()).isTrue();
-    assertThat(appliedResponse.getRuntimeRoomInstanceId()).isEqualTo("17");
+    assertThat(appliedResponse.getPrivateRuntimeRoomKey()).isEqualTo("17");
     assertThat(appliedResponse.getCanonicalAccountUuid()).isEqualTo(ACCOUNT.toString());
     assertThat(appliedResponse.getAssignmentIntentDigest()).isEqualTo("a".repeat(64));
 
@@ -169,7 +169,7 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
                 .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_CONFLICT);
     assertThat(conflictResponse.getConflictCode()).isEqualTo("CHARACTER_ALREADY_PLACED");
     assertThat(conflictResponse.hasStartLocation()).isFalse();
-    assertThat(conflictResponse.getRuntimeRoomInstanceId()).isEmpty();
+    assertThat(conflictResponse.getPrivateRuntimeRoomKey()).isEmpty();
 
     assertThatThrownBy(
             () ->

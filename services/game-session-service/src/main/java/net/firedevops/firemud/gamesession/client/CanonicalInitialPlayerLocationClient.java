@@ -31,7 +31,7 @@ public final class CanonicalInitialPlayerLocationClient
   private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Pattern MACHINE_CODE = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
-  private static final Pattern POSITIVE_ROOM_ID = Pattern.compile("[1-9][0-9]*");
+  private static final Pattern POSITIVE_PRIVATE_RUNTIME_ROOM_KEY = Pattern.compile("[1-9][0-9]*");
 
   private final String namespace;
 
@@ -211,12 +211,12 @@ public final class CanonicalInitialPlayerLocationClient
                 .equals(location.getCanonicalVersionUuid())) {
           throw invalidResponse("APPLIED start location changed its tenant or version scope");
         }
-        requirePositiveRuntimeRoomId(response.getRuntimeRoomInstanceId());
+        requirePositivePrivateRuntimeRoomKey(response.getPrivateRuntimeRoomKey());
       }
       case CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_CONFLICT -> {
         if (!MACHINE_CODE.matcher(response.getConflictCode()).matches()
             || response.hasStartLocation()
-            || !response.getRuntimeRoomInstanceId().isEmpty()) {
+            || !response.getPrivateRuntimeRoomKey().isEmpty()) {
           throw invalidResponse("CONFLICT response must contain a conflict code and no location");
         }
       }
@@ -224,17 +224,17 @@ public final class CanonicalInitialPlayerLocationClient
     }
   }
 
-  private static void requirePositiveRuntimeRoomId(String value) {
-    if (value == null || !POSITIVE_ROOM_ID.matcher(value).matches()) {
-      throw invalidResponse("runtime_room_instance_id must be a positive private room id");
+  private static void requirePositivePrivateRuntimeRoomKey(String value) {
+    if (value == null || !POSITIVE_PRIVATE_RUNTIME_ROOM_KEY.matcher(value).matches()) {
+      throw invalidResponse("private_runtime_room_key must be a positive private room key");
     }
     try {
       if (Long.parseLong(value) <= 0L) {
-        throw invalidResponse("runtime_room_instance_id must be a positive private room id");
+        throw invalidResponse("private_runtime_room_key must be a positive private room key");
       }
     } catch (NumberFormatException invalid) {
       throw invalidResponse(
-          "runtime_room_instance_id exceeds the supported private room id range", invalid);
+          "private_runtime_room_key exceeds the supported positive long range", invalid);
     }
   }
 

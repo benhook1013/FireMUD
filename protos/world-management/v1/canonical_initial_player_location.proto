@@ -53,7 +53,8 @@ message CanonicalInitialPlayerLocationResponse {
   CanonicalInitialPlayerLocationOutcome outcome = 9;
   string conflict_code = 10;
   CanonicalInitialPlayerLocationRoom start_location = 11;
-  string runtime_room_instance_id = 12;
+  // Private World runtime room key; not a canonical RoomInstanceRef or current occupancy.
+  string private_runtime_room_key = 12;
 }
 
 // This is the retained initial ROOM binding, not a read of current occupancy or activation.

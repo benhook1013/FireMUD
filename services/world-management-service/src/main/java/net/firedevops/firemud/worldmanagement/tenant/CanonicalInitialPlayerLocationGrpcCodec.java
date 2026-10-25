@@ -136,7 +136,7 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
                   .setCanonicalVersionUuid(result.startLocation().versionId().toString())
                   .setRoomTemplateUuid(result.startLocation().roomTemplateId().toString())
                   .build())
-          .setRuntimeRoomInstanceId(Long.toString(result.runtimeRoomInstanceId()));
+          .setPrivateRuntimeRoomKey(Long.toString(result.runtimeRoomInstanceId()));
     } else if (result.outcome() == Outcome.CONFLICT) {
       if (result.conflictCode() == null
           || result.startLocation() != null

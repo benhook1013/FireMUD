@@ -207,7 +207,7 @@ class CanonicalInitialPlayerLocationClientMtlsTest {
                 .setCanonicalTenantUuid(request.getExpectedTarget().getCanonicalTenantUuid())
                 .setCanonicalVersionUuid(request.getExpectedTarget().getCanonicalVersionUuid())
                 .setRoomTemplateUuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
-        .setRuntimeRoomInstanceId("9182")
+        .setPrivateRuntimeRoomKey("9182")
         .build();
   }
 }

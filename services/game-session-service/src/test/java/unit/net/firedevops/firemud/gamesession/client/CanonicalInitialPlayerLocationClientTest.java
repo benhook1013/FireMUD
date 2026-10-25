@@ -250,14 +250,14 @@ class CanonicalInitialPlayerLocationClientTest {
             applied.toBuilder()
                 .setStartLocation(applied.getStartLocation().toBuilder().setRoomTemplateUuid("bad"))
                 .build(),
-            applied.toBuilder().setRuntimeRoomInstanceId("0").build(),
-            applied.toBuilder().setRuntimeRoomInstanceId("01").build(),
-            applied.toBuilder().setRuntimeRoomInstanceId("9223372036854775808").build(),
+            applied.toBuilder().setPrivateRuntimeRoomKey("0").build(),
+            applied.toBuilder().setPrivateRuntimeRoomKey("01").build(),
+            applied.toBuilder().setPrivateRuntimeRoomKey("9223372036854775808").build(),
             conflictResponse(request).toBuilder().clearConflictCode().build(),
             conflictResponse(request).toBuilder()
                 .setStartLocation(applied.getStartLocation())
                 .build(),
-            conflictResponse(request).toBuilder().setRuntimeRoomInstanceId("7").build(),
+            conflictResponse(request).toBuilder().setPrivateRuntimeRoomKey("7").build(),
             applied.toBuilder().setOutcomeValue(99).build());
 
     for (var response : malformed) {
@@ -483,7 +483,7 @@ class CanonicalInitialPlayerLocationClientTest {
                 .setCanonicalTenantUuid(request.getExpectedTarget().getCanonicalTenantUuid())
                 .setCanonicalVersionUuid(request.getExpectedTarget().getCanonicalVersionUuid())
                 .setRoomTemplateUuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
-        .setRuntimeRoomInstanceId("9182")
+        .setPrivateRuntimeRoomKey("9182")
         .build();
   }
 
