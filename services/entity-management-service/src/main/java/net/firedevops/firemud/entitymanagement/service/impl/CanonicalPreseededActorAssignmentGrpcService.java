@@ -163,11 +163,6 @@ public final class CanonicalPreseededActorAssignmentGrpcService
   private static StatusRuntimeException toAssignmentFailureStatus(RuntimeException failure) {
     if (failure instanceof StatusRuntimeException statusFailure) {
       Status.Code code = statusFailure.getStatus().getCode();
-      if (code == Status.Code.PERMISSION_DENIED) {
-        return Status.PERMISSION_DENIED
-            .withDescription("Preseeded actor assignment is not authorized")
-            .asRuntimeException();
-      }
       if (code == Status.Code.FAILED_PRECONDITION || code == Status.Code.NOT_FOUND) {
         return Status.FAILED_PRECONDITION
             .withDescription("Preseeded actor assignment owner evidence is not current")
@@ -175,6 +170,7 @@ public final class CanonicalPreseededActorAssignmentGrpcService
       }
       if (code == Status.Code.UNAVAILABLE
           || code == Status.Code.DEADLINE_EXCEEDED
+          || code == Status.Code.PERMISSION_DENIED
           || code == Status.Code.RESOURCE_EXHAUSTED
           || code == Status.Code.ABORTED
           || code == Status.Code.CANCELLED

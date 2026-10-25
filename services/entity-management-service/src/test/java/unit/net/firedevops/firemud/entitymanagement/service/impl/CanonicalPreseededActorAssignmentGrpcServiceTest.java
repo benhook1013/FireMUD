@@ -171,10 +171,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
             Status.FAILED_PRECONDITION
                 .withDescription("PRIVATE OWNER DETAIL")
                 .asRuntimeException());
-    var upstreamFailure =
-        invoke(
-            assignmentHandler(upstreamFailureService),
-            wireRequest);
+    var upstreamFailure = invoke(assignmentHandler(upstreamFailureService), wireRequest);
     assertNoPartialResponse(upstreamFailure, Status.Code.FAILED_PRECONDITION);
     assertThat(upstreamFailure.errorDescription)
         .isEqualTo("Preseeded actor assignment owner evidence is not current");
@@ -192,10 +189,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
             configuration.unavailablePreseededActorAssignmentOwnerEvidencePort(),
             mock(CharacterRepository.class));
     var accountIdentityUnavailable =
-        invoke(
-            new CanonicalPreseededActorAssignmentGrpcService(
-                NAMESPACE, accountIdentityUnavailableService),
-            wireRequest);
+        invoke(assignmentHandler(accountIdentityUnavailableService), wireRequest);
     assertNoPartialResponse(accountIdentityUnavailable, Status.Code.UNAVAILABLE);
 
     var stagingUnavailableService =
@@ -212,10 +206,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
             configuration.disabledPreseededActorStagingEligibilityPort(),
             configuration.unavailablePreseededActorAssignmentOwnerEvidencePort(),
             mock(CharacterRepository.class));
-    var stagingUnavailable =
-        invoke(
-            assignmentHandler(stagingUnavailableService),
-            wireRequest);
+    var stagingUnavailable = invoke(assignmentHandler(stagingUnavailableService), wireRequest);
     assertNoPartialResponse(stagingUnavailable, Status.Code.UNAVAILABLE);
   }
 
@@ -231,10 +222,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
         .thenThrow(
             new PreseededActorAssignmentService.PreconditionException(
                 "PRIVATE PRECONDITION DETAIL"));
-    var precondition =
-        invoke(
-            assignmentHandler(preconditionService),
-            wireRequest);
+    var precondition = invoke(assignmentHandler(preconditionService), wireRequest);
     assertNoPartialResponse(precondition, Status.Code.FAILED_PRECONDITION);
     assertThat(precondition.errorDescription)
         .isEqualTo("Preseeded actor assignment preconditions are not satisfied");
@@ -243,10 +231,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
         mock(PreseededActorAssignmentService.class);
     when(unexpectedFailureService.assign(domainRequest))
         .thenThrow(new IllegalStateException("PRIVATE INTERNAL DETAIL"));
-    var unexpectedFailure =
-        invoke(
-            assignmentHandler(unexpectedFailureService),
-            wireRequest);
+    var unexpectedFailure = invoke(assignmentHandler(unexpectedFailureService), wireRequest);
     assertNoPartialResponse(unexpectedFailure, Status.Code.INTERNAL);
     assertThat(unexpectedFailure.errorDescription).isEqualTo("Preseeded actor assignment failed");
   }
@@ -401,6 +386,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
         List.of(
             Status.Code.UNAVAILABLE,
             Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.PERMISSION_DENIED,
             Status.Code.RESOURCE_EXHAUSTED,
             Status.Code.ABORTED,
             Status.Code.CANCELLED,
@@ -414,10 +400,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
                   .withDescription("PRIVATE DEPENDENCY DETAIL")
                   .asRuntimeException());
 
-      CapturingObserver response =
-          invoke(
-              assignmentHandler(assignmentService),
-              wireRequest);
+      CapturingObserver response = invoke(assignmentHandler(assignmentService), wireRequest);
 
       Status.Code expectedCode =
           upstreamCode == Status.Code.UNKNOWN ? Status.Code.INTERNAL : Status.Code.UNAVAILABLE;
@@ -464,10 +447,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
           }
         };
 
-    invokeWithObserver(
-        assignmentHandler(assignmentService),
-        wireRequest,
-        observer);
+    invokeWithObserver(assignmentHandler(assignmentService), wireRequest, observer);
 
     assertThat(calls.next).isTrue();
     assertThat(calls.error).isSameAs(observerFailure);
@@ -509,11 +489,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
         };
 
     assertThatThrownBy(
-            () ->
-                invokeWithObserver(
-                    assignmentHandler(assignmentService),
-                    wireRequest,
-                    observer))
+            () -> invokeWithObserver(assignmentHandler(assignmentService), wireRequest, observer))
         .isSameAs(observerFailure);
     assertThat(calls.next).isTrue();
     assertThat(calls.completed).isTrue();
@@ -534,10 +510,7 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
                 CHARACTER_UUID,
                 domainRequest.mutationIntentDigest()));
 
-    CapturingObserver response =
-        invoke(
-            assignmentHandler(assignmentService),
-            wireRequest);
+    CapturingObserver response = invoke(assignmentHandler(assignmentService), wireRequest);
 
     assertNoPartialResponse(response, Status.Code.INTERNAL);
     assertThat(response.errorDescription).isEqualTo("Preseeded actor assignment failed");
