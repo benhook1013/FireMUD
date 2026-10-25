@@ -6,10 +6,10 @@ import os
 import subprocess
 import tempfile
 import unittest
-from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 spec = importlib.util.spec_from_file_location(
     "refresh_daemon", Path(__file__).with_name("refresh-gradle-daemon-jvm.py")
@@ -20,16 +20,16 @@ spec.loader.exec_module(refresh_daemon)
 
 def metadata():
     records = []
-    for os, arch in refresh_daemon.PLATFORMS:
-        suffix = ".zip" if os == "windows" else ".tar.gz"
+    for os_name, arch in refresh_daemon.PLATFORMS:
+        suffix = ".zip" if os_name == "windows" else ".tar.gz"
         records.append({
             "vendor": "eclipse", "release_name": "jdk-21.0.12.1+1",
             "version": {"major": 21, "minor": 0, "security": 12, "patch": 1, "build": 1,
                         "semver": "21.0.12+101.0.LTS", "openjdk_version": "21.0.12.1+1-LTS"},
-            "binary": {"os": os, "architecture": arch, "image_type": "jdk",
+            "binary": {"os": os_name, "architecture": arch, "image_type": "jdk",
                        "jvm_impl": "hotspot", "project": "jdk", "package": {
                            "link": "https://github.com/adoptium/temurin21-binaries/releases/download/"
-                           f"jdk-21.0.12.1%2B1/OpenJDK21U-jdk_{arch}_{os}_hotspot_21.0.12.1_1{suffix}"}},
+                           f"jdk-21.0.12.1%2B1/OpenJDK21U-jdk_{arch}_{os_name}_hotspot_21.0.12.1_1{suffix}"}},
         })
     return records
 
@@ -208,10 +208,12 @@ class DaemonCriteriaTest(unittest.TestCase):
                 self.assertEqual(refresh_daemon.select_refresh_downloads(check_only=True), expected_urls)
             pinned_fetch.assert_called_once_with("jdk-21.0.12.1+1")
 
-        with patch.object(refresh_daemon, "fetch_latest_metadata",
-                          return_value=staggered_latest_metadata()):
-            with self.assertRaisesRegex(ValueError, "do not share one release/build"):
-                refresh_daemon.select_refresh_downloads(check_only=False)
+        with (
+            patch.object(refresh_daemon, "fetch_latest_metadata",
+                         return_value=staggered_latest_metadata()),
+            self.assertRaisesRegex(ValueError, "do not share one release/build"),
+        ):
+            refresh_daemon.select_refresh_downloads(check_only=False)
 
     def test_rejects_malformed_or_mixed_committed_pins(self):
         urls = refresh_daemon.select_downloads(metadata())
@@ -314,46 +316,61 @@ class DaemonCriteriaTest(unittest.TestCase):
             self.assertEqual(parse_qs(urlsplit(requests[offset + 1].full_url).query)["page"], ["1"])
 
     def test_http_fetch_fails_closed_for_missing_duplicate_malformed_and_oversized_pages(self):
-        with patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=[
-                JsonResponse([]) for _ in refresh_daemon.PLATFORMS]):
-            with self.assertRaisesRegex(ValueError, "within 10 pages"):
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=[
+                JsonResponse([]) for _ in refresh_daemon.PLATFORMS
+            ]),
+            self.assertRaisesRegex(ValueError, "within 10 pages"),
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
 
         full_page = [{"release_name": f"unrelated-{index}", "binaries": []}
                      for index in range(refresh_daemon.MAX_FEATURE_RELEASES)]
-        with patch.object(refresh_daemon.urllib.request, "urlopen",
-                          side_effect=[JsonResponse(full_page)
-                                       for _ in range(refresh_daemon.MAX_FEATURE_RELEASE_PAGES)]) as urlopen:
-            with self.assertRaisesRegex(ValueError, "within 10 pages"):
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen",
+                         side_effect=[JsonResponse(full_page)
+                                      for _ in range(refresh_daemon.MAX_FEATURE_RELEASE_PAGES)]) as urlopen,
+            self.assertRaisesRegex(ValueError, "within 10 pages"),
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
         self.assertEqual(urlopen.call_count, refresh_daemon.MAX_FEATURE_RELEASE_PAGES)
 
         not_found = HTTPError("https://api.adoptium.net/page/1", 404, "Not Found", None, None)
-        with patch.object(refresh_daemon.urllib.request, "urlopen",
-                          side_effect=[JsonResponse(full_page), not_found]) as urlopen:
-            with self.assertRaisesRegex(ValueError, "within 10 pages"):
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen",
+                         side_effect=[JsonResponse(full_page), not_found]) as urlopen,
+            self.assertRaisesRegex(ValueError, "within 10 pages"),
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
         self.assertEqual(urlopen.call_count, 2)
 
         server_error = HTTPError("https://api.adoptium.net/page/0", 503, "Unavailable", None, None)
-        with patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=server_error):
-            with self.assertRaises(HTTPError) as raised:
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=server_error),
+            self.assertRaises(HTTPError) as raised,
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
         self.assertEqual(raised.exception.code, 503)
 
         duplicate = feature_metadata(metadata())[0]
-        with patch.object(refresh_daemon.urllib.request, "urlopen",
-                          return_value=JsonResponse([duplicate, copy.deepcopy(duplicate)])):
-            with self.assertRaisesRegex(ValueError, "Duplicate Adoptium release metadata"):
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen",
+                         return_value=JsonResponse([duplicate, copy.deepcopy(duplicate)])),
+            self.assertRaisesRegex(ValueError, "Duplicate Adoptium release metadata"),
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
 
-        with patch.object(refresh_daemon.urllib.request, "urlopen", return_value=JsonResponse([None])):
-            with self.assertRaisesRegex(TypeError, "Malformed Adoptium feature-release metadata"):
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen", return_value=JsonResponse([None])),
+            self.assertRaisesRegex(TypeError, "Malformed Adoptium feature-release metadata"),
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
 
-        with patch.object(refresh_daemon.urllib.request, "urlopen", return_value=OversizedResponse([])):
-            with self.assertRaisesRegex(ValueError, "exceeds the bounded size"):
-                refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+        with (
+            patch.object(refresh_daemon.urllib.request, "urlopen", return_value=OversizedResponse([])),
+            self.assertRaisesRegex(ValueError, "exceeds the bounded size"),
+        ):
+            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
 
     def test_check_only_preserves_preexisting_edits_outside_the_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -456,11 +473,13 @@ class DaemonCriteriaTest(unittest.TestCase):
                     diff_calls.append(command)
                 return original_check_output(command, *args, **kwargs)
 
-            with patch.object(refresh_daemon, "ROOT", root), \
-                    patch.object(refresh_daemon.subprocess, "check_output",
-                                 side_effect=enumerate_fifo_for_guard):
-                with self.assertRaisesRegex(RuntimeError, "Unsupported untracked special file"):
-                    refresh_daemon.outside_artifact_state()
+            with (
+                patch.object(refresh_daemon, "ROOT", root),
+                patch.object(refresh_daemon.subprocess, "check_output",
+                             side_effect=enumerate_fifo_for_guard),
+                self.assertRaisesRegex(RuntimeError, "Unsupported untracked special file"),
+            ):
+                refresh_daemon.outside_artifact_state()
             self.assertEqual(len(diff_calls), 1)
 
     def test_check_only_rejects_generator_created_untracked_file(self):
@@ -480,14 +499,16 @@ class DaemonCriteriaTest(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0)
                 return original_run(*args, **kwargs)
 
-            with patch.object(refresh_daemon, "ROOT", root), \
-                    patch.object(refresh_daemon, "fetch_release_metadata",
-                                 return_value=feature_metadata(metadata())), \
-                    patch.object(refresh_daemon, "fetch_latest_metadata",
-                                 side_effect=AssertionError("check-only must not query latest")), \
-                    patch.object(refresh_daemon.subprocess, "run", side_effect=run_or_generate):
-                with self.assertRaisesRegex(RuntimeError, "changed files outside its generated artifact"):
-                    refresh_daemon.refresh(check_only=True)
+            with (
+                patch.object(refresh_daemon, "ROOT", root),
+                patch.object(refresh_daemon, "fetch_release_metadata",
+                             return_value=feature_metadata(metadata())),
+                patch.object(refresh_daemon, "fetch_latest_metadata",
+                             side_effect=AssertionError("check-only must not query latest")),
+                patch.object(refresh_daemon.subprocess, "run", side_effect=run_or_generate),
+                self.assertRaisesRegex(RuntimeError, "changed files outside its generated artifact"),
+            ):
+                refresh_daemon.refresh(check_only=True)
 
             self.assertEqual(len(generator_calls), 1)
             self.assertEqual(generated_outside.read_text(), "outside the generated artifact\n")
@@ -574,14 +595,16 @@ class DaemonCriteriaTest(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0)
                 return original_run(*args, **kwargs)
 
-            with patch.object(refresh_daemon, "ROOT", root), \
-                    patch.object(refresh_daemon, "fetch_release_metadata",
-                                 return_value=feature_metadata(metadata())), \
-                    patch.object(refresh_daemon, "fetch_latest_metadata",
-                                 side_effect=AssertionError("check-only must not query latest")), \
-                    patch.object(refresh_daemon.subprocess, "run", side_effect=run_or_generate):
-                with self.assertRaisesRegex(RuntimeError, "changed files outside its generated artifact"):
-                    refresh_daemon.refresh(check_only=True)
+            with (
+                patch.object(refresh_daemon, "ROOT", root),
+                patch.object(refresh_daemon, "fetch_release_metadata",
+                             return_value=feature_metadata(metadata())),
+                patch.object(refresh_daemon, "fetch_latest_metadata",
+                             side_effect=AssertionError("check-only must not query latest")),
+                patch.object(refresh_daemon.subprocess, "run", side_effect=run_or_generate),
+                self.assertRaisesRegex(RuntimeError, "changed files outside its generated artifact"),
+            ):
+                refresh_daemon.refresh(check_only=True)
 
             self.assertEqual(len(generator_calls), 1)
             self.assertEqual(outside.read_text(), "unexpected generator edit\n")

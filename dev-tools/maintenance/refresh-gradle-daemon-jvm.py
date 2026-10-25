@@ -345,14 +345,17 @@ def refresh(check_only=False):
     with tempfile.TemporaryDirectory(prefix="firemud-daemon-jdk-") as directory:
         metadata_file = Path(directory) / "download-urls.json"
         metadata_file.write_text(json.dumps(urls))
-        run_options = {"cwd": ROOT, "check": True}
-        if has_resource_session_context():
-            run_options["pass_fds"] = (int(os.environ[RESOURCE_SESSION_ENV[0]]),)
+        session_fds = (
+            (int(os.environ[RESOURCE_SESSION_ENV[0]]),)
+            if has_resource_session_context() else ()
+        )
         subprocess.run(
             ["bash", str(ROOT / "dev-tools/validation/run-locked-gradle.sh"),
              "updateDaemonJvm", "--jvm-version=21", "--jvm-vendor=adoptium",
              f"-PdaemonJvmDownloadUrlsFile={metadata_file}"],
-            **run_options,
+            cwd=ROOT,
+            check=True,
+            pass_fds=session_fds,
         )
     validate_criteria((ROOT / ARTIFACT).read_text(), urls)
     if outside_artifact_state() != before:
