@@ -492,18 +492,20 @@ class CanonicalPlayerCreatedRosterClientTest {
     when(channels.buildChannel(anyString(), anyInt(), any(), anyBoolean())).thenReturn(channel);
     var client = client(false);
     client.init();
+    var deadlineNotBefore = io.grpc.Deadline.after(20, TimeUnit.SECONDS);
     assertThatThrownBy(() -> client.listPlayerCreatedRoster(source, fixture.context()))
         .isInstanceOfSatisfying(
             StatusRuntimeException.class,
             failure ->
                 assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+    var deadlineNotAfter = io.grpc.Deadline.after(20, TimeUnit.SECONDS);
     var options = org.mockito.ArgumentCaptor.forClass(io.grpc.CallOptions.class);
     verify(channel).newCall(any(), options.capture());
     assertThat(options.getValue().getCompressor()).isEqualTo("gzip");
     assertThat(options.getValue().getMaxInboundMessageSize()).isEqualTo(66 * 1024);
     assertThat(options.getValue().getDeadline()).isNotNull();
-    assertThat(options.getValue().getDeadline().timeRemaining(TimeUnit.MILLISECONDS))
-        .isBetween(19_000L, 20_000L);
+    // Compare absolute deadlines so scheduling after the call cannot shrink the asserted budget.
+    assertThat(options.getValue().getDeadline()).isBetween(deadlineNotBefore, deadlineNotAfter);
     assertThat(options.getValue().getCredentials())
         .isInstanceOf(
             net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials.class);

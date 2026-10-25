@@ -199,6 +199,7 @@ public final class ControlledPlayerCreatedRosterSourceFixture {
 
     public void respondWith(ReadPlayerCreatedRosterSourceResponse nextResponse) {
       response.set(Objects.requireNonNull(nextResponse, "nextResponse"));
+      failure.set(null);
     }
 
     public void failWith(StatusRuntimeException nextFailure) {

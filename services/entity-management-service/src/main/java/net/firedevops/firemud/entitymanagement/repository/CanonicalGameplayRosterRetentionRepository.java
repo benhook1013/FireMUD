@@ -39,6 +39,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
     value = "EI_EXPOSE_REP2",
     justification = "DSLContext is the owner transaction collaborator")
 public final class CanonicalGameplayRosterRetentionRepository {
+  // Admission bindings omit namespace; this valid placeholder only reconstructs comparison data.
+  private static final String CLASSIFICATION_ONLY_NAMESPACE = "retained-classification";
+
   private final DSLContext dsl;
 
   public CanonicalGameplayRosterRetentionRepository(DSLContext dsl) {
@@ -1153,7 +1156,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
                 operation,
                 UUID.fromString(minimal.getCanonicalAccountUuid()),
                 UUID.fromString(minimal.getPlayerExecutionContext().getSessionId()),
-                "entity",
+                CLASSIFICATION_ONLY_NAMESPACE,
                 minimal.getExpectedTarget(),
                 minimal.getExpectedSource());
         if (!operation.toString().equals(minimal.getRequestUuid())
@@ -1173,7 +1176,7 @@ public final class CanonicalGameplayRosterRetentionRepository {
                 CanonicalGameplayRosterReferenceEvidence.uuid(request.getCanonicalAccountUuid()),
                 CanonicalGameplayRosterReferenceEvidence.uuid(
                     request.getPlayerExecutionContext().getSessionId()),
-                "retained-classification",
+                CLASSIFICATION_ONLY_NAMESPACE,
                 canonicalTarget.toWire());
         if (!operation.toString().equals(request.getRequestUuid())
             || !Arrays.equals(original, admissionBinding(checked))) {

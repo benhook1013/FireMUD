@@ -517,6 +517,34 @@ class EntityCharacterCreatePostgresIntegrationTest {
   }
 
   @Test
+  void standaloneCreatedRosterCannotExceedTheOwnerResolvedScopeUniqueIndex() throws Exception {
+    var proof = proof(UUID.randomUUID(), UUID.randomUUID());
+    var terminal = repository.settle(proof, null);
+    UUID characterId = UUID.fromString(terminal.getCharacterId());
+    String before = retainedRow(dsl, "characters", "character_uuid", characterId);
+    // Even a direct duplicate with retained terminal metadata cannot exceed the scope bound.
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) SELECT gen_random_uuid(), account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE character_uuid = ?",
+                    characterId))
+        .isInstanceOf(org.jooq.exception.IntegrityConstraintViolationException.class)
+        .hasMessageContaining("ux_characters_owner_resolved_account_namespace");
+    assertThat(dsl.fetchCount(DSL.table("characters"))).isOne();
+    assertThat(retainedRow(dsl, "characters", "character_uuid", characterId)).isEqualTo(before);
+    assertThat(
+            repository.readPlayerCreatedRoster(
+                new AuthenticatedAccountSelector(
+                    UUID.fromString(proof.action().target().accountId())),
+                published(proof)))
+        .containsExactly(
+            new net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterActor(
+                characterId, "Wayfarer"));
+    assertThat(repository.replay(proof.request()).orElseThrow().toByteArray())
+        .containsExactly(terminal.toByteArray());
+  }
+
+  @Test
   void emptyDiscoveryIgnoresOutOfScopeDecoysAndOmitsInScopeQuarantinedDecoys() throws Exception {
     var proof = proof(UUID.randomUUID(), UUID.randomUUID());
     var published = published(proof);

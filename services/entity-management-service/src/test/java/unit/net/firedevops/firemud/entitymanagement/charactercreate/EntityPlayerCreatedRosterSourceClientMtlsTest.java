@@ -541,6 +541,10 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
                 assertThat(failure.getStatus().getDescription()).isEqualTo(description);
               });
       assertThat(owner.receivedRequests()).containsExactly(fixture.request());
+      owner.respondWith(fixture.response());
+      assertThat(client.read(fixture.request()).response().toByteArray())
+          .containsExactly(fixture.response().toByteArray());
+      assertThat(owner.receivedRequests()).containsExactly(fixture.request(), fixture.request());
     }
   }
 
