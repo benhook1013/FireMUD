@@ -852,7 +852,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
                 assertThat(failure.sqlState()).isEqualTo("23514");
                 assertThat(failure)
                     .hasMessageContaining(
-                        "A lease-bound runtime fence cannot be released without terminal owner reconciliation");
+                        "A lease-bound runtime fence cannot be released without definitive first-NEW Account abort evidence");
               });
       assertThat(
               testSchema
