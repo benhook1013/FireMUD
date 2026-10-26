@@ -213,6 +213,45 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
     }
   }
 
+  /**
+   * Resolves and verifies a retained installed INITIAL OPEN for its exact account scope. These
+   * coordinates select storage evidence only; the returned proof is not fresh caller or Account
+   * admission authority.
+   */
+  CanonicalGameplayAccountInitialOpenProof verifyCurrentOpenForTarget(
+      UUID accountId, UUID tenantId, UUID playableStateNamespaceId) {
+    if (isNil(accountId) || isNil(tenantId) || isNil(playableStateNamespaceId)) {
+      return refused(CanonicalGameplayAccountInitialOpenProof.Reason.ORIGINAL_ATTEMPT_MISMATCH);
+    }
+    CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot snapshot;
+    try {
+      requireNoAmbientTransaction();
+      snapshot =
+          repository.readInstalledOpenForTarget(accountId, tenantId, playableStateNamespaceId);
+    } catch (RuntimeException unavailable) {
+      return refused(CanonicalGameplayAccountInitialOpenProof.Reason.SOURCE_CONTROL_UNAVAILABLE);
+    }
+    if (snapshot == null
+        || !accountId.equals(snapshot.accountId())
+        || !tenantId.equals(snapshot.tenantId())
+        || !playableStateNamespaceId.equals(snapshot.playableStateNamespaceId())) {
+      return refused(CanonicalGameplayAccountInitialOpenProof.Reason.ORIGINAL_ATTEMPT_MISMATCH);
+    }
+    if (snapshot.state()
+        == CanonicalGameplayAccountInitialBarrierInitializerRepository.State.NEVER_DISPATCHED) {
+      return refused(CanonicalGameplayAccountInitialOpenProof.Reason.TARGET_NEVER_DISPATCHED);
+    }
+    if (snapshot.state()
+        == CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE) {
+      return refused(CanonicalGameplayAccountInitialOpenProof.Reason.REMOTE_OUTCOME_UNCERTAIN);
+    }
+    if (snapshot.state()
+        != CanonicalGameplayAccountInitialBarrierInitializerRepository.State.OPEN_INSTALLED) {
+      return refused(CanonicalGameplayAccountInitialOpenProof.Reason.ORIGINAL_ATTEMPT_MISMATCH);
+    }
+    return verifyCurrentOpen(snapshot.originalRequestId());
+  }
+
   private void tryCreateOnce(
       CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot snapshot,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
@@ -487,6 +526,10 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
 
   private static IllegalStateException unavailable(Throwable cause) {
     return new IllegalStateException("INITIAL account barrier is unavailable", cause);
+  }
+
+  private static boolean isNil(UUID value) {
+    return value == null || value.equals(new UUID(0L, 0L));
   }
 
   record Readback(

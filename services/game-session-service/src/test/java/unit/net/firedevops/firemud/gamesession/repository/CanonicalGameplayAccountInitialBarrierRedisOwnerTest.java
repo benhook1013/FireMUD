@@ -124,8 +124,7 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
         .isEqualTo(
             new CanonicalGameplayAccountInitialOpenProof.Refused(
                 CanonicalGameplayAccountInitialOpenProof.Reason.REMOTE_OUTCOME_UNCERTAIN));
-    verify(repository)
-        .beginOrRead(eq(original), any(), eq(tenantId), eq(namespaceId));
+    verify(repository).beginOrRead(eq(original), any(), eq(tenantId), eq(namespaceId));
     verify(commands).type(any(byte[].class));
     verifyNoInteractions(catalog);
   }
@@ -306,13 +305,176 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     assertThat(current.sourceControlEpoch()).isEqualTo(BigInteger.valueOf(8));
     assertThat(current.exactFields()).isEqualTo(expected.fields());
     verify(repository, org.mockito.Mockito.times(2)).readCurrent(requestId);
-    verify(repository)
-        .beginOrRead(eq(original), any(), eq(tenantId), eq(namespaceId));
+    verify(repository).beginOrRead(eq(original), any(), eq(tenantId), eq(namespaceId));
     verify(repository, org.mockito.Mockito.times(3)).requireNoAmbientTransaction();
     verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
     verifyNoInteractions(catalog);
     verify(commands).hgetall(any(byte[].class));
     verify(commands, org.mockito.Mockito.never()).evalsha(any(), any(), any(), any());
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void installedOpenCanBeResolvedByExactTargetAndOnlyPerformsFreshReadback() throws Exception {
+    UUID requestId = UUID.randomUUID();
+    UUID callerContextId = UUID.randomUUID();
+    UUID initializerId = UUID.randomUUID();
+    UUID accountId = UUID.randomUUID();
+    UUID tenantId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    String tag = "g8-" + "b".repeat(32);
+    var snapshot =
+        new CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot(
+            initializerId,
+            requestId,
+            callerContextId,
+            17L,
+            accountId,
+            tenantId,
+            namespaceId,
+            DIGEST,
+            "NO_ACTIVE_ACCOUNT_WIDE_FLOW",
+            BigInteger.valueOf(8),
+            BigInteger.valueOf(4),
+            DIGEST,
+            CanonicalGameplayAccountInitialBarrierInitializerRepository.State.OPEN_INSTALLED,
+            DIGEST,
+            DIGEST,
+            DIGEST,
+            1_000L,
+            1_100L,
+            31_000L,
+            DIGEST,
+            DIGEST);
+    var assignment = mock(CanonicalGameplayTenantGameplayTagRepository.Assignment.class);
+    when(assignment.isInitialBarrierTarget()).thenReturn(true);
+    when(assignment.initialBarrierInitializerId()).thenReturn(initializerId);
+    when(assignment.initialBarrierOriginalRequestId()).thenReturn(requestId);
+    when(assignment.accountId()).thenReturn(accountId);
+    when(assignment.tenantId()).thenReturn(tenantId);
+    when(assignment.playableStateNamespaceId()).thenReturn(namespaceId);
+    when(assignment.tenantGameplayTag()).thenReturn(tag);
+    var repository = mock(CanonicalGameplayAccountInitialBarrierInitializerRepository.class);
+    when(repository.readInstalledOpenForTarget(accountId, tenantId, namespaceId))
+        .thenReturn(snapshot);
+    when(repository.readCurrent(requestId)).thenReturn(snapshot);
+    var tenantTags = mock(CanonicalGameplayTenantGameplayTagRepository.class);
+    when(tenantTags.assignmentForInitialBarrierTarget(requestId)).thenReturn(assignment);
+    var observation = initialObservation(snapshot);
+    var receiver = mock(CanonicalGameplayProtectedIncarnationReceiver.class);
+    when(receiver.observeForInitialAccountBarrier(requestId)).thenReturn(observation);
+
+    var expected =
+        CanonicalGameplayAccountInitialBarrierValue.open(
+            accountId, tenantId, namespaceId, tag, initializerId, BigInteger.valueOf(8), DIGEST);
+    Map<byte[], byte[]> raw = new HashMap<>();
+    expected
+        .fields()
+        .forEach(
+            (field, value) ->
+                raw.put(
+                    field.getBytes(StandardCharsets.US_ASCII),
+                    value.getBytes(StandardCharsets.US_ASCII)));
+    RedisClient redis = mock(RedisClient.class);
+    StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
+    RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);
+    when(redis.connect(any(ByteArrayCodec.class))).thenReturn(connection);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.async()).thenReturn(commands);
+    doReturn(future("gamesession_coord_app")).when(commands).aclWhoami();
+    doReturn(future("hash")).when(commands).type(any(byte[].class));
+    doReturn(future(-1L)).when(commands).pttl(any(byte[].class));
+    doReturn(future(9L)).when(commands).hlen(any(byte[].class));
+    doReturn(future(raw)).when(commands).hgetall(any(byte[].class));
+    RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
+    var owner =
+        new CanonicalGameplayAccountInitialBarrierRedisOwner(
+            redis, catalog, repository, tenantTags, receiver);
+
+    var proof = owner.verifyCurrentOpenForTarget(accountId, tenantId, namespaceId);
+
+    assertThat(proof).isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+    var current = (CanonicalGameplayAccountInitialOpenProof.CurrentOpen) proof;
+    assertThat(current.originalRequestId()).isEqualTo(requestId);
+    assertThat(current.exactFields()).isEqualTo(expected.fields());
+    verify(repository).readInstalledOpenForTarget(accountId, tenantId, namespaceId);
+    verify(repository, org.mockito.Mockito.times(2)).readCurrent(requestId);
+    verify(tenantTags).assignmentForInitialBarrierTarget(requestId);
+    verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
+    verifyNoInteractions(catalog);
+    verify(commands).hgetall(any(byte[].class));
+    verify(commands, org.mockito.Mockito.never()).evalsha(any(), any(), any(), any());
+  }
+
+  @Test
+  void missingAmbiguousAndStaleTargetResolutionNeverReachPhysicalReadOrCreate() {
+    UUID missingAccount = UUID.randomUUID();
+    UUID ambiguousAccount = UUID.randomUUID();
+    UUID staleAccount = UUID.randomUUID();
+    UUID tenantId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    var repository = mock(CanonicalGameplayAccountInitialBarrierInitializerRepository.class);
+    when(repository.readInstalledOpenForTarget(missingAccount, tenantId, namespaceId))
+        .thenThrow(new IllegalStateException("no installed target"));
+    when(repository.readInstalledOpenForTarget(ambiguousAccount, tenantId, namespaceId))
+        .thenThrow(new IllegalStateException("multiple installed targets"));
+    when(repository.readInstalledOpenForTarget(staleAccount, tenantId, namespaceId))
+        .thenThrow(new IllegalStateException("NO_ACTIVE source changed"));
+    var tenantTags = mock(CanonicalGameplayTenantGameplayTagRepository.class);
+    var receiver = mock(CanonicalGameplayProtectedIncarnationReceiver.class);
+    RedisClient redis = mock(RedisClient.class);
+    RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
+    var owner =
+        new CanonicalGameplayAccountInitialBarrierRedisOwner(
+            redis, catalog, repository, tenantTags, receiver);
+
+    var missing = owner.verifyCurrentOpenForTarget(missingAccount, tenantId, namespaceId);
+    var ambiguous = owner.verifyCurrentOpenForTarget(ambiguousAccount, tenantId, namespaceId);
+    var stale = owner.verifyCurrentOpenForTarget(staleAccount, tenantId, namespaceId);
+
+    var refused =
+        new CanonicalGameplayAccountInitialOpenProof.Refused(
+            CanonicalGameplayAccountInitialOpenProof.Reason.SOURCE_CONTROL_UNAVAILABLE);
+    assertThat(missing).isEqualTo(refused);
+    assertThat(ambiguous).isEqualTo(refused);
+    assertThat(stale).isEqualTo(refused);
+    verify(repository).readInstalledOpenForTarget(missingAccount, tenantId, namespaceId);
+    verify(repository).readInstalledOpenForTarget(ambiguousAccount, tenantId, namespaceId);
+    verify(repository).readInstalledOpenForTarget(staleAccount, tenantId, namespaceId);
+    verifyNoInteractions(tenantTags, receiver, redis, catalog);
+  }
+
+  @Test
+  void nonInstalledTargetIsRefusedWithoutFresheningOrRecreatingIt() {
+    UUID accountId = UUID.randomUUID();
+    UUID tenantId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    var never =
+        snapshot(
+            UUID.randomUUID(),
+            new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 17L),
+            accountId,
+            tenantId,
+            namespaceId,
+            CanonicalGameplayAccountInitialBarrierInitializerRepository.State.NEVER_DISPATCHED);
+    var repository = mock(CanonicalGameplayAccountInitialBarrierInitializerRepository.class);
+    when(repository.readInstalledOpenForTarget(accountId, tenantId, namespaceId)).thenReturn(never);
+    var tenantTags = mock(CanonicalGameplayTenantGameplayTagRepository.class);
+    var receiver = mock(CanonicalGameplayProtectedIncarnationReceiver.class);
+    RedisClient redis = mock(RedisClient.class);
+    RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
+    var owner =
+        new CanonicalGameplayAccountInitialBarrierRedisOwner(
+            redis, catalog, repository, tenantTags, receiver);
+
+    var proof = owner.verifyCurrentOpenForTarget(accountId, tenantId, namespaceId);
+
+    assertThat(proof)
+        .isEqualTo(
+            new CanonicalGameplayAccountInitialOpenProof.Refused(
+                CanonicalGameplayAccountInitialOpenProof.Reason.TARGET_NEVER_DISPATCHED));
+    verify(repository).readInstalledOpenForTarget(accountId, tenantId, namespaceId);
+    verifyNoInteractions(tenantTags, receiver, redis, catalog);
   }
 
   @Test

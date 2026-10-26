@@ -155,7 +155,9 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
           AccountControlSource current =
               readCurrentNoActiveControl(transaction, snapshot.accountId());
           requireSameCurrentSource(snapshot, current);
-          requireOriginalJournalStillCurrent(transaction, snapshot);
+          if (snapshot.state() != State.OPEN_INSTALLED) {
+            requireOriginalJournalStillCurrent(transaction, snapshot);
+          }
           return InitialObservationContext.from(snapshot);
         });
   }
@@ -171,7 +173,69 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
           AccountControlSource current =
               readCurrentNoActiveControl(transaction, snapshot.accountId());
           requireSameCurrentSource(snapshot, current);
-          requireOriginalJournalStillCurrent(transaction, snapshot);
+          if (snapshot.state() != State.OPEN_INSTALLED) {
+            requireOriginalJournalStillCurrent(transaction, snapshot);
+          }
+          return snapshot;
+        });
+  }
+
+  /**
+   * Resolves exactly one retained installed INITIAL target by its physical account scope. The
+   * lookup is read-only and checks the target's captured positive NO_ACTIVE control tuple; it does
+   * not use original LOGIN liveness as storage authority or create a replacement target.
+   */
+  InitializerSnapshot readInstalledOpenForTarget(
+      UUID accountId, UUID tenantId, UUID playableStateNamespaceId) {
+    requireNonNil(accountId, "accountId");
+    requireNonNil(tenantId, "tenantId");
+    requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          var rows =
+              transaction.fetch(
+                  "SELECT i.initializer_id, i.original_request_id, i.original_caller_context_id,"
+                      + " i.original_attempt_fence, i.account_id, i.account_login_evidence_digest,"
+                      + " i.source_control_state, i.source_control_epoch,"
+                      + " i.inventory_snapshot_revision, i.source_control_digest, t.tenant_id,"
+                      + " t.playable_state_namespace_id, t.target_state,"
+                      + " t.before_accepted_attestation_digest, t.before_incarnation_digest,"
+                      + " t.before_source_payload_digest,"
+                      + " t.before_observation_issued_at_epoch_millis,"
+                      + " t.before_observation_observed_at_epoch_millis,"
+                      + " t.before_observation_expires_at_epoch_millis, t.installed_fields_digest"
+                      + " FROM "
+                      + INITIALIZER
+                      + " i JOIN "
+                      + TARGET
+                      + " t ON t.initializer_id = i.initializer_id"
+                      + " AND t.original_request_id = i.original_request_id"
+                      + " WHERE i.account_id = ? AND t.account_id = ? AND t.tenant_id = ?"
+                      + " AND t.playable_state_namespace_id = ?"
+                      + " AND t.target_state = 'OPEN_INSTALLED'"
+                      + " ORDER BY i.initializer_id, t.target_ordinal",
+                  accountId,
+                  accountId,
+                  tenantId,
+                  playableStateNamespaceId);
+          if (rows.size() != 1) {
+            throw conflict(
+                rows.isEmpty()
+                    ? "No retained installed INITIAL OPEN target matches the exact account scope"
+                    : "Multiple retained installed INITIAL OPEN targets match the exact account scope");
+          }
+          InitializerSnapshot snapshot = toSnapshot(rows.get(0));
+          if (snapshot.state() != State.OPEN_INSTALLED
+              || !accountId.equals(snapshot.accountId())
+              || !tenantId.equals(snapshot.tenantId())
+              || !playableStateNamespaceId.equals(snapshot.playableStateNamespaceId())) {
+            throw conflict("Retained INITIAL OPEN target differs from the exact account scope");
+          }
+          AccountControlSource current = readCurrentNoActiveControl(transaction, accountId);
+          requireSameCurrentSource(snapshot, current);
           return snapshot;
         });
   }

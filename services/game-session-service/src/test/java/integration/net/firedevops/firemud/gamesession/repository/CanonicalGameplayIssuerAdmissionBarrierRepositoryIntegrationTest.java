@@ -412,7 +412,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
                 cutoffOperationId,
                 target.closedValue().tenantId(),
                 target.closedValue().playableStateNamespaceId());
-    assertThat(closed.scriptOutcome()).isEqualTo(1L);
+    // Outcome 3 is CAPTURED_OPEN_CLOSED: this target replaces the exact OPEN
+    // payload captured by the cutoff.
+    assertThat(closed.scriptOutcome()).isEqualTo(3L);
     var installed = state.repository().completeCutoff(cutoffOperationId);
     assertThat(installed.state())
         .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
@@ -616,6 +618,17 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
         new CanonicalGameplayIssuerBindingLocalOperationRepository(
                 state.fixture().dsl(), state.sourceReader())
             .beginOrResumeOrdinaryNew(request);
+    var localCatalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution()));
+    var localProjection =
+        new CanonicalGameplayIssuerBindingLocalProjectionRepository(
+            state.fixture().dsl(), state.sourceReader());
+    var localOwner =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            ownerClient, localCatalog, localProjection, state.sourceReader());
+    // Capacity is a distinct physical phase: publish it while SQL is still PREPARED.
+    localOwner.projectAndRead(operation);
     var inventory = new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl());
     var provisionalEvidence = inventory.readProvisionalCasEvidence(transitionId);
     var lease =
@@ -630,15 +643,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             operation.preparedTransition().bindingGeneration(),
             null,
             state.fixture().source().originalDecision().targetEvidence()));
-    var localCatalog =
-        RedisScriptCatalog.fromContributions(
-            List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution()));
-    var localProjection =
-        new CanonicalGameplayIssuerBindingLocalProjectionRepository(
-            state.fixture().dsl(), state.sourceReader());
-    new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            ownerClient, localCatalog, localProjection, state.sourceReader())
-        .projectAndRead(operation);
+    localOwner.projectAndRead(operation);
     return operation;
   }
 

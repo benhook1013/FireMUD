@@ -2,10 +2,20 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import io.lettuce.core.AclSetuserArgs;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.protocol.CommandKeyword;
+import io.lettuce.core.protocol.CommandType;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
@@ -21,12 +31,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountInitialBarrierRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -34,6 +46,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -61,6 +74,158 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static GenericContainer<?> redis =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Test
+  void initialOwnerComposesSqlSignedObservationAndRedisWithoutRecreatingResetOpen()
+      throws Exception {
+    for (BigInteger epoch : List.of(BigInteger.ZERO, BigInteger.valueOf(8))) {
+      try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open(epoch);
+          InitialRedisFixture physical = InitialRedisFixture.open();
+          CanonicalGameplayLoginResult login = fixture.originalLogin()) {
+        var owner = fixture.initialOwner(physical.ownerClient(), fixture.initialRepository);
+        var initialized =
+            owner.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId);
+        assertThat(initialized)
+            .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+        var opened = (CanonicalGameplayAccountInitialOpenProof.CurrentOpen) initialized;
+        assertThat(opened.sourceControlEpoch()).isEqualTo(epoch);
+        assertThat(opened.exactFields()).hasSize(9);
+        assertThat(physical.connection().sync().hgetall(opened.key()))
+            .isEqualTo(opened.exactFields());
+        String retained = fixture.initialTargetPostimage();
+
+        var replay = owner.verifyCurrentOpen(fixture.original.requestId());
+        assertThat(replay).isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+        assertThat(((CanonicalGameplayAccountInitialOpenProof.CurrentOpen) replay).exactFields())
+            .isEqualTo(opened.exactFields());
+        assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+
+        fixture.dsl.execute(
+            "UPDATE game_session_initial_gameplay_login_journal"
+                + " SET abandoned = true, abandoned_at = CURRENT_TIMESTAMP"
+                + " WHERE request_id = ?",
+            fixture.original.requestId());
+        // The installed target is storage evidence independent of a later caller. The old LOGIN
+        // cannot create anything, while another binding may verify the same current target.
+        assertThat(
+                owner.verifyCurrentOpenForTarget(
+                    fixture.accountId, fixture.tenantId, fixture.namespaceId))
+            .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+        assertThat(
+                owner.initializeOnce(
+                    fixture.original, login, fixture.tenantId, fixture.namespaceId))
+            .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+        assertThat(physical.connection().sync().hgetall(opened.key()))
+            .isEqualTo(opened.exactFields());
+        assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+
+        physical.connection().sync().del(opened.key());
+        assertThat(owner.verifyCurrentOpen(fixture.original.requestId()))
+            .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+        assertThat(
+                owner.initializeOnce(
+                    fixture.original, login, fixture.tenantId, fixture.namespaceId))
+            .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+        assertThat(physical.connection().sync().exists(opened.key())).isZero();
+        assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+      }
+    }
+  }
+
+  @Test
+  void initialOwnerRecoversLostSqlReceiptFromExactPhysicalOpenWithoutAnotherCreate()
+      throws Exception {
+    try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
+        InitialRedisFixture physical = InitialRedisFixture.open();
+        CanonicalGameplayLoginResult login = fixture.originalLogin()) {
+      var repository = spy(fixture.initialRepository);
+      // Controlled receipt loss after the real SQL dispatch and real Redis write/readback.
+      doThrow(new IllegalStateException("Controlled loss of first SQL receipt"))
+          .doCallRealMethod()
+          .when(repository)
+          .acceptOpenReadback(eq(fixture.original.requestId()), any());
+      var owner = fixture.initialOwner(physical.ownerClient(), repository);
+      assertThat(
+              owner.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+      assertThat(repository.readCurrent(fixture.original.requestId()).state())
+          .isEqualTo(
+              CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE);
+      String key =
+          CanonicalGameplayAccountInitialBarrierKey.forTarget(
+              fixture.tenantTags.assignmentForInitialBarrierTarget(fixture.original.requestId()),
+              repository.readCurrent(fixture.original.requestId()).initializerId(),
+              fixture.original.requestId());
+      Map<String, String> firstPostimage = physical.connection().sync().hgetall(key);
+
+      var recovered =
+          owner.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId);
+      assertThat(recovered)
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+      assertThat(((CanonicalGameplayAccountInitialOpenProof.CurrentOpen) recovered).key())
+          .isEqualTo(key);
+      assertThat(physical.connection().sync().hgetall(key)).isEqualTo(firstPostimage);
+      assertThat(repository.readCurrent(fixture.original.requestId()).state())
+          .isEqualTo(
+              CanonicalGameplayAccountInitialBarrierInitializerRepository.State.OPEN_INSTALLED);
+      String retained = fixture.initialTargetPostimage();
+      assertThat(owner.verifyCurrentOpen(fixture.original.requestId()))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+      assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+    }
+  }
+
+  private record InitialRedisFixture(
+      RedisClient administrator,
+      StatefulRedisConnection<String, String> connection,
+      RedisClient ownerClient)
+      implements AutoCloseable {
+    static InitialRedisFixture open() {
+      String principal = "gamesession_coord_app";
+      String password = UUID.randomUUID().toString();
+      RedisClient administrator =
+          RedisClient.create(RedisURI.create(redis.getHost(), redis.getMappedPort(6379)));
+      StatefulRedisConnection<String, String> connection = administrator.connect();
+      // This container is owned solely by this test class; each case removes only its own key.
+      connection
+          .sync()
+          .aclSetuser(
+              principal,
+              new AclSetuserArgs()
+                  .reset()
+                  .on()
+                  .addPassword(password)
+                  .keyPattern("session:game:*")
+                  .addCommand(CommandType.HELLO)
+                  .addCommand(CommandType.PING)
+                  .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+                  .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+                  .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+                  .addCommand(CommandType.EVALSHA)
+                  .addCommand(CommandType.TYPE)
+                  .addCommand(CommandType.PTTL)
+                  .addCommand(CommandType.HLEN)
+                  .addCommand(CommandType.HGETALL)
+                  .addCommand(CommandType.HSET));
+      RedisClient owner =
+          RedisClient.create(
+              RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
+                  .withAuthentication(principal, password)
+                  .build());
+      return new InitialRedisFixture(administrator, connection, owner);
+    }
+
+    @Override
+    public void close() {
+      connection.close();
+      ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
 
   @Test
   void verifiesOnlySignedExactCurrentTargetAndRejectsReplayAndMismatches() throws Exception {
@@ -712,6 +877,10 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       }
 
       private static InitialFixture open() throws Exception {
+        return open(BigInteger.valueOf(8));
+      }
+
+      private static InitialFixture open(BigInteger sourceControlEpoch) throws Exception {
         String schema = "gs_initial_incarnation_" + UUID.randomUUID().toString().replace("-", "");
         DriverManagerDataSource dataSource = new DriverManagerDataSource();
         dataSource.setDriverClassName("org.postgresql.Driver");
@@ -769,7 +938,8 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
                     transitionId, UUID.randomUUID(), identity, reservation, null, null));
         dsl.execute(
             "UPDATE game_session_canonical_account_coverage_control"
-                + " SET last_operation_fence = 8 WHERE account_id = ?",
+                + " SET last_operation_fence = ? WHERE account_id = ?",
+            sourceControlEpoch,
             accountId);
 
         InitialGameplayLoginAttemptCoordinates original =
@@ -843,6 +1013,54 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
             channel,
             configuration,
             Clock.fixed(NOW, ZoneOffset.UTC));
+      }
+
+      private CanonicalGameplayLoginResult originalLogin() {
+        UUID tokenJti =
+            dsl.fetchOne(
+                    "SELECT verified_token_jti FROM game_session_initial_gameplay_login_journal"
+                        + " WHERE request_id = ?",
+                    original.requestId())
+                .get(0, UUID.class);
+        return mockInitialLoginResult(original, accountId, tokenJti);
+      }
+
+      private String initialTargetPostimage() {
+        return dsl.fetchOne(
+                "SELECT to_jsonb(t)::text FROM game_session_canonical_initial_account_barrier_target t"
+                    + " WHERE initializer_id = ?",
+                initialRepository.readCurrent(original.requestId()).initializerId())
+            .get(0, String.class);
+      }
+
+      private CanonicalGameplayAccountInitialBarrierRedisOwner initialOwner(
+          RedisClient client,
+          CanonicalGameplayAccountInitialBarrierInitializerRepository repository) {
+        var configuration =
+            new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
+                ATTESTOR_BINDING,
+                ACCEPTED_ATTESTATION_DIGEST,
+                Map.of(KEY_ID, (java.security.interfaces.RSAPublicKey) keyPair.getPublic()),
+                expectedEvidence,
+                ACL_DIGEST,
+                CONFIG_DIGEST,
+                16 * 1024,
+                1,
+                Duration.ofSeconds(30));
+        var receiver =
+            new CanonicalGameplayProtectedIncarnationReceiver(
+                repository,
+                tenantTags,
+                new ControlledSigner(keyPair),
+                configuration,
+                Clock.systemUTC());
+        return new CanonicalGameplayAccountInitialBarrierRedisOwner(
+            client,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution())),
+            repository,
+            tenantTags,
+            receiver);
       }
 
       private InitialGameplayLoginAttemptCoordinates original() {

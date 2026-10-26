@@ -12,16 +12,19 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
 import java.security.Signature;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1162,8 +1165,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
           lastOperationFence,
           accountId);
       CanonicalGameplayAccountAdmissionFenceIntent intent =
-          new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
-              .beginFenceIntent(accountId, UUID.randomUUID());
+          retainedIdentity == null
+              ? new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
+                  .beginFenceIntent(accountId, UUID.randomUUID())
+              : seedHistoricalV1028Intent(dsl, retainedIdentity, lastOperationFence);
       if (!intent.operationFence().equals(lastOperationFence.add(java.math.BigInteger.ONE))) {
         throw new IllegalStateException("Test fixture did not establish the intended fence epoch");
       }
@@ -1186,6 +1191,153 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
               "aof-7");
       return new Fixture(
           schema, dataSource, dsl, intent, runtime.targetNamespace(), keyPair, evidence);
+    }
+
+    private static CanonicalGameplayAccountAdmissionFenceIntent seedHistoricalV1028Intent(
+        DSLContext dsl,
+        CanonicalGameplayBindingIdentity identity,
+        java.math.BigInteger lastOperationFence)
+        throws Exception {
+      // TEST ONLY: seed the populated historical V1027/V1028 storage contract. The live intent
+      // producer captures INITIAL rows added in V1047 and must not run against this old schema.
+      // seedActiveSource creates exactly one binding, committed transition, and bound reservation;
+      // capture all three in the canonical kind order using their actual PostgreSQL JSONB images.
+      var rows =
+          dsl.fetch(
+                  "SELECT 0 AS row_ordinal, 'BINDING' AS source_kind,"
+                      + " encode(i.binding_ref, 'hex') AS source_key, i.tenant_id,"
+                      + " i.playable_state_namespace_id, to_jsonb(i)::text AS source_record_json"
+                      + " FROM game_session_canonical_gameplay_binding_inventory i"
+                      + " WHERE i.account_id = ?"
+                      + " UNION ALL SELECT 1, 'TRANSITION', t.transition_id::text, t.tenant_id,"
+                      + " t.playable_state_namespace_id, to_jsonb(t)::text"
+                      + " FROM game_session_canonical_binding_transition t"
+                      + " JOIN game_session_canonical_gameplay_binding_inventory i"
+                      + " ON i.binding_ref = t.candidate_binding_ref WHERE i.account_id = ?"
+                      + " UNION ALL SELECT 2, 'RESERVATION', r.reservation_id::text, r.tenant_id,"
+                      + " r.playable_state_namespace_id, to_jsonb(r)::text"
+                      + " FROM game_session_canonical_issuer_partition_reservation r"
+                      + " WHERE r.account_id = ? ORDER BY row_ordinal",
+                  identity.accountId(),
+                  identity.accountId(),
+                  identity.accountId())
+              .map(
+                  row ->
+                      CanonicalGameplayAccountAdmissionFenceIntent.cohortRow(
+                          row.get("row_ordinal", Long.class),
+                          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.valueOf(
+                              row.get("source_kind", String.class)),
+                          row.get("source_key", String.class),
+                          row.get("tenant_id", UUID.class),
+                          row.get("playable_state_namespace_id", UUID.class),
+                          row.get("source_record_json", String.class)));
+      if (rows.size() != 3
+          || rows.stream()
+              .anyMatch(
+                  row ->
+                      !identity.tenantId().equals(row.tenantId())
+                          || !identity
+                              .playableStateNamespaceId()
+                              .equals(row.playableStateNamespaceId()))) {
+        throw new IllegalStateException("Historical fixture must retain its three scoped sources");
+      }
+      var target =
+          CanonicalGameplayAccountAdmissionFenceIntent.barrierTarget(
+              0L, identity.tenantId(), identity.playableStateNamespaceId());
+      MessageDigest cohortDigest = MessageDigest.getInstance("SHA-256");
+      for (var row : rows) {
+        updateHistoricalDigest(
+            cohortDigest,
+            Long.toString(row.ordinal()),
+            row.kind().name(),
+            row.sourceKey(),
+            row.tenantId().toString(),
+            row.playableStateNamespaceId().toString(),
+            row.sourceRecordJson());
+      }
+      MessageDigest targetDigest = MessageDigest.getInstance("SHA-256");
+      updateHistoricalDigest(
+          targetDigest,
+          Long.toString(target.ordinal()),
+          target.tenantId().toString(),
+          target.playableStateNamespaceId().toString());
+      UUID operationId = UUID.randomUUID();
+      UUID requestId = UUID.randomUUID();
+      UUID plannedFence = UUID.randomUUID();
+      var operationFence = lastOperationFence.add(java.math.BigInteger.ONE);
+      dsl.execute(
+          "INSERT INTO game_session_canonical_account_admission_fence_intent"
+              + " (operation_id, request_id, account_id, operation_fence,"
+              + " planned_account_admission_fence, inventory_snapshot_revision,"
+              + " legacy_cohort_id, legacy_owner_operation_id, legacy_writer_fence,"
+              + " legacy_source_snapshot_revision, legacy_canonical_inventory_revision,"
+              + " legacy_namespace_index_readback_revision, legacy_evidence_digest, intent_state,"
+              + " cohort_row_count, cohort_digest, barrier_target_count, barrier_target_digest)"
+              + " SELECT ?, ?, ?, ?, ?, clock.inventory_revision, legacy.cohort_id,"
+              + " legacy.owner_operation_id, legacy.legacy_writer_fence,"
+              + " legacy.source_snapshot_revision, legacy.canonical_inventory_revision,"
+              + " legacy.namespace_index_readback_revision, legacy.evidence_digest,"
+              + " 'ACQUISITION_INTENT', 3, ?, 1, ?"
+              + " FROM game_session_canonical_binding_inventory_clock clock"
+              + " CROSS JOIN game_session_canonical_binding_legacy_disposition legacy"
+              + " WHERE clock.singleton_id = 1 AND legacy.singleton_id = 1",
+          operationId,
+          requestId,
+          identity.accountId(),
+          operationFence,
+          plannedFence,
+          "sha256:" + HexFormat.of().formatHex(cohortDigest.digest()),
+          "sha256:" + HexFormat.of().formatHex(targetDigest.digest()));
+      dsl.execute(
+          "INSERT INTO game_session_canonical_account_admission_fence_intent_barrier_target"
+              + " (operation_id, account_id, target_ordinal, tenant_id,"
+              + " playable_state_namespace_id, target_state) VALUES (?, ?, 0, ?, ?, 'REQUIRED')",
+          operationId,
+          identity.accountId(),
+          target.tenantId(),
+          target.playableStateNamespaceId());
+      for (var row : rows) {
+        dsl.execute(
+            "INSERT INTO game_session_canonical_account_admission_fence_intent_cohort_row"
+                + " (operation_id, account_id, row_ordinal, source_kind, source_key, tenant_id,"
+                + " playable_state_namespace_id, source_row)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb))",
+            operationId,
+            identity.accountId(),
+            row.ordinal(),
+            row.kind().name(),
+            row.sourceKey(),
+            row.tenantId(),
+            row.playableStateNamespaceId(),
+            row.sourceRecordJson());
+      }
+      dsl.execute(
+          "UPDATE game_session_canonical_account_coverage_control control"
+              + " SET state = 'ACQUISITION_INTENT', last_operation_fence = intent.operation_fence,"
+              + " current_fence_intent_id = intent.operation_id,"
+              + " current_operation_fence = intent.operation_fence,"
+              + " account_admission_fence = intent.planned_account_admission_fence,"
+              + " inventory_snapshot_revision = intent.inventory_snapshot_revision,"
+              + " updated_at = CURRENT_TIMESTAMP"
+              + " FROM game_session_canonical_account_admission_fence_intent intent"
+              + " WHERE control.account_id = intent.account_id AND intent.operation_id = ?"
+              + " AND control.state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'"
+              + " AND control.last_operation_fence = ?",
+          operationId,
+          lastOperationFence);
+      // Use the real immutable read model to verify the seeded tuple, counts, digests and control.
+      return new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
+          .readFenceIntent(identity.accountId(), requestId);
+    }
+
+    private static void updateHistoricalDigest(MessageDigest digest, String... values) {
+      // V1027 hashes UTF-8 fields framed by their four-byte big-endian lengths. These three
+      // historical sources all have resolved non-null scopes; no newer source kinds are seeded.
+      for (String value : values) {
+        byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(encoded.length).array());
+        digest.update(encoded);
+      }
     }
 
     private static void seedNoActiveAccountCoverageControl(DSLContext dsl, UUID accountId) {

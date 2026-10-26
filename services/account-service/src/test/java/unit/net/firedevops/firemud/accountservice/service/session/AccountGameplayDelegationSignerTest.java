@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -31,6 +32,7 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -87,10 +89,12 @@ import org.springframework.transaction.support.AbstractPlatformTransactionManage
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 class AccountGameplayDelegationSignerTest {
   private static final Instant NOW = Instant.parse("2026-10-05T00:00:00Z");
   private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+  private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final String ENVIRONMENT = "staging";
   private static final String CLUSTER = "cluster-a";
   private static final String NAMESPACE = "firemud";
@@ -136,6 +140,22 @@ class AccountGameplayDelegationSignerTest {
     mismatchedPair = generator.generateKeyPair();
   }
 
+  private static Map<?, ?> jwtClaims(byte[] compactJwt) throws Exception {
+    String[] parts = new String(compactJwt, StandardCharsets.US_ASCII).split("\\.", -1);
+    assertEquals(3, parts.length);
+    return JSON.readValue(Base64.getUrlDecoder().decode(parts[1]), Map.class);
+  }
+
+  private static Map<String, Object> castClaims(Map<?, ?> claims) {
+    Map<String, Object> copy = new LinkedHashMap<>();
+    claims.forEach(
+        (key, value) -> {
+          if (!(key instanceof String text)) throw new AssertionError("JWT claim key is not text");
+          copy.put(text, value);
+        });
+    return copy;
+  }
+
   @Test
   void remainsUnwiredAndFailsClosedWithoutProtectedSignerTrust() {
     AccountGameplayDelegationIssuanceRepository issuance =
@@ -173,6 +193,86 @@ class AccountGameplayDelegationSignerTest {
     assertFalse(AccountGameplayDelegationSigner.class.isAnnotationPresent(Service.class));
     verifyNoInteractions(issuance, desired, envelopeService);
     verifyNoInteractions(configMapClient);
+  }
+
+  @Test
+  void originalNewCredentialUsesBoundClaimsWhileLoginRetainsItsUnscopedShape() throws Exception {
+    Fixture fixture = new Fixture(temporaryDirectory, false);
+    UUID tenantId = UUID.fromString("22222222-2222-4222-8222-222222222222");
+    Map<String, Object> tuple =
+        new LinkedHashMap<>(GameSessionAccountDelegationProfile.authorityTuple(1L, 1L));
+    tuple.put("tenantAuthorityGeneration", Map.of(tenantId.toString(), "3"));
+    tuple.put("membershipAuthorityGeneration", Map.of(tenantId.toString(), "8"));
+    var bound =
+        new AccountMountedJwtSignerBundle.BoundDelegationClaims(
+            tenantId.toString(), tuple, Map.of(tenantId.toString(), "8"));
+
+    assertThrows(
+        net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.VerificationException
+            .class,
+        () ->
+            new AccountMountedJwtSignerBundle.BoundDelegationClaims(
+                tenantId.toString(),
+                GameSessionAccountDelegationProfile.authorityTuple(1L, 1L),
+                Map.of()));
+
+    AtomicReference<byte[]> loginJwt = new AtomicReference<>();
+    AccountMountedJwtSignerBundle.signCommittedGameplayDelegationDigest(
+        fixture.privateRoot,
+        Path.of("current.key"),
+        fixture.publicRoot,
+        Path.of("jwks.json"),
+        fixture.mountedIdentity,
+        new AccountMountedJwtSignerBundle.DelegationSigningSpec(
+            fixture.pendingIdentity, fixture.authoritySnapshot),
+        (digest, compact) -> loginJwt.set(compact.clone()));
+
+    UUID lineageId = UUID.randomUUID();
+    UUID boundJti = UUID.randomUUID();
+    while (lineageId.equals(boundJti) || boundJti.equals(TOKEN_JTI)) {
+      boundJti = UUID.randomUUID();
+    }
+    AtomicReference<byte[]> boundJwt = new AtomicReference<>();
+    var result =
+        AccountMountedJwtSignerBundle.signOriginalNewBoundGameplayDelegationDigest(
+            fixture.privateRoot,
+            Path.of("current.key"),
+            fixture.publicRoot,
+            Path.of("jwks.json"),
+            fixture.mountedIdentity,
+            new AccountMountedJwtSignerBundle.OriginalNewBoundDelegationSigningSpec(
+                lineageId,
+                REQUEST_ID,
+                ACCOUNT_ID,
+                boundJti,
+                NOW.getEpochSecond(),
+                NOW.getEpochSecond(),
+                NOW.plusSeconds(120).getEpochSecond(),
+                fixture.authoritySnapshot.issuanceFence(),
+                fixture.authoritySnapshot,
+                bound),
+            (digest, compact) -> boundJwt.set(compact.clone()));
+
+    Map<?, ?> loginClaims = jwtClaims(loginJwt.get());
+    Map<?, ?> boundClaims = jwtClaims(boundJwt.get());
+    assertThat(result.issuanceOperationId()).isEqualTo(lineageId);
+    assertThat(result.jti()).isEqualTo(boundJti);
+    assertThat(boundClaims.get("tenantId")).isEqualTo(tenantId.toString());
+    assertThat(boundClaims.get("tokenGeneration")).isEqualTo("1");
+    assertThat(boundClaims.get("issuanceFence")).isEqualTo("1");
+    assertThat(boundClaims.get("authorityTuple")).isEqualTo(tuple);
+    assertThat(boundClaims.get("membershipVersion")).isEqualTo(Map.of(tenantId.toString(), "8"));
+    assertThat(boundClaims.containsKey("globalRoles")).isFalse();
+    assertThat(boundClaims.containsKey("scopedRoles")).isFalse();
+    assertThat(loginClaims.containsKey("tenantId")).isFalse();
+    assertThat(loginClaims.get("membershipVersion")).isEqualTo(Map.of());
+    assertThat(loginClaims.get("tokenGeneration")).isEqualTo("1");
+    net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator
+        .validateClaims(castClaims(boundClaims));
+    assertThat(result.toString())
+        .doesNotContain(new String(boundJwt.get(), StandardCharsets.US_ASCII));
+    Arrays.fill(loginJwt.get(), (byte) 0);
+    Arrays.fill(boundJwt.get(), (byte) 0);
   }
 
   @Test

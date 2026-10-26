@@ -284,6 +284,115 @@ public final class CanonicalGameplayBindingInventoryRepository {
         });
   }
 
+  /**
+   * Claims the one permitted original-NEW candidate installation. The immutable candidate and
+   * DISPATCH_POSSIBLE marker commit together before the caller can reach Redis. A returned create
+   * permission exists only for that first committed claim; later calls are read-only.
+   */
+  OriginalNewCandidateInstallationClaim claimOriginalNewCandidateInstallation(
+      CanonicalGameplayAdmissionDecision originalDecision) {
+    Objects.requireNonNull(originalDecision, "originalDecision");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision = lockInventoryRevision(transaction);
+          CanonicalGameplayAccountCoverageEvidence accountCoverage =
+              lockAccountCoverageEvidence(transaction, originalDecision.candidate().accountId());
+          lockLeaseBoundRuntimeBeforeTransition(
+              transaction,
+              originalDecision.bindingDecisionId(),
+              originalDecision.candidate().bindingRef().bytes(),
+              originalDecision.targetEvidence());
+          CanonicalGameplayBindingProvisionalCasEvidence evidence =
+              loadProvisionalCasEvidence(transaction, originalDecision.bindingDecisionId(), true);
+          if (!accountCoverage.equals(evidence.transition().accountCoverageEvidence())) {
+            throw conflict("Original NEW account control changed before candidate dispatch claim");
+          }
+          requireDecisionMatchesOperation(originalDecision, evidence);
+          CanonicalGameplayOriginalNewCandidate candidate;
+          try {
+            candidate =
+                CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                    evidence, originalDecision);
+          } catch (RuntimeException invalidSource) {
+            throw conflict("Original NEW candidate source is not exact and public-production");
+          }
+
+          Record transition = findTransition(transaction, evidence.transition().transitionId());
+          byte[] storedBytes = transition.get("original_new_candidate_bytes", byte[].class);
+          String storedDigest = transition.get("original_new_candidate_digest", String.class);
+          String storedState = transition.get("original_new_candidate_state", String.class);
+          String storedReadbackDigest =
+              transition.get("original_new_candidate_readback_digest", String.class);
+          if (storedBytes == null) {
+            if (storedDigest != null
+                || storedState != null
+                || storedReadbackDigest != null
+                || evidence.transition().status()
+                    != CanonicalGameplayBindingTransitionSnapshot.Status.PREPARED
+                || transition.get("admission_lease_id", UUID.class) != null) {
+              throw conflict("Only an untouched PREPARED original NEW row can claim creation");
+            }
+            byte[] bytes = candidate.canonicalBytes();
+            String digest = CanonicalGameplayIssuerMemberV2Codec.sha256(bytes);
+            BigInteger priorRevision = evidence.transition().inventoryRevision();
+            BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+            updateOriginalNewCandidateRevisionRows(
+                transaction, evidence, priorRevision, nextRevision, bytes, digest);
+            bumpInventoryClock(transaction, currentRevision, nextRevision);
+            CanonicalGameplayBindingProvisionalCasEvidence current =
+                loadProvisionalCasEvidence(transaction, evidence.transition().transitionId(), true);
+            return new OriginalNewCandidateInstallationClaim(
+                current,
+                originalDecision,
+                candidate,
+                OriginalNewCandidateInstallationState.DISPATCH_POSSIBLE,
+                new OriginalNewCandidateCreatePermission());
+          }
+
+          if (storedDigest == null
+              || !storedDigest.equals(CanonicalGameplayIssuerMemberV2Codec.sha256(storedBytes))
+              || !Arrays.equals(storedBytes, candidate.canonicalBytes())
+              || (!"DISPATCH_POSSIBLE".equals(storedState)
+                  && !"READBACK_CONFIRMED".equals(storedState))) {
+            throw conflict("Original NEW candidate retry differs from its immutable SQL source");
+          }
+          CanonicalGameplayOriginalNewCandidate parsed =
+              CanonicalGameplayOriginalNewCandidate.parseCanonical(storedBytes);
+          if (!parsed.equals(candidate)
+              || !parsed.matchesOriginalDecision(originalDecision)
+              || !parsed.matchesProvisionalSources(evidence)) {
+            throw conflict("Stored original NEW candidate no longer matches its durable sources");
+          }
+          if (evidence.transition().status()
+              == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL) {
+            CanonicalGameplayAdmissionDecision stored = toAdmissionDecision(transition, evidence);
+            requireSameAdmissionDecision(originalDecision, stored);
+            if (!"READBACK_CONFIRMED".equals(storedState) || storedReadbackDigest == null) {
+              throw conflict("PROVISIONAL original NEW source lacks retained physical readback");
+            }
+          }
+          return new OriginalNewCandidateInstallationClaim(
+              evidence,
+              originalDecision,
+              parsed,
+              OriginalNewCandidateInstallationState.valueOf(storedState),
+              null);
+        });
+  }
+
+  /**
+   * Records only actual owner-produced physical readback, then reuses the existing provisional CAS.
+   */
+  CanonicalGameplayBindingTransitionSnapshot markOriginalNewCandidateProvisional(
+      OriginalNewCandidateInstallationClaim claim,
+      CanonicalGameplayOriginalNewCandidateRedisOwner.PhysicalReadback readback) {
+    Objects.requireNonNull(claim, "candidate installation claim");
+    Objects.requireNonNull(readback, "owner-produced physical readback");
+    return markProvisional(claim.evidence(), claim.originalDecision(), claim.candidate(), readback);
+  }
+
   void requireSameProvisionalSource(
       CanonicalGameplayBindingProvisionalCasEvidence expected,
       CanonicalGameplayBindingProvisionalCasEvidence current) {
@@ -632,6 +741,87 @@ public final class CanonicalGameplayBindingInventoryRepository {
             transitionId,
             decimal(oldRevision)),
         "Candidate issuer reservation changed before region bridge revision");
+  }
+
+  private static void updateOriginalNewCandidateRevisionRows(
+      DSLContext transaction,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      BigInteger oldRevision,
+      BigInteger nextRevision,
+      byte[] candidateBytes,
+      String candidateDigest) {
+    UUID transitionId = evidence.transition().transitionId();
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + TRANSITION
+                + " SET original_new_candidate_bytes = ?, original_new_candidate_digest = ?,"
+                + " original_new_candidate_state = 'DISPATCH_POSSIBLE', inventory_revision = ?"
+                + " WHERE transition_id = ? AND status = 'PREPARED' AND inventory_revision = ?"
+                + " AND expected_prior_binding_ref IS NULL"
+                + " AND expected_prior_binding_generation IS NULL"
+                + " AND admission_lease_id IS NULL AND original_new_candidate_bytes IS NULL"
+                + " AND original_new_candidate_digest IS NULL AND original_new_candidate_state IS NULL"
+                + " AND original_new_candidate_readback_digest IS NULL",
+            candidateBytes,
+            candidateDigest,
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision)),
+        "Original NEW candidate lost its first durable dispatch claim");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + INVENTORY
+                + " SET inventory_revision = ? WHERE binding_ref = ? AND transition_id = ?"
+                + " AND lifecycle = 'CANDIDATE_PREPARED' AND binding_generation = ?"
+                + " AND account_index_state = 'REPAIR_REQUIRED'"
+                + " AND issuer_index_state = 'REPAIR_REQUIRED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            evidence.candidate().bindingRef().bytes(),
+            transitionId,
+            decimal(evidence.transition().bindingGeneration()),
+            decimal(oldRevision)),
+        "Original NEW candidate inventory row changed before first dispatch claim");
+    requireCount(
+        transaction.execute(
+            "UPDATE "
+                + ACCOUNT_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision)),
+        1,
+        "Original NEW account-index obligation changed before first dispatch claim");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + ISSUER_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision)),
+        "Original NEW issuer-index obligation changed before first dispatch claim");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + REGION_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision)),
+        "Original NEW region obligation changed before first dispatch claim");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + RESERVATION
+                + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
+                + " AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            evidence.candidateReservation().reservationId(),
+            transitionId,
+            decimal(oldRevision)),
+        "Original NEW issuer reservation changed before first dispatch claim");
   }
 
   private static void bumpInventoryClock(
@@ -1477,7 +1667,18 @@ public final class CanonicalGameplayBindingInventoryRepository {
   CanonicalGameplayBindingTransitionSnapshot markProvisional(
       CanonicalGameplayBindingProvisionalCasEvidence expectedEvidence,
       CanonicalGameplayAdmissionDecision expectedDecision) {
+    return markProvisional(expectedEvidence, expectedDecision, null, null);
+  }
+
+  private CanonicalGameplayBindingTransitionSnapshot markProvisional(
+      CanonicalGameplayBindingProvisionalCasEvidence expectedEvidence,
+      CanonicalGameplayAdmissionDecision expectedDecision,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayOriginalNewCandidateRedisOwner.PhysicalReadback readback) {
     Objects.requireNonNull(expectedEvidence, "expectedEvidence");
+    if ((candidate == null) != (readback == null)) {
+      throw new IllegalArgumentException("Candidate and owner readback must be supplied together");
+    }
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
@@ -1500,6 +1701,68 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (current.expectedPrior() == null && expectedDecision == null) {
             throw conflict(
                 "First-binding provisional publication requires the exact Account lease decision");
+          }
+          boolean originalNew = current.expectedPrior() == null && expectedDecision != null;
+          if (originalNew && candidate != null) {
+            if (readback == null) throw conflict("Original NEW readback source is unavailable");
+            requireDecisionMatchesOperation(expectedDecision, current);
+            CanonicalGameplayOriginalNewCandidate actualCandidate;
+            try {
+              actualCandidate =
+                  CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                      current, expectedDecision);
+            } catch (RuntimeException invalidSource) {
+              throw conflict("Original NEW candidate sources are not exact");
+            }
+            if (!actualCandidate.equals(candidate)
+                || !candidate.matchesOriginalDecision(expectedDecision)
+                || !candidate.matchesProvisionalSources(current)
+                || !readback.matches(candidate, current)) {
+              throw conflict("Owner readback does not bind the exact original NEW source");
+            }
+            Record installation = findTransition(transaction, current.transition().transitionId());
+            byte[] storedCandidate = installation.get("original_new_candidate_bytes", byte[].class);
+            String storedCandidateDigest =
+                installation.get("original_new_candidate_digest", String.class);
+            String installationState =
+                installation.get("original_new_candidate_state", String.class);
+            String storedReadbackDigest =
+                installation.get("original_new_candidate_readback_digest", String.class);
+            if (storedCandidate == null
+                || !Arrays.equals(storedCandidate, candidate.canonicalBytes())
+                || !Objects.equals(
+                    storedCandidateDigest,
+                    CanonicalGameplayIssuerMemberV2Codec.sha256(storedCandidate))) {
+              throw conflict("Original NEW candidate bytes differ from the retained SQL source");
+            }
+            if ("READBACK_CONFIRMED".equals(installationState)) {
+              if (!Objects.equals(storedReadbackDigest, readback.digest())) {
+                throw conflict("Original NEW candidate has a different retained physical readback");
+              }
+            } else if ("DISPATCH_POSSIBLE".equals(installationState)
+                && current.transition().status()
+                    == CanonicalGameplayBindingTransitionSnapshot.Status.PREPARED) {
+              requireOne(
+                  transaction.execute(
+                      "UPDATE "
+                          + TRANSITION
+                          + " SET original_new_candidate_state = 'READBACK_CONFIRMED',"
+                          + " original_new_candidate_readback_digest = ?"
+                          + " WHERE transition_id = ? AND status = 'PREPARED'"
+                          + " AND original_new_candidate_bytes = ?"
+                          + " AND original_new_candidate_digest = ?"
+                          + " AND original_new_candidate_state = 'DISPATCH_POSSIBLE'"
+                          + " AND original_new_candidate_readback_digest IS NULL",
+                      readback.digest(),
+                      current.transition().transitionId(),
+                      candidate.canonicalBytes(),
+                      storedCandidateDigest),
+                  "Original NEW candidate readback source changed before provisional CAS");
+            } else {
+              throw conflict("Original NEW candidate is not in a readback-confirmable state");
+            }
+          } else if (candidate != null || readback != null) {
+            throw conflict("Original NEW candidate readback cannot authorize a transfer");
           }
           if (current.transition().status()
               == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL) {
@@ -4635,6 +4898,69 @@ public final class CanonicalGameplayBindingInventoryRepository {
       BigInteger inventorySnapshotRevision,
       BigInteger coverageGeneration,
       CanonicalGameplayAccountCoverageEvidence evidence) {}
+
+  enum OriginalNewCandidateInstallationState {
+    DISPATCH_POSSIBLE,
+    READBACK_CONFIRMED
+  }
+
+  /** SQL-issued, one-use permission returned only by the transaction that first claims dispatch. */
+  static final class OriginalNewCandidateCreatePermission {
+    private boolean consumed;
+
+    private OriginalNewCandidateCreatePermission() {}
+
+    synchronized boolean consume() {
+      if (consumed) return false;
+      consumed = true;
+      return true;
+    }
+  }
+
+  /**
+   * Exact SQL source plus the optional first-dispatch permission; constructors stay
+   * repository-owned.
+   */
+  static final class OriginalNewCandidateInstallationClaim {
+    private final CanonicalGameplayBindingProvisionalCasEvidence evidence;
+    private final CanonicalGameplayAdmissionDecision originalDecision;
+    private final CanonicalGameplayOriginalNewCandidate candidate;
+    private final OriginalNewCandidateInstallationState state;
+    private final OriginalNewCandidateCreatePermission createPermission;
+
+    private OriginalNewCandidateInstallationClaim(
+        CanonicalGameplayBindingProvisionalCasEvidence evidence,
+        CanonicalGameplayAdmissionDecision originalDecision,
+        CanonicalGameplayOriginalNewCandidate candidate,
+        OriginalNewCandidateInstallationState state,
+        OriginalNewCandidateCreatePermission createPermission) {
+      this.evidence = Objects.requireNonNull(evidence, "evidence");
+      this.originalDecision = Objects.requireNonNull(originalDecision, "originalDecision");
+      this.candidate = Objects.requireNonNull(candidate, "candidate");
+      this.state = Objects.requireNonNull(state, "state");
+      this.createPermission = createPermission;
+    }
+
+    CanonicalGameplayBindingProvisionalCasEvidence evidence() {
+      return evidence;
+    }
+
+    CanonicalGameplayAdmissionDecision originalDecision() {
+      return originalDecision;
+    }
+
+    CanonicalGameplayOriginalNewCandidate candidate() {
+      return candidate;
+    }
+
+    OriginalNewCandidateInstallationState state() {
+      return state;
+    }
+
+    boolean consumeCreatePermission() {
+      return createPermission != null && createPermission.consume();
+    }
+  }
 
   private static void requireOne(int changed, String message) {
     if (changed != 1) {

@@ -787,7 +787,9 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
   }
 
   private static TestSchema newTestSchema(String prefix) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema =
+        prefix.substring(0, Math.min(prefix.length(), 31))
+            + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)

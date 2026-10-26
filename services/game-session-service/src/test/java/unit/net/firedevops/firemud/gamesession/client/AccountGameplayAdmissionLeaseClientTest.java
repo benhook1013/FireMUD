@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,12 +34,17 @@ import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.ConfirmOriginalNewGameplayAdmissionRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.IssueOriginalNewGameplayCredentialRequest;
+import net.firedevops.firemud.account.v1.OriginalNewAdmissionConfirmationResponse;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalLeaseRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
@@ -51,6 +57,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
@@ -59,6 +66,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Controlled Account peer transport proof; the returned lease is codec evidence only. */
 @Timeout(60)
@@ -76,6 +84,7 @@ class AccountGameplayAdmissionLeaseClientTest {
   private static final UUID HOLD_FENCE = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final UUID DECISION_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
   private static final String HIGH = "9007199254740993";
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
@@ -218,6 +227,145 @@ class AccountGameplayAdmissionLeaseClientTest {
               });
       assertThat(acquired.toString()).doesNotContain(JWT);
     } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void originalNewRpcCarriesOpaqueCredentialAndConfirmsOnlyAccountReadbackAnchors()
+      throws Exception {
+    var observed = new CopyOnWriteArrayList<String>();
+    var deadlines = new CopyOnWriteArrayList<Deadline>();
+    var issuedRequests = new CopyOnWriteArrayList<IssueOriginalNewGameplayCredentialRequest>();
+    var confirmationRequests =
+        new CopyOnWriteArrayList<ConfirmOriginalNewGameplayAdmissionRequest>();
+    byte[] handle = new byte[32];
+    java.util.Arrays.fill(handle, (byte) 0x2a);
+    Server server =
+        server(
+            "account-server",
+            new AccountGameplayAdmissionLeaseServiceGrpc
+                .AccountGameplayAdmissionLeaseServiceImplBase() {
+              @Override
+              public void issueOriginalNewGameplayCredential(
+                  IssueOriginalNewGameplayCredentialRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                capture(observed, deadlines);
+                issuedRequests.add(request);
+                try {
+                  var parsed =
+                      AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(
+                          request);
+                  var lease = parsed.originalLeaseEvidence();
+                  Map<?, ?> carrier = lease.carrier();
+                  Map<?, ?> scope = object(carrier, "bindingScope");
+                  Map<String, Object> claims = testBoundClaims(lease);
+                  String compactJwt = testCompactJwt(claims);
+                  UUID lineage = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+                  UUID tokenJti = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+                  OriginalNewCredential credential =
+                      AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+                          compactJwt,
+                          handle,
+                          lineage,
+                          tokenJti,
+                          jwtSha256(compactJwt),
+                          Long.parseLong((String) carrier.get("issuanceFence")),
+                          UUID.fromString((String) carrier.get("leaseId")),
+                          lease.leaseFence().longValueExact(),
+                          "102",
+                          checkpointsSha256(carrier.get("outboxCheckpoints")));
+                  var ack =
+                      OriginalAckReceiptEvidence.fromFields(
+                          1,
+                          UUID.fromString((String) carrier.get("requestId")),
+                          UUID.fromString((String) scope.get("accountId")),
+                          UUID.fromString((String) carrier.get("leaseId")),
+                          lease.leaseFence().longValueExact(),
+                          lease.sha256(),
+                          DECISION_ID,
+                          1_015_000L,
+                          "101",
+                          1_014_999L,
+                          "102");
+                  observer.onNext(
+                      AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+                          parsed, lease, State.COMMITTED, DECISION_ID, ack, credential));
+                  observer.onCompleted();
+                  credential.close();
+                } catch (RuntimeException malformed) {
+                  observer.onError(Status.INVALID_ARGUMENT.asRuntimeException());
+                }
+              }
+
+              @Override
+              public void confirmOriginalNewGameplayAdmission(
+                  ConfirmOriginalNewGameplayAdmissionRequest request,
+                  StreamObserver<OriginalNewAdmissionConfirmationResponse> observer) {
+                capture(observed, deadlines);
+                confirmationRequests.add(request);
+                var parsed =
+                    AccountGameplayAdmissionLeaseGrpcCodec
+                        .parseConfirmOriginalNewGameplayAdmissionRequest(request);
+                var lease = parsed.originalLeaseEvidence();
+                observer.onNext(
+                    AccountGameplayAdmissionLeaseGrpcCodec
+                        .toConfirmOriginalNewGameplayAdmissionResponse(
+                            parsed,
+                            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                            UUID.fromString((String) lease.carrier().get("leaseId")),
+                            lease.leaseFence().longValueExact(),
+                            1_020_000L,
+                            1_320_000L,
+                            "c".repeat(64)));
+                observer.onCompleted();
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      byte[] originalLease = lease().canonicalJson().getBytes(StandardCharsets.UTF_8);
+      OriginalNewCredential received =
+          client.issueOriginalNewBoundGameplayCredential(JWT, originalLease);
+      byte[] receivedHandle = received.opaqueRebindHandle();
+      try {
+        assertThat(receivedHandle).containsExactly(handle);
+      } finally {
+        java.util.Arrays.fill(receivedHandle, (byte) 0);
+      }
+      assertThat(received.toString()).doesNotContain(JWT, HexFormat.of().formatHex(handle));
+      var confirmation = client.confirmOriginalNewGameplayAdmission(JWT, originalLease);
+
+      assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER);
+      assertThat(issuedRequests)
+          .singleElement()
+          .satisfies(
+              request -> {
+                assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
+                assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                    .containsExactly(originalLease);
+              });
+      assertThat(confirmation.lineageId())
+          .isEqualTo(UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+      assertThat(confirmation.continuityExpiresAtMillis()).isEqualTo(1_320_000L);
+      assertThat(confirmationRequests)
+          .singleElement()
+          .satisfies(
+              request -> {
+                assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
+                assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                    .containsExactly(originalLease);
+              });
+      assertThat(deadlines)
+          .hasSize(2)
+          .allSatisfy(
+              deadline -> {
+                long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
+                assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
+              });
+      received.close();
+      java.util.Arrays.fill(originalLease, (byte) 0);
+    } finally {
+      java.util.Arrays.fill(handle, (byte) 0);
       stop(server);
     }
   }
@@ -728,6 +876,64 @@ class AccountGameplayAdmissionLeaseClientTest {
     value.put("evaluatedAt", "1000000");
     value.put("expiresAt", "1015000");
     return AccountGameplayAdmissionLeaseEvidence.fromCarrier(value);
+  }
+
+  private static Map<String, Object> testBoundClaims(AccountGameplayAdmissionLeaseEvidence lease) {
+    Map<?, ?> carrier = lease.carrier();
+    Map<?, ?> scope = object(carrier, "bindingScope");
+    Map<?, ?> baseline = object(carrier, "membershipBaseline");
+    long issuedAt = Instant.now().getEpochSecond();
+    Map<String, Object> claims = new LinkedHashMap<>();
+    claims.put("iss", GameSessionAccountDelegationProfile.ISSUER);
+    claims.put("sub", scope.get("accountId"));
+    claims.put("jti", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    claims.put("accountId", scope.get("accountId"));
+    claims.put("aud", GameSessionAccountDelegationProfile.AUDIENCE);
+    claims.put("iat", issuedAt);
+    claims.put("nbf", issuedAt);
+    claims.put("exp", issuedAt + 120L);
+    claims.put("tokenGeneration", "1");
+    claims.put("authorityTuple", carrier.get("authorityTuple"));
+    claims.put("membershipVersion", baseline.get("membershipVersion"));
+    claims.put("issuanceFence", carrier.get("issuanceFence"));
+    claims.put("tenantId", scope.get("tenantId"));
+    return claims;
+  }
+
+  private static String testCompactJwt(Map<String, Object> claims) {
+    try {
+      String header =
+          Base64.getUrlEncoder()
+              .withoutPadding()
+              .encodeToString(
+                  "{\"alg\":\"RS256\",\"kid\":\"controlled-test\"}"
+                      .getBytes(StandardCharsets.UTF_8));
+      String payload =
+          Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.writeValueAsBytes(claims));
+      return header + "." + payload + ".c2ln";
+    } catch (Exception malformed) {
+      throw new IllegalStateException("Controlled JWT fixture could not be encoded", malformed);
+    }
+  }
+
+  private static String checkpointsSha256(Object checkpoints) {
+    byte[] canonical = null;
+    try {
+      canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(checkpoints));
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+    } catch (Exception malformed) {
+      throw new IllegalStateException(
+          "Controlled checkpoint fixture could not be hashed", malformed);
+    } finally {
+      if (canonical != null) java.util.Arrays.fill(canonical, (byte) 0);
+    }
+  }
+
+  private static Map<?, ?> object(Map<?, ?> source, String field) {
+    Object value = source.get(field);
+    if (!(value instanceof Map<?, ?> object))
+      throw new IllegalArgumentException("Fixture map required");
+    return object;
   }
 
   private static String jwtSha256(String jwt) {

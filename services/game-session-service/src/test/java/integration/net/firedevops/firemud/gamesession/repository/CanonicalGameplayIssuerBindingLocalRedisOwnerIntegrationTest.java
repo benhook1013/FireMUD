@@ -750,8 +750,11 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
             intent.sourceCheckpoint(), incarnation);
     AtomicReference<CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState>
         currentState = new AtomicReference<>(initialState);
-    initialCoverageOwner(dsl, currentState::get)
-        .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    CanonicalGameplayIssuerInstalledAnchor anchor =
+        initialCoverageOwner(dsl, currentState::get)
+            .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, currentState::get);
 
     var runtimeTarget =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
