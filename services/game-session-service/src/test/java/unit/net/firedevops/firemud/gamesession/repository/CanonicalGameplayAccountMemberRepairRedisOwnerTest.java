@@ -2,13 +2,12 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
-import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
 import java.lang.reflect.Modifier;
 import java.math.BigInteger;
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.UUID;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -70,21 +69,40 @@ class CanonicalGameplayAccountMemberRepairRedisOwnerTest {
 
   @Test
   void refusesToOpenRedisWhileAnAmbientSqlTransactionIsActive() {
-    RedisURI uri =
-        RedisURI.Builder.redis("127.0.0.1", 1).withTimeout(Duration.ofMillis(250)).build();
-    RedisClient client = RedisClient.create(uri);
-    client.setOptions(ClientOptions.builder().autoReconnect(false).build());
+    RedisClient client = mock(RedisClient.class);
+    var owner =
+        new CanonicalGameplayAccountMemberRepairRedisOwner(
+            client, RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
     try {
-      var owner =
-          new CanonicalGameplayAccountMemberRepairRedisOwner(
-              client, RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
       TransactionSynchronizationManager.setActualTransactionActive(true);
       assertThatThrownBy(() -> owner.projectAndRead(operation()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("projection is unavailable");
+      verifyNoInteractions(client);
     } finally {
       TransactionSynchronizationManager.clear();
-      client.shutdown(Duration.ZERO, Duration.ofSeconds(1));
+    }
+  }
+
+  @Test
+  void refusesToOpenRedisWhileAmbientSynchronizationIsActiveWithoutSqlTransaction() {
+    RedisClient client = mock(RedisClient.class);
+    var owner =
+        new CanonicalGameplayAccountMemberRepairRedisOwner(
+            client, RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+    try {
+      TransactionSynchronizationManager.initSynchronization();
+      assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+      assertThatThrownBy(() -> owner.projectAndRead(operation()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("projection is unavailable");
+      verifyNoInteractions(client);
+    } finally {
+      if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
     }
   }
 
