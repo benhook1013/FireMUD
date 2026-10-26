@@ -8,9 +8,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
@@ -25,8 +22,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 class AccountGameplayAdmissionLeaseOwnerTest {
   private static final String NAMESPACE = "firemud";
-  private static final Clock CLOCK =
-      Clock.fixed(Instant.parse("2026-10-26T00:00:00Z"), ZoneOffset.UTC);
 
   private final AccountGameplayAdmissionCallerVerifier callerVerifier =
       mock(AccountGameplayAdmissionCallerVerifier.class);
@@ -34,8 +29,7 @@ class AccountGameplayAdmissionLeaseOwnerTest {
       mock(CanonicalGameplayAdmissionDecisionReadClient.class);
   private final DataSource dataSource = mock(DataSource.class);
   private final AccountGameplayAdmissionLeaseOwner owner =
-      new AccountGameplayAdmissionLeaseOwner(
-          callerVerifier, decisionClient, NAMESPACE, dataSource, CLOCK);
+      new AccountGameplayAdmissionLeaseOwner(callerVerifier, decisionClient, NAMESPACE, dataSource);
 
   @AfterEach
   void clearContext() {

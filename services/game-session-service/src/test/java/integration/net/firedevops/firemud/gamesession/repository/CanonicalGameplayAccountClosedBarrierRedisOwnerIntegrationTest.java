@@ -25,7 +25,13 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -470,6 +476,137 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
   }
 
   @Test
+  void acceptsClosedReadbackAfterConcurrentPrepareCommitsWhileWaitingOnInventoryClock()
+      throws Exception {
+    try (Fixture fixture = Fixture.open();
+        RedisFixture redis = RedisFixture.open()) {
+      UUID operationId = fixture.intent().operationId();
+      var readback =
+          fixture
+              .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+              .installAndRead(operationId, 0L);
+
+      String prepareApplicationName =
+          "gs_closed_receipt_prepare_" + UUID.randomUUID().toString().replace("-", "");
+      String acceptApplicationName =
+          "gs_closed_receipt_accept_" + UUID.randomUUID().toString().replace("-", "");
+      DSLContext prepareDsl = fixture.dslForApplication(prepareApplicationName);
+      DSLContext acceptDsl = fixture.dslForApplication(acceptApplicationName);
+
+      // A distinct account can still prepare while this account's acquisition intent is pending.
+      // That real owner operation advances the shared inventory revision.
+      var runtime =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              fixture.dataSource, UUID.randomUUID());
+      UUID otherAccountId = UUID.randomUUID();
+      CanonicalGameplayBindingIdentity otherCandidate =
+          new CanonicalGameplayBindingIdentity(
+              otherAccountId,
+              runtime.canonicalTenantId(),
+              runtime.playableStateNamespaceId(),
+              UUID.randomUUID(),
+              "SHARED",
+              runtime.gameInstanceUuid(),
+              runtime.gameInstanceId(),
+              UUID.randomUUID().toString(),
+              UUID.randomUUID(),
+              java.math.BigInteger.ONE,
+              GameSessionAccountDelegationProfile.ISSUER,
+              java.math.BigInteger.ONE,
+              java.math.BigInteger.ONE,
+              java.math.BigInteger.valueOf(16),
+              java.math.BigInteger.valueOf(32));
+      CanonicalGameplayBindingTransitionRequest otherRequest =
+          new CanonicalGameplayBindingTransitionRequest(
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              otherCandidate,
+              new CanonicalIssuerReservationFenceEvidence(
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  java.math.BigInteger.ONE,
+                  java.math.BigInteger.ONE,
+                  java.math.BigInteger.ONE),
+              null,
+              null);
+      java.math.BigInteger startingRevision =
+          Objects.requireNonNull(
+                  fixture
+                      .dsl
+                      .fetchSingle(
+                          "SELECT inventory_revision FROM"
+                              + " game_session_canonical_binding_inventory_clock"
+                              + " WHERE singleton_id = 1")
+                      .get("inventory_revision", java.math.BigDecimal.class),
+                  "starting inventory revision")
+              .toBigIntegerExact();
+
+      CountDownLatch inventoryClockHeld = new CountDownLatch(1);
+      CountDownLatch releaseInventoryClock = new CountDownLatch(1);
+      try (ExecutorService executor = Executors.newFixedThreadPool(3)) {
+        Future<?> clockHolder =
+            executor.submit(
+                () ->
+                    fixture.dsl.transactionResult(
+                        configuration -> {
+                          DSLContext transaction = DSL.using(configuration);
+                          if (transaction.fetchOne(
+                                  "SELECT inventory_revision FROM"
+                                      + " game_session_canonical_binding_inventory_clock"
+                                      + " WHERE singleton_id = 1 FOR UPDATE")
+                              == null) {
+                            throw new IllegalStateException("Inventory clock row is missing");
+                          }
+                          inventoryClockHeld.countDown();
+                          awaitLatch(releaseInventoryClock);
+                          return Boolean.TRUE;
+                        }));
+        try {
+          assertThat(inventoryClockHeld.await(5, TimeUnit.SECONDS)).isTrue();
+          Future<?> prepare =
+              executor.submit(
+                  () ->
+                      new CanonicalGameplayBindingInventoryRepository(prepareDsl)
+                          .prepare(otherRequest));
+          awaitInventoryClockLockWait(fixture.dsl, prepareApplicationName);
+
+          Future<StoredClosedBarrierReceipt> accepted =
+              executor.submit(
+                  () ->
+                      new CanonicalGameplayAccountAdmissionBarrierRepository(
+                              acceptDsl, Clock.fixed(NOW, ZoneOffset.UTC))
+                          .acceptClosedBarrierReadback(operationId, 0L, readback));
+          awaitInventoryClockLockWait(fixture.dsl, acceptApplicationName);
+
+          // PostgreSQL's row-lock queue releases the actual prepare first, then lets the receipt
+          // owner take a fresh READ COMMITTED snapshot after that commit.
+          releaseInventoryClock.countDown();
+          prepare.get(10, TimeUnit.SECONDS);
+          assertThat(accepted.get(10, TimeUnit.SECONDS).operationId()).isEqualTo(operationId);
+        } finally {
+          releaseInventoryClock.countDown();
+          clockHolder.get(10, TimeUnit.SECONDS);
+        }
+      }
+
+      java.math.BigInteger endingRevision =
+          Objects.requireNonNull(
+                  fixture
+                      .dsl
+                      .fetchSingle(
+                          "SELECT inventory_revision FROM"
+                              + " game_session_canonical_binding_inventory_clock"
+                              + " WHERE singleton_id = 1")
+                      .get("inventory_revision", java.math.BigDecimal.class),
+                  "ending inventory revision")
+              .toBigIntegerExact();
+      assertThat(endingRevision).isEqualTo(startingRevision.add(java.math.BigInteger.ONE));
+      assertThat(closedReceiptCount(fixture, operationId)).isEqualTo(1L);
+    }
+  }
+
+  @Test
   void expiredTrustedAcceptanceClockCannotReplaceAnExistingClosedReceipt() throws Exception {
     try (Fixture fixture = Fixture.open();
         RedisFixture redis = RedisFixture.open()) {
@@ -579,6 +716,39 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
                 operationId)
             .get("row_count", Long.class);
     return java.util.Objects.requireNonNull(count, "receipt count");
+  }
+
+  private static void awaitInventoryClockLockWait(DSLContext observer, String applicationName)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      Boolean waiting =
+          Objects.requireNonNull(
+                  observer.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                          + " WHERE pid <> pg_backend_pid() AND application_name = ?"
+                          + " AND state = 'active' AND wait_event_type = 'Lock'"
+                          + " AND query ILIKE '%game_session_canonical_binding_inventory_clock%')",
+                      applicationName),
+                  "inventory clock lock wait query")
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(waiting)) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    throw new AssertionError("Owner did not wait on the held inventory clock row");
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting to release inventory clock row");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while holding inventory clock row", interrupted);
+    }
   }
 
   private static String closedReceiptPostimage(
@@ -1037,6 +1207,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       flyway.migrate();
     }
 
+    private DSLContext dslForApplication(String applicationName) {
+      return DSL.using(dataSource(schema, applicationName), SQLDialect.POSTGRES);
+    }
+
     private static Flyway flyway(
         DriverManagerDataSource dataSource, String schema, String migrationTarget) {
       var configuration =
@@ -1105,10 +1279,21 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
     }
 
     private static DriverManagerDataSource dataSource(String schema) {
+      return dataSource(schema, null);
+    }
+
+    private static DriverManagerDataSource dataSource(String schema, String applicationName) {
       DriverManagerDataSource source = new DriverManagerDataSource();
       source.setDriverClassName("org.postgresql.Driver");
       String jdbcUrl = POSTGRES.getJdbcUrl();
-      source.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+      String applicationNameParameter =
+          applicationName == null ? "" : "&ApplicationName=" + applicationName;
+      source.setUrl(
+          jdbcUrl
+              + (jdbcUrl.contains("?") ? "&" : "?")
+              + "currentSchema="
+              + schema
+              + applicationNameParameter);
       source.setUsername(POSTGRES.getUsername());
       source.setPassword(POSTGRES.getPassword());
       return source;
