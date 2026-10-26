@@ -1413,6 +1413,11 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       image =
           "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
               + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
+      // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
     }
     return dsl.fetch(
             "SELECT ("
@@ -1430,6 +1435,11 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       image =
           "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
               + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
+      // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
     }
     return dsl.fetch(
             "SELECT xmin::text || ':' || ("

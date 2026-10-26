@@ -7,6 +7,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
@@ -52,6 +53,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       "game_session_canonical_binding_account_index_obligation";
   private static final String ISSUER_OBLIGATION =
       "game_session_canonical_binding_issuer_index_obligation";
+  private static final String ISSUER_LOCAL_RELEASE =
+      "game_session_canonical_issuer_binding_local_release_operation";
   private static final String REGION_OBLIGATION =
       "game_session_canonical_binding_region_bridge_obligation";
   private static final String GENERATION = "game_session_canonical_binding_generation";
@@ -315,6 +318,16 @@ public final class CanonicalGameplayBindingInventoryRepository {
           transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
           return loadFirstNewAdmissionAbortSource(transaction, transitionId, false);
         });
+  }
+
+  /**
+   * Read-only package seam for the local issuer release owner inside its guarded SQL transaction.
+   */
+  static CanonicalGameplayAdmissionAbortSource readFirstNewAdmissionAbortSourceInTransaction(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    Objects.requireNonNull(transaction, "transaction");
+    Objects.requireNonNull(transitionId, "transitionId");
+    return loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate);
   }
 
   /**
@@ -1679,7 +1692,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !candidate.accountId().equals(account.get("account_id", UUID.class))
         || !candidate.tenantId().equals(account.get("tenant_id", UUID.class))
         || !revision.equals(readBigInteger(account, "inventory_revision"))
-        || !"REQUIRED".equals(issuer.get("status", String.class))
+        || !("REQUIRED".equals(issuer.get("status", String.class))
+            || "RELEASED".equals(issuer.get("status", String.class)))
         || !Arrays.equals(bindingRef, issuer.get("binding_ref", byte[].class))
         || !transition.issuerReservationId().equals(issuer.get("reservation_id", UUID.class))
         || !transition.bindingGeneration().equals(readBigInteger(issuer, "binding_generation"))
@@ -1738,6 +1752,142 @@ public final class CanonicalGameplayBindingInventoryRepository {
     } else if (retainedCandidate.accountIndexState()
         != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED) {
       throw conflict("Unacknowledged retained abort has contradictory account-index state");
+    }
+
+    String issuerStatus = issuer.get("status", String.class);
+    UUID releaseOperationId = issuer.get("local_release_operation_id", UUID.class);
+    if ("REQUIRED".equals(issuerStatus)) {
+      if (releaseOperationId != null) {
+        throw conflict("Pending issuer obligation contains an unearned release operation id");
+      }
+      Record pendingRelease =
+          transaction.fetchOne(
+              "SELECT * FROM " + ISSUER_LOCAL_RELEASE + " WHERE transition_id = ?", transitionId);
+      if (pendingRelease != null
+          && (!"PENDING_PHYSICAL_PROOF".equals(pendingRelease.get("status", String.class))
+              || !revision.equals(readBigInteger(pendingRelease, "source_inventory_revision")))) {
+        throw conflict("Pending issuer release differs from its retained abort source revision");
+      }
+    } else {
+      Record releasedReservation =
+          transaction.fetchOne(
+              "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
+              transition.issuerReservationId());
+      if (releaseOperationId == null
+          || releasedReservation == null
+          || toReservation(releasedReservation).lifecycle()
+              != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) {
+        throw conflict("Released issuer obligation lacks its exact terminal reservation");
+      }
+      requireCompletedIssuerLocalRelease(
+          transaction, transitionId, bindingRef, revision, releaseOperationId);
+    }
+  }
+
+  static void requireCompletedIssuerLocalRelease(
+      DSLContext transaction,
+      UUID transitionId,
+      byte[] bindingRef,
+      BigInteger completionRevision,
+      UUID releaseOperationId) {
+    Record release =
+        transaction.fetchOne(
+            "SELECT * FROM "
+                + ISSUER_LOCAL_RELEASE
+                + " WHERE operation_id = ? AND transition_id = ?",
+            releaseOperationId,
+            transitionId);
+    if (release == null
+        || !"RELEASED".equals(release.get("status", String.class))
+        || !completionRevision.equals(readBigInteger(release, "completion_inventory_revision"))
+        || readBigInteger(release, "source_inventory_revision").compareTo(completionRevision) >= 0
+        || !Arrays.equals(bindingRef, release.get("binding_ref", byte[].class))
+        || !releaseOperationId.equals(release.get("operation_id", UUID.class))) {
+      throw conflict("Released issuer obligation lacks an exact fresh local-release receipt");
+    }
+    byte[] originalBytes = release.get("original_member_value_bytes", byte[].class);
+    byte[] releasedBytes = release.get("released_member_value_bytes", byte[].class);
+    byte[] readbackBytes = release.get("physical_readback_field_set_bytes", byte[].class);
+    String originalDigest = release.get("original_member_value_digest", String.class);
+    String releasedDigest = release.get("released_member_value_digest", String.class);
+    String readbackDigest = release.get("physical_readback_field_set_digest", String.class);
+    if (originalBytes == null
+        || releasedBytes == null
+        || readbackBytes == null
+        || !CanonicalGameplayIssuerMemberV2Codec.sha256(originalBytes).equals(originalDigest)
+        || !CanonicalGameplayIssuerMemberV2Codec.sha256(releasedBytes).equals(releasedDigest)
+        || !CanonicalGameplayIssuerMemberV2Codec.sha256(readbackBytes).equals(readbackDigest)) {
+      throw conflict("Released issuer receipt contains malformed exact-value digests");
+    }
+    Record original =
+        transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_issuer_binding_local_operation"
+                + " WHERE operation_id = ? AND transition_id = ?",
+            release.get("original_local_operation_id", UUID.class),
+            transitionId);
+    if (original == null
+        || !Arrays.equals(originalBytes, original.get("member_value_bytes", byte[].class))
+        || !Objects.equals(originalDigest, original.get("member_value_digest", String.class))
+        || !Objects.equals(
+            original.get("reservation_id", UUID.class), release.get("reservation_id", UUID.class))
+        || !Arrays.equals(original.get("binding_ref", byte[].class), bindingRef)) {
+      throw conflict(
+          "Released issuer receipt no longer retains its immutable original V1034 operation");
+    }
+    CanonicalGameplayIssuerMemberV2Value originalValue;
+    CanonicalGameplayIssuerMemberV2Value releasedValue;
+    try {
+      originalValue = CanonicalGameplayIssuerMemberV2Codec.decode(originalBytes);
+      releasedValue = CanonicalGameplayIssuerMemberV2Codec.decode(releasedBytes);
+    } catch (RuntimeException malformed) {
+      throw conflict("Released issuer receipt contains a malformed schema-v2 member");
+    }
+    BigInteger sourceRevision = readBigInteger(release, "source_inventory_revision");
+    BigInteger operationFence = readBigInteger(release, "release_operation_fence");
+    BigInteger generation = readBigInteger(release, "release_local_member_generation");
+    UUID operationId = release.get("operation_id", UUID.class);
+    CanonicalGameplayIssuerMemberV2Value expectedValue =
+        new CanonicalGameplayIssuerMemberV2Value(
+            originalValue.owner(),
+            originalValue.bindingGeneration(),
+            new CanonicalIssuerPartitionReservation(
+                originalValue.reservation().reservationId(),
+                originalValue.reservation().owner(),
+                originalValue.reservation().bindingGeneration(),
+                originalValue.reservation().transitionId(),
+                originalValue.reservation().partitionId(),
+                CanonicalIssuerPartitionReservation.Lifecycle.RELEASED,
+                originalValue.reservation().reservationFence(),
+                originalValue.reservation().issuerCoverageOperationId(),
+                originalValue.reservation().issuerCoverageOperationFence(),
+                originalValue.reservation().coverageFence(),
+                originalValue.reservation().inventorySnapshotRevision(),
+                sourceRevision),
+            originalValue.anchor(),
+            new CanonicalGameplayIssuerMemberV2Value.LocalMemberOperation(
+                operationId, operationFence, generation),
+            originalValue.issuerControlEpoch(),
+            originalValue.layoutDescriptor(),
+            originalValue.sourceCheckpoint(),
+            originalValue.incarnation());
+    if (!expectedValue.equals(releasedValue)
+        || !operationFence.add(BigInteger.ONE).equals(generation)
+        || !operationFence.equals(readBigInteger(release, "release_operation_fence"))) {
+      throw conflict("Released issuer receipt rewrites its original owner or anchor provenance");
+    }
+    Map<String, byte[]> readback;
+    try {
+      readback = CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(readbackBytes);
+    } catch (RuntimeException malformed) {
+      throw conflict("Released issuer receipt contains malformed physical field-set bytes");
+    }
+    String capacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+            releasedValue.reservation().reservationId());
+    String memberField = new String(bindingRef, java.nio.charset.StandardCharsets.UTF_8);
+    if (!Arrays.equals(readback.get(capacityField), releasedBytes)
+        || readback.containsKey(memberField)) {
+      throw conflict("Released issuer receipt lacks its exact positive terminal capacity field");
     }
   }
 
@@ -2359,7 +2509,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         candidate.characterId());
   }
 
-  private static BigInteger lockInventoryRevision(DSLContext transaction) {
+  static BigInteger lockInventoryRevision(DSLContext transaction) {
     return readBigInteger(
         Objects.requireNonNull(
             transaction.fetchOne(
@@ -3724,7 +3874,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         row.get("reservation_id", UUID.class),
         CanonicalGameplayBindingIssuerIndexObligation.Status.valueOf(
             row.get("status", String.class)),
-        readBigInteger(row, "inventory_revision"));
+        readBigInteger(row, "inventory_revision"),
+        row.get("local_release_operation_id", UUID.class));
   }
 
   private static CanonicalGameplayBindingRegionBridgeObligation toRegionObligation(Record row) {

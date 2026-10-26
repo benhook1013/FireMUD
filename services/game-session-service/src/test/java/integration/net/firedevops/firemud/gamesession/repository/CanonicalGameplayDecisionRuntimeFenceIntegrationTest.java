@@ -194,7 +194,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
                           + " SELECT transition_id FROM game_session_canonical_binding_transition"
                           + " WHERE candidate_binding_ref = ?)",
                       candidateRef))
-          .hasMessageContaining("terminal owner reconciliation");
+          .hasMessageContaining("definitive first-NEW Account abort evidence");
 
       assertThat(
               java.util.Objects.requireNonNull(

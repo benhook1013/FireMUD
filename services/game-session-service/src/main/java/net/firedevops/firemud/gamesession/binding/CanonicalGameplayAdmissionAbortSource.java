@@ -50,8 +50,10 @@ public record CanonicalGameplayAdmissionAbortSource(
       requireNonNil(orphanCleanupId, "orphanCleanupId");
       if (candidate.lifecycle()
               != CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED
-          || reservation.lifecycle()
-              != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING) {
+          || (reservation.lifecycle()
+                  != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
+              && reservation.lifecycle()
+                  != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED)) {
         throw new IllegalArgumentException("Aborted source is not retained for exact cleanup");
       }
     } else {

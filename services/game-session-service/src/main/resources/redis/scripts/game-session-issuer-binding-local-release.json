@@ -1,0 +1,39 @@
+{
+  "scriptId": "game-session.issuer-binding-local-release.v1",
+  "resourcePath": "redis/lua/game-session-issuer-binding-local-release.lua",
+  "sha256": "82a94b421725ff3fa4a7e77a16755c929700ea68c13e7b6437e7f1ae472b9b22",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "issuerPartition",
+      "ownedPrefix": "session:game:index:issuer:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "issuerId"},
+    {"name": "partitionId"},
+    {"name": "partitionCount"},
+    {"name": "partitionCapacity"},
+    {"name": "baselineFieldCountAndExactFieldValuePairs"},
+    {"name": "registeredLocalOperationCountAndExactOperationTupleAndCurrentPhase"},
+    {"name": "originalAndReleasedMemberOperationAndCapacityProof"}
+  ],
+  "category": "SESSION_ISSUER_INDEX",
+  "outcomes": [
+    {"code": "RELEASED_CAPACITY_PROJECTED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "RELEASED_MEMBER_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDSET_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS_OR_CAPACITY", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "tailLossBehavior": "The one-key release requires the exact installed v2 anchor, complete immutable baseline, current SQL registered local operations, and a genuine Account-aborted first-NEW source. It writes only the SQL-issued RELEASED reservation bytes and removes only that operation's exact original binding field. The terminal V2 value retains its original reservation coverage tuple and installed anchor; its inventoryRevision is the frozen SQL release-preparation source revision P. A later durable SQL receipt advances the current inventory clock to fresh revision R and links P, exact postimage, independent readback, and the original operation. Missing baseline/header, legacy or malformed values, unknown fields, conflicting or newer members, wrong reservation/anchor/incarnation, or changed source fail closed. RELEASE_PENDING remains capacity-counted until exact readback and the guarded SQL completion; only a retained completed RELEASED postimage is excluded from ordinary capacity. No coverage acknowledgement, barrier, or admission authority is produced.",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "v2"}
+  ],
+  "legacyPayloadShape": null
+}

@@ -11,7 +11,25 @@ public record CanonicalGameplayBindingIssuerIndexObligation(
     BigInteger bindingGeneration,
     UUID reservationId,
     Status status,
-    BigInteger inventoryRevision) {
+    BigInteger inventoryRevision,
+    UUID localReleaseOperationId) {
+  public CanonicalGameplayBindingIssuerIndexObligation(
+      UUID transitionId,
+      CanonicalGameplayBindingRef bindingRef,
+      BigInteger bindingGeneration,
+      UUID reservationId,
+      Status status,
+      BigInteger inventoryRevision) {
+    this(
+        transitionId,
+        bindingRef,
+        bindingGeneration,
+        reservationId,
+        status,
+        inventoryRevision,
+        null);
+  }
+
   public CanonicalGameplayBindingIssuerIndexObligation {
     requireNonNil(transitionId, "transitionId");
     Objects.requireNonNull(bindingRef, "bindingRef");
@@ -19,6 +37,12 @@ public record CanonicalGameplayBindingIssuerIndexObligation(
     requireNonNil(reservationId, "reservationId");
     Objects.requireNonNull(status, "status");
     requirePositive(inventoryRevision, "inventoryRevision");
+    if ((status == Status.REQUIRED && localReleaseOperationId != null)
+        || (status == Status.RELEASED
+            && (localReleaseOperationId == null
+                || localReleaseOperationId.equals(new UUID(0L, 0L))))) {
+      throw new IllegalArgumentException("Issuer release linkage must match its obligation status");
+    }
   }
 
   private static void requireNonNil(UUID value, String name) {
@@ -36,6 +60,7 @@ public record CanonicalGameplayBindingIssuerIndexObligation(
   }
 
   public enum Status {
-    REQUIRED
+    REQUIRED,
+    RELEASED
   }
 }

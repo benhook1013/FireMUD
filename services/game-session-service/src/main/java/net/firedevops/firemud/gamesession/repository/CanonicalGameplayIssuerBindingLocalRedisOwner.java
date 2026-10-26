@@ -21,6 +21,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -108,6 +109,9 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       requireNoAmbientTransaction();
       var work = projectionRepository.readPreparedPartitionWork(operation);
       requireFreshCurrentState(work);
+      if (!work.targetEntry().operationId().equals(operation.operationId())) {
+        throw unavailable();
+      }
       RedisScriptDescriptor descriptor = requireDescriptor();
       byte[] script = scriptSource(descriptor);
       byte[] key = exactPartitionKey(work);
@@ -517,6 +521,10 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
 
     public CanonicalGameplayIssuerBindingLocalOperation operation() {
       return operation;
+    }
+
+    public UUID operationId() {
+      return operation.operationId();
     }
 
     public long scriptOutcome() {

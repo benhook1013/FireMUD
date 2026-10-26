@@ -33,6 +33,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
   private static final String TRANSITION = "game_session_canonical_binding_transition";
   private static final String ISSUER_OBLIGATION =
       "game_session_canonical_binding_issuer_index_obligation";
+  private static final String ISSUER_LOCAL_RELEASE =
+      "game_session_canonical_issuer_binding_local_release_operation";
   private static final String ACCOUNT_CONTROL = "game_session_canonical_account_coverage_control";
   private static final String INVENTORY_CLOCK = "game_session_canonical_binding_inventory_clock";
   private static final int MAX_LOCAL_OPERATIONS_PER_PARTITION =
@@ -125,6 +127,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     for (Record row : operationRows) {
       LocalEntry entry = readLocalEntry(transaction, row, anchor, target);
       if (!localOperationIds.add(entry.operationId())
+          || (!entry.registeredOperationId().equals(entry.operationId())
+              && !localOperationIds.add(entry.registeredOperationId()))
           || !localReservationIds.add(entry.memberValue().reservation().reservationId())
           || !localBindingRefs.add(
               new String(
@@ -154,9 +158,9 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       }
       if (entry.countsTowardCapacity())
         localAggregateCapacity = localAggregateCapacity.add(BigInteger.ONE);
-      if (entry.operationId().equals(target.operationId())) {
-        if (!Arrays.equals(entry.exactMemberValueBytes(), target.exactMemberValueBytes())
-            || !entry.memberValue().equals(target.memberValue())
+      if (entry.registeredOperationId().equals(target.operationId())) {
+        if (!Arrays.equals(entry.exactRegisteredMemberValueBytes(), target.exactMemberValueBytes())
+            || !entry.registeredMemberValue().equals(target.memberValue())
             || !targetPartition.equals(partitionId)) {
           throw unavailable("The requested operation differs from its current SQL registration");
         }
@@ -200,7 +204,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
 
     LocalEntry targetEntry =
         entries.stream()
-            .filter(entry -> entry.operationId().equals(target.operationId()))
+            .filter(entry -> entry.registeredOperationId().equals(target.operationId()))
             .findFirst()
             .orElseThrow(() -> unavailable("The requested operation disappeared from its SQL set"));
     Map<String, byte[]> allowedFields = new HashMap<>(targetBaselineFields);
@@ -379,12 +383,21 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     }
     CurrentPhase phase =
         verifyCurrentSourceRows(
-            row, member, reservationRow, inventoryRow, transitionRow, issuerObligation);
+            transaction,
+            row,
+            member,
+            reservationRow,
+            inventoryRow,
+            transitionRow,
+            issuerObligation);
     requireAccountControlCurrent(transaction, row, member.owner().accountId());
     return new LocalEntry(
         operationId,
+        phase.operationId(),
         exactValue,
+        phase.memberValueBytes(),
         member,
+        phase.memberValue(),
         phase.bindingPresent(),
         phase.countsTowardCapacity(),
         phase.lifecycle(),
@@ -393,6 +406,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
   }
 
   private static CurrentPhase verifyCurrentSourceRows(
+      DSLContext transaction,
       Record operationRow,
       CanonicalGameplayIssuerMemberV2Value member,
       Record reservationRow,
@@ -408,6 +422,12 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     String transitionStatus = text(transitionRow, "status");
     String reservationLifecycle = text(reservationRow, "lifecycle");
     BigInteger currentReservationRevision = positive(reservationRow, "inventory_revision");
+    BigInteger currentRevision = positive(transitionRow, "inventory_revision");
+    String issuerStatus = text(issuerObligation, "status");
+    UUID releaseOperationId = issuerObligation.get("local_release_operation_id", UUID.class);
+    if (!"REQUIRED".equals(issuerStatus) && !"RELEASED".equals(issuerStatus)) {
+      throw unavailable("The current local issuer obligation has an unsupported terminal state");
+    }
     if (!uuid(reservationRow, "reservation_id").equals(original.reservationId())
         || !uuid(reservationRow, "transition_id").equals(original.transitionId())
         || !uuid(reservationRow, "reservation_fence").equals(original.reservationFence())
@@ -442,8 +462,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         || transitionRow.get("expected_prior_binding_generation") != null
         || !bytesEqual(issuerObligation, "binding_ref", owner.bindingRef().bytes())
         || !uuid(issuerObligation, "reservation_id").equals(original.reservationId())
-        || !positive(issuerObligation, "binding_generation").equals(member.bindingGeneration())
-        || !"REQUIRED".equals(text(issuerObligation, "status"))) {
+        || !positive(issuerObligation, "binding_generation").equals(member.bindingGeneration())) {
       throw unavailable(
           "The actual V29 issuer transition no longer matches its immutable local operation");
     }
@@ -455,31 +474,77 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
 
     boolean bindingPresent;
     boolean counted;
+    UUID projectedOperationId = uuid(operationRow, "operation_id");
+    byte[] projectedBytes = bytes(operationRow, "member_value_bytes");
+    CanonicalGameplayIssuerMemberV2Value projectedMember = member;
     if ("PREPARED".equals(transitionStatus)
         && "CANDIDATE_PREPARED".equals(candidateLifecycle)
-        && "RESERVED".equals(reservationLifecycle)) {
+        && "RESERVED".equals(reservationLifecycle)
+        && "REQUIRED".equals(issuerStatus)
+        && releaseOperationId == null) {
       bindingPresent = false;
       counted = true;
     } else if ("PROVISIONAL".equals(transitionStatus)
         && "PROVISIONAL".equals(candidateLifecycle)
-        && "RESERVED".equals(reservationLifecycle)) {
+        && "RESERVED".equals(reservationLifecycle)
+        && "REQUIRED".equals(issuerStatus)
+        && releaseOperationId == null) {
       bindingPresent = true;
       counted = true;
     } else if ("COMMITTED".equals(transitionStatus)
         && "ACTIVE".equals(candidateLifecycle)
-        && "BOUND".equals(reservationLifecycle)) {
+        && "BOUND".equals(reservationLifecycle)
+        && "REQUIRED".equals(issuerStatus)
+        && releaseOperationId == null) {
       bindingPresent = true;
       counted = true;
+    } else if ("ABORTED".equals(transitionStatus)
+        && "TERMINAL_UNRESOLVED".equals(candidateLifecycle)
+        && "RELEASE_PENDING".equals(reservationLifecycle)
+        && "REQUIRED".equals(issuerStatus)
+        && releaseOperationId == null) {
+      CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readProjection(
+          transaction,
+          operationRow,
+          member,
+          currentRevision,
+          transitionStatus,
+          candidateLifecycle,
+          reservationLifecycle,
+          issuerStatus,
+          null);
+      bindingPresent = true;
+      counted = true;
+    } else if ("ABORTED".equals(transitionStatus)
+        && "TERMINAL_UNRESOLVED".equals(candidateLifecycle)
+        && "RELEASED".equals(reservationLifecycle)
+        && "RELEASED".equals(issuerStatus)
+        && releaseOperationId != null) {
+      var release =
+          CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readProjection(
+              transaction,
+              operationRow,
+              member,
+              currentRevision,
+              transitionStatus,
+              candidateLifecycle,
+              reservationLifecycle,
+              issuerStatus,
+              releaseOperationId);
+      if (release == null)
+        throw unavailable("Released issuer reservation lacks its durable exact successor");
+      projectedOperationId = release.operationId();
+      projectedBytes = release.exactMemberValueBytes();
+      projectedMember = release.memberValue();
+      bindingPresent = false;
+      counted = false;
     } else {
       throw unavailable(
           "The current SQL transition phase does not qualify an issuer reservation/member projection");
     }
-    if (!positive(inventoryRow, "inventory_revision")
-            .equals(positive(transitionRow, "inventory_revision"))
-        || !positive(issuerObligation, "inventory_revision")
-            .equals(positive(transitionRow, "inventory_revision"))
-        || !positive(reservationRow, "inventory_revision")
-            .equals(positive(transitionRow, "inventory_revision"))) {
+    if (!positive(inventoryRow, "inventory_revision").equals(currentRevision)
+        || !positive(issuerObligation, "inventory_revision").equals(currentRevision)
+        || !positive(reservationRow, "inventory_revision").equals(currentRevision)) {
       throw unavailable(
           "The V29 candidate, reservation, and issuer obligation revisions are not one current transition");
     }
@@ -488,7 +553,10 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         counted,
         reservationLifecycle,
         transitionStatus,
-        positive(transitionRow, "inventory_revision"));
+        currentRevision,
+        projectedOperationId,
+        projectedBytes,
+        projectedMember);
   }
 
   private static void requireOwnerColumns(
@@ -898,6 +966,9 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       for (LocalEntry entry :
           entries.stream().sorted(Comparator.comparing(LocalEntry::operationId)).toList()) {
         update(digest, entry.operationId().toString().getBytes(StandardCharsets.US_ASCII));
+        update(
+            digest, entry.registeredOperationId().toString().getBytes(StandardCharsets.US_ASCII));
+        update(digest, entry.exactRegisteredMemberValueBytes());
         update(digest, entry.exactMemberValueBytes());
         update(digest, entry.transitionStatus().getBytes(StandardCharsets.US_ASCII));
         update(digest, entry.lifecycle().getBytes(StandardCharsets.US_ASCII));
@@ -998,11 +1069,17 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       boolean countsTowardCapacity,
       String lifecycle,
       String transitionStatus,
-      BigInteger inventoryRevision) {}
+      BigInteger inventoryRevision,
+      UUID operationId,
+      byte[] memberValueBytes,
+      CanonicalGameplayIssuerMemberV2Value memberValue) {}
 
   record LocalEntry(
+      UUID registeredOperationId,
       UUID operationId,
+      byte[] exactRegisteredMemberValueBytes,
       byte[] exactMemberValueBytes,
+      CanonicalGameplayIssuerMemberV2Value registeredMemberValue,
       CanonicalGameplayIssuerMemberV2Value memberValue,
       boolean bindingPresent,
       boolean countsTowardCapacity,
@@ -1010,7 +1087,13 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       String transitionStatus,
       BigInteger inventoryRevision) {
     LocalEntry {
+      exactRegisteredMemberValueBytes = exactRegisteredMemberValueBytes.clone();
       exactMemberValueBytes = exactMemberValueBytes.clone();
+    }
+
+    @Override
+    public byte[] exactRegisteredMemberValueBytes() {
+      return exactRegisteredMemberValueBytes.clone();
     }
 
     @Override
