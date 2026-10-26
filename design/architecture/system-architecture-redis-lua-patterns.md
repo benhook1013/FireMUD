@@ -204,11 +204,12 @@ Once ADR 0176 is implemented, these checks will be enforced via the aggregated L
 Session scripts operate only on gameplay session keys that share one `{tenantGameplayTag}` and do **not** run under a region lease. The normal mutating set is:
 
 - `session:game:{tenantGameplayTag}:<gameInstanceId>:<sessionId>`
-- `session:game:account-admission:{tenantGameplayTag}:<accountId>:<playableStateNamespaceId>` — exact account/tenant/namespace barrier checked by the final binding CAS; it shares the same `{tenantGameplayTag}` and is never combined with the global account index.
 - `session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<characterId>` — the target one-active-character key for controller identity `{tenantId, playableStateNamespaceId, characterId}`; server-derived `playableStateScope` remains binding/routing evidence, and its value/evidence retains `sessionId`, `gameInstanceId`, and `bindingGeneration`. The existing `<gameInstanceId>:<characterId>` index is current implementation drift.
 - canonical tenant-scoped account index: `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>`
 - `session:game:index:tenant:{tenantGameplayTag}`
 - `session:game:index:realm-grant:{tenantGameplayTag}:<grantScopeId>` when the binding is private/playtest grant-gated, where `grantScopeId` is the exact canonical `grant/v1` scope ID for the complete Account-owned tuple
+
+The final binding CAS additionally reads `session:game:account-admission:{tenantGameplayTag}:<accountId>:<playableStateNamespaceId>` as a checked key in the same gameplay slot; it never mutates that barrier. The separate one-key CLOSED installer owns its mutation, under the [account-admission barrier contract](./system-architecture-session-behavior.md#global-account-active-binding-index). The global account index remains excluded from this invocation.
 
 `session:game:index:account-tenant:{tenantGameplayTag}:<accountId>` is the canonical tenant-scoped account index key. It must not be shortened to `session:game:index:account:<accountId>`; that is a separate cross-tenant discovery index and is never part of a shard-local Lua invocation.
 

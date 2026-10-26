@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,6 +23,7 @@ import java.security.Signature;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
@@ -31,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding.Binding;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingFixture;
@@ -50,6 +53,8 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.BindingIdentity;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.ConfigMapSnapshot;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.AccountSecurityCutoff;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
@@ -81,6 +86,17 @@ class AccountGameplayAdmissionCallerVerifierTest {
   private static final String KID = "account-admission-test";
   private static final String GAME_SESSION_WORKLOAD =
       "spiffe://firemud/ns/firemud/sa/game-session-service";
+  private static final SourceIdentity JWKS_SOURCE_IDENTITY =
+      new SourceIdentity(
+          ENVIRONMENT,
+          CLUSTER,
+          CLUSTER_UID,
+          NAMESPACE,
+          NAMESPACE_UID,
+          CONFIG_MAP_UID,
+          "api-r1",
+          "https://kubernetes.test:6443",
+          API_CA_DIGEST);
   private static final UUID ACCOUNT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID ISSUANCE_OPERATION_ID =
       UUID.fromString("22222222-2222-4222-8222-222222222222");
@@ -126,6 +142,97 @@ class AccountGameplayAdmissionCallerVerifierTest {
     assertEquals(1L, verified.tokenIdentityFence());
     assertFalse(verified.toString().contains(compactJwt));
     verify(fixture.currentIssuanceOwner).requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI);
+  }
+
+  @Test
+  void reusesJwksCacheForSamePinAndStillReadsCurrentIssuanceForEachVerification() throws Exception {
+    Fixture fixture = new Fixture();
+    MutableClock clock = new MutableClock(NOW);
+    AccountJwtJwksTrustedSource source = trustedSource(JWKS_SOURCE_IDENTITY, fixture.jwksJson);
+    String compactJwt = fixture.signedToken(signingPair, fixture.initialClaims());
+    CommittedCandidateVerificationData committed =
+        fixture.candidate(compactJwt, ACCOUNT_ID, false, false);
+    when(fixture.currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI))
+        .thenReturn(committed);
+    AccountGameplayAdmissionCallerVerifier verifier = fixture.verifierWith(source, clock);
+
+    verifier.verifyPresentedCompactToken(compactJwt);
+    verifier.verifyPresentedCompactToken(compactJwt);
+
+    verify(source, times(2)).sourceIdentity();
+    verify(source, times(1)).load();
+    verify(fixture.currentIssuanceOwner, times(2))
+        .requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI);
+  }
+
+  @Test
+  void refreshesJwksCacheAfterMaximumAge() throws Exception {
+    Fixture fixture = new Fixture();
+    MutableClock clock = new MutableClock(NOW);
+    AccountJwtJwksTrustedSource source = trustedSource(JWKS_SOURCE_IDENTITY, fixture.jwksJson);
+    String compactJwt = fixture.signedToken(signingPair, fixture.initialClaims());
+    CommittedCandidateVerificationData committed =
+        fixture.candidate(compactJwt, ACCOUNT_ID, false, false);
+    when(fixture.currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI))
+        .thenReturn(committed);
+    AccountGameplayAdmissionCallerVerifier verifier = fixture.verifierWith(source, clock);
+
+    verifier.verifyPresentedCompactToken(compactJwt);
+    clock.advanceSeconds(31);
+    verifier.verifyPresentedCompactToken(compactJwt);
+
+    verify(source, times(2)).load();
+    verify(fixture.currentIssuanceOwner, times(2))
+        .requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI);
+  }
+
+  @Test
+  void replacesJwksCacheWhenTrustedSourceIdentityChanges() throws Exception {
+    Fixture fixture = new Fixture();
+    MutableClock clock = new MutableClock(NOW);
+    SourceIdentity rotatedIdentity =
+        new SourceIdentity(
+            ENVIRONMENT,
+            CLUSTER,
+            CLUSTER_UID,
+            NAMESPACE,
+            NAMESPACE_UID,
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "api-r2",
+            "https://kubernetes.test:6443",
+            API_CA_DIGEST);
+    AtomicReference<SourceIdentity> activeIdentity = new AtomicReference<>(JWKS_SOURCE_IDENTITY);
+    AtomicReference<String> activeJwks = new AtomicReference<>(fixture.jwksJson);
+    AccountJwtJwksTrustedSource source = mock(AccountJwtJwksTrustedSource.class);
+    when(source.sourceIdentity()).thenAnswer(invocation -> activeIdentity.get());
+    when(source.load())
+        .thenAnswer(
+            invocation ->
+                new PublicJwksSnapshot(
+                    activeIdentity.get(), activeJwks.get().getBytes(StandardCharsets.UTF_8)));
+    String oldToken = fixture.signedToken(signingPair, fixture.initialClaims());
+    CommittedCandidateVerificationData oldCandidate =
+        fixture.candidate(oldToken, ACCOUNT_ID, false, false);
+    Map<String, Object> rotatedClaims = fixture.initialClaims();
+    String rotatedToken = fixture.signedToken(mismatchedPair, rotatedClaims);
+    CommittedCandidateVerificationData rotatedCandidate =
+        fixture.candidate(rotatedToken, ACCOUNT_ID, false, false);
+    when(fixture.currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI))
+        .thenReturn(oldCandidate, rotatedCandidate);
+    AccountGameplayAdmissionCallerVerifier verifier = fixture.verifierWith(source, clock);
+
+    verifier.verifyPresentedCompactToken(oldToken);
+    activeIdentity.set(rotatedIdentity);
+    activeJwks.set("{\"keys\":[" + jwkJson(mismatchedPair, KID) + "]}");
+
+    assertUnavailable(verifier, oldToken);
+    assertSame(
+        rotatedCandidate, verifier.verifyPresentedCompactToken(rotatedToken).committedCandidate());
+
+    verify(source, times(3)).sourceIdentity();
+    verify(source, times(2)).load();
+    verify(fixture.currentIssuanceOwner, times(2))
+        .requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI);
   }
 
   @Test
@@ -200,6 +307,42 @@ class AccountGameplayAdmissionCallerVerifierTest {
     assertNull(failure.getCause());
     assertEquals("Account gameplay caller verification is unavailable", failure.getMessage());
     assertFalse(failure.toString().contains(compactJwt));
+  }
+
+  private static AccountJwtJwksTrustedSource trustedSource(
+      SourceIdentity identity, String jwksJson) {
+    AccountJwtJwksTrustedSource source = mock(AccountJwtJwksTrustedSource.class);
+    when(source.sourceIdentity()).thenReturn(identity);
+    when(source.load())
+        .thenReturn(new PublicJwksSnapshot(identity, jwksJson.getBytes(StandardCharsets.UTF_8)));
+    return source;
+  }
+
+  private static final class MutableClock extends Clock {
+    private Instant instant;
+
+    private MutableClock(Instant instant) {
+      this.instant = instant;
+    }
+
+    private void advanceSeconds(long seconds) {
+      instant = instant.plusSeconds(seconds);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return this;
+    }
+
+    @Override
+    public Instant instant() {
+      return instant;
+    }
   }
 
   private enum CandidateMismatch {
@@ -400,6 +543,11 @@ class AccountGameplayAdmissionCallerVerifierTest {
       verifier =
           new AccountGameplayAdmissionCallerVerifier(
               trustedJwksSource, currentIssuanceOwner, CLOCK);
+    }
+
+    private AccountGameplayAdmissionCallerVerifier verifierWith(
+        AccountJwtJwksTrustedSource source, Clock clock) {
+      return new AccountGameplayAdmissionCallerVerifier(source, currentIssuanceOwner, clock);
     }
 
     private Map<String, Object> initialClaims() {

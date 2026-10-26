@@ -520,6 +520,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           BigInteger currentRevision = lockInventoryRevision(transaction);
+          lockLeaseBoundRuntimeBeforeTransition(
+              transaction, expected.transitionId(), expected.bindingRef().bytes(), null);
           AccountCoverageControl control =
               lockExistingAccountCoverageControl(transaction, expected.accountId());
           requireNoActiveAccountControl(control);
@@ -2392,6 +2394,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
             request.issuerReservation().reservationId())) {
       throw conflict("The same transition identity was retried with a different exact request");
     }
+    if ("PROVISIONAL".equals(storedStatus) && expectedRef == null) {
+      // Keep the transition-first row-lock order and verify any completed member ACK from its
+      // durable operation before this exact NEW retry accepts the acknowledged candidate state.
+      loadProvisionalCasEvidence(transaction, request.transitionId(), true);
+    }
     if (expectedRef == null && findActiveController(transaction, candidate) != null) {
       throw conflict("A first-binding retry cannot proceed while an active controller exists");
     }
@@ -2399,10 +2406,16 @@ public final class CanonicalGameplayBindingInventoryRepository {
         transaction.fetchOne(
             "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
             candidate.bindingRef().bytes());
+    boolean acknowledgedOrdinaryNewRetry =
+        "PROVISIONAL".equals(storedStatus)
+            && expectedRef == null
+            && binding != null
+            && "ACKNOWLEDGED".equals(binding.get("account_index_state", String.class));
     if (binding == null
         || !toIdentity(binding).equals(candidate)
         || !expectedCandidateLifecycle.equals(binding.get("lifecycle", String.class))
-        || !"REPAIR_REQUIRED".equals(binding.get("account_index_state", String.class))
+        || (!"REPAIR_REQUIRED".equals(binding.get("account_index_state", String.class))
+            && !acknowledgedOrdinaryNewRetry)
         || !"REPAIR_REQUIRED".equals(binding.get("issuer_index_state", String.class))
         || !readBigInteger(binding, "binding_generation")
             .equals(readBigInteger(transition, "candidate_binding_generation"))
@@ -2497,13 +2510,20 @@ public final class CanonicalGameplayBindingInventoryRepository {
       throw conflict("Stored transition does not retain every required account-index obligation");
     }
     Record add = obligations.get(0);
+    boolean completedOrdinaryNewMemberRepair =
+        "PROVISIONAL".equals(transition.get("status", String.class))
+            && expectedPriorBindingRef == null
+            && "ACKNOWLEDGED".equals(add.get("status", String.class))
+            && "PRESENT_AWAITING_COVERAGE".equals(add.get("projection_state", String.class))
+            && "ACKNOWLEDGED".equals(candidate.get("account_index_state", String.class));
     BigInteger candidateGeneration = readBigInteger(transition, "candidate_binding_generation");
     BigInteger expectedPriorGeneration = request.expectedPriorBindingGeneration();
     if (!Arrays.equals(
             add.get("binding_ref", byte[].class), request.candidate().bindingRef().bytes())
         || !"ADD_OR_RETAIN".equals(add.get("action", String.class))
         || !"BEFORE_FINAL_CAS".equals(add.get("execution_phase", String.class))
-        || !"REQUIRED".equals(add.get("status", String.class))
+        || (!"REQUIRED".equals(add.get("status", String.class))
+            && !completedOrdinaryNewMemberRepair)
         || !readBigInteger(add, "binding_generation").equals(candidateGeneration)
         || !Objects.equals(add.get("account_id", UUID.class), request.candidate().accountId())
         || !Objects.equals(add.get("tenant_id", UUID.class), request.candidate().tenantId())

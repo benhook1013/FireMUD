@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.math.BigInteger;
@@ -102,10 +103,11 @@ public final class AccountGameplayAdmissionLeaseClient
                   .acquireGameplayAdmissionLease(wireRequest));
       requireLeaseCorrelation(response.originalLeaseEvidence());
       return response;
-    } catch (StatusRuntimeException unavailable) {
-      throw new IllegalStateException("Account gameplay admission lease acquisition failed");
+    } catch (StatusRuntimeException failure) {
+      throw statusFailure("Account gameplay admission lease acquisition failed", failure);
     } catch (IllegalArgumentException malformed) {
-      throw new IllegalStateException("Account returned invalid gameplay admission lease evidence");
+      throw invalidEvidence(
+          "Account returned invalid gameplay admission lease evidence", malformed);
     }
   }
 
@@ -130,10 +132,11 @@ public final class AccountGameplayAdmissionLeaseClient
                   .finalizeGameplayAdmissionLease(wireRequest));
       requireLeaseCorrelation(response.originalLeaseEvidence());
       return response;
-    } catch (StatusRuntimeException unavailable) {
-      throw new IllegalStateException("Account gameplay admission lease finalization failed");
+    } catch (StatusRuntimeException failure) {
+      throw statusFailure("Account gameplay admission lease finalization failed", failure);
     } catch (IllegalArgumentException malformed) {
-      throw new IllegalStateException("Account returned invalid gameplay admission lease evidence");
+      throw invalidEvidence(
+          "Account returned invalid gameplay admission lease evidence", malformed);
     }
   }
 
@@ -156,10 +159,11 @@ public final class AccountGameplayAdmissionLeaseClient
                   .readGameplayAdmissionLease(wireRequest));
       requireLeaseCorrelation(response.originalLeaseEvidence());
       return response;
-    } catch (StatusRuntimeException unavailable) {
-      throw new IllegalStateException("Account gameplay admission lease read failed");
+    } catch (StatusRuntimeException failure) {
+      throw statusFailure("Account gameplay admission lease read failed", failure);
     } catch (IllegalArgumentException malformed) {
-      throw new IllegalStateException("Account returned invalid gameplay admission lease evidence");
+      throw invalidEvidence(
+          "Account returned invalid gameplay admission lease evidence", malformed);
     }
   }
 
@@ -184,10 +188,11 @@ public final class AccountGameplayAdmissionLeaseClient
                   .abortGameplayAdmissionLease(wireRequest));
       requireLeaseCorrelation(response.originalLeaseEvidence());
       return response;
-    } catch (StatusRuntimeException unavailable) {
-      throw new IllegalStateException("Account gameplay admission lease abort failed");
+    } catch (StatusRuntimeException failure) {
+      throw statusFailure("Account gameplay admission lease abort failed", failure);
     } catch (IllegalArgumentException malformed) {
-      throw new IllegalStateException("Account returned invalid gameplay admission lease evidence");
+      throw invalidEvidence(
+          "Account returned invalid gameplay admission lease evidence", malformed);
     }
   }
 
@@ -200,5 +205,17 @@ public final class AccountGameplayAdmissionLeaseClient
       throw new IllegalArgumentException(
           "Account lease scope does not correlate to this Game Session workload");
     }
+  }
+
+  private static IllegalStateException statusFailure(
+      String message, StatusRuntimeException failure) {
+    StatusRuntimeException sanitizedStatus =
+        Status.fromCode(failure.getStatus().getCode()).asRuntimeException();
+    return new IllegalStateException(message, sanitizedStatus);
+  }
+
+  private static IllegalStateException invalidEvidence(
+      String message, IllegalArgumentException malformed) {
+    return new IllegalStateException(message, malformed);
   }
 }

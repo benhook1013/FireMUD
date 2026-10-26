@@ -42,7 +42,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -51,6 +54,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -61,6 +65,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -268,13 +273,11 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               fixture.signerFixture.trustedJwksSource(),
               fixture.committedIssuanceOwner,
               Clock.systemUTC());
+      AdmissionClockCapture clockCapture = new AdmissionClockCapture();
+      DataSource ownerDataSource = captureAdmissionClockReads(fixture.dataSource, clockCapture);
       AccountGameplayAdmissionLeaseOwner owner =
           new AccountGameplayAdmissionLeaseOwner(
-              callerVerifier,
-              decisionClient,
-              TEST_NAMESPACE,
-              fixture.dataSource,
-              Clock.systemUTC());
+              callerVerifier, decisionClient, TEST_NAMESPACE, ownerDataSource);
       var wireRequest =
           AccountGameplayAdmissionLeaseGrpcCodec.toAcquireRequest(
               requestId, originalJwt, candidate, target, BigInteger.ONE);
@@ -292,6 +295,20 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               parsedRequest, Objects.requireNonNull(first.get()));
 
       var originalLease = firstEvidence.originalLeaseEvidence();
+      long evaluatedAt = Long.parseLong((String) originalLease.carrier().get("evaluatedAt"));
+      assertThat(clockCapture.databaseMillis.get()).isEqualTo(evaluatedAt);
+      assertThat(clockCapture.clockConnection.get())
+          .isNotNull()
+          .isSameAs(clockCapture.operationInsertConnection.get());
+      assertThat(clockCapture.clockReadUsedEnlistedConnection.get()).isTrue();
+      assertThat(clockCapture.operationInsertUsedEnlistedConnection.get()).isTrue();
+      long originalExpiry = Long.parseLong((String) originalLease.carrier().get("expiresAt"));
+      assertThat(originalExpiry)
+          .isEqualTo(
+              Math.min(
+                  Math.addExact(
+                      evaluatedAt, AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS),
+                  Math.multiplyExact(issuanceIdentity.expiresAtEpochSecond(), 1_000L)));
       UUID originalRequestId = UUID.fromString((String) originalLease.carrier().get("requestId"));
       UUID originalLeaseId = UUID.fromString((String) originalLease.carrier().get("leaseId"));
       long originalFence = originalLease.leaseFence().longValueExact();
@@ -442,11 +459,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               Clock.systemUTC());
       AccountGameplayAdmissionLeaseOwner owner =
           new AccountGameplayAdmissionLeaseOwner(
-              callerVerifier,
-              decisionClient,
-              TEST_NAMESPACE,
-              fixture.dataSource,
-              Clock.systemUTC());
+              callerVerifier, decisionClient, TEST_NAMESPACE, fixture.dataSource);
 
       Path pkiDirectory = Files.createTempDirectory(temporaryDirectory, "gameplay-admission-mtls-");
       var pki =
@@ -687,6 +700,123 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
             .isEqualTo(allocationAfterAcquire);
         assertThat(fixture.sourceAndIssuanceImageForAuthenticatedCommit())
             .isEqualTo(sourceImageBeforeFreshCommit);
+
+        UUID abortRequestId = UUID.randomUUID();
+        var abortPublished = controlledPublishedTarget(candidate, target, abortRequestId);
+        when(decisionClient.readPublishedRealmAdmissionOwner(eq(abortPublished.selector())))
+            .thenReturn(abortPublished);
+        var allocatorBeforeAbort = fixture.leaseAllocationState(abortRequestId, accountId);
+        var sourceImageBeforeAbort = fixture.sourceAndIssuanceImageForAuthenticatedAcquire();
+        assertThat(allocatorBeforeAbort)
+            .isEqualTo(new LeaseAllocationState(1L, 1L, null, new LeaseFenceRow(accountId, 1L)));
+        var abortAcquireWire =
+            AccountGameplayAdmissionLeaseGrpcCodec.toAcquireRequest(
+                abortRequestId, originalJwt, candidate, target, BigInteger.ONE);
+        var parsedAbortAcquire =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(abortAcquireWire);
+        var abortAcquireResponse =
+            stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                .acquireGameplayAdmissionLease(abortAcquireWire);
+        var abortAcquire =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
+                parsedAbortAcquire, abortAcquireResponse);
+        assertThat(abortAcquire.state()).isEqualTo(State.PENDING);
+        AccountGameplayAdmissionLeaseEvidence abortedLease = abortAcquire.originalLeaseEvidence();
+        UUID abortedLeaseId = UUID.fromString((String) abortedLease.carrier().get("leaseId"));
+        long abortedLeaseFence = abortedLease.leaseFence().longValueExact();
+        byte[] abortedLeaseBytes = abortedLease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+        var allocationAfterAbortAcquire = fixture.leaseAllocationState(abortRequestId, accountId);
+        assertThat(allocationAfterAbortAcquire.allocationCount()).isEqualTo(2L);
+        assertThat(allocationAfterAbortAcquire.fenceCount()).isEqualTo(1L);
+        assertThat(allocationAfterAbortAcquire.allocation())
+            .isEqualTo(
+                new LeaseAllocationRow(
+                    accountId, abortRequestId, abortedLeaseId, abortedLeaseFence));
+        assertThat(allocationAfterAbortAcquire.fence()).isEqualTo(new LeaseFenceRow(accountId, 2L));
+        assertThat(fixture.sourceAndIssuanceImageForAuthenticatedAcquire())
+            .isEqualTo(sourceImageBeforeAbort);
+
+        var abortWire =
+            AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+                originalJwt, abortedLeaseBytes, null);
+        var parsedAbort = AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(abortWire);
+        var abortedResponse =
+            stub.withDeadlineAfter(5, TimeUnit.SECONDS).abortGameplayAdmissionLease(abortWire);
+        var aborted =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(parsedAbort, abortedResponse);
+        assertThat(aborted.state()).isEqualTo(State.ABORTED);
+        assertThat(aborted.bindingDecisionId()).isNull();
+        assertThat(aborted.orphanCleanupId()).isNotNull();
+        assertThat(aborted.originalLeaseEvidence().canonicalJson())
+            .isEqualTo(abortedLease.canonicalJson());
+        var retainedAbortBeforeFinalize = fixture.readLeaseOperation(abortedLease);
+        assertThat(retainedAbortBeforeFinalize.state())
+            .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.ABORTED);
+        assertThat(retainedAbortBeforeFinalize.orphanCleanupId())
+            .isEqualTo(aborted.orphanCleanupId());
+        UUID abortDecisionId = UUID.randomUUID();
+        AtomicInteger abortDecisionReads = new AtomicInteger();
+        doAnswer(
+                invocation -> {
+                  abortDecisionReads.incrementAndGet();
+                  throw Status.UNAVAILABLE
+                      .withDescription("Aborted Game Session decision is no longer readable")
+                      .asRuntimeException();
+                })
+            .when(decisionClient)
+            .read(eq(abortDecisionId), any());
+        var abortFinalizeWire =
+            AccountGameplayAdmissionLeaseGrpcCodec.toFinalizeRequest(
+                originalJwt, abortedLeaseBytes, abortDecisionId);
+        var parsedAbortFinalize =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(abortFinalizeWire);
+        long operationCountBeforeAbortFinalize = fixture.leaseOperationCount();
+        var allocatorBeforeAbortFinalize = fixture.leaseAllocationState(abortRequestId, accountId);
+        var sourceImageBeforeAbortFinalize =
+            fixture.sourceAndIssuanceImageForAuthenticatedAcquire();
+        var abortedFinalizeResponse =
+            stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                .finalizeGameplayAdmissionLease(abortFinalizeWire);
+        var abortedFinalize =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(
+                parsedAbortFinalize, abortedFinalizeResponse);
+        assertThat(abortedFinalize.state()).isEqualTo(State.ABORTED);
+        assertThat(abortedFinalize.bindingDecisionId()).isNull();
+        assertThat(abortedFinalize.orphanCleanupId()).isEqualTo(aborted.orphanCleanupId());
+        assertThat(abortedFinalize.originalAckReceipt()).isNull();
+        assertThat(abortedFinalize.originalLeaseEvidence().canonicalJson())
+            .isEqualTo(abortedLease.canonicalJson());
+        assertThat(abortDecisionReads.get()).isZero();
+        assertThat(fixture.readLeaseOperation(abortedLease)).isEqualTo(retainedAbortBeforeFinalize);
+        assertThat(fixture.leaseOperationCount()).isEqualTo(operationCountBeforeAbortFinalize);
+        assertThat(fixture.leaseAllocationState(abortRequestId, accountId))
+            .isEqualTo(allocatorBeforeAbortFinalize);
+        assertThat(fixture.sourceAndIssuanceImageForAuthenticatedAcquire())
+            .isEqualTo(sourceImageBeforeAbortFinalize);
+
+        TokenIdentity tokenIdentity = fixture.tokenIdentity(fixture.committedCandidate);
+        UUID revocationRequestId = UUID.randomUUID();
+        fixture.inSerializableTransaction(
+            () ->
+                fixture.tokenFences.beginRevocationIntent(
+                    tokenIdentity,
+                    revocationRequestId,
+                    AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                        tokenIdentity, revocationRequestId)));
+        assertThatThrownBy(
+                () ->
+                    stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                        .finalizeGameplayAdmissionLease(abortFinalizeWire))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.UNAVAILABLE));
+        assertThat(abortDecisionReads.get()).isZero();
+        assertThat(fixture.readLeaseOperation(abortedLease)).isEqualTo(retainedAbortBeforeFinalize);
+        assertThat(fixture.leaseOperationCount()).isEqualTo(operationCountBeforeAbortFinalize);
+        assertThat(fixture.leaseAllocationState(abortRequestId, accountId))
+            .isEqualTo(allocatorBeforeAbortFinalize);
       } finally {
         if (wrongRoleChannel != null) {
           wrongRoleChannel.shutdownNow();
@@ -1112,6 +1242,186 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     };
   }
 
+  private static DataSource captureAdmissionClockReads(
+      DataSource delegate, AdmissionClockCapture capture) {
+    DelegatingDataSource recordingDataSource =
+        new DelegatingDataSource(delegate) {
+          @SuppressFBWarnings(
+              value = "ODR_OPEN_DATABASE_RESOURCE",
+              justification =
+                  "The returned proxy owns this physical connection and delegates close; "
+                      + "construction failure closes the connection before rethrowing.")
+          @Override
+          public Connection getConnection() throws SQLException {
+            Connection physical = super.getConnection();
+            try {
+              return (Connection)
+                  java.lang.reflect.Proxy.newProxyInstance(
+                      Connection.class.getClassLoader(),
+                      new Class<?>[] {Connection.class},
+                      (proxy, method, arguments) -> {
+                        if (method.getName().equals("prepareStatement")
+                            && arguments != null
+                            && arguments.length > 0
+                            && arguments[0] instanceof String sql) {
+                          PreparedStatement statement =
+                              (PreparedStatement) invokeJdbc(method, physical, arguments);
+                          Connection enlistedConnection = (Connection) proxy;
+                          if (isAdmissionDatabaseClockQuery(sql)) {
+                            capture.clockConnection.set(enlistedConnection);
+                            capture.clockReadUsedEnlistedConnection.set(
+                                isEnlistedConnection(capture.dataSource, enlistedConnection));
+                            return captureClockResult(statement, capture);
+                          }
+                          if (isAdmissionLeaseInsert(sql)) {
+                            capture.operationInsertConnection.set(enlistedConnection);
+                            capture.operationInsertUsedEnlistedConnection.set(
+                                isEnlistedConnection(capture.dataSource, enlistedConnection));
+                          }
+                          return statement;
+                        }
+                        if (method.getName().equals("createStatement")) {
+                          Statement statement = (Statement) invokeJdbc(method, physical, arguments);
+                          return captureClockStatement(statement, (Connection) proxy, capture);
+                        }
+                        return invokeJdbc(method, physical, arguments);
+                      });
+            } catch (RuntimeException | Error constructionFailure) {
+              try {
+                physical.close();
+              } catch (SQLException closeFailure) {
+                constructionFailure.addSuppressed(closeFailure);
+              }
+              throw constructionFailure;
+            }
+          }
+        };
+    capture.dataSource = recordingDataSource;
+    return recordingDataSource;
+  }
+
+  private static PreparedStatement captureClockResult(
+      PreparedStatement statement, AdmissionClockCapture capture) {
+    AtomicBoolean clockResultPending = new AtomicBoolean();
+    return (PreparedStatement)
+        java.lang.reflect.Proxy.newProxyInstance(
+            PreparedStatement.class.getClassLoader(),
+            new Class<?>[] {PreparedStatement.class},
+            (proxy, method, arguments) -> {
+              Object result = invokeJdbc(method, statement, arguments);
+              if (method.getName().equals("executeQuery") && result instanceof ResultSet rows) {
+                return captureClockRows(rows, capture);
+              }
+              if (method.getName().equals("execute") && Boolean.TRUE.equals(result)) {
+                clockResultPending.set(true);
+              }
+              if (method.getName().equals("getResultSet")
+                  && clockResultPending.getAndSet(false)
+                  && result instanceof ResultSet rows) {
+                return captureClockRows(rows, capture);
+              }
+              return result;
+            });
+  }
+
+  private static Statement captureClockStatement(
+      Statement statement, Connection connection, AdmissionClockCapture capture) {
+    AtomicBoolean clockResultPending = new AtomicBoolean();
+    return (Statement)
+        java.lang.reflect.Proxy.newProxyInstance(
+            Statement.class.getClassLoader(),
+            new Class<?>[] {Statement.class},
+            (proxy, method, arguments) -> {
+              boolean clockQuery = false;
+              if (arguments != null
+                  && arguments.length > 0
+                  && arguments[0] instanceof String sql
+                  && method.getName().startsWith("execute")) {
+                clockQuery = isAdmissionDatabaseClockQuery(sql);
+                if (clockQuery) {
+                  capture.clockConnection.set(connection);
+                  capture.clockReadUsedEnlistedConnection.set(
+                      isEnlistedConnection(capture.dataSource, connection));
+                } else if (isAdmissionLeaseInsert(sql)) {
+                  capture.operationInsertConnection.set(connection);
+                  capture.operationInsertUsedEnlistedConnection.set(
+                      isEnlistedConnection(capture.dataSource, connection));
+                }
+              }
+              Object result = invokeJdbc(method, statement, arguments);
+              if (clockQuery && result instanceof ResultSet rows) {
+                return captureClockRows(rows, capture);
+              }
+              if (clockQuery && method.getName().equals("execute") && Boolean.TRUE.equals(result)) {
+                clockResultPending.set(true);
+              }
+              if (method.getName().equals("getResultSet")
+                  && clockResultPending.getAndSet(false)
+                  && result instanceof ResultSet rows) {
+                return captureClockRows(rows, capture);
+              }
+              return result;
+            });
+  }
+
+  private static ResultSet captureClockRows(ResultSet rows, AdmissionClockCapture capture) {
+    return (ResultSet)
+        java.lang.reflect.Proxy.newProxyInstance(
+            ResultSet.class.getClassLoader(),
+            new Class<?>[] {ResultSet.class},
+            (proxy, method, arguments) -> {
+              Object value = invokeJdbc(method, rows, arguments);
+              boolean columnRead =
+                  method.getName().startsWith("get")
+                      && arguments != null
+                      && arguments.length > 0
+                      && (arguments[0] instanceof Integer || arguments[0] instanceof String);
+              if (columnRead && value instanceof Number number) {
+                capture.databaseMillis.set(number.longValue());
+              } else if (columnRead
+                  && value instanceof String text
+                  && text.matches("[1-9][0-9]*")) {
+                capture.databaseMillis.set(Long.parseLong(text));
+              }
+              return value;
+            });
+  }
+
+  private static boolean isAdmissionDatabaseClockQuery(String sql) {
+    return sql.toLowerCase(Locale.ROOT)
+        .replaceAll("\\s+", "")
+        .startsWith("selectfloor(extract(epochfromclock_timestamp())*1000)::bigint");
+  }
+
+  private static boolean isAdmissionLeaseInsert(String sql) {
+    String normalizedSql = sql.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+    return normalizedSql.startsWith("insert")
+        && normalizedSql.contains("account_gameplay_admission_lease_operations");
+  }
+
+  private static boolean isEnlistedConnection(DataSource dataSource, Connection connection) {
+    Object resource = TransactionSynchronizationManager.getResource(dataSource);
+    return resource instanceof ConnectionHolder holder && holder.getConnection() == connection;
+  }
+
+  private static Object invokeJdbc(
+      java.lang.reflect.Method method, Object target, Object[] arguments) throws Throwable {
+    try {
+      return method.invoke(target, arguments);
+    } catch (java.lang.reflect.InvocationTargetException failure) {
+      throw failure.getCause();
+    }
+  }
+
+  private static final class AdmissionClockCapture {
+    private final AtomicLong databaseMillis = new AtomicLong();
+    private final AtomicReference<Connection> clockConnection = new AtomicReference<>();
+    private final AtomicReference<Connection> operationInsertConnection = new AtomicReference<>();
+    private final AtomicBoolean clockReadUsedEnlistedConnection = new AtomicBoolean();
+    private final AtomicBoolean operationInsertUsedEnlistedConnection = new AtomicBoolean();
+    private DataSource dataSource;
+  }
+
   private static Candidate admissionCandidate(Fixture fixture) {
     var identity = fixture.committedCandidate.identity();
     var authority = fixture.committedCandidate.authoritySnapshot();
@@ -1216,6 +1526,14 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
   private static CanonicalGameplayAdmissionDecisionReadClient controlledPublishedTargetClient(
       Candidate candidate, Target target, UUID requestId) {
+    var published = controlledPublishedTarget(candidate, target, requestId);
+    var decisionClient = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
+    when(decisionClient.readPublishedRealmAdmissionOwner(any())).thenReturn(published);
+    return decisionClient;
+  }
+
+  private static PublishedRealmEvidence controlledPublishedTarget(
+      Candidate candidate, Target target, UUID requestId) {
     var selector =
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
             requestId,
@@ -1235,9 +1553,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     var published = mock(PublishedRealmEvidence.class);
     when(published.selector()).thenReturn(selector);
     when(published.currentTarget()).thenReturn(target);
-    var decisionClient = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
-    when(decisionClient.readPublishedRealmAdmissionOwner(any())).thenReturn(published);
-    return decisionClient;
+    return published;
   }
 
   private static void controlProvisionalDecisionRead(
