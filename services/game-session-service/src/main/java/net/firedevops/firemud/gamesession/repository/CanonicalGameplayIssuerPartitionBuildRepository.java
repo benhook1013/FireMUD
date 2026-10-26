@@ -73,7 +73,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
           + " to_jsonb(i)::text AS source_row_json FROM game_session_canonical_gameplay_binding_inventory i"
           + " WHERE i.inventory_revision <= ?"
           + " UNION ALL SELECT 'TRANSITION' AS source_kind, t.transition_id::text AS source_key,"
-          + " t.inventory_revision AS source_revision, to_jsonb(t)::text AS source_row_json"
+          + " t.inventory_revision AS source_revision,"
+          // Preserve frozen pre-V1035 transition bytes for the absence-equivalent new NULL field.
+          // A definitive abort UUID remains part of the full captured source.
+          + " CASE WHEN to_jsonb(t)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(t) - 'admission_orphan_cleanup_id')::text"
+          + " ELSE to_jsonb(t)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"
           + " ELSE 'UNRESOLVED_LEGACY_RESERVATION' END AS source_kind,"
@@ -87,7 +92,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
           + " WHERE a.inventory_revision <= ?"
           + " UNION ALL SELECT 'ISSUER_OBLIGATION' AS source_kind,"
           + " encode(o.binding_ref, 'hex') || ':' || o.transition_id::text AS source_key,"
-          + " o.inventory_revision AS source_revision, to_jsonb(o)::text AS source_row_json"
+          + " o.inventory_revision AS source_revision,"
+          // Preserve pre-V1036 frozen bytes only for the absence-equivalent new NULL linkage.
+          // An actual release-operation identity remains significant captured source evidence.
+          + " CASE WHEN to_jsonb(o)->'local_release_operation_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(o) - 'local_release_operation_id')::text"
+          + " ELSE to_jsonb(o)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_issuer_index_obligation o"
           + " WHERE o.inventory_revision <= ?"
           + " UNION ALL SELECT 'REGION_OBLIGATION' AS source_kind,"
@@ -281,6 +291,48 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         loadAndRequireExactPlan(transaction, intent, currentRows, derived, buildPlanRow);
     if (plan.state() != CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED) {
       throw conflict("Blocked issuer partition build plan cannot issue member operations");
+    }
+    return plan;
+  }
+
+  /**
+   * Reconstructs the immutable plan retained by an already installed initial anchor. This reads
+   * only the frozen V1030 cohort and V1031 plan artifacts; it deliberately does not compare them
+   * with the now-advancing live inventory clock or source rows.
+   */
+  CanonicalGameplayIssuerPartitionBuildPlan readInstalledPlanForAnchorInTransaction(
+      DSLContext transaction, UUID bootstrapOperationId, UUID bootstrapRequestId) {
+    requireNonNil(bootstrapOperationId, "bootstrapOperationId");
+    requireNonNil(bootstrapRequestId, "bootstrapRequestId");
+    if (bootstrapOperationId.equals(bootstrapRequestId)) {
+      throw conflict("Bootstrap operation and request identities must be distinct");
+    }
+    Record control = lockControl(transaction, ISSUER);
+    if (control == null) throw conflict("Installed initial anchor lost its issuer control row");
+    Record intentRow = lockIntent(transaction, bootstrapOperationId);
+    if (intentRow == null) throw conflict("Installed initial anchor lost its bootstrap intent row");
+    BigInteger frozenRevision = readBigInteger(intentRow, "inventory_snapshot_revision");
+    CanonicalGameplayIssuerLayoutBootstrapIntent intent =
+        loadAndRequireCurrentIntent(
+            transaction,
+            control,
+            intentRow,
+            bootstrapOperationId,
+            bootstrapRequestId,
+            frozenRevision);
+    List<IssuerCohortSourceRow> frozenRows =
+        intent.cohortRows().stream().map(IssuerCohortSourceRow::new).toList();
+    DerivedPlan derived = derivePlan(intent, frozenRows);
+    Record buildPlanRow =
+        transaction.fetchOne(
+            "SELECT * FROM " + BUILD_PLAN + " WHERE bootstrap_operation_id = ? FOR UPDATE",
+            bootstrapOperationId);
+    if (buildPlanRow == null)
+      throw conflict("Installed initial anchor lost its immutable build plan");
+    CanonicalGameplayIssuerPartitionBuildPlan plan =
+        loadAndRequireExactPlan(transaction, intent, frozenRows, derived, buildPlanRow);
+    if (plan.state() != CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED) {
+      throw conflict("Installed initial anchor plan contains an unresolved blocker");
     }
     return plan;
   }

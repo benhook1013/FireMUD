@@ -51,7 +51,12 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
           + " to_jsonb(i)::text AS source_row_json FROM game_session_canonical_gameplay_binding_inventory i"
           + " WHERE i.inventory_revision <= ?"
           + " UNION ALL SELECT 'TRANSITION' AS source_kind, t.transition_id::text AS source_key,"
-          + " t.inventory_revision AS source_revision, to_jsonb(t)::text AS source_row_json"
+          + " t.inventory_revision AS source_revision,"
+          // Preserve frozen pre-V1035 transition bytes for the absence-equivalent new NULL field.
+          // A definitive abort UUID remains part of the full captured source.
+          + " CASE WHEN to_jsonb(t)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(t) - 'admission_orphan_cleanup_id')::text"
+          + " ELSE to_jsonb(t)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"
           + " ELSE 'UNRESOLVED_LEGACY_RESERVATION' END AS source_kind,"
@@ -65,7 +70,12 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
           + " WHERE a.inventory_revision <= ?"
           + " UNION ALL SELECT 'ISSUER_OBLIGATION' AS source_kind,"
           + " encode(o.binding_ref, 'hex') || ':' || o.transition_id::text AS source_key,"
-          + " o.inventory_revision AS source_revision, to_jsonb(o)::text AS source_row_json"
+          + " o.inventory_revision AS source_revision,"
+          // Preserve pre-V1036 frozen bytes only for the absence-equivalent new NULL linkage.
+          // An actual release-operation identity remains significant captured source evidence.
+          + " CASE WHEN to_jsonb(o)->'local_release_operation_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(o) - 'local_release_operation_id')::text"
+          + " ELSE to_jsonb(o)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_issuer_index_obligation o"
           + " WHERE o.inventory_revision <= ?"
           + " UNION ALL SELECT 'REGION_OBLIGATION' AS source_kind,"

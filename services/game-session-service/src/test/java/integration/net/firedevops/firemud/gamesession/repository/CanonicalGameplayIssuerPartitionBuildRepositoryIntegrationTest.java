@@ -106,7 +106,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           rowImages(testSchema.dsl(), "game_session_canonical_binding_region_bridge_obligation");
       List<String> inventoryClockBefore =
           rowImages(testSchema.dsl(), "game_session_canonical_binding_inventory_clock");
-      List<String> migrationHistoryBefore = rowImages(testSchema.dsl(), "flyway_schema_history");
+      List<String> migrationHistoryBefore = migrationHistorySnapshot(testSchema.dsl());
       List<String> retainedSourceTables =
           List.of(
               "game_session_canonical_gameplay_binding_inventory",
@@ -125,10 +125,10 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               .toList();
 
       migrateThrough1031(testSchema);
-      List<String> migrationHistoryAfter1031 = rowImages(testSchema.dsl(), "flyway_schema_history");
-      assertThat(migrationHistoryAfter1031)
-          .hasSize(migrationHistoryBefore.size() + 1)
-          .containsAll(migrationHistoryBefore);
+      List<String> migrationHistoryAfter1031 = migrationHistorySnapshot(testSchema.dsl());
+      assertThat(migrationHistoryAfter1031).hasSize(migrationHistoryBefore.size() + 1);
+      assertThat(migrationHistoryAfter1031.subList(0, migrationHistoryBefore.size()))
+          .containsExactlyElementsOf(migrationHistoryBefore);
       assertThat(
               testSchema
                   .dsl()
@@ -141,18 +141,43 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                   .toList())
           .isEqualTo(retainedRowsWithXminBefore);
 
-      migrateRemaining(testSchema);
-      List<String> migrationHistoryAfterCurrent =
-          rowImages(testSchema.dsl(), "flyway_schema_history");
-      assertThat(migrationHistoryAfterCurrent)
-          .hasSize(migrationHistoryAfter1031.size() + 1)
-          .containsAll(migrationHistoryAfter1031);
+      List<List<String>> retainedRowsWithXminAt1031 =
+          retainedSourceTables.stream()
+              .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
+              .toList();
+      migrateThrough1032(testSchema);
+      List<String> migrationHistoryAfter1032 = migrationHistorySnapshot(testSchema.dsl());
+      assertThat(migrationHistoryAfter1032).hasSize(migrationHistoryAfter1031.size() + 1);
+      assertThat(migrationHistoryAfter1032.subList(0, migrationHistoryAfter1031.size()))
+          .containsExactlyElementsOf(migrationHistoryAfter1031);
       assertThat(
               testSchema
                   .dsl()
                   .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1032'")
                   .get(0, String.class))
           .isEqualTo("V1032__canonical_issuer_bootstrap_member_operation.sql");
+      assertThat(
+              retainedSourceTables.stream()
+                  .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
+                  .toList())
+          .isEqualTo(retainedRowsWithXminAt1031);
+
+      migrateRemaining(testSchema);
+      List<String> migrationHistoryAfterCurrent = migrationHistorySnapshot(testSchema.dsl());
+      assertThat(migrationHistoryAfterCurrent.subList(0, migrationHistoryAfter1032.size()))
+          .containsExactlyElementsOf(migrationHistoryAfter1032);
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1032'")
+                  .get(0, String.class))
+          .isEqualTo("V1032__canonical_issuer_bootstrap_member_operation.sql");
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1033'")
+                  .get(0, String.class))
+          .isEqualTo("V1033__canonical_issuer_bootstrap_coverage.sql");
 
       var ready = new CountDownLatch(2);
       var start = new CountDownLatch(1);
@@ -276,7 +301,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           .containsExactlyElementsOf(regionObligationsBefore);
       assertThat(rowImages(testSchema.dsl(), "game_session_canonical_binding_inventory_clock"))
           .containsExactlyElementsOf(inventoryClockBefore);
-      List<String> migrationHistoryAfter = rowImages(testSchema.dsl(), "flyway_schema_history");
+      List<String> migrationHistoryAfter = migrationHistorySnapshot(testSchema.dsl());
       assertThat(migrationHistoryAfter).containsExactlyElementsOf(migrationHistoryAfterCurrent);
       assertThat(
               retainedSourceTables.stream()
@@ -1268,6 +1293,18 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .migrate();
   }
 
+  private static void migrateThrough1032(TestSchema testSchema) {
+    Flyway.configure()
+        .dataSource(testSchema.dataSource())
+        .schemas(testSchema.schema())
+        .defaultSchema(testSchema.schema())
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(MigrationVersion.fromVersion("1032"))
+        .load()
+        .migrate();
+  }
+
   private static void migrateRemaining(TestSchema testSchema) {
     Flyway.configure()
         .dataSource(testSchema.dataSource())
@@ -1370,18 +1407,53 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static List<String> rowImages(DSLContext dsl, String tableName) {
+    String image = "to_jsonb(retained_row)";
+    if (tableName.equals("game_session_canonical_binding_transition")) {
+      // V1035 adds only this nullable field. Keep every other source value and non-null abort UUID.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
+      // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
+    }
     return dsl.fetch(
-            "SELECT to_jsonb(retained_row)::text AS row_image FROM "
+            "SELECT ("
+                + image
+                + ")::text AS row_image FROM "
                 + tableName
-                + " retained_row ORDER BY to_jsonb(retained_row)::text")
+                + " retained_row ORDER BY 1")
         .getValues("row_image", String.class);
   }
 
   private static List<String> rowImagesWithXmin(DSLContext dsl, String tableName) {
+    String image = "to_jsonb(retained_row)";
+    if (tableName.equals("game_session_canonical_binding_transition")) {
+      // Preserve xmin and all source data while comparing the one absent-equivalent V1035 field.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
+      // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
+    }
     return dsl.fetch(
-            "SELECT xmin::text || ':' || to_jsonb(retained_row)::text AS row_image FROM "
+            "SELECT xmin::text || ':' || ("
+                + image
+                + ")::text AS row_image FROM "
                 + tableName
-                + " retained_row ORDER BY to_jsonb(retained_row)::text, xmin::text")
+                + " retained_row ORDER BY 1")
+        .getValues("row_image", String.class);
+  }
+
+  private static List<String> migrationHistorySnapshot(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT to_jsonb(history_row)::text AS row_image FROM flyway_schema_history history_row"
+                + " ORDER BY installed_rank")
         .getValues("row_image", String.class);
   }
 

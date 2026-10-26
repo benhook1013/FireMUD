@@ -165,6 +165,163 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         });
   }
 
+  /**
+   * Requalifies an installed anchor while the binding inventory clock is already locked. The caller
+   * must acquire that clock before entering this method so the issuer-control lock remains second
+   * in the shared inventory -> issuer -> account order.
+   */
+  static CanonicalGameplayIssuerInstalledAnchor
+      readInstalledAnchorForBindingPreparationInTransaction(
+          DSLContext transaction,
+          CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState) {
+    Objects.requireNonNull(transaction, "transaction");
+    Objects.requireNonNull(currentState, "currentState");
+
+    Record control =
+        transaction.fetchOne(
+            "SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    if (control == null
+        || !ISSUER.equals(requireText(control, "issuer_id"))
+        || !"INITIAL_BOOTSTRAP_INTENT".equals(requireText(control, "state"))) {
+      throw conflict("Ordinary NEW requires the positive current installed issuer-control row");
+    }
+    UUID currentOperationId = requireUuid(control, "current_operation_id");
+    BigInteger controlEpoch = readInteger(control, "control_epoch");
+    BigInteger operationFence = readInteger(control, "current_operation_fence");
+    BigInteger coverageFence = readInteger(control, "current_coverage_fence");
+    if (controlEpoch.signum() <= 0
+        || !controlEpoch.equals(operationFence)
+        || coverageFence.signum() <= 0
+        || coverageFence.equals(operationFence)
+        || readInteger(control, "last_issued_fence").compareTo(coverageFence) < 0) {
+      throw conflict("Current issuer-control tuple is malformed or no longer positive");
+    }
+
+    List<Record> issuerIntents =
+        transaction.fetch(
+            "SELECT operation_id FROM "
+                + "game_session_canonical_issuer_layout_bootstrap_intent"
+                + " WHERE issuer_id = ? ORDER BY operation_id FOR UPDATE",
+            ISSUER);
+    if (issuerIntents.size() != 1
+        || !currentOperationId.equals(requireUuid(issuerIntents.get(0), "operation_id"))) {
+      throw conflict("A conflicting or unpointed issuer layout intent prevents ordinary NEW");
+    }
+
+    Record intentRequest =
+        transaction.fetchOne(
+            "SELECT request_id FROM "
+                + "game_session_canonical_issuer_layout_bootstrap_intent"
+                + " WHERE operation_id = ? AND issuer_id = ?",
+            currentOperationId,
+            ISSUER);
+    if (intentRequest == null)
+      throw conflict("Current issuer control points to no durable layout intent");
+    CanonicalGameplayIssuerPartitionBuildPlan plan =
+        new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+            .readInstalledPlanForAnchorInTransaction(
+                transaction, currentOperationId, requireUuid(intentRequest, "request_id"));
+    CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
+    if (!currentOperationId.equals(intent.operationId())
+        || !controlEpoch.equals(intent.controlEpoch())
+        || !operationFence.equals(intent.operationFence())
+        || !coverageFence.equals(intent.coverageFence())) {
+      throw conflict("Current issuer control no longer points at its exact initial intent tuple");
+    }
+    requireCurrentState(currentState, intent);
+
+    Record anchorRow =
+        transaction.fetchOne("SELECT * FROM " + ANCHOR + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    if (anchorRow == null) {
+      throw conflict("Ordinary NEW requires an actual immutable installed issuer anchor");
+    }
+    CanonicalGameplayIssuerInstalledAnchor actual = loadAnchor(anchorRow);
+    requireAnchorMatchesPlan(actual, plan, currentState);
+    requireProofSummaryMatchesAnchor(
+        verifyCompleteProof(transaction, plan, actual.incarnationBytes()), actual);
+    requireCounterCoversAnchor(transaction, actual);
+    return actual;
+  }
+
+  /** Exact immutable baseline field set for one partition of the installed initial anchor. */
+  static InstalledAnchorPartitionProof readInstalledAnchorPartitionProof(
+      DSLContext transaction,
+      CanonicalGameplayIssuerInstalledAnchor anchor,
+      BigInteger partitionId) {
+    Objects.requireNonNull(transaction, "transaction");
+    Objects.requireNonNull(anchor, "anchor");
+    Objects.requireNonNull(partitionId, "partitionId");
+    if (partitionId.signum() < 0 || partitionId.compareTo(anchor.partitionCount()) >= 0) {
+      throw conflict("Candidate partition is outside the exact installed layout");
+    }
+    Record row =
+        transaction.fetchOne(
+            "SELECT * FROM " + PROOF + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
+            anchor.bootstrapOperationId(),
+            new BigDecimal(partitionId));
+    if (row == null
+        || !"EXACT_PHYSICAL_READBACK".equals(requireText(row, "proof_state"))
+        || !anchor.operationFence().equals(readInteger(row, "bootstrap_operation_fence"))
+        || !anchor.coverageFence().equals(readInteger(row, "bootstrap_coverage_fence"))
+        || !anchor
+            .issuerInventorySnapshotRevision()
+            .equals(readInteger(row, "issuer_inventory_snapshot_revision"))) {
+      throw conflict("Exact installed-anchor partition proof is missing or mismatched");
+    }
+    byte[] fieldSetBytes = requireBytes(row, "exact_physical_field_set_bytes");
+    String fieldSetDigest = requireText(row, "exact_physical_field_set_digest");
+    if (!fieldSetDigest.equals(CanonicalGameplayIssuerMemberV2Codec.sha256(fieldSetBytes))) {
+      throw conflict("Installed-anchor partition field set does not match its exact digest");
+    }
+    return new InstalledAnchorPartitionProof(
+        partitionId,
+        fieldSetBytes,
+        fieldSetDigest,
+        readInt(row, "physical_counted_capacity_count"),
+        readInt(row, "physical_reservation_count"),
+        readInt(row, "physical_binding_count"));
+  }
+
+  /** Refuses a post-anchor candidate whose exact field already exists in the frozen baseline. */
+  static void requireNewMemberAbsentFromBaseline(
+      InstalledAnchorPartitionProof proof,
+      CanonicalGameplayBindingRef bindingRef,
+      UUID reservationId) {
+    Objects.requireNonNull(proof, "proof");
+    Objects.requireNonNull(bindingRef, "bindingRef");
+    Objects.requireNonNull(reservationId, "reservationId");
+    Map<String, byte[]> fields = decodeFieldSet(proof.exactPhysicalFieldSetBytes());
+    if (fields.containsKey(new String(bindingRef.bytes(), StandardCharsets.UTF_8))
+        || fields.containsKey(CAPACITY_PREFIX + reservationId)) {
+      throw conflict(
+          "Installed issuer baseline already contains the requested NEW member or reservation");
+    }
+  }
+
+  record InstalledAnchorPartitionProof(
+      BigInteger partitionId,
+      byte[] exactPhysicalFieldSetBytes,
+      String exactPhysicalFieldSetDigest,
+      int physicalCountedCapacityCount,
+      int physicalReservationCount,
+      int physicalBindingCount) {
+    InstalledAnchorPartitionProof {
+      Objects.requireNonNull(partitionId, "partitionId");
+      exactPhysicalFieldSetBytes = Objects.requireNonNull(exactPhysicalFieldSetBytes).clone();
+      Objects.requireNonNull(exactPhysicalFieldSetDigest, "exactPhysicalFieldSetDigest");
+      if (physicalCountedCapacityCount < 0
+          || physicalReservationCount < 0
+          || physicalBindingCount < 0) {
+        throw new IllegalArgumentException("Installed partition proof counts must be nonnegative");
+      }
+    }
+
+    @Override
+    public byte[] exactPhysicalFieldSetBytes() {
+      return exactPhysicalFieldSetBytes.clone();
+    }
+  }
+
   void verifyExistingPartitionProof(
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.Readback readback) {
     Objects.requireNonNull(readback, "readback");
@@ -348,7 +505,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         null);
   }
 
-  private ProofSummary verifyCompleteProof(
+  private static ProofSummary verifyCompleteProof(
       DSLContext transaction,
       CanonicalGameplayIssuerPartitionBuildPlan plan,
       byte[] expectedIncarnationBytes) {
@@ -569,8 +726,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     var reservation = value.reservation();
     var anchor = value.anchor();
     var operation = value.memberOperation();
-    if (!requireUuid(row, "member_operation_id").equals(work.memberOperationId())
-        || !requireUuid(row, "bootstrap_operation_id").equals(intent.operationId())
+    if (!requireUuid(row, "bootstrap_operation_id").equals(intent.operationId())
         || !requireUuid(row, "bootstrap_request_id").equals(intent.requestId())
         || !requireUuid(row, "build_operation_id").equals(plan.buildOperationId())
         || !plan.planDigest().equals(requireText(row, "build_plan_digest"))
@@ -979,7 +1135,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     }
   }
 
-  private static byte[] encodeFieldSet(Map<String, byte[]> fields) {
+  static byte[] encodeFieldSet(Map<String, byte[]> fields) {
     List<Map.Entry<String, byte[]>> entries = new ArrayList<>(fields.entrySet());
     entries.sort(
         (left, right) ->
@@ -1005,7 +1161,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     }
   }
 
-  private static Map<String, byte[]> decodeFieldSet(byte[] encoded) {
+  static Map<String, byte[]> decodeFieldSet(byte[] encoded) {
     if (encoded.length == 0 || encoded.length > 17 * 1024 * 1024) {
       throw conflict("Persisted issuer physical field proof is outside its bound");
     }

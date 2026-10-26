@@ -44,7 +44,8 @@ public record CanonicalGameplayBindingProvisionalCasEvidence(
     // A provisional NEW transition may have a completed binding-local account-member repair.
     // The repository must still prove that durable acknowledgement before it returns this model.
     boolean accountIndexRepairWasAcknowledged =
-        transition.status() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        initialBinding
+            && transition.status() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
             && candidate.accountIndexState()
                 == CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED;
     if (candidate.lifecycle() != expectedCandidateLifecycle

@@ -54,7 +54,8 @@ public final class CanonicalGameplayAccountMemberRepairOwner {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(
           "Binding-local account member repair phases cannot share an ambient transaction");
     }

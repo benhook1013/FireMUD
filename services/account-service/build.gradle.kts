@@ -86,6 +86,7 @@ dependencies {
     testImplementation(testFixtures(project(":common-platform-core")))
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
+    integrationTestImplementation(project(path = ":game-session-service", configuration = "gameSessionClassesProof"))
     integrationTestImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }
