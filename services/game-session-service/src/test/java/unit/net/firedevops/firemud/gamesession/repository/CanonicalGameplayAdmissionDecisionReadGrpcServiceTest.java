@@ -11,6 +11,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Map;
@@ -23,12 +25,142 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisi
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Controlled parser, repository, codec and callback failure tests; native owner composition is a
  * separate PostgreSQL test.
  */
 class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
+  @Test
+  void deniesNonAccountCallerBeforeParsingOrRepositoryRead() {
+    var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
+    var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+    var observer = observer();
+    var request = GetCanonicalGameplayAdmissionDecisionRequest.getDefaultInstance();
+    doThrow(Status.PERMISSION_DENIED.asRuntimeException()).when(guard).requireAccountCaller();
+    try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
+      new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
+          .getCanonicalGameplayAdmissionDecision(request, observer);
+      codec.verify(
+          () -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request), never());
+    }
+
+    assertFailure(observer, Status.Code.PERMISSION_DENIED, null);
+    verify(guard).requireAccountCaller();
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void rejectsAmbientTransactionBeforeParsingOrRepositoryRead() {
+    var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
+    var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+    var observer = observer();
+    var request = GetCanonicalGameplayAdmissionDecisionRequest.getDefaultInstance();
+    try {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+      assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+      try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
+        new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
+            .getCanonicalGameplayAdmissionDecision(request, observer);
+        codec.verify(
+            () -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request), never());
+      }
+      assertFailure(observer, Status.Code.FAILED_PRECONDITION, null);
+      verify(guard).requireAccountCaller();
+      verifyNoInteractions(repository);
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+  }
+
+  @Test
+  void rejectsSynchronizationWithoutTransactionBeforeParsingOrRepositoryRead() {
+    var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
+    var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+    var observer = observer();
+    var request = GetCanonicalGameplayAdmissionDecisionRequest.getDefaultInstance();
+    try {
+      TransactionSynchronizationManager.initSynchronization();
+      assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
+        new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
+            .getCanonicalGameplayAdmissionDecision(request, observer);
+        codec.verify(
+            () -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request), never());
+      }
+      assertFailure(observer, Status.Code.FAILED_PRECONDITION, null);
+      verify(guard).requireAccountCaller();
+      verifyNoInteractions(repository);
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+  }
+
+  @Test
+  void invalidAndOversizedRequestsFailBeforeRepositoryRead() {
+    var invalid = GetCanonicalGameplayAdmissionDecisionRequest.getDefaultInstance();
+    var oversized =
+        GetCanonicalGameplayAdmissionDecisionRequest.newBuilder()
+            .mergeUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(
+                        100,
+                        UnknownFieldSet.Field.newBuilder()
+                            .addLengthDelimited(
+                                ByteString.copyFrom(
+                                    new byte
+                                        [CanonicalGameplayAdmissionDecisionReadGrpcCodec
+                                                .MAX_REQUEST_WIRE_BYTES
+                                            + 1]))
+                            .build())
+                    .build())
+            .build();
+
+    for (var request : new GetCanonicalGameplayAdmissionDecisionRequest[] {invalid, oversized}) {
+      var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
+      var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+      var observer = observer();
+      new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
+          .getCanonicalGameplayAdmissionDecision(request, observer);
+
+      assertFailure(observer, Status.Code.INVALID_ARGUMENT, null);
+      verify(guard).requireAccountCaller();
+      verifyNoInteractions(repository);
+    }
+  }
+
+  @Test
+  void rejectsMismatchedLeaseKindNamespaceAndCallerBeforeRepositoryRead() {
+    var cases =
+        new Runnable[] {
+          () -> {
+            var fixture = validReadFixture();
+            when(fixture.selector().expectedLeaseEvidence().leaseKind())
+                .thenReturn(
+                    net.firedevops.firemud.common.account.admission
+                        .AccountGameplayAdmissionLeaseEvidence.LeaseKind.RESUME);
+            assertDeniedLease(fixture);
+          },
+          () -> {
+            var fixture = validReadFixture();
+            when(fixture.selector().expectedLeaseEvidence().carrier())
+                .thenReturn(Map.of("targetNamespace", "other", "callerWorkload", accountPeer()));
+            assertDeniedLease(fixture);
+          },
+          () -> {
+            var fixture = validReadFixture();
+            when(fixture.selector().expectedLeaseEvidence().carrier())
+                .thenReturn(Map.of("targetNamespace", "test", "callerWorkload", "other"));
+            assertDeniedLease(fixture);
+          }
+        };
+
+    for (var testCase : cases) testCase.run();
+  }
+
   @Test
   void unexpectedRepositoryFailureTerminatesOnceWithSanitizedInternal() {
     var fixture = validReadFixture();
@@ -243,6 +375,25 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     var decisionId = decision.bindingDecisionId();
     when(selector.bindingDecisionId()).thenReturn(decisionId);
     return new ReadFixture(repository, guard, observer, request, selector, decision);
+  }
+
+  private static void assertDeniedLease(ReadFixture fixture) {
+    try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
+      codec
+          .when(
+              () -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(fixture.request()))
+          .thenReturn(fixture.selector());
+      new CanonicalGameplayAdmissionDecisionReadGrpcService(
+              fixture.repository(), fixture.guard(), "test")
+          .getCanonicalGameplayAdmissionDecision(fixture.request(), fixture.observer());
+    }
+    assertFailure(fixture.observer(), Status.Code.PERMISSION_DENIED, null);
+    verify(fixture.guard()).requireAccountCaller();
+    verifyNoInteractions(fixture.repository());
+  }
+
+  private static String accountPeer() {
+    return "spiffe://firemud/ns/test/sa/game-session-service";
   }
 
   private static void assertFailure(

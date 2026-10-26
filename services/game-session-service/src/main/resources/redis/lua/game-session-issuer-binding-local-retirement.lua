@@ -252,22 +252,21 @@ for _, operation in ipairs(operations) do
     if operation.bindingMustBePresent == '1' and binding ~= operation.memberBytes then return -1 end
   end
 end
-if revisionBefore == successorRevision then
-  if targetCapacityBefore ~= nil or actualFields[targetBindingRef] == releasedBytes then return -1 end
-  if #actual / 2 ~= allowedCount then return -1 end
-  return 2
-end
-if revisionBefore ~= expectedRevision
-    or #actual / 2 ~= allowedCount + 1
-    or targetCapacityBefore ~= releasedBytes
-    or actualFields[targetBindingRef] == releasedBytes
-    or actualCapacity ~= tonumber(plannedPartitionCapacity)
-    or actualReservations ~= baselineReservations + operationCount
-    or actualBindings < baselineBindings
-    or actualBindings > baselineBindings + registeredBindings then return -1 end
 for field, value in pairs(baseline) do
   if redis.call('HGET', KEYS[1], field) ~= value then return -1 end
 end
+if actualCapacity > tonumber(plannedPartitionCapacity)
+    or actualReservations < baselineReservations
+    or actualReservations > baselineReservations + operationCount
+    or actualBindings < baselineBindings
+    or actualBindings > baselineBindings + registeredBindings then return -1 end
+if revisionBefore == successorRevision then
+  if targetCapacityBefore ~= nil or actualFields[targetBindingRef] == releasedBytes then return -1 end
+  return 2
+end
+if revisionBefore ~= expectedRevision
+    or targetCapacityBefore ~= releasedBytes
+    or actualFields[targetBindingRef] == releasedBytes then return -1 end
 redis.call('HDEL', KEYS[1], targetCapacityField)
 redis.call('HSET', KEYS[1], revisionField, successorRevision)
 return 1

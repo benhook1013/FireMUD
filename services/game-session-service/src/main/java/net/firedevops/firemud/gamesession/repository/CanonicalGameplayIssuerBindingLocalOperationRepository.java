@@ -148,8 +148,8 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
                       .readInstalledAnchorPartitionProof(
                           transaction, anchor, reservation.partitionId());
               AccountControlSnapshot accountControl =
-                  readAndRequireAccountControl(
-                      transaction,
+                  readCapturedAccountControl(
+                      operationRow,
                       abortSource.candidate().identity().accountId(),
                       abortSource.transition().accountCoverageEvidence());
               Request request =
@@ -617,6 +617,40 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
       throw conflict("Current Account coverage control changed during ordinary NEW preparation");
     }
     return current;
+  }
+
+  private static AccountControlSnapshot readCapturedAccountControl(
+      Record operationRow,
+      UUID accountId,
+      CanonicalGameplayAccountCoverageEvidence originalEvidence) {
+    AccountControlSnapshot captured = AccountControlSnapshot.fromOperation(operationRow, accountId);
+    if (!captured.evidence().equals(originalEvidence)) {
+      throw conflict(
+          "Original Account-control provenance differs from the retained first-NEW transition");
+    }
+    return captured;
+  }
+
+  static void requireCapturedAccountControlMatchesTransition(
+      Record operationRow, Record transitionRow, UUID accountId) {
+    readCapturedAccountControl(
+        operationRow,
+        accountId,
+        CanonicalGameplayBindingInventoryRepository.toAccountCoverageEvidence(
+            transitionRow, accountId));
+  }
+
+  static void requireCurrentAccountControlMatchesCaptured(
+      DSLContext transaction, Record operationRow, UUID accountId) {
+    Record account =
+        transaction.fetchOne(
+            "SELECT * FROM " + ACCOUNT_CONTROL + " WHERE account_id = ? FOR UPDATE", accountId);
+    if (account == null
+        || !AccountControlSnapshot.from(account, accountId)
+            .equals(AccountControlSnapshot.fromOperation(operationRow, accountId))) {
+      throw conflict(
+          "Current Account coverage control differs from the original ordinary NEW checkpoint");
+    }
   }
 
   private static void insertOperation(

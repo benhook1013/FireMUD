@@ -212,6 +212,16 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .projectAndRead(localOperation);
   }
 
+  public CanonicalGameplayIssuerInstalledAnchor retryOriginalIssuerBootstrap() {
+    CanonicalGameplayIssuerInstalledAnchor originalAnchor = localOperation.anchor();
+    var partitionOwner =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
+            issuerRedisClient, issuerCatalog, issuerSource);
+    return new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
+        .completeInitialBootstrap(
+            originalAnchor.bootstrapOperationId(), originalAnchor.bootstrapRequestId());
+  }
+
   /**
    * Tuple-consistent controlled upstream target; it does not claim a live initial-admission
    * producer.

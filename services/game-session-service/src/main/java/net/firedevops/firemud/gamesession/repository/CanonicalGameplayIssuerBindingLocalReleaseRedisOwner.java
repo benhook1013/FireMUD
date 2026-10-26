@@ -194,8 +194,6 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       }
       Map<String, byte[]> baseline = work.baselineFields();
       Map<String, byte[]> allowed = work.allowedFields();
-      if (actual.size() != allowed.size())
-        throw unavailable("Issuer partition contains an unknown field");
       byte[] physicalRevision =
           actual.get(
               b64(
