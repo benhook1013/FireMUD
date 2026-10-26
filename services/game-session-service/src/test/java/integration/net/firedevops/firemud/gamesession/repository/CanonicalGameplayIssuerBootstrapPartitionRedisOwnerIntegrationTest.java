@@ -153,13 +153,19 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
             .findFirst()
             .orElseThrow();
     var value = active.expectedMemberValue();
-    assertThat(value.reservation().issuerCoverageOperationId())
-        .isNotEqualTo(value.anchor().issuerCoverageOperationId());
-    assertThat(value.reservation().issuerCoverageOperationFence())
-        .isNotEqualTo(value.anchor().operationFence());
-    assertThat(value.reservation().coverageFence()).isNotEqualTo(value.anchor().coverageFence());
-    assertThat(value.reservation().inventorySnapshotRevision())
-        .isNotEqualTo(value.anchor().issuerInventorySnapshotRevision());
+    var originalReservationCoverageTuple =
+        List.of(
+            value.reservation().issuerCoverageOperationId(),
+            value.reservation().issuerCoverageOperationFence(),
+            value.reservation().coverageFence(),
+            value.reservation().inventorySnapshotRevision());
+    var bootstrapAnchorTuple =
+        List.of(
+            value.anchor().issuerCoverageOperationId(),
+            value.anchor().operationFence(),
+            value.anchor().coverageFence(),
+            value.anchor().issuerInventorySnapshotRevision());
+    assertThat(originalReservationCoverageTuple).isNotEqualTo(bootstrapAnchorTuple);
 
     var firstOwner = owner(work, currentState(fixture, work));
     var first = firstOwner.buildAndRead(work);
@@ -283,7 +289,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     byte[] legacyV1 = "{\"schemaVersion\":1}".getBytes(StandardCharsets.UTF_8);
     administratorCommands.hset(populatedKey, bindingField, legacyV1);
 
-    assertThatThrownBy(() -> owner(populated, currentState(fixture, populated)).buildAndRead(populated))
+    assertThatThrownBy(
+            () -> owner(populated, currentState(fixture, populated)).buildAndRead(populated))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.hget(populatedKey, bindingField)).containsExactly(legacyV1);
     assertThat(administratorCommands.hlen(populatedKey)).isEqualTo(1L);
@@ -294,12 +301,14 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     byte[] foreignField = ascii("unrelated-operator-field");
     byte[] foreignValue = ascii("retained-source");
     administratorCommands.hset(foreignKey, foreignField, foreignValue);
-    assertThatThrownBy(() -> owner(foreignWork, currentState(fixture, foreignWork)).buildAndRead(foreignWork))
+    assertThatThrownBy(
+            () -> owner(foreignWork, currentState(fixture, foreignWork)).buildAndRead(foreignWork))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.hlen(foreignKey)).isEqualTo(1L);
     assertThat(administratorCommands.hget(foreignKey, foreignField)).containsExactly(foreignValue);
 
-    BigInteger expiringPartition = populated.partitionId().add(BigInteger.valueOf(3)).mod(PARTITION_COUNT);
+    BigInteger expiringPartition =
+        populated.partitionId().add(BigInteger.valueOf(3)).mod(PARTITION_COUNT);
     var expiringWork = partitionWork(fixture, expiringPartition);
     byte[] expiringKey = key(fixture, expiringPartition);
     byte[] expiringField = ascii("foreign-ttl-field");
@@ -308,10 +317,13 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     administratorCommands.pexpire(expiringKey, 60_000);
     long ttlBefore = administratorCommands.pttl(expiringKey);
 
-    assertThatThrownBy(() -> owner(expiringWork, currentState(fixture, expiringWork)).buildAndRead(expiringWork))
+    assertThatThrownBy(
+            () ->
+                owner(expiringWork, currentState(fixture, expiringWork)).buildAndRead(expiringWork))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.pttl(expiringKey)).isPositive().isLessThanOrEqualTo(ttlBefore);
-    assertThat(administratorCommands.hget(expiringKey, expiringField)).containsExactly(expiringValue);
+    assertThat(administratorCommands.hget(expiringKey, expiringField))
+        .containsExactly(expiringValue);
 
     BigInteger wrongTypePartition =
         populated.partitionId().add(BigInteger.valueOf(4)).mod(PARTITION_COUNT);
@@ -320,7 +332,9 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     byte[] wrongTypeValue = ascii("foreign-persistent-string");
     administratorCommands.set(wrongTypeKey, wrongTypeValue);
     assertThatThrownBy(
-            () -> owner(wrongTypeWork, currentState(fixture, wrongTypeWork)).buildAndRead(wrongTypeWork))
+            () ->
+                owner(wrongTypeWork, currentState(fixture, wrongTypeWork))
+                    .buildAndRead(wrongTypeWork))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.type(wrongTypeKey)).isEqualTo("string");
     assertThat(administratorCommands.get(wrongTypeKey)).containsExactly(wrongTypeValue);
@@ -398,7 +412,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
   }
 
   @Test
-  void retainedCommitAfterLostReplyReplaysFromFreshSqlWorkAndSeparatePhysicalReadback() throws Exception {
+  void retainedCommitAfterLostReplyReplaysFromFreshSqlWorkAndSeparatePhysicalReadback()
+      throws Exception {
     Fixture fixture = fixture(false);
     CanonicalGameplayIssuerBootstrapPartitionWork work =
         partitionWork(fixture, fixture.partitionId());
@@ -410,14 +425,12 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
 
     // The test deliberately discards this post-commit script reply to model a lost reply/crash.
     administratorCommands.evalsha(
-        scriptSha,
-        ScriptOutputType.INTEGER,
-        new byte[][] {key},
-        scriptArguments(work, physical));
+        scriptSha, ScriptOutputType.INTEGER, new byte[][] {key}, scriptArguments(work, physical));
 
     CanonicalGameplayIssuerBootstrapPartitionWork restartedWork =
         partitionWork(fixture, work.partitionId());
-    var readback = owner(restartedWork, currentState(fixture, restartedWork)).buildAndRead(restartedWork);
+    var readback =
+        owner(restartedWork, currentState(fixture, restartedWork)).buildAndRead(restartedWork);
     assertThat(readback.physicalFieldCount()).isEqualTo(3);
     assertThat(readback.physicalCountedCapacityCount()).isEqualTo(1);
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
@@ -432,8 +445,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
         .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
     assertThat(work.memberOperations()).hasSize(2);
     assertThat(work.memberOperations())
-        .allSatisfy(
-            operation -> assertThat(operation.countsTowardCapacity()).isTrue());
+        .allSatisfy(operation -> assertThat(operation.countsTowardCapacity()).isTrue());
     var physical = CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.expectedFields(work);
     var catalog =
         RedisScriptCatalog.fromContributions(
@@ -494,7 +506,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
           seedSamePartitionActiveBinding(testSchema.dsl(), partitionId);
       assertThat(samePartition.bindingRef().partitionId(PARTITION_COUNT)).isEqualTo(partitionId);
     }
-    if (includeReleasedReservation) insertReleasedReservation(testSchema.dsl(), active, partitionId);
+    if (includeReleasedReservation)
+      insertReleasedReservation(testSchema.dsl(), active, partitionId);
 
     UUID requestId = UUID.randomUUID();
     var source = sourceCheckpoint(BigInteger.valueOf(7));
@@ -747,7 +760,9 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     UUID originalCoverageOperationId = UUID.randomUUID();
     byte[] bindingRef =
         CanonicalGameplayBindingRef.of(
-                template.tenantId().toString(), template.gameInstanceId().toString(), sessionId.toString())
+                template.tenantId().toString(),
+                template.gameInstanceId().toString(),
+                sessionId.toString())
             .bytes();
     dsl.execute(
         "INSERT INTO game_session_canonical_issuer_partition_reservation"
@@ -792,11 +807,13 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
               ("physical-release-session-" + candidate).getBytes(StandardCharsets.UTF_8));
       byte[] ref =
           CanonicalGameplayBindingRef.of(
-                  template.tenantId().toString(), template.gameInstanceId().toString(), session.toString())
+                  template.tenantId().toString(),
+                  template.gameInstanceId().toString(),
+                  session.toString())
               .bytes();
       if (CanonicalGameplayBindingRef.fromExactBytes(ref)
-          .partitionId(PARTITION_COUNT)
-          .equals(targetPartition)
+              .partitionId(PARTITION_COUNT)
+              .equals(targetPartition)
           && !session.toString().equals(template.sessionId())) {
         return session;
       }
@@ -838,7 +855,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     String fullCapacity = "\"partitionCapacity\":\"" + PARTITION_CAPACITY + "\"";
     String reducedCapacity = "\"partitionCapacity\":\"1\"";
     if (!original.contains(fullCapacity)) {
-      throw new IllegalStateException("Controlled physical input has no exact partition capacity field");
+      throw new IllegalStateException(
+          "Controlled physical input has no exact partition capacity field");
     }
     return original.replace(fullCapacity, reducedCapacity).getBytes(StandardCharsets.UTF_8);
   }
@@ -874,7 +892,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
   private static void insertAdditionalActiveSource(
       DSLContext dsl, CanonicalGameplayBindingIdentity identity) {
     byte[] bindingRef = identity.bindingRef().bytes();
-    BigInteger partitionId = identity.bindingRef().partitionId(identity.issuerIndexPartitionCount());
+    BigInteger partitionId =
+        identity.bindingRef().partitionId(identity.issuerIndexPartitionCount());
     UUID accountIndexFence = UUID.randomUUID();
     UUID reservationId = UUID.randomUUID();
     UUID transitionId = UUID.randomUUID();
@@ -971,15 +990,17 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
   }
 
   private static boolean statusesRemainPending(DSLContext dsl) {
-    Long operations =
-        dsl.fetchOne("SELECT count(*) FROM game_session_canonical_issuer_bootstrap_member_operation")
-            .get(0, Long.class);
-    Long pending =
+    var operationsRow =
         dsl.fetchOne(
-                "SELECT count(*) FROM game_session_canonical_issuer_bootstrap_member_operation"
-                    + " WHERE member_status = 'PENDING_PHYSICAL_PROOF'")
-            .get(0, Long.class);
-    return operations.equals(pending);
+            "SELECT count(*) FROM game_session_canonical_issuer_bootstrap_member_operation");
+    var pendingRow =
+        dsl.fetchOne(
+            "SELECT count(*) FROM game_session_canonical_issuer_bootstrap_member_operation"
+                + " WHERE member_status = 'PENDING_PHYSICAL_PROOF'");
+    if (operationsRow == null || pendingRow == null) return false;
+    Long operations = operationsRow.get(0, Long.class);
+    Long pending = pendingRow.get(0, Long.class);
+    return operations != null && pending != null && operations.equals(pending);
   }
 
   private static void establishActualLegacyDisposition(DSLContext dsl) {
@@ -1042,7 +1063,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
               public void rebuildExact(
                   CanonicalGameplayLegacyMigrationOwner.FencedCohort ignored,
                   CanonicalGameplayLegacyMigrationSourceSnapshot source,
-                  net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot
+                  net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventorySnapshot
                       canonical) {
                 assertThat(canonical.bindings()).isEmpty();
                 assertThat(canonical.reservations()).isEmpty();
@@ -1051,7 +1073,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
               @Override
               public CanonicalGameplayLegacyMigrationReadback readBackExact(
                   CanonicalGameplayLegacyMigrationOwner.FencedCohort ignored,
-                  net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot
+                  net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventorySnapshot
                       canonical) {
                 assertThat(canonical.bindings()).isEmpty();
                 return new CanonicalGameplayLegacyMigrationReadback(
@@ -1099,9 +1122,11 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
 
   private void dropSchema(String schema) {
     try (Connection connection = dataSource("public").getConnection()) {
-      DSL.using(connection, SQLDialect.POSTGRES).execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+      DSL.using(connection, SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     } catch (SQLException failure) {
-      throw new IllegalStateException("Could not drop the owned issuer physical test schema", failure);
+      throw new IllegalStateException(
+          "Could not drop the owned issuer physical test schema", failure);
     }
   }
 
@@ -1112,13 +1137,17 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     uri.setTimeout(Duration.ofSeconds(5));
     RedisClient client = RedisClient.create(uri);
     client.setOptions(
-        ClientOptions.builder().autoReconnect(false).protocolVersion(io.lettuce.core.protocol.ProtocolVersion.RESP2).build());
+        ClientOptions.builder()
+            .autoReconnect(false)
+            .protocolVersion(io.lettuce.core.protocol.ProtocolVersion.RESP2)
+            .build());
     return client;
   }
 
   private static String digest(byte[] bytes) {
     try {
-      return "sha256:" + java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (java.security.NoSuchAlgorithmException impossible) {
       throw new IllegalStateException(impossible);
     }
