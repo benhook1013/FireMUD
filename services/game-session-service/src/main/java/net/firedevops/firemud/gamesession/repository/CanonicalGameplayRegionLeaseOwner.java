@@ -171,21 +171,14 @@ final class CanonicalGameplayRegionLeaseOwner {
         grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
       } else {
         requireReusableRegionGrant(
-            existingRegionInstallation,
-            source,
-            incarnation,
-            prior,
-            expectedRegionEpoch);
+            existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
         grant = existingRegionInstallation.grant;
         reusingRegionGrant = true;
       }
     }
     if (reusingRegionGrant) {
       redisOwner.requireGrantScope(
-          grant,
-          existingRegionInstallation.source,
-          expectedRegionEpoch,
-          runtimeIdentity);
+          grant, existingRegionInstallation.source, expectedRegionEpoch, runtimeIdentity);
     } else {
       redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
     }

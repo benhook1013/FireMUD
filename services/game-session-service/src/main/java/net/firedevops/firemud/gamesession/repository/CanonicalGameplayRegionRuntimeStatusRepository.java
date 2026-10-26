@@ -193,8 +193,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             source.regionId());
     if (row == null) return Optional.empty();
     TimelinePreparation preparation = toTimelinePreparation(row);
-    if (!sameRegionSource(preparation.source, source)
-        || !preparation.tenantRegionTag.equals(tag)) {
+    if (!sameRegionSource(preparation.source, source) || !preparation.tenantRegionTag.equals(tag)) {
       throw unavailable();
     }
     return Optional.of(preparation);
@@ -242,7 +241,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && current.leaseTokenCorrelation != null
         && current.leaseTokenCorrelation.equals(status.leaseTokenCorrelation())
         && current.executorFence != null
-        && status.executorFence().longValueExact() == current.executorFence
+        && status.executorFence().equals(current.executorFence)
         && current.redisMetaDigest != null
         && current.redisMetaDigest.equals(expectedMetaDigest)
         && matchesSource(status, current.source)
@@ -894,11 +893,12 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && expected.publicProduction() == actual.publicProduction()
         && expected.controlPlaneRequestId().equals(actual.controlPlaneRequestId())
         && expected.canonicalVersionId().equals(actual.canonicalVersionId())
-        && expected.expectedDescriptorRequestDigest()
+        && expected
+            .expectedDescriptorRequestDigest()
             .equals(actual.expectedDescriptorRequestDigest())
-        && expected.expectedDescriptorResultDigest()
-            .equals(actual.expectedDescriptorResultDigest())
-        && expected.expectedReleaseAttestationDigest()
+        && expected.expectedDescriptorResultDigest().equals(actual.expectedDescriptorResultDigest())
+        && expected
+            .expectedReleaseAttestationDigest()
             .equals(actual.expectedReleaseAttestationDigest());
   }
 

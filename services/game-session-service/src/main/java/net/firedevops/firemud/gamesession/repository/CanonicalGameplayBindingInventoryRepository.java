@@ -737,9 +737,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !assignment.captureId().equals(ownerStatus.captureId())
         || !assignment.graphSha256().equals(ownerStatus.graphSha256())
         || !assignment.preparationInputDigest().equals(ownerStatus.preparationInputDigest())
-        || !CanonicalGameplayRegionRuntimeStatusRepository
-            .sameLifecycleRequestExceptReadRequestId(
-                assignment.request(), ownerStatus.lifecycleRequest())
+        || !CanonicalGameplayRegionRuntimeStatusRepository.sameLifecycleRequestExceptReadRequestId(
+            assignment.request(), ownerStatus.lifecycleRequest())
         || assignment.lifecycleEpoch() != ownerStatus.lifecycleEpoch()
         || assignment.lifecycleRowVersion() != ownerStatus.lifecycleRowVersion()
         || ownerStatus.paused()

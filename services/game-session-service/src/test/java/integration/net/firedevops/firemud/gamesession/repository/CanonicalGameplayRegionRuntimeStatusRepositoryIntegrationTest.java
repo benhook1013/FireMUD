@@ -225,7 +225,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
             Instant.parse("2026-10-26T00:00:01Z"));
     var laterRequest =
         lifecycleRequest(
-            source.lifecycleRequest(), UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            source.lifecycleRequest(),
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             source.lifecycleRequest().controlPlaneRequestId());
     var laterSource = source(source, laterRequest);
 
@@ -257,9 +258,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         source(
             source,
             lifecycleRequest(
-                laterRequest,
-                laterRequest.readRequestId(),
-                "different-control-plane-request"));
+                laterRequest, laterRequest.readRequestId(), "different-control-plane-request"));
     assertThatThrownBy(() -> repository.find(changedTargetSelector))
         .isInstanceOf(IllegalStateException.class);
   }

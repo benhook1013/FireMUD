@@ -215,32 +215,30 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               CanonicalGameplayRegionRedisKeys.lease(
                   identity.tenantId(), identity.gameInstanceId(), status.regionId()));
       byte[] currentTickState =
-          redis
-              .admin()
-              .hget(ascii(initialMetaKey), ascii("current_tick_state"));
+          redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       if (!Arrays.equals(currentTickState, ascii("APPLIED"))) {
         throw new IllegalStateException("Canonical Redis initial timeline metadata is absent");
       }
       Proof firstProof =
           new Proof(
-          transitionId,
-          sessionId,
-          identity.regionId(),
-          resolved.canonicalRegionInstanceId(),
-          status.lifecycleEpoch(),
-          status.lifecycleRowVersion(),
-          status.regionEpoch(),
-          status.executorFence(),
-          acknowledged.bridgeOperationId(),
-          acknowledged.runtimeEntityId(),
-          acknowledged.entityProjectionGeneration(),
-          acknowledged.entityProjectionFence(),
-          acknowledged.entityReferenceDigest(),
-          acknowledged.worldSourceDigest(),
-          acknowledged.redisReadbackDigest(),
-          acknowledged.inventoryRevision(),
-          acknowledged.acknowledgedAt(),
-          acknowledged.equals(replayed));
+              transitionId,
+              sessionId,
+              identity.regionId(),
+              resolved.canonicalRegionInstanceId(),
+              status.lifecycleEpoch(),
+              status.lifecycleRowVersion(),
+              status.regionEpoch(),
+              status.executorFence(),
+              acknowledged.bridgeOperationId(),
+              acknowledged.runtimeEntityId(),
+              acknowledged.entityProjectionGeneration(),
+              acknowledged.entityProjectionFence(),
+              acknowledged.entityReferenceDigest(),
+              acknowledged.worldSourceDigest(),
+              acknowledged.redisReadbackDigest(),
+              acknowledged.inventoryRevision(),
+              acknowledged.acknowledgedAt(),
+              acknowledged.equals(replayed));
       if (secondBinding == null) {
         return new TwoBindingProof(firstProof, null, null, true, true, true, true, true);
       }
@@ -258,20 +256,16 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       String firstTimelineOperationId =
           firstTimelineBefore.get("initialization_operation_id", UUID.class).toString();
       String firstTimelineDigest = firstTimelineBefore.get("preparation_digest", String.class);
-      String firstWorldSourceDigest =
-          firstTimelineBefore.get("world_source_digest", String.class);
+      String firstWorldSourceDigest = firstTimelineBefore.get("world_source_digest", String.class);
       byte[] firstLifecycleRequest =
           firstTimelineBefore.get("lifecycle_request_bytes", byte[].class);
       byte[] firstMetaOperation =
-          redis
-              .admin()
-              .hget(ascii(initialMetaKey), ascii("first_timeline_operation_id"));
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_operation_id"));
       byte[] firstMetaDigest =
-          redis
-              .admin()
-              .hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
 
-      var secondResolved = secondBinding.worldRegionResolver().resolve(secondBinding.worldRequest());
+      var secondResolved =
+          secondBinding.worldRegionResolver().resolve(secondBinding.worldRequest());
       requireExactCurrentTarget(secondBinding.worldRequest(), secondBinding.currentTarget());
       UUID secondTransitionId = UUID.randomUUID();
       UUID secondSessionId = UUID.randomUUID();
@@ -329,7 +323,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
           || secondAcknowledgement.transitionId().equals(acknowledged.transitionId())
           || secondAcknowledgement.bridgeOperationId().equals(acknowledged.bridgeOperationId())
-          || !secondAcknowledgement.inventoryRevision().equals(secondLostReplyRetry.inventoryRevision())) {
+          || !secondAcknowledgement
+              .inventoryRevision()
+              .equals(secondLostReplyRetry.inventoryRevision())) {
         throw new IllegalStateException("Second binding did not retain its independent exact ACK");
       }
       var secondStatus =
@@ -346,27 +342,23 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               identity.gameInstanceId(),
               identity.regionId());
       byte[] secondMetaOperation =
-          redis
-              .admin()
-              .hget(ascii(initialMetaKey), ascii("first_timeline_operation_id"));
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_operation_id"));
       byte[] secondMetaDigest =
-          redis
-              .admin()
-              .hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
       byte[] secondMetaRegionEpoch =
           redis.admin().hget(ascii(initialMetaKey), ascii("region_epoch"));
-      byte[] secondMetaTickId =
-          redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_id"));
+      byte[] secondMetaTickId = redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_id"));
       byte[] secondMetaTickState =
           redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       boolean unchangedTimeline =
-          firstTimelineOperationId
-                  .equals(firstTimelineAfter.get("initialization_operation_id", UUID.class).toString())
+          firstTimelineOperationId.equals(
+                  firstTimelineAfter.get("initialization_operation_id", UUID.class).toString())
               && transitionId.equals(firstTimelineAfter.get("transition_id", UUID.class))
               && Arrays.equals(
                   firstLifecycleRequest,
                   firstTimelineAfter.get("lifecycle_request_bytes", byte[].class))
-              && firstTimelineDigest.equals(firstTimelineAfter.get("preparation_digest", String.class))
+              && firstTimelineDigest.equals(
+                  firstTimelineAfter.get("preparation_digest", String.class))
               && firstWorldSourceDigest.equals(
                   firstTimelineAfter.get("world_source_digest", String.class))
               && Arrays.equals(firstMetaOperation, secondMetaOperation)
@@ -501,9 +493,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             bridgeProof.transitionId());
     if (acknowledgedBefore == null
         || !"ACKNOWLEDGED".equals(acknowledgedBefore.get("status", String.class))
-        || !bridgeProof.acknowledgedInventoryRevision()
+        || !bridgeProof
+            .acknowledgedInventoryRevision()
             .equals(new BigInteger(acknowledgedBefore.get("inventory_revision").toString()))
-        || !bridgeProof.redisReadbackDigest()
+        || !bridgeProof
+            .redisReadbackDigest()
             .equals(acknowledgedBefore.get("redis_readback_digest", String.class))) {
       throw new IllegalStateException("The exact region ACK is not the retained abort source");
     }
@@ -541,25 +535,32 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         || !aborted.isAccountAborted()
         || !cleanupId.equals(aborted.orphanCleanupId())
         || aborted.candidate().lifecycle()
-            != net.firedevops.firemud.gamesession.binding
-                .CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED
+            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                .Lifecycle.TERMINAL_UNRESOLVED
         || aborted.reservation().lifecycle()
-            != net.firedevops.firemud.gamesession.binding
-                .CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
+            != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation
+                .Lifecycle.RELEASE_PENDING
         || !"ACKNOWLEDGED".equals(acknowledgedAfter.get("status", String.class))
-        || !aborted.transition().inventoryRevision()
+        || !aborted
+            .transition()
+            .inventoryRevision()
             .equals(acknowledgedAfter.get("inventory_revision", BigInteger.class))
-        || !bridgeProof.redisReadbackDigest()
+        || !bridgeProof
+            .redisReadbackDigest()
             .equals(acknowledgedAfter.get("redis_readback_digest", String.class))
-        || !bridgeProof.acknowledgedAt()
+        || !bridgeProof
+            .acknowledgedAt()
             .equals(
                 acknowledgedAfter
                     .get("acknowledged_at", java.time.OffsetDateTime.class)
                     .toInstant())
-        || !acknowledgedBefore.get("acknowledged_at", java.time.OffsetDateTime.class)
+        || !acknowledgedBefore
+            .get("acknowledged_at", java.time.OffsetDateTime.class)
             .equals(acknowledgedAfter.get("acknowledged_at", java.time.OffsetDateTime.class))
         || !acknowledgementImageBefore.equals(acknowledgementImageAfter)
-        || !aborted.transition().inventoryRevision()
+        || !aborted
+            .transition()
+            .inventoryRevision()
             .equals(new BigInteger(acknowledgedAfter.get("inventory_revision").toString()))
         || aborted.transition().status()
             != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
@@ -865,10 +866,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private static RegionRedisState snapshotRegionRedisState(
       RegionRedis redis, byte[] leaseKey, String metaKey) {
     Map<String, String> metadata = new LinkedHashMap<>();
-    redis.admin()
+    redis
+        .admin()
         .hgetall(ascii(metaKey))
-        .forEach(
-            (field, value) -> metadata.put(asciiString(field), asciiString(value)));
+        .forEach((field, value) -> metadata.put(asciiString(field), asciiString(value)));
     return new RegionRedisState(
         redis.admin().type(leaseKey),
         asciiString(redis.admin().get(leaseKey)),
