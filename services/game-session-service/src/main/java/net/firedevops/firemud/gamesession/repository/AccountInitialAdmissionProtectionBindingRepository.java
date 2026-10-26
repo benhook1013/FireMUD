@@ -327,9 +327,11 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
         || !protection.accountProtectionId().equals(row.get("account_protection_id", UUID.class))
         || protection.accountProtectionFence()
             != required(row, "account_protection_fence", Long.class)
-        || !request.gameSessionOwnerAttemptId()
+        || !request
+            .gameSessionOwnerAttemptId()
             .equals(row.get("original_owner_attempt_id", UUID.class))
-        || !request.gameSessionOwnerMutationId()
+        || !request
+            .gameSessionOwnerMutationId()
             .equals(row.get("original_owner_mutation_id", UUID.class))
         || request.gameSessionOwnerFence() != required(row, "original_owner_fence", Long.class)
         || !Arrays.equals(

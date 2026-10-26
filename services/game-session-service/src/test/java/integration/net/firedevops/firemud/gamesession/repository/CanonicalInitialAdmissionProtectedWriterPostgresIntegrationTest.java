@@ -350,9 +350,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       String historyBefore =
           harness
               .dsl()
-              .fetch(
-                  "SELECT * "
-                      + "FROM flyway_schema_history ORDER BY installed_rank")
+              .fetch("SELECT * " + "FROM flyway_schema_history ORDER BY installed_rank")
               .formatJSON();
       Record intentBefore =
           harness
@@ -380,10 +378,13 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   prepared.request().targetNamespace(),
                   target.launch().association().controlPlaneRequestId());
       assertThat(
-              harness.dsl().fetch(
-                  "SELECT version FROM flyway_schema_history "
-                      + "WHERE version IN ('1000', '1001', '1002', '1038.1', '1039', '1040') "
-                      + "AND success ORDER BY installed_rank").getValues(0, String.class))
+              harness
+                  .dsl()
+                  .fetch(
+                      "SELECT version FROM flyway_schema_history "
+                          + "WHERE version IN ('1000', '1001', '1002', '1038.1', '1039', '1040') "
+                          + "AND success ORDER BY installed_rank")
+                  .getValues(0, String.class))
           .containsExactly("1000", "1001", "1002", "1038.1", "1039", "1040");
 
       harness.migrateLatest();
@@ -393,7 +394,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   .dsl()
                   .fetch(
                       "SELECT * "
-                          + "FROM flyway_schema_history WHERE version <> '1040.1' "
+                          + "FROM flyway_schema_history WHERE version IS DISTINCT FROM '1040.1' "
                           + "ORDER BY installed_rank")
                   .formatJSON())
           .isEqualTo(historyBefore);
@@ -562,8 +563,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                                   changedProtection,
                                   "controlled denial after original lease expiry")))
           .isInstanceOf(
-              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException
-                  .class)
+              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("changed Account protection");
       assertThatThrownBy(
               () ->
@@ -576,8 +576,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                                   prepared.protection(),
                                   prepared.worldProof())))
           .isInstanceOf(
-              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException
-                  .class)
+              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("ABORTED");
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(aborted.formatJSON());

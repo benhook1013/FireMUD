@@ -76,7 +76,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   private static final String SHARED_SAGA_MIGRATION_LOCATION =
       "filesystem:"
           + Path.of("../common-saga/src/main/resources/db/migration/saga")
-              .toAbsolutePath().normalize();
+              .toAbsolutePath()
+              .normalize();
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -902,14 +903,15 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     }
 
     void migrateLatest() {
-      Flyway flyway = Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-            .locations(MIGRATION_LOCATION, SHARED_SAGA_MIGRATION_LOCATION)
-          .load();
+      Flyway flyway =
+          Flyway.configure()
+              .dataSource(dataSource)
+              .schemas(schema)
+              .defaultSchema(schema)
+              .table("flyway_schema_history")
+              .placeholders(java.util.Map.of("serviceSchema", schema))
+              .locations(MIGRATION_LOCATION, SHARED_SAGA_MIGRATION_LOCATION)
+              .load();
       flyway.migrate();
       flyway.validate();
     }
