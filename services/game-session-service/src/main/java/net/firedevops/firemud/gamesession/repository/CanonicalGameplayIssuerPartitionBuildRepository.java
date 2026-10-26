@@ -25,8 +25,11 @@ import java.util.UUID;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationDisposition;
+import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -217,6 +220,169 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
                 "SELECT * FROM " + BUILD_PLAN + " WHERE bootstrap_operation_id = ? FOR UPDATE",
                 bootstrapOperationId),
             "saved issuer partition build plan must be readable"));
+  }
+
+  /**
+   * Reads one exact work item from an already persisted complete PREPARED plan using the caller's
+   * transaction. This deliberately repeats the same locks and exact source/plan checks as plan
+   * preparation; it does not open a nested transaction or create a missing plan.
+   */
+  PreparedMemberWork readPreparedMemberWorkInTransaction(
+      DSLContext transaction,
+      UUID bootstrapOperationId,
+      UUID bootstrapRequestId,
+      long workOrdinal) {
+    return readPreparedMemberWorkFromVerifiedPlan(
+        readPreparedPlanInTransaction(transaction, bootstrapOperationId, bootstrapRequestId),
+        workOrdinal);
+  }
+
+  /** Loads and locks the already persisted complete PREPARED plan and its current sources. */
+  CanonicalGameplayIssuerPartitionBuildPlan readPreparedPlanInTransaction(
+      DSLContext transaction, UUID bootstrapOperationId, UUID bootstrapRequestId) {
+    requireNonNil(bootstrapOperationId, "bootstrapOperationId");
+    requireNonNil(bootstrapRequestId, "bootstrapRequestId");
+    if (bootstrapOperationId.equals(bootstrapRequestId)) {
+      throw conflict("Bootstrap operation and request identities must be distinct");
+    }
+    BigInteger currentInventoryRevision = lockInventoryRevision(transaction);
+    Record control = lockControl(transaction, ISSUER);
+    if (control == null) {
+      Record orphan =
+          transaction.fetchOne(
+              "SELECT operation_id FROM " + BOOTSTRAP_INTENT + " WHERE issuer_id = ?", ISSUER);
+      if (orphan != null) {
+        throw conflict("Pending issuer-bootstrap intent lost its positive current control row");
+      }
+      throw conflict("Exact pending issuer-bootstrap control row is missing");
+    }
+    Record intentRow = lockIntent(transaction, bootstrapOperationId);
+    if (intentRow == null) throw conflict("Exact pending issuer-bootstrap operation is missing");
+    CanonicalGameplayIssuerLayoutBootstrapIntent intent =
+        loadAndRequireCurrentIntent(
+            transaction,
+            control,
+            intentRow,
+            bootstrapOperationId,
+            bootstrapRequestId,
+            currentInventoryRevision);
+    List<IssuerCohortSourceRow> currentRows =
+        captureCurrentCohort(transaction, intent.inventorySnapshotRevision());
+    requireSameCohort(intent.cohortRows(), currentRows);
+    DerivedPlan derived = derivePlan(intent, currentRows);
+    Record buildPlanRow =
+        transaction.fetchOne(
+            "SELECT * FROM " + BUILD_PLAN + " WHERE bootstrap_operation_id = ? FOR UPDATE",
+            bootstrapOperationId);
+    if (buildPlanRow == null) {
+      throw conflict("Exact complete issuer partition build plan is missing");
+    }
+    CanonicalGameplayIssuerPartitionBuildPlan plan =
+        loadAndRequireExactPlan(transaction, intent, currentRows, derived, buildPlanRow);
+    if (plan.state() != CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED) {
+      throw conflict("Blocked issuer partition build plan cannot issue member operations");
+    }
+    return plan;
+  }
+
+  /** Extracts typed source only from a plan returned by {@link #readPreparedPlanInTransaction}. */
+  PreparedMemberWork readPreparedMemberWorkFromVerifiedPlan(
+      CanonicalGameplayIssuerPartitionBuildPlan plan, long workOrdinal) {
+    Objects.requireNonNull(plan, "plan");
+    if (plan.state() != CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED) {
+      throw conflict("Blocked issuer partition build plan cannot issue member operations");
+    }
+    if (workOrdinal < 0) throw conflict("Member work ordinal must not be negative");
+    if (workOrdinal >= plan.memberWorks().size()) {
+      throw conflict("Member work ordinal is outside the exact prepared plan");
+    }
+    CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
+    CanonicalGameplayIssuerPartitionBuildPlan.MemberWork work =
+        plan.memberWorks().get(Math.toIntExact(workOrdinal));
+    int sourceIndex = Math.toIntExact(work.reservationSourceRowOrdinal());
+    if (sourceIndex >= intent.cohortRows().size()) {
+      throw conflict("Prepared member work lost its exact reservation cohort row");
+    }
+    CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow sourceRow =
+        intent.cohortRows().get(sourceIndex);
+    if (sourceRow.kind() != CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION
+        || !sourceRow.sourceRowDigest().equals(work.reservationSourceRowDigest())) {
+      throw conflict("Prepared member work no longer links to its exact original reservation");
+    }
+    ReservationSource source = parseReservation(sourceRow);
+    CanonicalGameplayBindingIdentity owner =
+        new CanonicalGameplayBindingIdentity(
+            UUID.fromString(source.accountId()),
+            UUID.fromString(source.tenantId()),
+            UUID.fromString(source.namespaceId()),
+            UUID.fromString(source.characterId()),
+            source.playableStateScope(),
+            UUID.fromString(source.gameInstanceId()),
+            source.runtimeGameInstanceId().longValueExact(),
+            source.sessionId(),
+            UUID.fromString(source.regionId()),
+            source.regionEpoch(),
+            source.issuerId(),
+            source.issuerAuthGeneration(),
+            source.layoutVersion(),
+            source.partitionCount(),
+            source.partitionCapacity());
+    CanonicalIssuerPartitionReservation reservation =
+        new CanonicalIssuerPartitionReservation(
+            source.reservationId(),
+            owner,
+            source.bindingGeneration(),
+            source.transitionId(),
+            source.partitionId(),
+            CanonicalIssuerPartitionReservation.Lifecycle.valueOf(source.lifecycle()),
+            source.reservationFence(),
+            source.coverageOperationId(),
+            source.coverageOperationFence(),
+            source.coverageFence(),
+            source.inventorySnapshotRevision(),
+            sourceRow.sourceInventoryRevision());
+    if (!work.reservationId().equals(reservation.reservationId())
+        || !Arrays.equals(work.bindingRef(), owner.bindingRef().bytes())
+        || !work.transitionId().equals(reservation.transitionId())
+        || !work.reservationLifecycle().equals(reservation.lifecycle().name())
+        || !work.reservationFence().equals(reservation.reservationFence())
+        || !work.originalPartitionId().equals(reservation.partitionId())
+        || !work.originalLayoutVersion().equals(reservation.owner().issuerIndexLayoutVersion())
+        || !work.originalPartitionCount().equals(reservation.owner().issuerIndexPartitionCount())
+        || !work.originalPartitionCapacity()
+            .equals(reservation.owner().issuerIndexPartitionCapacity())
+        || !work.originalIssuerCoverageOperationId().equals(reservation.issuerCoverageOperationId())
+        || !work.originalIssuerCoverageOperationFence()
+            .equals(reservation.issuerCoverageOperationFence())
+        || !work.originalCoverageFence().equals(reservation.coverageFence())
+        || !work.originalInventorySnapshotRevision()
+            .equals(reservation.inventorySnapshotRevision())) {
+      throw conflict("Prepared member work differs from its exact typed original reservation");
+    }
+    CanonicalGameplayBindingInventoryEntry.Lifecycle bindingLifecycle = null;
+    if (work.bindingSourceRowOrdinal() != null) {
+      int bindingIndex = Math.toIntExact(work.bindingSourceRowOrdinal());
+      if (bindingIndex >= intent.cohortRows().size()) {
+        throw conflict("Prepared member work lost its exact binding cohort row");
+      }
+      CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow bindingRow =
+          intent.cohortRows().get(bindingIndex);
+      if (bindingRow.kind() != CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.BINDING
+          || !bindingRow.sourceRowDigest().equals(work.bindingSourceRowDigest())) {
+        throw conflict("Prepared member work no longer links to its exact binding cohort row");
+      }
+      BindingSource binding = parseBinding(bindingRow);
+      if (!binding.matches(source)) {
+        throw conflict("Prepared member work binding differs from the exact original reservation");
+      }
+      try {
+        bindingLifecycle =
+            CanonicalGameplayBindingInventoryEntry.Lifecycle.valueOf(binding.lifecycle());
+      } catch (RuntimeException malformed) {
+        throw conflict("Prepared member work has an unsupported binding lifecycle");
+      }
+    }
+    return new PreparedMemberWork(plan, work, reservation, bindingLifecycle);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapIntent loadAndRequireCurrentIntent(
@@ -792,6 +958,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
     if (!ISSUER.equals(issuerId)) {
       throw conflict("Binding source does not use the exact Account issuer");
     }
+    String lifecycle = text(json, "lifecycle");
+    try {
+      CanonicalGameplayBindingInventoryEntry.Lifecycle.valueOf(lifecycle);
+    } catch (RuntimeException malformed) {
+      throw conflict("Binding source uses an unsupported lifecycle");
+    }
     return new BindingSource(
         row.rowOrdinal(),
         row.sourceRowDigest(),
@@ -814,6 +986,7 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         integer(json, "issuer_index_partition_count"),
         integer(json, "issuer_index_partition_capacity"),
         integer(json, "issuer_partition_id"),
+        lifecycle,
         integer(json, "binding_generation"));
   }
 
@@ -1773,6 +1946,7 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
       BigInteger partitionCount,
       BigInteger partitionCapacity,
       BigInteger partitionId,
+      String lifecycle,
       BigInteger bindingGeneration) {
     BindingSource {
       bindingRef = bindingRef.clone();
@@ -1804,6 +1978,18 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
           && partitionCount.equals(reservation.partitionCount())
           && partitionCapacity.equals(reservation.partitionCapacity())
           && partitionId.equals(reservation.partitionId());
+    }
+  }
+
+  record PreparedMemberWork(
+      CanonicalGameplayIssuerPartitionBuildPlan plan,
+      CanonicalGameplayIssuerPartitionBuildPlan.MemberWork work,
+      CanonicalIssuerPartitionReservation originalReservation,
+      CanonicalGameplayBindingInventoryEntry.Lifecycle bindingLifecycle) {
+    PreparedMemberWork {
+      Objects.requireNonNull(plan, "plan");
+      Objects.requireNonNull(work, "work");
+      Objects.requireNonNull(originalReservation, "originalReservation");
     }
   }
 }
