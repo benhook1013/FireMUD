@@ -107,7 +107,52 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       List<String> inventoryClockBefore =
           rowImages(testSchema.dsl(), "game_session_canonical_binding_inventory_clock");
       List<String> migrationHistoryBefore = rowImages(testSchema.dsl(), "flyway_schema_history");
+      List<String> retainedSourceTables =
+          List.of(
+              "game_session_canonical_gameplay_binding_inventory",
+              "game_session_canonical_issuer_partition_reservation",
+              "game_session_canonical_issuer_layout_bootstrap_intent",
+              "game_session_canonical_issuer_layout_bootstrap_control",
+              "game_session_canonical_issuer_layout_bootstrap_cohort_row",
+              "game_session_canonical_binding_transition",
+              "game_session_canonical_binding_account_index_obligation",
+              "game_session_canonical_binding_issuer_index_obligation",
+              "game_session_canonical_binding_region_bridge_obligation",
+              "game_session_canonical_binding_inventory_clock");
+      List<List<String>> retainedRowsWithXminBefore =
+          retainedSourceTables.stream()
+              .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
+              .toList();
+
+      migrateThrough1031(testSchema);
+      List<String> migrationHistoryAfter1031 = rowImages(testSchema.dsl(), "flyway_schema_history");
+      assertThat(migrationHistoryAfter1031)
+          .hasSize(migrationHistoryBefore.size() + 1)
+          .containsAll(migrationHistoryBefore);
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1031'")
+                  .get(0, String.class))
+          .isEqualTo("V1031__canonical_issuer_partition_build_plan.sql");
+      assertThat(
+              retainedSourceTables.stream()
+                  .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
+                  .toList())
+          .isEqualTo(retainedRowsWithXminBefore);
+
       migrateRemaining(testSchema);
+      List<String> migrationHistoryAfterCurrent =
+          rowImages(testSchema.dsl(), "flyway_schema_history");
+      assertThat(migrationHistoryAfterCurrent)
+          .hasSize(migrationHistoryAfter1031.size() + 1)
+          .containsAll(migrationHistoryAfter1031);
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1032'")
+                  .get(0, String.class))
+          .isEqualTo("V1032__canonical_issuer_bootstrap_member_operation.sql");
 
       var ready = new CountDownLatch(2);
       var start = new CountDownLatch(1);
@@ -232,9 +277,12 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       assertThat(rowImages(testSchema.dsl(), "game_session_canonical_binding_inventory_clock"))
           .containsExactlyElementsOf(inventoryClockBefore);
       List<String> migrationHistoryAfter = rowImages(testSchema.dsl(), "flyway_schema_history");
-      assertThat(migrationHistoryAfter)
-          .hasSize(migrationHistoryBefore.size() + 1)
-          .containsAll(migrationHistoryBefore);
+      assertThat(migrationHistoryAfter).containsExactlyElementsOf(migrationHistoryAfterCurrent);
+      assertThat(
+              retainedSourceTables.stream()
+                  .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
+                  .toList())
+          .isEqualTo(retainedRowsWithXminBefore);
     } finally {
       executor.shutdownNow();
       dropSchema(testSchema.schema());
@@ -320,9 +368,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                               + " game_session_canonical_issuer_partition_build_plan,"
                               + " game_session_canonical_issuer_partition_build_cohort_row,"
                               + " game_session_canonical_issuer_partition_build_member_work,"
-                              + " game_session_canonical_issuer_partition_build_blocker"))
+                              + " game_session_canonical_issuer_partition_build_blocker CASCADE"))
           .isInstanceOf(DataAccessException.class)
-          .hasMessageContaining("issuer partition build preparation artifacts are immutable");
+          .hasMessageContaining("artifacts are immutable");
 
       assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_build_plan"))
           .containsExactlyElementsOf(planBefore);
@@ -1208,6 +1256,18 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
   }
 
+  private static void migrateThrough1031(TestSchema testSchema) {
+    Flyway.configure()
+        .dataSource(testSchema.dataSource())
+        .schemas(testSchema.schema())
+        .defaultSchema(testSchema.schema())
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(MigrationVersion.fromVersion("1031"))
+        .load()
+        .migrate();
+  }
+
   private static void migrateRemaining(TestSchema testSchema) {
     Flyway.configure()
         .dataSource(testSchema.dataSource())
@@ -1314,6 +1374,14 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
             "SELECT to_jsonb(retained_row)::text AS row_image FROM "
                 + tableName
                 + " retained_row ORDER BY to_jsonb(retained_row)::text")
+        .getValues("row_image", String.class);
+  }
+
+  private static List<String> rowImagesWithXmin(DSLContext dsl, String tableName) {
+    return dsl.fetch(
+            "SELECT xmin::text || ':' || to_jsonb(retained_row)::text AS row_image FROM "
+                + tableName
+                + " retained_row ORDER BY to_jsonb(retained_row)::text, xmin::text")
         .getValues("row_image", String.class);
   }
 

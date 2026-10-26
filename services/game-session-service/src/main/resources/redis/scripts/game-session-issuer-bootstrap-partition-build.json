@@ -1,0 +1,39 @@
+{
+  "scriptId": "game-session.issuer-bootstrap-partition-build.v1",
+  "resourcePath": "redis/lua/game-session-issuer-bootstrap-partition-build.lua",
+  "sha256": "526383d905b93ef2a8026f6b4ac659b601c40257b874652b8c3b89b637b84531",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "issuerPartition",
+      "ownedPrefix": "session:game:index:issuer:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "issuerId"},
+    {"name": "partitionId"},
+    {"name": "partitionCount"},
+    {"name": "partitionCapacity"},
+    {"name": "exactBootstrapMetadata"},
+    {"name": "memberOperationCount"},
+    {"name": "repeatedBindingRefMemberCapacityFieldBindingPresence"}
+  ],
+  "category": "SESSION_ISSUER_INDEX",
+  "outcomes": [
+    {"code": "PARTITION_BUILT", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "PARTITION_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDSET_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS_OR_CAPACITY", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "This local one-partition bootstrap projection is reset-sensitive physical evidence only. The SQL owner must supply a complete positive prepared cohort and the exact member-operation set for this partition. Missing, partial, malformed, legacy, foreign, or mismatched state remains unqualified unless the exact complete field set is written and read back under fresh controlled current-source and incarnation checks. This single partition readback is not complete issuer coverage, an installed anchor, an acknowledgement, barrier OPEN, or admission authority.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "v2"}
+  ],
+  "legacyPayloadShape": null
+}
