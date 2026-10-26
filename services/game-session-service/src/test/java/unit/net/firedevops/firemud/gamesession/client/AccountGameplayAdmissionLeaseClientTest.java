@@ -6,11 +6,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.ByteString;
 import io.grpc.Context;
 import io.grpc.Deadline;
+import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.TlsServerCredentials;
 import io.grpc.stub.StreamObserver;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -345,6 +349,104 @@ class AccountGameplayAdmissionLeaseClientTest {
   }
 
   @Test
+  void allFourOperationsPreserveOnlySanitizedRemoteStatusAndRedactJwt() throws Exception {
+    Server server =
+        server(
+            "account-server",
+            new AccountGameplayAdmissionLeaseServiceGrpc
+                .AccountGameplayAdmissionLeaseServiceImplBase() {
+              @Override
+              public void acquireGameplayAdmissionLease(
+                  AcquireGameplayAdmissionLeaseRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                failWithSecret(observer, Status.Code.DEADLINE_EXCEEDED);
+              }
+
+              @Override
+              public void finalizeGameplayAdmissionLease(
+                  FinalizeGameplayAdmissionLeaseRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                failWithSecret(observer, Status.Code.UNAVAILABLE);
+              }
+
+              @Override
+              public void readGameplayAdmissionLease(
+                  ReadGameplayAdmissionLeaseRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                failWithSecret(observer, Status.Code.PERMISSION_DENIED);
+              }
+
+              @Override
+              public void abortGameplayAdmissionLease(
+                  AbortGameplayAdmissionLeaseRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                failWithSecret(observer, Status.Code.FAILED_PRECONDITION);
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      byte[] originalBytes = lease().canonicalJson().getBytes(StandardCharsets.UTF_8);
+
+      assertSanitizedStatusFailure(
+          () -> client.acquire(REQUEST_ID, JWT, candidate(), target(), new BigInteger(HIGH)),
+          Status.Code.DEADLINE_EXCEEDED,
+          "Account gameplay admission lease acquisition failed");
+      assertSanitizedStatusFailure(
+          () -> client.finalizeLease(JWT, originalBytes, DECISION_ID),
+          Status.Code.UNAVAILABLE,
+          "Account gameplay admission lease finalization failed");
+      assertSanitizedStatusFailure(
+          () -> client.read(JWT, originalBytes),
+          Status.Code.PERMISSION_DENIED,
+          "Account gameplay admission lease read failed");
+      assertSanitizedStatusFailure(
+          () -> client.abort(JWT, originalBytes, null),
+          Status.Code.FAILED_PRECONDITION,
+          "Account gameplay admission lease abort failed");
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void malformedResponseRetainsOnlyTheCodecSafeDiagnostic() throws Exception {
+    Server server =
+        server(
+            "account-server",
+            new AccountGameplayAdmissionLeaseServiceGrpc
+                .AccountGameplayAdmissionLeaseServiceImplBase() {
+              @Override
+              public void acquireGameplayAdmissionLease(
+                  AcquireGameplayAdmissionLeaseRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                observer.onNext(
+                    AccountGameplayAdmissionLeaseResponse.newBuilder()
+                        .addSchemaVersion(2)
+                        .addOriginalLeaseEvidenceUtf8(ByteString.copyFromUtf8(JWT))
+                        .build());
+                observer.onCompleted();
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.acquire(REQUEST_ID, JWT, candidate(), target(), new BigInteger(HIGH)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account returned invalid gameplay admission lease evidence")
+          .hasCauseInstanceOf(IllegalArgumentException.class)
+          .satisfies(
+              failure -> {
+                assertThat(failure.getCause())
+                    .hasMessage("Unsupported Account admission lease schema")
+                    .hasNoCause();
+                assertThat(throwableText(failure)).doesNotContain(JWT);
+              });
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
   void rejectsPlaintextNamespaceAndAmbientSqlOrSynchronizationBeforeRpc() throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
@@ -434,6 +536,39 @@ class AccountGameplayAdmissionLeaseClientTest {
     var peer = GrpcPeerIdentity.current();
     peers.add(peer == null ? null : peer.uri());
     deadlines.add(Context.current().getDeadline());
+  }
+
+  private static void failWithSecret(
+      StreamObserver<AccountGameplayAdmissionLeaseResponse> observer, Status.Code code) {
+    Metadata trailers = new Metadata();
+    Metadata.Key<String> secret =
+        Metadata.Key.of("x-controlled-secret", Metadata.ASCII_STRING_MARSHALLER);
+    trailers.put(secret, JWT);
+    observer.onError(
+        Status.fromCode(code)
+            .withDescription("controlled failure " + JWT)
+            .asRuntimeException(trailers));
+  }
+
+  private static void assertSanitizedStatusFailure(
+      Runnable operation, Status.Code expectedCode, String expectedMessage) {
+    assertThatThrownBy(operation::run)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(expectedMessage)
+        .satisfies(
+            failure -> {
+              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
+              assertThat(failure.getCause()).isInstanceOf(StatusRuntimeException.class);
+              assertThat(Status.fromThrowable(failure.getCause()).getCode())
+                  .isEqualTo(expectedCode);
+              assertThat(throwableText(failure)).doesNotContain(JWT);
+            });
+  }
+
+  private static String throwableText(Throwable failure) {
+    StringWriter text = new StringWriter();
+    failure.printStackTrace(new PrintWriter(text));
+    return text.toString();
   }
 
   private static void stop(Server server) throws InterruptedException {

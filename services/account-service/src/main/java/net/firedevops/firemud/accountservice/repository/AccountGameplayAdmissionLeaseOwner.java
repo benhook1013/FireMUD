@@ -4,7 +4,6 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.math.BigInteger;
 import java.sql.Connection;
-import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -63,7 +62,6 @@ public final class AccountGameplayAdmissionLeaseOwner {
   private final AccountGameplayAdmissionCallerVerifier callerVerifier;
   private final CanonicalGameplayAdmissionDecisionReadClient decisionReadClient;
   private final String workloadNamespace;
-  private final Clock clock;
   private final AccountGameplayAdmissionOriginalCommitExecutor originalCommitExecutor;
   private final AccountGameplayAdmissionOriginalAckReceiptCommitExecutor receiptExecutor;
 
@@ -71,8 +69,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
       AccountGameplayAdmissionCallerVerifier callerVerifier,
       CanonicalGameplayAdmissionDecisionReadClient decisionReadClient,
       String workloadNamespace,
-      DataSource dataSource,
-      Clock clock) {
+      DataSource dataSource) {
     this.callerVerifier =
         Objects.requireNonNull(callerVerifier, "Account caller verifier required");
     this.decisionReadClient =
@@ -82,7 +79,6 @@ public final class AccountGameplayAdmissionLeaseOwner {
     }
     this.workloadNamespace = workloadNamespace;
     this.dataSource = Objects.requireNonNull(dataSource, "Account DataSource required");
-    this.clock = Objects.requireNonNull(clock, "Account clock required");
     originalCommitExecutor = new AccountGameplayAdmissionOriginalCommitExecutor(dataSource);
     receiptExecutor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource);
   }
@@ -141,6 +137,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
                   repository.allocate(accountId, request.requestId(), UUID.randomUUID());
               AccountGameplayAdmissionLeaseEvidence evidence =
                   buildOriginalEvidence(
+                      current.dsl(),
                       allocation,
                       peer.uri(),
                       expectedCandidate,
@@ -193,6 +190,15 @@ public final class AccountGameplayAdmissionLeaseOwner {
           retainedBeforeRemoteReads.bindingDecisionId(),
           retainedBeforeRemoteReads.orphanCleanupId(),
           receipt);
+    }
+    if (retainedBeforeRemoteReads.state() == AccountGameplayAdmissionLeaseOperation.State.ABORTED) {
+      return AccountGameplayAdmissionLeaseGrpcCodec.toFinalizeResponse(
+          request,
+          retainedBeforeRemoteReads.evidence(),
+          wireState(retainedBeforeRemoteReads.state()),
+          retainedBeforeRemoteReads.bindingDecisionId(),
+          retainedBeforeRemoteReads.orphanCleanupId(),
+          null);
     }
 
     // Both remote authorities are read after the short Account replay lookup and before the
@@ -538,6 +544,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
   }
 
   private AccountGameplayAdmissionLeaseEvidence buildOriginalEvidence(
+      DSLContext dsl,
       Allocation allocation,
       String callerWorkload,
       Candidate candidate,
@@ -545,7 +552,11 @@ public final class AccountGameplayAdmissionLeaseOwner {
       BigInteger bindingGeneration,
       Map<String, Object> currentSourceFields,
       long tokenExpiryEpochSecond) {
-    long now = clock.millis();
+    Long databaseNow =
+        dsl.fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    if (databaseNow == null || databaseNow <= 0L) throw unavailable();
+    long now = databaseNow;
     long originalExpiry;
     try {
       originalExpiry =
@@ -605,7 +616,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
                     tenantId, caller.identity().tokenJti(), caller.currentCandidate());
             return operation.apply(
                 new CurrentAccountOperation(
-                    current, new AccountGameplayAdmissionLeaseRepository(dsl)));
+                    dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
           });
     } catch (StatusRuntimeException failure) {
       throw failure;
@@ -869,6 +880,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
   }
 
   private record CurrentAccountOperation(
+      DSLContext dsl,
       AccountGameplayAdmissionCurrentSources.Current currentSources,
       AccountGameplayAdmissionLeaseRepository repository) {
     private void requireCandidate(

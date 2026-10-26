@@ -49,6 +49,8 @@ public final class AccountGameplayAdmissionCallerVerifier {
   private final AccountJwtJwksTrustedSource trustedJwksSource;
   private final AccountGameplayDelegationCommittedIssuanceOwner currentIssuanceOwner;
   private final Clock clock;
+  private final Object cacheMonitor = new Object();
+  private AccountPublicJwksCache publicJwksCache;
 
   public AccountGameplayAdmissionCallerVerifier(
       AccountJwtJwksTrustedSource trustedJwksSource,
@@ -73,10 +75,9 @@ public final class AccountGameplayAdmissionCallerVerifier {
 
     try {
       SourceIdentity trustedPin = trustedJwksSource.sourceIdentity();
-      var publicJwksCache =
-          new AccountPublicJwksCache(trustedJwksSource, trustedPin, clock, MAX_JWKS_CACHE_AGE);
       VerifiedClaims verified =
-          new AccountAsymmetricJwtVerifier(publicJwksCache, clock).verify(compactJwt, POLICY);
+          new AccountAsymmetricJwtVerifier(currentCache(trustedPin), clock)
+              .verify(compactJwt, POLICY);
 
       // The cryptographically and profile-verified JTI is only a lookup selector. It is not
       // passed to Account's committed-currentness owner until signature/profile validation above.
@@ -88,6 +89,16 @@ public final class AccountGameplayAdmissionCallerVerifier {
     } catch (RuntimeException failure) {
       // Do not preserve exception text or causes that could expose credential or parser details.
       throw unavailable();
+    }
+  }
+
+  private AccountPublicJwksCache currentCache(SourceIdentity identity) {
+    synchronized (cacheMonitor) {
+      if (publicJwksCache == null || !identity.equals(publicJwksCache.sourceIdentity())) {
+        publicJwksCache =
+            new AccountPublicJwksCache(trustedJwksSource, identity, clock, MAX_JWKS_CACHE_AGE);
+      }
+      return publicJwksCache;
     }
   }
 
