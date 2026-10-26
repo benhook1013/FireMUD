@@ -692,7 +692,8 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw conflict("Issuer bootstrap member operation owner cannot join an ambient transaction");
     }
   }

@@ -1644,7 +1644,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       reservation = provisional.candidateReservation();
     } else {
       requireRetainedFirstNewAbortObligations(
-          transaction, transitionId, transitionSnapshot, candidate);
+          transaction, transitionId, transitionSnapshot, candidate, retainedDefinitiveAbortCleanup);
     }
 
     AccountGameplayAdmissionLeaseEvidence lease;
@@ -1696,7 +1696,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       DSLContext transaction,
       UUID transitionId,
       CanonicalGameplayBindingTransitionSnapshot transition,
-      CanonicalGameplayBindingInventoryEntry retainedCandidate) {
+      CanonicalGameplayBindingInventoryEntry retainedCandidate,
+      boolean retainedDefinitiveAbortCleanup) {
     BigInteger revision = transition.inventoryRevision();
     byte[] bindingRef = transition.bindingRef().bytes();
     CanonicalGameplayBindingIdentity candidate = transition.candidate();
@@ -1777,15 +1778,17 @@ public final class CanonicalGameplayBindingInventoryRepository {
               && !completedRevision.equals(obligation.projectionInventoryRevision()))) {
         throw conflict("Retained abort changed the original completed account-member readback");
       }
-      Record control =
-          transaction.fetchOne(
-              "SELECT * FROM game_session_canonical_account_coverage_control WHERE account_id = ?",
-              operation.accountId());
-      if (control == null
-          || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(control.get("state", String.class))
-          || !readBigInteger(control, "last_operation_fence")
-              .equals(operation.accountControlEpoch())) {
-        throw conflict("Retained account-member acknowledgement has a different control epoch");
+      if (!retainedDefinitiveAbortCleanup) {
+        Record control =
+            transaction.fetchOne(
+                "SELECT * FROM game_session_canonical_account_coverage_control WHERE account_id = ?",
+                operation.accountId());
+        if (control == null
+            || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(control.get("state", String.class))
+            || !readBigInteger(control, "last_operation_fence")
+                .equals(operation.accountControlEpoch())) {
+          throw conflict("Retained account-member acknowledgement has a different control epoch");
+        }
       }
     } else if (retainedCandidate.accountIndexState()
         != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED) {
