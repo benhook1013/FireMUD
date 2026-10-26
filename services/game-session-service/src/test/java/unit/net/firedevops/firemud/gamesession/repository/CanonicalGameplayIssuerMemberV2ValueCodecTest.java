@@ -22,7 +22,7 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
   private static final BigInteger LARGE = new BigInteger("9007199254740997");
 
   @Test
-  void roundTripsCompleteTupleAndCountersBeyondJavaScriptSafeInteger() {
+  void roundTripsCompleteTupleAndCountersBeyondJavaScriptSafeInteger() throws Exception {
     CanonicalGameplayIssuerMemberV2Value value = fixture();
 
     byte[] encoded = CanonicalGameplayIssuerMemberV2Codec.encode(value);
@@ -33,9 +33,20 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
     assertThat(decoded.bindingGeneration()).isEqualTo(LARGE);
     assertThat(decoded.anchor().issuerInventorySnapshotRevision())
         .isEqualTo(LARGE.add(BigInteger.valueOf(12)));
+    assertThat(decoded.reservation().issuerCoverageOperationId()).isEqualTo(uuid(21));
+    assertThat(decoded.reservation().issuerCoverageOperationFence())
+        .isEqualTo(LARGE.add(BigInteger.valueOf(15)));
+    assertThat(decoded.reservation().coverageFence()).isEqualTo(LARGE.add(BigInteger.valueOf(16)));
+    assertThat(decoded.reservation().inventorySnapshotRevision())
+        .isEqualTo(LARGE.add(BigInteger.valueOf(17)));
     assertThat(decoded.memberOperation().coverageGeneration())
         .isEqualTo(LARGE.add(BigInteger.valueOf(20)));
     assertThat(new String(encoded, StandardCharsets.UTF_8)).contains("\"schemaVersion\":2");
+    ObjectNode encodedRoot = (ObjectNode) JSON.readTree(encoded);
+    assertThat(encodedRoot.path("reservation").path("coverageFence").textValue())
+        .isEqualTo(LARGE.add(BigInteger.valueOf(16)).toString());
+    assertThat(encodedRoot.path("anchor").path("coverageFence").textValue())
+        .isEqualTo(LARGE.add(BigInteger.valueOf(11)).toString());
   }
 
   @Test
@@ -91,15 +102,16 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
   }
 
   @Test
-  void sameBindingWithDifferentConsistentAnchorOrReservationRemainsSeparateAfterDecode() {
+  void originalReservationAnchorAndMemberOperationTuplesRemainDistinctPhysicalIdentity()
+      throws Exception {
     CanonicalGameplayIssuerMemberV2Value original = fixture();
     CanonicalGameplayIssuerMemberV2Value.Anchor changedAnchor =
         new CanonicalGameplayIssuerMemberV2Value.Anchor(
-            original.anchor().issuerCoverageOperationId(),
-            original.anchor().operationFence(),
-            original.anchor().coverageFence(),
+            uuid(34),
+            original.anchor().operationFence().add(BigInteger.ONE),
+            original.anchor().coverageFence().add(BigInteger.ONE),
             original.anchor().issuerInventorySnapshotRevision().add(BigInteger.ONE));
-    CanonicalIssuerPartitionReservation changedReservation =
+    CanonicalIssuerPartitionReservation changedOriginalReservation =
         new CanonicalIssuerPartitionReservation(
             original.reservation().reservationId(),
             original.owner(),
@@ -108,13 +120,22 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
             original.reservation().partitionId(),
             original.reservation().lifecycle(),
             original.reservation().reservationFence(),
-            changedAnchor.issuerCoverageOperationId(),
-            changedAnchor.operationFence(),
-            changedAnchor.coverageFence(),
-            changedAnchor.issuerInventorySnapshotRevision(),
+            uuid(35),
+            original.reservation().issuerCoverageOperationFence().add(BigInteger.ONE),
+            original.reservation().coverageFence().add(BigInteger.ONE),
+            original.reservation().inventorySnapshotRevision().add(BigInteger.ONE),
             original.reservation().inventoryRevision());
+    CanonicalGameplayIssuerMemberV2Value anotherOriginalReservation =
+        withReservation(original, changedOriginalReservation);
     CanonicalGameplayIssuerMemberV2Value anotherAnchor =
-        copy(original, changedReservation, changedAnchor);
+        copy(original, original.reservation(), changedAnchor);
+    CanonicalGameplayIssuerMemberV2Value anotherMemberOperation =
+        withMemberOperation(
+            original,
+            new CanonicalGameplayIssuerMemberV2Value.LocalMemberOperation(
+                uuid(36),
+                original.memberOperation().operationFence().add(BigInteger.ONE),
+                original.memberOperation().coverageGeneration().add(BigInteger.ONE)));
     CanonicalIssuerPartitionReservation changedLifecycle =
         new CanonicalIssuerPartitionReservation(
             original.reservation().reservationId(),
@@ -132,15 +153,24 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
     CanonicalGameplayIssuerMemberV2Value anotherReservation =
         copy(original, changedLifecycle, original.anchor());
 
-    assertThat(anotherAnchor.owner()).isEqualTo(original.owner());
-    assertThat(anotherAnchor).isNotEqualTo(original);
-    assertThat(anotherReservation).isNotEqualTo(original);
-    byte[] anotherAnchorBytes = CanonicalGameplayIssuerMemberV2Codec.encode(anotherAnchor);
-    assertThat(anotherAnchorBytes)
-        .isNotEqualTo(CanonicalGameplayIssuerMemberV2Codec.encode(original));
-    assertThat(CanonicalGameplayIssuerMemberV2Codec.decode(anotherAnchorBytes))
-        .isEqualTo(anotherAnchor)
-        .isNotEqualTo(original);
+    byte[] originalBytes = CanonicalGameplayIssuerMemberV2Codec.encode(original);
+    for (CanonicalGameplayIssuerMemberV2Value changed :
+        List.of(
+            anotherOriginalReservation,
+            anotherAnchor,
+            anotherMemberOperation,
+            anotherReservation)) {
+      byte[] changedBytes = CanonicalGameplayIssuerMemberV2Codec.encode(changed);
+      assertThat(changed).isNotEqualTo(original);
+      assertThat(changedBytes).isNotEqualTo(originalBytes);
+      CanonicalGameplayIssuerMemberV2Value decoded =
+          CanonicalGameplayIssuerMemberV2Codec.decode(changedBytes);
+      assertThat(decoded).isEqualTo(changed).isNotEqualTo(original);
+      assertThat(decoded.hashCode()).isEqualTo(changed.hashCode());
+    }
+    assertThat(anotherOriginalReservation.anchor()).isEqualTo(original.anchor());
+    assertThat(anotherAnchor.reservation()).isEqualTo(original.reservation());
+    assertThat(anotherMemberOperation.reservation()).isEqualTo(original.reservation());
   }
 
   @Test
@@ -209,10 +239,32 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
     extraField.put("extra", "not permitted");
     assertRejected(canonical(extraField));
 
+    ObjectNode missingOriginalCoverageField = root.deepCopy();
+    ((ObjectNode) missingOriginalCoverageField.get("reservation")).remove("coverageFence");
+    assertRejected(canonical(missingOriginalCoverageField));
+
+    ObjectNode unknownOriginalCoverageField = root.deepCopy();
+    ((ObjectNode) unknownOriginalCoverageField.get("reservation"))
+        .put("unrecognizedCoverageEvidence", "not permitted");
+    assertRejected(canonical(unknownOriginalCoverageField));
+
+    ObjectNode malformedOriginalCoverageField = root.deepCopy();
+    ((ObjectNode) malformedOriginalCoverageField.get("reservation"))
+        .put("inventorySnapshotRevision", "01");
+    assertRejected(canonical(malformedOriginalCoverageField));
+
     String duplicate =
         new String(canonical, StandardCharsets.UTF_8)
             .replace("\"schemaVersion\":2", "\"schemaVersion\":2,\"schemaVersion\":2");
     assertRejected(duplicate.getBytes(StandardCharsets.UTF_8));
+    String originalFence =
+        "\"issuerCoverageOperationFence\":\""
+            + fixture().reservation().issuerCoverageOperationFence()
+            + "\"";
+    String duplicateOriginalReservationField =
+        new String(canonical, StandardCharsets.UTF_8)
+            .replace(originalFence, originalFence + "," + originalFence);
+    assertRejected(duplicateOriginalReservationField.getBytes(StandardCharsets.UTF_8));
 
     ObjectNode leadingZero = root.deepCopy();
     leadingZero.put("bindingGeneration", "01");
@@ -246,29 +298,20 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
   }
 
   @Test
-  void constructorRejectsAnAnchorThatDoesNotMatchItsReservation() {
-    CanonicalGameplayIssuerMemberV2Value original = fixture();
-    CanonicalGameplayIssuerMemberV2Value.Anchor mismatchedAnchor =
-        new CanonicalGameplayIssuerMemberV2Value.Anchor(
-            original.anchor().issuerCoverageOperationId(),
-            original.anchor().operationFence(),
-            original.anchor().coverageFence().add(BigInteger.ONE),
-            original.anchor().issuerInventorySnapshotRevision());
+  void constructorAcceptsDistinctValidOriginalReservationAndNewAnchorTuples() {
+    CanonicalGameplayIssuerMemberV2Value value = fixture();
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayIssuerMemberV2Value(
-                    original.owner(),
-                    original.bindingGeneration(),
-                    original.reservation(),
-                    mismatchedAnchor,
-                    original.memberOperation(),
-                    original.issuerControlEpoch(),
-                    original.layoutDescriptor(),
-                    original.sourceCheckpoint(),
-                    original.incarnation()))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("complete installed anchor tuple");
+    assertThat(value.reservation().issuerCoverageOperationId())
+        .isNotEqualTo(value.anchor().issuerCoverageOperationId());
+    assertThat(value.reservation().issuerCoverageOperationFence())
+        .isNotEqualTo(value.anchor().operationFence());
+    assertThat(value.reservation().coverageFence()).isNotEqualTo(value.anchor().coverageFence());
+    assertThat(value.reservation().inventorySnapshotRevision())
+        .isNotEqualTo(value.anchor().issuerInventorySnapshotRevision());
+    assertThat(
+            CanonicalGameplayIssuerMemberV2Codec.decode(
+                CanonicalGameplayIssuerMemberV2Codec.encode(value)))
+        .isEqualTo(value);
   }
 
   static CanonicalGameplayIssuerMemberV2Value fixture() {
@@ -328,10 +371,10 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
             owner.bindingRef().partitionId(owner.issuerIndexPartitionCount()),
             CanonicalIssuerPartitionReservation.Lifecycle.BOUND,
             uuid(32),
-            anchor.issuerCoverageOperationId(),
-            anchor.operationFence(),
-            anchor.coverageFence(),
-            anchor.issuerInventorySnapshotRevision(),
+            uuid(21),
+            LARGE.add(BigInteger.valueOf(15)),
+            LARGE.add(BigInteger.valueOf(16)),
+            LARGE.add(BigInteger.valueOf(17)),
             LARGE.add(BigInteger.valueOf(14)));
     CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence deployment =
         new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
@@ -390,6 +433,21 @@ class CanonicalGameplayIssuerMemberV2ValueCodecTest {
         original.reservation(),
         original.anchor(),
         memberOperation,
+        original.issuerControlEpoch(),
+        original.layoutDescriptor(),
+        original.sourceCheckpoint(),
+        original.incarnation());
+  }
+
+  private static CanonicalGameplayIssuerMemberV2Value withReservation(
+      CanonicalGameplayIssuerMemberV2Value original,
+      CanonicalIssuerPartitionReservation reservation) {
+    return new CanonicalGameplayIssuerMemberV2Value(
+        original.owner(),
+        original.bindingGeneration(),
+        reservation,
+        original.anchor(),
+        original.memberOperation(),
         original.issuerControlEpoch(),
         original.layoutDescriptor(),
         original.sourceCheckpoint(),

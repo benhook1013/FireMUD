@@ -68,15 +68,7 @@ final class CanonicalGameplayIssuerMemberV2Value {
       throw new IllegalArgumentException(
           "Issuer reservation must retain the exact binding owner, generation, and partition");
     }
-    if (!anchor.issuerCoverageOperationId().equals(reservation.issuerCoverageOperationId())
-        || !anchor.operationFence().equals(reservation.issuerCoverageOperationFence())
-        || !anchor.coverageFence().equals(reservation.coverageFence())
-        || !anchor
-            .issuerInventorySnapshotRevision()
-            .equals(reservation.inventorySnapshotRevision())) {
-      throw new IllegalArgumentException(
-          "Issuer reservation must retain the complete installed anchor tuple");
-    }
+    // The reservation's original coverage tuple is independent from the newly pinned anchor.
     requireDigestMatches(
         layoutDescriptor.exactDescriptorBytes(), layoutDescriptor.descriptorDigest(), "descriptor");
     requireDigestMatches(

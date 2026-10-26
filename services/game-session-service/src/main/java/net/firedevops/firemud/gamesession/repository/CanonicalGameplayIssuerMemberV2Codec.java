@@ -88,6 +88,10 @@ final class CanonicalGameplayIssuerMemberV2Codec {
           "partitionId",
           "lifecycle",
           "reservationFence",
+          "issuerCoverageOperationId",
+          "issuerCoverageOperationFence",
+          "coverageFence",
+          "inventorySnapshotRevision",
           "inventoryRevision");
   private static final Set<String> ANCHOR_FIELDS =
       Set.of(
@@ -136,6 +140,15 @@ final class CanonicalGameplayIssuerMemberV2Codec {
       requireCounterLimit(value.layoutDescriptor().partitionCount(), "partitionCount", false);
       requireCounterLimit(value.layoutDescriptor().partitionCapacity(), "partitionCapacity", false);
       requireCounterLimit(value.reservation().partitionId(), "partitionId", true);
+      requireCounterLimit(
+          value.reservation().issuerCoverageOperationFence(),
+          "reservation.issuerCoverageOperationFence",
+          false);
+      requireCounterLimit(value.reservation().coverageFence(), "reservation.coverageFence", false);
+      requireCounterLimit(
+          value.reservation().inventorySnapshotRevision(),
+          "reservation.inventorySnapshotRevision",
+          false);
       requireCounterLimit(value.reservation().inventoryRevision(), "inventoryRevision", false);
       requireCounterLimit(value.anchor().operationFence(), "anchor.operationFence", false);
       requireCounterLimit(value.anchor().coverageFence(), "anchor.coverageFence", false);
@@ -226,12 +239,19 @@ final class CanonicalGameplayIssuerMemberV2Codec {
               text(reservationObject, "lifecycle"),
               "reservation lifecycle");
       UUID reservationFence = uuid(reservationObject, "reservationFence");
+      UUID reservationIssuerCoverageOperationId =
+          uuid(reservationObject, "issuerCoverageOperationId");
+      BigInteger reservationIssuerCoverageOperationFence =
+          positive(reservationObject, "issuerCoverageOperationFence");
+      BigInteger reservationCoverageFence = positive(reservationObject, "coverageFence");
+      BigInteger reservationInventorySnapshotRevision =
+          positive(reservationObject, "inventorySnapshotRevision");
       BigInteger inventoryRevision = positive(reservationObject, "inventoryRevision");
 
       ObjectNode anchorObject = nestedObject(root, "anchor", ANCHOR_FIELDS);
       UUID issuerCoverageOperationId = uuid(anchorObject, "issuerCoverageOperationId");
       BigInteger anchorOperationFence = positive(anchorObject, "operationFence");
-      BigInteger coverageFence = positive(anchorObject, "coverageFence");
+      BigInteger anchorCoverageFence = positive(anchorObject, "coverageFence");
       BigInteger issuerInventorySnapshotRevision =
           positive(anchorObject, "issuerInventorySnapshotRevision");
       byte[] sourceCheckpointBytes = base64(anchorObject, "sourceCheckpointBytes");
@@ -310,10 +330,10 @@ final class CanonicalGameplayIssuerMemberV2Codec {
               partitionId,
               lifecycle,
               reservationFence,
-              issuerCoverageOperationId,
-              anchorOperationFence,
-              coverageFence,
-              issuerInventorySnapshotRevision,
+              reservationIssuerCoverageOperationId,
+              reservationIssuerCoverageOperationFence,
+              reservationCoverageFence,
+              reservationInventorySnapshotRevision,
               inventoryRevision);
       CanonicalGameplayIssuerMemberV2Value value =
           new CanonicalGameplayIssuerMemberV2Value(
@@ -323,7 +343,7 @@ final class CanonicalGameplayIssuerMemberV2Codec {
               new CanonicalGameplayIssuerMemberV2Value.Anchor(
                   issuerCoverageOperationId,
                   anchorOperationFence,
-                  coverageFence,
+                  anchorCoverageFence,
                   issuerInventorySnapshotRevision),
               memberOperation,
               issuerControlEpoch,
@@ -387,6 +407,13 @@ final class CanonicalGameplayIssuerMemberV2Codec {
     reservationObject.put("partitionId", reservation.partitionId().toString());
     reservationObject.put("lifecycle", reservation.lifecycle().name());
     reservationObject.put("reservationFence", reservation.reservationFence().toString());
+    reservationObject.put(
+        "issuerCoverageOperationId", reservation.issuerCoverageOperationId().toString());
+    reservationObject.put(
+        "issuerCoverageOperationFence", reservation.issuerCoverageOperationFence().toString());
+    reservationObject.put("coverageFence", reservation.coverageFence().toString());
+    reservationObject.put(
+        "inventorySnapshotRevision", reservation.inventorySnapshotRevision().toString());
     reservationObject.put("inventoryRevision", reservation.inventoryRevision().toString());
 
     ObjectNode anchorObject = root.putObject("anchor");

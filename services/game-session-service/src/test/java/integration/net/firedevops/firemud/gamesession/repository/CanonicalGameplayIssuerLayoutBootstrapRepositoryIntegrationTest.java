@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -181,6 +182,119 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       assertThat(
               countRows(testSchema.dsl(), "game_session_canonical_issuer_layout_bootstrap_control"))
           .isEqualTo(1);
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void shapeOnlyMemberRoundTripPreservesPopulatedReservationTupleBesideBootstrapAnchor() {
+    TestSchema testSchema = newTestSchema("gs_issuer_boot_member_shape_");
+    try {
+      establishActualLegacyDisposition(testSchema.dsl());
+      var inventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+      var prepared = prepareActualBinding(inventory);
+      List<String> reservationRowsBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation");
+      var durableReservationRow =
+          testSchema
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_canonical_issuer_partition_reservation"
+                      + " WHERE reservation_id = ?",
+                  prepared.issuerReservationId());
+      byte[] originalBindingRefBytes = durableReservationRow.get("binding_ref", byte[].class);
+      var originalReservation =
+          new CanonicalIssuerPartitionReservation(
+              prepared.issuerReservationId(),
+              prepared.candidate(),
+              decimal(durableReservationRow.get("binding_generation", BigDecimal.class)),
+              durableReservationRow.get("transition_id", UUID.class),
+              decimal(durableReservationRow.get("partition_id", BigDecimal.class)),
+              CanonicalIssuerPartitionReservation.Lifecycle.valueOf(
+                  durableReservationRow.get("lifecycle", String.class)),
+              durableReservationRow.get("reservation_fence", UUID.class),
+              durableReservationRow.get("issuer_coverage_operation_id", UUID.class),
+              decimal(
+                  durableReservationRow.get("issuer_coverage_operation_fence", BigDecimal.class)),
+              decimal(durableReservationRow.get("coverage_fence", BigDecimal.class)),
+              decimal(durableReservationRow.get("inventory_snapshot_revision", BigDecimal.class)),
+              decimal(durableReservationRow.get("inventory_revision", BigDecimal.class)));
+
+      var bootstrapOwner = new CanonicalGameplayIssuerLayoutBootstrapRepository(testSchema.dsl());
+      var intent =
+          bootstrapOwner.beginInitialBootstrapIntent(
+              UUID.randomUUID(),
+              descriptor(LAYOUT_VERSION, PARTITION_COUNT, PARTITION_CAPACITY),
+              sourceCheckpoint(BigInteger.valueOf(7)));
+      assertThat(intent.state())
+          .isEqualTo(CanonicalGameplayIssuerLayoutBootstrapIntent.State.INITIAL_BOOTSTRAP_INTENT);
+      var anchor =
+          new CanonicalGameplayIssuerMemberV2Value.Anchor(
+              intent.operationId(),
+              intent.operationFence(),
+              intent.coverageFence(),
+              intent.inventorySnapshotRevision());
+      assertThat(
+              new CanonicalGameplayIssuerMemberV2Value.Anchor(
+                  originalReservation.issuerCoverageOperationId(),
+                  originalReservation.issuerCoverageOperationFence(),
+                  originalReservation.coverageFence(),
+                  originalReservation.inventorySnapshotRevision()))
+          .isNotEqualTo(anchor);
+
+      // These member-operation and incarnation values are explicit shape fixtures; they do not
+      // advance bootstrap state or establish trusted issuer, Redis, or admission evidence.
+      var controlledMemberOperation =
+          new CanonicalGameplayIssuerMemberV2Value.LocalMemberOperation(
+              UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+              BigInteger.valueOf(101),
+              BigInteger.valueOf(102));
+      var controlledIncarnation = controlledIncarnationForShapeOnly();
+      var value =
+          new CanonicalGameplayIssuerMemberV2Value(
+              prepared.candidate(),
+              prepared.bindingGeneration(),
+              originalReservation,
+              anchor,
+              controlledMemberOperation,
+              intent.controlEpoch(),
+              intent.layoutDescriptor(),
+              intent.sourceCheckpoint(),
+              controlledIncarnation);
+
+      byte[] encoded = CanonicalGameplayIssuerMemberV2Codec.encode(value);
+      CanonicalGameplayIssuerMemberV2Value decoded =
+          CanonicalGameplayIssuerMemberV2Codec.decode(encoded);
+      assertThat(decoded).isEqualTo(value);
+      assertThat(decoded.reservation()).isEqualTo(originalReservation);
+      assertThat(decoded.reservation().owner().bindingRef().bytes())
+          .containsExactly(originalBindingRefBytes);
+      assertThat(decoded.anchor()).isEqualTo(anchor);
+      assertThat(decoded.memberOperation()).isEqualTo(controlledMemberOperation);
+      assertThat(decoded.incarnation()).isEqualTo(controlledIncarnation);
+
+      var reservationCohortRow =
+          intent.cohortRows().stream()
+              .filter(
+                  row ->
+                      row.kind()
+                          == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
+              .findFirst()
+              .orElseThrow();
+      assertThat(reservationCohortRow.sourceKey())
+          .isEqualTo(prepared.issuerReservationId().toString());
+      var frozenReadback = bootstrapOwner.readCurrentInitialBootstrapIntent(intent.operationId());
+      assertThat(frozenReadback.state())
+          .isEqualTo(CanonicalGameplayIssuerLayoutBootstrapIntent.State.INITIAL_BOOTSTRAP_INTENT);
+      assertThat(frozenReadback.cohortRows())
+          .filteredOn(
+              row ->
+                  row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION)
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
+          .containsExactly(reservationCohortRow.sourceRowDigest());
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation"))
+          .containsExactlyElementsOf(reservationRowsBefore);
     } finally {
       dropSchema(testSchema.schema());
     }
@@ -873,6 +987,37 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
 
   private static int countRows(DSLContext dsl, String tableName) {
     return dsl.fetchCount(DSL.table(tableName));
+  }
+
+  private static BigInteger decimal(BigDecimal value) {
+    return Objects.requireNonNull(value, "durable reservation counter").toBigIntegerExact();
+  }
+
+  private static CanonicalGameplayIssuerMemberV2Value.Incarnation
+      controlledIncarnationForShapeOnly() {
+    var deployment =
+        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
+            "coordination-controlled",
+            "deployment-controlled",
+            List.of("coord-controlled-a", "coord-controlled-b"),
+            "redis-controlled",
+            "lua-registry-controlled",
+            digest("lua-registry-controlled"),
+            "READY",
+            "boot-controlled",
+            "startup-controlled",
+            "storage-controlled",
+            "aof-controlled");
+    return new CanonicalGameplayIssuerMemberV2Value.Incarnation(
+        "controlled-shape-only-workload",
+        digest("attestation-controlled"),
+        deployment,
+        digest("coord-ops-ro-acl-controlled"),
+        digest("coord-redis-config-controlled"));
+  }
+
+  private static String digest(String value) {
+    return CanonicalGameplayIssuerMemberV2Codec.sha256(value.getBytes(StandardCharsets.UTF_8));
   }
 
   private static BigInteger currentInventoryRevision(DSLContext dsl) {
