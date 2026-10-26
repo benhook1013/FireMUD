@@ -65,62 +65,6 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final ObjectMapper JSON = new ObjectMapper();
 
-  private static final String COHORT_SQL =
-      "SELECT source_kind, source_key, source_revision, source_row_json FROM ("
-          + "SELECT CASE WHEN i.issuer_id = ? THEN 'BINDING'"
-          + " ELSE 'UNRESOLVED_LEGACY_BINDING' END AS source_kind,"
-          + " encode(i.binding_ref, 'hex') AS source_key, i.inventory_revision AS source_revision,"
-          + " to_jsonb(i)::text AS source_row_json FROM game_session_canonical_gameplay_binding_inventory i"
-          + " WHERE i.inventory_revision <= ?"
-          + " UNION ALL SELECT 'TRANSITION' AS source_kind, t.transition_id::text AS source_key,"
-          + " t.inventory_revision AS source_revision,"
-          // Preserve frozen pre-V1035 transition bytes for the absence-equivalent new NULL field.
-          // A definitive abort UUID remains part of the full captured source.
-          + " CASE WHEN to_jsonb(t)->'admission_orphan_cleanup_id' = 'null'::jsonb"
-          + " THEN (to_jsonb(t) - 'admission_orphan_cleanup_id')::text"
-          + " ELSE to_jsonb(t)::text END AS source_row_json"
-          + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
-          + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"
-          + " ELSE 'UNRESOLVED_LEGACY_RESERVATION' END AS source_kind,"
-          + " r.reservation_id::text AS source_key, r.inventory_revision AS source_revision,"
-          + " to_jsonb(r)::text AS source_row_json FROM game_session_canonical_issuer_partition_reservation r"
-          + " WHERE r.inventory_revision <= ?"
-          + " UNION ALL SELECT 'ACCOUNT_OBLIGATION' AS source_kind,"
-          + " a.transition_id::text || ':' || a.obligation_ordinal::text AS source_key,"
-          + " a.inventory_revision AS source_revision, to_jsonb(a)::text AS source_row_json"
-          + " FROM game_session_canonical_binding_account_index_obligation a"
-          + " WHERE a.inventory_revision <= ?"
-          + " UNION ALL SELECT 'ISSUER_OBLIGATION' AS source_kind,"
-          + " encode(o.binding_ref, 'hex') || ':' || o.transition_id::text AS source_key,"
-          + " o.inventory_revision AS source_revision,"
-          // Preserve pre-V1036 frozen bytes only for the absence-equivalent new NULL linkage.
-          // An actual release-operation identity remains significant captured source evidence.
-          + " CASE WHEN to_jsonb(o)->'local_release_operation_id' = 'null'::jsonb"
-          + " THEN (to_jsonb(o) - 'local_release_operation_id')::text"
-          + " ELSE to_jsonb(o)::text END AS source_row_json"
-          + " FROM game_session_canonical_binding_issuer_index_obligation o"
-          + " WHERE o.inventory_revision <= ?"
-          + " UNION ALL SELECT 'REGION_OBLIGATION' AS source_kind,"
-          + " g.transition_id::text AS source_key, g.inventory_revision AS source_revision,"
-          + " to_jsonb(g)::text AS source_row_json"
-          + " FROM game_session_canonical_binding_region_bridge_obligation g"
-          + " WHERE g.inventory_revision <= ?"
-          + ") captured_cohort ORDER BY source_kind COLLATE \"C\", source_key COLLATE \"C\"";
-
-  private static final String FUTURE_REVISION_SQL =
-      "SELECT EXISTS (SELECT 1 FROM game_session_canonical_gameplay_binding_inventory"
-          + " WHERE inventory_revision > ?)"
-          + " OR EXISTS (SELECT 1 FROM game_session_canonical_binding_transition"
-          + " WHERE inventory_revision > ?)"
-          + " OR EXISTS (SELECT 1 FROM game_session_canonical_issuer_partition_reservation"
-          + " WHERE inventory_revision > ?)"
-          + " OR EXISTS (SELECT 1 FROM game_session_canonical_binding_account_index_obligation"
-          + " WHERE inventory_revision > ?)"
-          + " OR EXISTS (SELECT 1 FROM game_session_canonical_binding_issuer_index_obligation"
-          + " WHERE inventory_revision > ?)"
-          + " OR EXISTS (SELECT 1 FROM game_session_canonical_binding_region_bridge_obligation"
-          + " WHERE inventory_revision > ?) AS has_future_revision";
-
   private final DSLContext dsl;
 
   CanonicalGameplayIssuerPartitionBuildRepository(DSLContext dsl) {
@@ -636,15 +580,8 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
     requireNoFutureRows(transaction, snapshotRevision);
     return transaction
         .fetch(
-            COHORT_SQL,
-            ISSUER,
-            decimal(snapshotRevision),
-            decimal(snapshotRevision),
-            ISSUER,
-            decimal(snapshotRevision),
-            decimal(snapshotRevision),
-            decimal(snapshotRevision),
-            decimal(snapshotRevision))
+            CanonicalGameplayIssuerCohortSql.cohortSql(),
+            CanonicalGameplayIssuerCohortSql.cohortBindings(ISSUER, decimal(snapshotRevision)))
         .map(
             row -> {
               String sourceJson = requireText(row, "source_row_json");
@@ -704,22 +641,8 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
       CanonicalGameplayIssuerLayoutBootstrapIntent intent,
       List<IssuerCohortSourceRow> currentRows) {
     List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> cohortRows =
-        currentRows.stream()
-            .sorted(
-                Comparator.comparing((IssuerCohortSourceRow row) -> row.cohortRow().kind().name())
-                    .thenComparing(row -> row.cohortRow().sourceKey()))
-            .map(
-                row -> {
-                  var source = row.cohortRow();
-                  return new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
-                      currentRows.indexOf(row),
-                      source.kind(),
-                      source.sourceKey(),
-                      source.sourceInventoryRevision(),
-                      source.sourceRowJson(),
-                      source.sourceRowDigest());
-                })
-            .toList();
+        assignCanonicalCohortOrdinals(
+            currentRows.stream().map(IssuerCohortSourceRow::cohortRow).toList());
     List<PlanBlocker> blockers = new ArrayList<>();
     Map<UUID, ReservationSource> reservations = new HashMap<>();
     Map<UUID, List<BindingSource>> bindings = new HashMap<>();
@@ -900,6 +823,33 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         Comparator.comparingLong(PlanBlocker::sourceRowOrdinal)
             .thenComparing(blocker -> blocker.code().name()));
     return new DerivedPlan(planned, blockers);
+  }
+
+  static List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> assignCanonicalCohortOrdinals(
+      List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> currentRows) {
+    List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> sortedRows =
+        currentRows.stream()
+            .sorted(
+                Comparator.comparing(
+                        (CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow row) ->
+                            row.kind().name())
+                    .thenComparing(
+                        CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey))
+            .toList();
+    List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> numberedRows =
+        new ArrayList<>(sortedRows.size());
+    for (int ordinal = 0; ordinal < sortedRows.size(); ordinal++) {
+      var source = sortedRows.get(ordinal);
+      numberedRows.add(
+          new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+              ordinal,
+              source.kind(),
+              source.sourceKey(),
+              source.sourceInventoryRevision(),
+              source.sourceRowJson(),
+              source.sourceRowDigest()));
+    }
+    return List.copyOf(numberedRows);
   }
 
   /** Initial bootstrap adopts its frozen layout; it does not migrate reservations to a new one. */
@@ -1734,13 +1684,8 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
     Record row =
         Objects.requireNonNull(
             transaction.fetchOne(
-                FUTURE_REVISION_SQL,
-                decimal(revision),
-                decimal(revision),
-                decimal(revision),
-                decimal(revision),
-                decimal(revision),
-                decimal(revision)),
+                CanonicalGameplayIssuerCohortSql.FUTURE_REVISION_SQL,
+                CanonicalGameplayIssuerCohortSql.futureRevisionBindings(decimal(revision))),
             "future inventory query must return one row");
     if (Boolean.TRUE.equals(row.get("has_future_revision", Boolean.class))) {
       throw conflict("Current issuer inventory has durable rows beyond its locked clock");

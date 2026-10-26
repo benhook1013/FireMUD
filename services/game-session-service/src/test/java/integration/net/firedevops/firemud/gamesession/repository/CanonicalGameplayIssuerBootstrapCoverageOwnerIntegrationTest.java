@@ -207,9 +207,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
       assertThat(administratorCommands.type(key)).isEqualTo("hash");
       assertThat(administratorCommands.pttl(key)).isEqualTo(-1L);
       if (partitionId.equals(fixture.activePartition())) {
-        assertThat(administratorCommands.hlen(key)).isEqualTo(3L);
+        assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
       } else {
-        assertThat(administratorCommands.hlen(key)).isEqualTo(1L);
+        assertThat(administratorCommands.hlen(key)).isEqualTo(2L);
       }
     }
     assertThat(originalReservationImage(fixture.dsl())).isEqualTo(originalReservationImage);

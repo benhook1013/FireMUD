@@ -31,8 +31,11 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
   static final String METADATA_FIELD = "!issuer-partition-bootstrap/v1";
   static final String RESERVATION_FIELD_PREFIX = "!issuer-reservation-capacity/v1:";
+  static final String MUTATION_REVISION_FIELD =
+      CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD;
   static final int MAX_MEMBER_OPERATIONS = 256;
-  static final int MAX_HASH_FIELDS = 1 + 2 * MAX_MEMBER_OPERATIONS;
+  static final int MAX_HASH_FIELDS = 2 + 2 * MAX_MEMBER_OPERATIONS;
+  static final int MAX_LOCAL_HASH_FIELDS = MAX_HASH_FIELDS + 2 * MAX_MEMBER_OPERATIONS;
   static final int MAX_BINDING_REF_BYTES = 6_144;
   static final int MAX_VALUE_BYTES = CanonicalGameplayIssuerMemberV2Codec.MAX_VALUE_BYTES;
   static final int MAX_METADATA_BYTES = 64 * 1024;
@@ -76,10 +79,17 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
 
     Map<String, byte[]> fields = new LinkedHashMap<>();
     putUnique(fields, METADATA_FIELD, metadata);
+    byte[] initialRevision =
+        work.initialPhysicalRevision().toString().getBytes(StandardCharsets.US_ASCII);
+    putUnique(fields, MUTATION_REVISION_FIELD, initialRevision);
     Set<UUID> reservations = new HashSet<>();
     Set<String> bindings = new HashSet<>();
     int bindingCount = 0;
-    long totalBytes = METADATA_FIELD.getBytes(StandardCharsets.US_ASCII).length + metadata.length;
+    long totalBytes =
+        METADATA_FIELD.getBytes(StandardCharsets.US_ASCII).length
+            + metadata.length
+            + MUTATION_REVISION_FIELD.getBytes(StandardCharsets.US_ASCII).length
+            + initialRevision.length;
     for (CanonicalGameplayIssuerBootstrapMemberOperation operation : work.memberOperations()) {
       CanonicalGameplayIssuerMemberV2Value value = operation.expectedMemberValue();
       byte[] valueBytes = operation.exactMemberValueBytes();

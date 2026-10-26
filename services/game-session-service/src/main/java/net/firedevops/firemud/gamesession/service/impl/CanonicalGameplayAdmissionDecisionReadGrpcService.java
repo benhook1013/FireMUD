@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryConflictException;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepository;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuard;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionDecisionReadServiceGrpc;
@@ -91,17 +92,47 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       return;
     }
 
-    final GetCanonicalGameplayAdmissionDecisionResponse response;
+    final CanonicalGameplayAdmissionDecision decision;
     try {
-      CanonicalGameplayAdmissionDecision decision =
+      decision =
           repository.readAdmissionDecision(
               selector.bindingDecisionId(), selector.expectedLeaseEvidence());
-      if (decision.leaseKind()
-          != net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence
-              .LeaseKind.NEW_BINDING) {
-        fail(observer, Status.FAILED_PRECONDITION);
-        return;
-      }
+    } catch (CannotCreateTransactionException
+        | DataAccessResourceFailureException
+        | TransientDataAccessException unavailable) {
+      fail(observer, Status.UNAVAILABLE);
+      return;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+      return;
+    } catch (CanonicalGameplayBindingInventoryConflictException conflict) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
+    } catch (IllegalStateException conflict) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
+    } catch (RuntimeException unexpectedRepositoryFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+
+    final boolean newBindingDecision;
+    try {
+      newBindingDecision =
+          decision.leaseKind()
+              == net.firedevops.firemud.common.account.admission
+                  .AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING;
+    } catch (RuntimeException unexpectedDecisionFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    if (!newBindingDecision) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
+    }
+
+    final GetCanonicalGameplayAdmissionDecisionResponse response;
+    try {
       response =
           CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
               selector,
@@ -112,16 +143,8 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
               decision.resumeEpisodeId(),
               toCandidate(decision),
               toTarget(decision));
-    } catch (CannotCreateTransactionException
-        | DataAccessResourceFailureException
-        | TransientDataAccessException unavailable) {
-      fail(observer, Status.UNAVAILABLE);
-      return;
-    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
-      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
-      return;
-    } catch (RuntimeException incompleteOrConflicting) {
-      fail(observer, Status.FAILED_PRECONDITION);
+    } catch (RuntimeException responseEncodingFailure) {
+      fail(observer, Status.INTERNAL);
       return;
     }
 

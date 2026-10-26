@@ -2,6 +2,7 @@
 -- qualifies, its binding member. KEYS[1] is the only issuer partition hash.
 local keyPrefix = 'session:game:index:issuer:'
 local metadataField = '!issuer-partition-bootstrap/v1'
+local mutationRevisionField = '!issuer-partition-mutation-revision/v1'
 local capacityPrefix = '!issuer-reservation-capacity/v1:'
 local maxDecimalBytes = 256
 local maxBindingRefBytes = 6144
@@ -9,6 +10,8 @@ local maxMemberValueBytes = 65536
 local maxMetadataBytes = 65536
 local maxMemberOperations = 256
 local maxHashFields = 1025
+local maxPhysicalFields = 1026
+local maxBaselineFields = 513
 local maxHashBytes = 16777216
 
 local function uuid(value)
@@ -60,7 +63,9 @@ local function canonicalBindingRef(bytes, member)
   local domain, offset = readSegment(bytes, 1)
   if domain ~= 'bindingRef/v1' or not offset then return false end
   local tenant, afterTenant = readSegment(bytes, offset)
+  if not tenant or not afterTenant then return false end
   local instance, afterInstance = readSegment(bytes, afterTenant)
+  if not instance or not afterInstance then return false end
   local session, afterSession = readSegment(bytes, afterInstance)
   if not tenant or not instance or not session or not afterSession or afterSession ~= #bytes + 1 then
     return false
@@ -167,7 +172,7 @@ if issuerId ~= 'firemud-account-service' or not nonnegative(partitionId)
     or not positive(partitionCount) or not positive(partitionCapacity)
     or not positive(baselineCountText) then return -2 end
 local baselineCount = tonumber(baselineCountText)
-if not baselineCount or baselineCount > maxHashFields then return -2 end
+if not baselineCount or baselineCount > maxBaselineFields then return -2 end
 
 local cursor = 6
 local baseline = {}
@@ -281,21 +286,29 @@ local seenBindings = {}
 local registeredOperations = {}
 local localCapacity = 0
 local localBindingCount = 0
-local targetOperationId = ARGV[cursor + operationCount * 6]
-local targetReservationId = ARGV[cursor + operationCount * 6 + 1]
-local targetBindingRef = ARGV[cursor + operationCount * 6 + 2]
-local targetMemberBytes = ARGV[cursor + operationCount * 6 + 3]
-local targetBindingPresent = ARGV[cursor + operationCount * 6 + 4]
-local plannedPartitionCapacity = ARGV[cursor + operationCount * 6 + 5]
-local plannedAggregateCapacity = ARGV[cursor + operationCount * 6 + 6]
-local aggregateBound = ARGV[cursor + operationCount * 6 + 7]
+local targetOperationId = ARGV[cursor + operationCount * 8]
+local targetReservationId = ARGV[cursor + operationCount * 8 + 1]
+local targetBindingRef = ARGV[cursor + operationCount * 8 + 2]
+local targetMemberBytes = ARGV[cursor + operationCount * 8 + 3]
+local targetBindingPresent = ARGV[cursor + operationCount * 8 + 4]
+local plannedPartitionCapacity = ARGV[cursor + operationCount * 8 + 5]
+local plannedAggregateCapacity = ARGV[cursor + operationCount * 8 + 6]
+local aggregateBound = ARGV[cursor + operationCount * 8 + 7]
+local expectedRevision = ARGV[cursor + operationCount * 8 + 8]
+local successorRevision = ARGV[cursor + operationCount * 8 + 9]
+local mutationKind = ARGV[cursor + operationCount * 8 + 10]
 if not uuid(targetOperationId) or not uuid(targetReservationId)
     or type(targetBindingRef) ~= 'string' or type(targetMemberBytes) ~= 'string'
     or (targetBindingPresent ~= '0' and targetBindingPresent ~= '1')
     or not nonnegative(plannedPartitionCapacity)
     or not nonnegative(plannedAggregateCapacity)
     or not positive(aggregateBound)
-    or #ARGV ~= cursor + operationCount * 6 + 7 then return -2 end
+    or not uuid(expectedRevision) or not uuid(successorRevision)
+    or expectedRevision == successorRevision
+    or (mutationKind ~= 'ADD_CAPACITY' and mutationKind ~= 'ADD_BINDING')
+    or (mutationKind == 'ADD_CAPACITY' and targetBindingPresent ~= '0')
+    or (mutationKind == 'ADD_BINDING' and targetBindingPresent ~= '1')
+    or #ARGV ~= cursor + operationCount * 8 + 10 then return -2 end
 
 local targetFound = false
 local position = cursor
@@ -306,10 +319,15 @@ for index = 1, operationCount do
   local memberBytes = ARGV[position + 3]
   local bindingPresent = ARGV[position + 4]
   local countsCapacity = ARGV[position + 5]
-  position = position + 6
+  local capacityMustBePresent = ARGV[position + 6]
+  local bindingMustBePresent = ARGV[position + 7]
+  position = position + 8
   if not uuid(operationId) or not uuid(reservationId)
       or (bindingPresent ~= '0' and bindingPresent ~= '1')
       or (countsCapacity ~= '0' and countsCapacity ~= '1')
+      or (capacityMustBePresent ~= '0' and capacityMustBePresent ~= '1')
+      or (bindingMustBePresent ~= '0' and bindingMustBePresent ~= '1')
+      or (bindingMustBePresent == '1' and bindingPresent ~= '1')
       or type(memberBytes) ~= 'string' or #memberBytes == 0 or #memberBytes > maxMemberValueBytes
       or seenOperationIds[operationId] or seenReservationIds[reservationId]
       or seenBindings[bindingRef] then return -2 end
@@ -322,10 +340,13 @@ for index = 1, operationCount do
   seenReservationIds[reservationId] = true
   seenBindings[bindingRef] = true
   registeredOperations[#registeredOperations + 1] = {
+    operationId = operationId,
     bindingRef = bindingRef,
     reservationId = reservationId,
     memberBytes = memberBytes,
-    bindingPresent = bindingPresent
+    bindingPresent = bindingPresent,
+    capacityMustBePresent = capacityMustBePresent,
+    bindingMustBePresent = bindingMustBePresent
   }
   if countsCapacity == '1' then localCapacity = localCapacity + 1 end
   local capacityField = capacityPrefix .. reservationId
@@ -353,7 +374,7 @@ if targetBindingPresent == '1' and allowed[targetBindingRef] ~= targetMemberByte
 local kind = redis.call('TYPE', KEYS[1]).ok
 if kind ~= 'hash' or redis.call('PTTL', KEYS[1]) ~= -1 then return -1 end
 local actual = redis.call('HGETALL', KEYS[1])
-if #actual % 2 ~= 0 or #actual / 2 > maxHashFields then return -1 end
+if #actual % 2 ~= 0 or #actual / 2 > maxPhysicalFields then return -1 end
 local actualCapacityCount = 0
 local actualReservationCount = 0
 local actualBindingCount = 0
@@ -366,13 +387,19 @@ for index = 1, #actual, 2 do
   totalActualBytes = totalActualBytes + #field + #valueBytes
   if totalActualBytes > maxHashBytes then return -1 end
   local expected = allowed[field]
-  if expected == nil or expected ~= valueBytes then return -1 end
-  if string.sub(field, 1, #capacityPrefix) == capacityPrefix then
+  if field == mutationRevisionField then
+    if valueBytes ~= expectedRevision and valueBytes ~= successorRevision then return -1 end
+  elseif expected == nil or expected ~= valueBytes then
+    return -1
+  end
+  if field == mutationRevisionField then
+    -- The separately validated fence is not a reservation or binding field.
+  elseif string.sub(field, 1, #capacityPrefix) == capacityPrefix then
     local decodedOk, member = pcall(cjson.decode, valueBytes)
     if not decodedOk or type(member) ~= 'table' or type(member.reservation) ~= 'table' then return -1 end
     actualReservationCount = actualReservationCount + 1
     if member.reservation.lifecycle ~= 'RELEASED' then actualCapacityCount = actualCapacityCount + 1 end
-  elseif field ~= metadataField then
+  elseif field ~= metadataField and field ~= mutationRevisionField then
     actualBindingCount = actualBindingCount + 1
   end
 end
@@ -393,14 +420,30 @@ if actualCapacityCount > tonumber(plannedPartitionCapacity)
 
 local capacityBefore = redis.call('HGET', KEYS[1], targetCapacityField)
 local bindingBefore = redis.call('HGET', KEYS[1], targetBindingRef)
-if capacityBefore ~= nil and capacityBefore ~= false and capacityBefore ~= targetMemberBytes then return -1 end
-if bindingBefore ~= nil and bindingBefore ~= false and targetBindingPresent == '1'
-    and bindingBefore ~= targetMemberBytes then return -1 end
-if targetBindingPresent == '0' and bindingBefore ~= nil and bindingBefore ~= false then return -1 end
-local changedCapacity = capacityBefore == false or capacityBefore == nil
-local changedBinding = targetBindingPresent == '1' and (bindingBefore == false or bindingBefore == nil)
-if changedCapacity then redis.call('HSET', KEYS[1], targetCapacityField, targetMemberBytes) end
-if changedBinding then redis.call('HSET', KEYS[1], targetBindingRef, targetMemberBytes) end
-if changedBinding then return 2 end
-if changedCapacity then return 1 end
-return 3
+local revisionBefore = actualFields[mutationRevisionField]
+for _, operation in ipairs(registeredOperations) do
+  if operation.operationId ~= targetOperationId or revisionBefore ~= successorRevision then
+    local capacity = actualFields[capacityPrefix .. operation.reservationId]
+    local binding = actualFields[operation.bindingRef]
+    if operation.capacityMustBePresent == '1' and capacity ~= operation.memberBytes then return -1 end
+    if operation.bindingMustBePresent == '1' and binding ~= operation.memberBytes then return -1 end
+  end
+end
+if revisionBefore == successorRevision then
+  if capacityBefore ~= targetMemberBytes
+      or (targetBindingPresent == '1' and bindingBefore ~= targetMemberBytes)
+      or (targetBindingPresent == '0' and bindingBefore ~= nil and bindingBefore ~= false) then return -1 end
+  return 3
+end
+if revisionBefore ~= expectedRevision then return -1 end
+if mutationKind == 'ADD_CAPACITY' then
+  if capacityBefore ~= nil and capacityBefore ~= false then return -1 end
+  if bindingBefore ~= nil and bindingBefore ~= false then return -1 end
+  redis.call('HSET', KEYS[1], mutationRevisionField, successorRevision,
+      targetCapacityField, targetMemberBytes)
+  return 1
+end
+if capacityBefore ~= targetMemberBytes or (bindingBefore ~= nil and bindingBefore ~= false) then return -1 end
+redis.call('HSET', KEYS[1], mutationRevisionField, successorRevision,
+    targetBindingRef, targetMemberBytes)
+return 2

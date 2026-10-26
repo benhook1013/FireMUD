@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,6 +44,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -85,11 +87,24 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   private final RedisScriptCatalog issuerCatalog;
   private final Map<String, CanonicalGameplayIssuerBindingLocalOperation> otherOperations =
       new HashMap<>();
+  private final Map<String, AccountGameplayAdmissionLeaseEvidence> otherLeases = new HashMap<>();
 
   public CanonicalGameplayAdmissionAbortCompositionFixture(
       DriverManagerDataSource accountDataSource,
       Candidate accountCandidate,
       RedisClient issuerRedisClient) {
+    this(accountDataSource, accountCandidate, issuerRedisClient, 0);
+  }
+
+  /** Installs actual retained reservations as part of the qualified initial bootstrap cohort. */
+  public CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount) {
+    if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
+      throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
+    }
     this.issuerRedisClient =
         java.util.Objects.requireNonNull(issuerRedisClient, "issuerRedisClient");
     dataSource = new DriverManagerDataSource();
@@ -134,6 +149,9 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             accountCandidate.issuerIndexPartitionCount(),
             accountCandidate.issuerIndexPartitionCapacity());
     establishActualLegacyDisposition(dsl);
+    if (seedBootstrapMemberCount > 0) {
+      seedQualifiedBootstrapMembers(seedBootstrapMemberCount);
+    }
     repository = new CanonicalGameplayBindingInventoryRepository(dsl);
     BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
     BigInteger partitionCount = identity.issuerIndexPartitionCount();
@@ -411,6 +429,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .projectAndRead(localOperation);
   }
 
+  /** Uses a controlled Account lease input and the actual provisional SQL/Redis owners. */
+  public void publishOriginalWithControlledAccountLease() {
+    publish(controlledLeaseEvidence(identity, generation, target));
+  }
+
   /**
    * Start the disposable GS role before lease allocation so container startup consumes no lease
    * lifetime.
@@ -507,6 +530,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .prepareOrResume(transitionId);
   }
 
+  public CanonicalGameplayIssuerBindingLocalReleaseOperation prepareIssuerRelease(String seed) {
+    return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
+        .prepareOrResume(otherOperation(seed).request().transitionId());
+  }
+
   public CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.Readback projectIssuerRelease(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation) {
     return new CanonicalGameplayIssuerBindingLocalReleaseRedisOwner(
@@ -530,6 +558,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.Readback readback) {
     return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
         .completeWithReadback(operation, readback);
+  }
+
+  /** Records a controlled Account terminal input through the actual Game Session abort owner. */
+  public CanonicalGameplayAdmissionAbortSource recordOriginalAccountAbort() {
+    var source = repository.readFirstNewAdmissionAbortSource(transitionId);
+    return repository.recordFirstNewAccountAbort(
+        source,
+        UUID.nameUUIDFromBytes("original-controller-cleanup".getBytes(StandardCharsets.UTF_8)));
   }
 
   public UUID prepareOtherControllerNew(String seed) {
@@ -567,6 +603,180 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                     null));
     otherOperations.put(seed, operation);
     return operation.operationId();
+  }
+
+  /** Uses the actual NEW SQL owner to prepare a member in a caller-selected pinned partition. */
+  public UUID prepareOtherControllerNewInPartition(String seed, BigInteger partitionId) {
+    Objects.requireNonNull(seed, "seed");
+    Objects.requireNonNull(partitionId, "partitionId");
+    if (partitionId.signum() < 0
+        || partitionId.compareTo(identity.issuerIndexPartitionCount()) >= 0) {
+      throw new IllegalArgumentException("partitionId must be within the installed issuer layout");
+    }
+    CanonicalGameplayBindingIdentity other;
+    do {
+      other =
+          new CanonicalGameplayBindingIdentity(
+              identity.accountId(),
+              identity.tenantId(),
+              identity.playableStateNamespaceId(),
+              UUID.randomUUID(),
+              identity.playableStateScope(),
+              identity.gameInstanceId(),
+              identity.runtimeGameInstanceId(),
+              UUID.randomUUID().toString(),
+              identity.regionId(),
+              identity.regionEpoch(),
+              identity.issuerId(),
+              identity.issuerAuthGeneration(),
+              identity.issuerIndexLayoutVersion(),
+              identity.issuerIndexPartitionCount(),
+              identity.issuerIndexPartitionCapacity());
+    } while (!other
+        .bindingRef()
+        .partitionId(identity.issuerIndexPartitionCount())
+        .equals(partitionId));
+    var operation =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
+            .beginOrResumeOrdinaryNew(
+                new CanonicalGameplayIssuerBindingLocalOperation.Request(
+                    UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
+                    UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)),
+                    other,
+                    null,
+                    null));
+    otherOperations.put(seed, operation);
+    return operation.operationId();
+  }
+
+  /** Replays the exact retained request for a previously prepared controller operation. */
+  public UUID retryOtherControllerNew(String seed) {
+    var operation = otherOperation(seed);
+    var retried =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
+            .beginOrResumeOrdinaryNew(operation.request());
+    otherOperations.put(seed, retried);
+    return retried.operationId();
+  }
+
+  /** Uses the actual SQL preparation and physical Redis owner for another same-partition NEW. */
+  public CanonicalGameplayIssuerBindingLocalRedisOwner.Readback projectOtherControllerNew(
+      String seed) {
+    var operation = otherOperation(seed);
+    return new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+        .projectAndRead(operation);
+  }
+
+  /** Publishes a controlled Account lease through the actual SQL and Redis provisional owners. */
+  public void publishOtherControllerNew(String seed) {
+    var operation = otherOperation(seed);
+    var transitionId = operation.request().transitionId();
+    var evidence = repository.readProvisionalCasEvidence(transitionId);
+    var lease =
+        otherLeases.computeIfAbsent(
+            seed,
+            ignored ->
+                controlledLeaseEvidence(
+                    operation.request().candidate(),
+                    evidence.transition().bindingGeneration(),
+                    target));
+    repository.markProvisional(
+        evidence,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            operation.request().candidate(),
+            evidence.transition().bindingGeneration(),
+            null,
+            target));
+    new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+        .projectAndRead(operation);
+  }
+
+  /** Records a controlled Account abort through the actual Game Session SQL abort owner. */
+  public CanonicalGameplayAdmissionAbortSource recordOtherAccountAbort(String seed) {
+    var operation = otherOperation(seed);
+    var source = repository.readFirstNewAdmissionAbortSource(operation.request().transitionId());
+    return repository.recordFirstNewAccountAbort(
+        source, UUID.nameUUIDFromBytes((seed + "-cleanup").getBytes(StandardCharsets.UTF_8)));
+  }
+
+  CanonicalGameplayIssuerBindingLocalOperation otherOperation(String seed) {
+    var operation = otherOperations.get(seed);
+    if (operation == null) {
+      throw new IllegalArgumentException("Other NEW operation was not prepared");
+    }
+    return operation;
+  }
+
+  CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
+      prepareOtherAddMutation(String seed) {
+    return localProjectionRepository.prepareAddMutationWork(otherOperation(seed));
+  }
+
+  CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
+      readPreparedPartitionWork(CanonicalGameplayIssuerBindingLocalOperation operation) {
+    return localProjectionRepository.readPreparedPartitionWork(operation);
+  }
+
+  CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
+      readCurrentOriginalPartitionWork() {
+    return localProjectionRepository.readPreparedPartitionWork(localOperation);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalRetirementOperation prepareIssuerRetirement(
+      UUID transitionId) {
+    return new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource)
+        .prepareOrResume(transitionId);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalRetirementRedisOwner.Readback retireIssuerCapacity(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return new CanonicalGameplayIssuerBindingLocalRetirementRedisOwner(
+            issuerRedisClient,
+            retirementCatalog(),
+            localProjectionRepository,
+            new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource),
+            issuerSource)
+        .retireAndRead(operation);
+  }
+
+  /** Adds the retirement script only for callers that exercise the new owner. */
+  RedisScriptCatalog retirementCatalog() {
+    return RedisScriptCatalog.fromContributions(
+        List.of(
+            new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution()));
+  }
+
+  public byte[] issuerPartitionKey() {
+    return CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  public byte[] issuerPartitionKey(String seed) {
+    return CanonicalGameplayIssuerRedisKeys.forMember(otherOperation(seed).memberValue())
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  public BigInteger originalPartitionId() {
+    return localOperation.reservation().partitionId();
+  }
+
+  public int originalBaselineReservationCount() {
+    return localOperation.baselinePartitionProof().physicalReservationCount();
+  }
+
+  public int originalBaselineCountedCapacity() {
+    return localOperation.baselinePartitionProof().physicalCountedCapacityCount();
+  }
+
+  public int originalBaselineBindingCount() {
+    return localOperation.baselinePartitionProof().physicalBindingCount();
   }
 
   public BigInteger preparedLocalCountedReservations() {
@@ -726,16 +936,6 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     }
   }
 
-  public CanonicalGameplayIssuerBindingLocalRedisOwner.Readback projectOtherControllerNew(
-      String seed) {
-    var operation = otherOperations.get(seed);
-    if (operation == null)
-      throw new IllegalArgumentException("Other NEW operation was not prepared");
-    return new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-        .projectAndRead(operation);
-  }
-
   /** Attempts a newer candidate; the retained unresolved original must fence preparation. */
   public BigInteger prepareNewerCandidate() {
     var newer =
@@ -813,6 +1013,146 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   public byte[] originalMemberValueBytes() {
     return localOperation.exactMemberValueBytes();
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target) {
+    long now = System.currentTimeMillis();
+    String nowSeconds = Long.toString(now / 1000L);
+    Map<String, Object> carrier = new LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
+    carrier.put("targetNamespace", target.targetNamespace());
+    carrier.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
+    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("leaseId", UUID.randomUUID().toString());
+    carrier.put("leaseFence", "1");
+    Map<String, Object> scope = new LinkedHashMap<>();
+    scope.put("accountId", candidate.accountId().toString());
+    scope.put("tenantId", candidate.tenantId().toString());
+    scope.put("realmId", target.realmId().toString());
+    scope.put("worldSlug", target.worldSlug());
+    scope.put("realmSlug", target.realmSlug());
+    scope.put("playableStateNamespaceId", target.playableStateNamespaceId().toString());
+    scope.put("playableStateScope", target.playableStateScope());
+    scope.put("gameInstanceId", target.canonicalGameInstanceId().toString());
+    scope.put("characterId", candidate.characterId().toString());
+    scope.put("sessionId", candidate.sessionId());
+    scope.put("bindingGeneration", bindingGeneration.toString());
+    scope.put("catalogRevision", Long.toString(target.catalogRevision()));
+    scope.put("pointerVersion", Long.toString(target.pointerVersion()));
+    scope.put("regionId", candidate.regionId().toString());
+    scope.put("regionEpoch", candidate.regionEpoch().toString());
+    carrier.put("bindingScope", scope);
+    carrier.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration", candidate.issuerAuthGeneration().toString(),
+            "accountAuthorityGeneration", "1",
+            "tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "privateRealmGrantVersions", List.of()));
+    carrier.put("issuanceFence", "1");
+    carrier.put(
+        "membershipBaseline",
+        Map.of(
+            "membershipLifecycleState", "ACTIVE",
+            "membershipVersion", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", "1"));
+    String prefix = "account:auth-authority:v1:";
+    List<Map<String, Object>> checkpoints = new java.util.ArrayList<>();
+    for (String stream :
+        List.of(
+            "account/" + candidate.accountId(),
+            "issuer/" + candidate.issuerId(),
+            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
+            "tenant/" + candidate.tenantId())) {
+      checkpoints.add(
+          Map.of(
+              "outboxStreamKey",
+              prefix + stream,
+              "outboxSequence",
+              stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0"));
+    }
+    carrier.put("outboxCheckpoints", checkpoints);
+    carrier.put(
+        "tokenIdentityEvidence",
+        Map.ofEntries(
+            Map.entry("accountId", candidate.accountId().toString()),
+            Map.entry("operationId", UUID.randomUUID().toString()),
+            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
+            Map.entry("tokenJti", UUID.randomUUID().toString()),
+            Map.entry("tokenSHA256", "a".repeat(64)),
+            Map.entry("tokenProfile", "game-session-account-delegation"),
+            Map.entry("tokenGeneration", "1"),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("tokenIdentityFence", "1"),
+            Map.entry("issuedAt", nowSeconds),
+            Map.entry("notBefore", nowSeconds),
+            Map.entry("expiresAt", Long.toString(now / 1000L + 60L))));
+    carrier.put("evaluatedAt", Long.toString(now));
+    carrier.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+  }
+
+  private void seedQualifiedBootstrapMembers(int count) {
+    var inventoryRepository = new CanonicalGameplayBindingInventoryRepository(dsl);
+    for (int index = 0; index < count; index++) {
+      seedQualifiedBootstrapMember(inventoryRepository);
+    }
+  }
+
+  private void seedQualifiedBootstrapMember(
+      CanonicalGameplayBindingInventoryRepository inventoryRepository) {
+    var candidate =
+        new CanonicalGameplayBindingIdentity(
+            UUID.randomUUID(),
+            identity.tenantId(),
+            identity.playableStateNamespaceId(),
+            UUID.randomUUID(),
+            identity.playableStateScope(),
+            identity.gameInstanceId(),
+            identity.runtimeGameInstanceId(),
+            UUID.randomUUID().toString(),
+            identity.regionId(),
+            identity.regionEpoch(),
+            identity.issuerId(),
+            identity.issuerAuthGeneration(),
+            identity.issuerIndexLayoutVersion(),
+            identity.issuerIndexPartitionCount(),
+            identity.issuerIndexPartitionCapacity());
+    var reservation =
+        new CanonicalIssuerReservationFenceEvidence(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            BigInteger.ONE,
+            BigInteger.TWO,
+            BigInteger.ONE);
+    UUID transitionId = UUID.randomUUID();
+    inventoryRepository.prepare(
+        new CanonicalGameplayBindingTransitionRequest(
+            transitionId, UUID.randomUUID(), candidate, reservation, null, null));
+    var prepared = inventoryRepository.readProvisionalCasEvidence(transitionId);
+    var lease =
+        controlledLeaseEvidence(candidate, prepared.transition().bindingGeneration(), target);
+    inventoryRepository.markProvisional(
+        prepared,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            candidate,
+            prepared.transition().bindingGeneration(),
+            null,
+            target));
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint

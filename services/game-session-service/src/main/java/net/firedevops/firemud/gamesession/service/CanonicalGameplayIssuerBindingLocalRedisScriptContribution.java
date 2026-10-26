@@ -32,20 +32,22 @@ public final class CanonicalGameplayIssuerBindingLocalRedisScriptContribution
   @Override
   public Collection<RedisScriptDescriptor> descriptors() {
     try (InputStream input = getClass().getResourceAsStream(DESCRIPTOR_PATH)) {
-      if (input == null) throw unavailable();
+      if (input == null) throw new IOException("Descriptor resource is missing");
       byte[] bytes = input.readNBytes(16 * 1024 + 1);
-      if (bytes.length == 0 || bytes.length > 16 * 1024) throw unavailable();
+      if (bytes.length == 0 || bytes.length > 16 * 1024) {
+        throw new IOException("Descriptor resource is empty or oversized");
+      }
       RedisScriptDescriptor descriptor = JSON.readValue(bytes, RedisScriptDescriptor.class);
       if (!ownerId().equals(descriptor.owner()) || !SCRIPT_ID.equals(descriptor.scriptId())) {
-        throw unavailable();
+        throw new IllegalArgumentException("Descriptor owner or script identity is invalid");
       }
       return List.of(descriptor);
     } catch (IOException | RuntimeException failure) {
-      throw unavailable();
+      throw unavailable(failure);
     }
   }
 
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException("Issuer binding-local Redis descriptor is unavailable");
+  private static IllegalStateException unavailable(Throwable cause) {
+    return new IllegalStateException("Issuer binding-local Redis descriptor is unavailable", cause);
   }
 }
