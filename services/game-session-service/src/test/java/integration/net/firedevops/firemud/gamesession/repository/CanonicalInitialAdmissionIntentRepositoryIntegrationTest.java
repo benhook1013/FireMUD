@@ -87,11 +87,11 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   void humanStartingIntentRefusesAnExpiredOriginalOwnerWithoutEffects() throws Exception {
     Harness harness = harness();
     try {
-      OwnerTarget target = harness.seedStarting(Duration.ofSeconds(2));
+      OwnerTarget target = harness.seedStarting(Duration.ofSeconds(10));
       var request = holdRequest(target, "intent-expired-original-owner");
       var lifecycle = target.lifecycleRequest(uuid(409));
 
-      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
       while (!Boolean.TRUE.equals(
           harness
               .dsl

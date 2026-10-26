@@ -10,6 +10,10 @@ import net.firedevops.firemud.gamesession.service.AccountInitialAdmissionSettlem
 import net.firedevops.firemud.gamesession.v1.AccountInitialAdmissionSettlementReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetAccountInitialAdmissionSettlementRequest;
 import net.firedevops.firemud.gamesession.v1.GetAccountInitialAdmissionSettlementResponse;
+import org.jooq.exception.TooManyRowsException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 /** Dedicated unregistered Account read; the separate World-only service is unchanged. */
 public final class AccountInitialAdmissionSettlementReadGrpcService
@@ -66,12 +70,35 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
       AccountInitialAdmissionSettlementReadGrpcCodec.fromResponse(input, response);
       observer.onNext(response);
       observer.onCompleted();
-    } catch (org.jooq.exception.DataAccessException
-        | org.springframework.dao.DataAccessException unavailable) {
+    } catch (TooManyRowsException unproved) {
+      observer.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Exact protected terminal is unavailable")
+              .withCause(unproved)
+              .asRuntimeException());
+    } catch (CannotCreateTransactionException
+        | DataAccessResourceFailureException
+        | TransientDataAccessException unavailable) {
       observer.onError(
           Status.UNAVAILABLE
               .withDescription("Settlement owner is unavailable")
+              .withCause(unavailable)
               .asRuntimeException());
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException storageFailure) {
+      if (hasTransientSqlState(storageFailure)) {
+        observer.onError(
+            Status.UNAVAILABLE
+                .withDescription("Settlement owner is unavailable")
+                .withCause(storageFailure)
+                .asRuntimeException());
+      } else {
+        observer.onError(
+            Status.INTERNAL
+                .withDescription("Settlement owner read failed")
+                .withCause(storageFailure)
+                .asRuntimeException());
+      }
     } catch (IllegalArgumentException | IllegalStateException unproved) {
       observer.onError(
           Status.FAILED_PRECONDITION
@@ -84,5 +111,21 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
               .withCause(unexpected)
               .asRuntimeException());
     }
+  }
+
+  private static boolean hasTransientSqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sqlException) {
+        String sqlState = sqlException.getSQLState();
+        if (sqlState != null
+            && (sqlState.startsWith("08")
+                || sqlState.startsWith("40")
+                || sqlState.startsWith("57")
+                || sqlState.equals("55P03"))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }
