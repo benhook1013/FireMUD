@@ -34,7 +34,7 @@
   ],
   "resetSensitivity": "CLUSTER",
   "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
-  "tailLossBehavior": "This tenant-local CLOSED barrier fails admission when missing or malformed. A CLOSED install is not OPEN authorization, an installed account-fence receipt, or coverage evidence. Reset-sensitive storage observations must be reverified before an owner retries the same durable operation; this script never opens a barrier or touches the global account index.",
+  "tailLossBehavior": "This tenant-local CLOSED barrier fails admission when missing or malformed. A CLOSED install is not OPEN authorization, an installed account-fence receipt, or coverage evidence. Reset-sensitive storage observations must be reverified before an owner retries the same durable operation. An AOF-retained barrier with the same operation and epoch but a changed stable incarnation is refused without mutation; a fresh observation does not authorize an in-place rewrite. The original intent remains unresolved and the target CLOSED until Game Session account-wide fenced recovery resolves replacement under the canonical reset/recovery contract. This local installer does not implement that replacement or intent settlement and never opens a barrier or touches the global account index.",
   "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
   "supportedCoexistence": [
     {"callerVersion": "v1", "payloadVersion": "none"}
