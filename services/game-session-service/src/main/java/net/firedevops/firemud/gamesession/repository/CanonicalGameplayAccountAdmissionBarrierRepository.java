@@ -226,7 +226,6 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
 
           // The prepare owner takes this same inventory-clock then account-control lock order.
           // The operation lookup below is only a locator; current SQL ownership is reloaded.
