@@ -128,6 +128,72 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
         });
   }
 
+  /** Resolves topology only for the persisted exact original-attempt INITIAL target. */
+  Assignment assignmentForInitialBarrierTarget(UUID originalRequestId) {
+    requireNonNil(originalRequestId, "originalRequestId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          Record row =
+              transaction.fetchOne(
+                  "SELECT i.initializer_id, i.account_id, i.source_control_epoch,"
+                      + " t.target_ordinal, t.tenant_id,"
+                      + " t.playable_state_namespace_id, t.target_state, control.state AS control_state,"
+                      + " control.last_operation_fence, control.current_operation_id,"
+                      + " control.current_fence_intent_id, control.current_operation_fence,"
+                      + " control.account_admission_fence, control.historical_account_admission_fence,"
+                      + " control.coverage_fence, control.inventory_snapshot_revision,"
+                      + " control.coverage_generation"
+                      + " FROM game_session_canonical_initial_account_barrier_initializer i"
+                      + " JOIN game_session_canonical_initial_account_barrier_target t"
+                      + " ON t.initializer_id = i.initializer_id"
+                      + " AND t.original_request_id = i.original_request_id"
+                      + " JOIN game_session_canonical_account_coverage_control control"
+                      + " ON control.account_id = i.account_id"
+                      + " WHERE i.original_request_id = ? AND t.target_ordinal = 0"
+                      + " FOR UPDATE OF i, t, control",
+                  originalRequestId);
+          if (row == null
+              || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(row.get("control_state", String.class))
+              || row.get("last_operation_fence", java.math.BigDecimal.class) == null
+              || row.get("last_operation_fence", java.math.BigDecimal.class)
+                      .toBigIntegerExact()
+                      .signum()
+                  < 0
+              || row.get("source_control_epoch", java.math.BigDecimal.class) == null
+              || !row.get("source_control_epoch", java.math.BigDecimal.class)
+                  .toBigIntegerExact()
+                  .equals(
+                      row.get("last_operation_fence", java.math.BigDecimal.class)
+                          .toBigIntegerExact())
+              || row.get("current_operation_id", UUID.class) != null
+              || row.get("current_fence_intent_id", UUID.class) != null
+              || row.get("current_operation_fence") != null
+              || row.get("account_admission_fence", UUID.class) != null
+              || row.get("historical_account_admission_fence", UUID.class) != null
+              || row.get("coverage_fence", UUID.class) != null
+              || row.get("inventory_snapshot_revision") != null
+              || row.get("coverage_generation") != null) {
+            throw conflict(
+                "The exact INITIAL target or its positive NO_ACTIVE control is unavailable");
+          }
+          UUID initializerId = requiredUuid(row, "initializer_id");
+          UUID accountId = requiredUuid(row, "account_id");
+          UUID tenantId = requiredUuid(row, "tenant_id");
+          UUID namespaceId = requiredUuid(row, "playable_state_namespace_id");
+          if (requiredLong(row, "target_ordinal") != 0L
+              || !Set.of("NEVER_DISPATCHED", "DISPATCH_POSSIBLE", "OPEN_INSTALLED")
+                  .contains(requiredString(row, "target_state"))) {
+            throw conflict("The INITIAL target state is not a retained original-attempt state");
+          }
+          requireTenantClaim(transaction, tenantId);
+          InitialTarget source =
+              new InitialTarget(initializerId, originalRequestId, accountId, tenantId, namespaceId);
+          return resolveMapping(
+              transaction, source, allocationVersion, tagFor(tenantId, allocationVersion));
+        });
+  }
+
   /**
    * Narrow package-private collision path for native database proof. The tenant still comes from
    * the exact persisted transition; only the candidate output is controlled to exercise the global
@@ -387,7 +453,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     return new CanonicalGameplayBindingInventoryConflictException(message);
   }
 
-  private sealed interface Target permits BindingTarget, BarrierTarget {
+  private sealed interface Target permits BindingTarget, BarrierTarget, InitialTarget {
     UUID tenantId();
 
     UUID accountId();
@@ -408,6 +474,14 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
   private record BarrierTarget(
       UUID sourceId, long ordinal, UUID accountId, UUID tenantId, UUID namespaceId)
+      implements Target {}
+
+  private record InitialTarget(
+      UUID initializerId,
+      UUID originalRequestId,
+      UUID accountId,
+      UUID tenantId,
+      UUID namespaceId)
       implements Target {}
 
   /** Owner-issued immutable mapping plus the exact SQL source needed by the key builder. */
@@ -451,6 +525,18 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
     public boolean isBindingTransition() {
       return source instanceof BindingTarget;
+    }
+
+    boolean isInitialBarrierTarget() {
+      return source instanceof InitialTarget;
+    }
+
+    UUID initialBarrierInitializerId() {
+      return source instanceof InitialTarget initial ? initial.initializerId() : null;
+    }
+
+    UUID initialBarrierOriginalRequestId() {
+      return source instanceof InitialTarget initial ? initial.originalRequestId() : null;
     }
 
     public UUID transitionId() {

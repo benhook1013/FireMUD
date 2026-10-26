@@ -171,6 +171,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     CanonicalGameplayIssuerInstalledAnchor anchor =
         initialCoverageOwner(dsl, currentState::get)
             .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, currentState::get);
     String installedAnchorImage = anchorImage(dsl);
     String installedProofImage = proofImage(dsl);
     String initialReservationImage = reservationImage(dsl);

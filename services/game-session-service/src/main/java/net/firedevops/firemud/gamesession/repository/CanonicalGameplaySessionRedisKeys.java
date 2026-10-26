@@ -53,6 +53,28 @@ public final class CanonicalGameplaySessionRedisKeys {
       throw new IllegalArgumentException(
           "Account admission barrier keys require a persisted acquisition-intent target");
     }
+    return accountAdmissionBarrierKey(assignment);
+  }
+
+  /** Builds the same canonical key only for one persisted original-attempt INITIAL target. */
+  static String initialAccountAdmissionBarrier(
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      java.util.UUID expectedInitializerId,
+      java.util.UUID expectedOriginalRequestId) {
+    Objects.requireNonNull(assignment, "assignment");
+    Objects.requireNonNull(expectedInitializerId, "expected initializer id");
+    Objects.requireNonNull(expectedOriginalRequestId, "expected original request id");
+    if (!assignment.isInitialBarrierTarget()
+        || !expectedInitializerId.equals(assignment.initialBarrierInitializerId())
+        || !expectedOriginalRequestId.equals(assignment.initialBarrierOriginalRequestId())) {
+      throw new IllegalArgumentException(
+          "INITIAL account admission barrier keys require their persisted original target");
+    }
+    return accountAdmissionBarrierKey(assignment);
+  }
+
+  private static String accountAdmissionBarrierKey(
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {
     return "session:game:account-admission:{"
         + tag(assignment)
         + "}:"

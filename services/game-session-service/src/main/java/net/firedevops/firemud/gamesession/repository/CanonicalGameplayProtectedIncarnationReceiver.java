@@ -38,6 +38,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 final class CanonicalGameplayProtectedIncarnationReceiver {
   private static final String OBSERVATION_SCHEMA = "firemud.gs.protected-incarnation-read/v1";
+  private static final String INITIAL_OBSERVATION_SCHEMA =
+      "firemud.gs.protected-initial-account-barrier-read/v1";
   private static final String INCARNATION_BINDING_SCHEMA =
       "firemud.gs.protected-incarnation-binding/v1";
   private static final Pattern KEY_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
@@ -67,6 +69,20 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
           "inventorySnapshotRevision",
           "cohortDigest",
           "barrierTargetDigest");
+  private static final Set<String> INITIAL_OWNER_FIELDS =
+      Set.of(
+          "ownerKind",
+          "initializerId",
+          "originalRequestId",
+          "originalCallerContextId",
+          "originalAttemptFence",
+          "accountId",
+          "sourceControlState",
+          "sourceControlEpoch",
+          "inventorySnapshotRevision",
+          "accountLoginEvidenceDigest",
+          "sourceControlDigest",
+          "targetDigest");
   private static final Set<String> TARGET_FIELDS =
       Set.of(
           "targetOrdinal",
@@ -95,6 +111,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
           .build();
 
   private final CanonicalGameplayAccountAdmissionBarrierRepository intentRepository;
+  private final CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository;
   private final CanonicalGameplayTenantGameplayTagRepository tenantTagRepository;
   private final ProtectedObservationChannel observationChannel;
   private final TrustedConfiguration trustedConfiguration;
@@ -109,6 +126,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       Clock clock) {
     this(
         intentRepository,
+        null,
         tenantTagRepository,
         observationChannel,
         trustedConfiguration,
@@ -123,7 +141,42 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       TrustedConfiguration trustedConfiguration,
       Clock clock,
       SecureRandom secureRandom) {
+    this(
+        intentRepository,
+        null,
+        tenantTagRepository,
+        observationChannel,
+        trustedConfiguration,
+        clock,
+        secureRandom);
+  }
+
+  CanonicalGameplayProtectedIncarnationReceiver(
+      CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository,
+      CanonicalGameplayTenantGameplayTagRepository tenantTagRepository,
+      ProtectedObservationChannel observationChannel,
+      TrustedConfiguration trustedConfiguration,
+      Clock clock) {
+    this(
+        null,
+        initialRepository,
+        tenantTagRepository,
+        observationChannel,
+        trustedConfiguration,
+        clock,
+        new SecureRandom());
+  }
+
+  private CanonicalGameplayProtectedIncarnationReceiver(
+      CanonicalGameplayAccountAdmissionBarrierRepository intentRepository,
+      CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository,
+      CanonicalGameplayTenantGameplayTagRepository tenantTagRepository,
+      ProtectedObservationChannel observationChannel,
+      TrustedConfiguration trustedConfiguration,
+      Clock clock,
+      SecureRandom secureRandom) {
     this.intentRepository = intentRepository;
+    this.initialRepository = initialRepository;
     this.tenantTagRepository = tenantTagRepository;
     this.observationChannel = observationChannel;
     this.trustedConfiguration = trustedConfiguration;
@@ -143,9 +196,23 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     if (targetOrdinal < 0) {
       throw new IllegalArgumentException("targetOrdinal must not be negative");
     }
-    requireAvailable();
-
+    requireAvailable(OwnerKind.ACCOUNT_FENCE);
     CurrentContext before = loadCurrentContext(operationId, targetOrdinal);
+    return observeCurrentContext(
+        before, () -> loadCurrentContext(operationId, targetOrdinal));
+  }
+
+  /** Reads a separate INITIAL original-attempt context under the same trusted signature verifier. */
+  VerifiedIncarnation observeForInitialAccountBarrier(UUID originalRequestId) {
+    requireNoAmbientTransaction();
+    requireNonNil(originalRequestId, "originalRequestId");
+    requireAvailable(OwnerKind.INITIAL_ACCOUNT_BARRIER);
+    CurrentContext before = loadInitialCurrentContext(originalRequestId);
+    return observeCurrentContext(before, () -> loadInitialCurrentContext(originalRequestId));
+  }
+
+  private VerifiedIncarnation observeCurrentContext(
+      CurrentContext before, java.util.function.Supplier<CurrentContext> reload) {
     long issuedAt = clock.millis();
     if (issuedAt <= 0L) {
       throw new ObservationUnavailableException("Protected observation clock is unavailable");
@@ -184,9 +251,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     if (signed == null) {
       throw new ObservationUnavailableException("Protected observation source returned no bytes");
     }
-
     VerifiedPayload payload = verifyObservation(signed, request, before);
-    CurrentContext after = loadCurrentContext(operationId, targetOrdinal);
+    CurrentContext after = reload.get();
     if (!before.equals(after)) {
       throw new ObservationRejectedException("Protected observation owner context changed");
     }
@@ -198,7 +264,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         || payload.expiresAtEpochMillis() != expiresAt) {
       throw new ObservationRejectedException("Protected observation is expired or out of window");
     }
-    String incarnationDigest = incarnationDigest(trustedConfiguration);
     return new VerifiedIncarnation(
         before,
         trustedConfiguration.acceptedAttestationDigest(),
@@ -208,11 +273,12 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         payload.observedAtEpochMillis(),
         expiresAt,
         payload.payloadDigest(),
-        incarnationDigest);
+        incarnationDigest(trustedConfiguration));
   }
 
-  private void requireAvailable() {
-    if (intentRepository == null
+  private void requireAvailable(OwnerKind ownerKind) {
+    if ((ownerKind == OwnerKind.ACCOUNT_FENCE && intentRepository == null)
+        || (ownerKind == OwnerKind.INITIAL_ACCOUNT_BARRIER && initialRepository == null)
         || tenantTagRepository == null
         || observationChannel == null
         || trustedConfiguration == null
@@ -260,6 +326,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     }
     CanonicalGameplaySessionRedisKeys.accountAdmissionBarrier(assignment);
     return new CurrentContext(
+        OwnerKind.ACCOUNT_FENCE,
         intent.operationId(),
         intent.requestId(),
         intent.accountId(),
@@ -273,7 +340,54 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         target.playableStateNamespaceId(),
         assignment.tenantGameplayTag(),
         assignment.workloadNamespace(),
-        assignment.allocationVersion());
+        assignment.allocationVersion(),
+        null,
+        0L,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private CurrentContext loadInitialCurrentContext(UUID originalRequestId) {
+    requireNoAmbientTransaction();
+    CanonicalGameplayAccountInitialBarrierInitializerRepository.InitialObservationContext context =
+        initialRepository.readCurrentObservationContext(originalRequestId);
+    CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
+        tenantTagRepository.assignmentForInitialBarrierTarget(originalRequestId);
+    CanonicalGameplayAccountInitialBarrierKey.forTarget(
+        assignment, context.initializerId(), context.originalRequestId());
+    if (!assignment.isInitialBarrierTarget()
+        || !context.initializerId().equals(assignment.initialBarrierInitializerId())
+        || !context.originalRequestId().equals(assignment.initialBarrierOriginalRequestId())
+        || !context.accountId().equals(assignment.accountId())
+        || !context.tenantId().equals(assignment.tenantId())
+        || !context.playableStateNamespaceId().equals(assignment.playableStateNamespaceId())) {
+      throw new ObservationRejectedException(
+          "Protected INITIAL observation target differs from current SQL source");
+    }
+    return new CurrentContext(
+        OwnerKind.INITIAL_ACCOUNT_BARRIER,
+        context.initializerId(),
+        context.originalRequestId(),
+        context.accountId(),
+        null,
+        null,
+        context.inventorySnapshotRevision().toString(),
+        context.sourceControlDigest(),
+        context.targetDigest(),
+        0L,
+        context.tenantId(),
+        context.playableStateNamespaceId(),
+        assignment.tenantGameplayTag(),
+        assignment.workloadNamespace(),
+        assignment.allocationVersion(),
+        context.originalCallerContextId(),
+        context.originalAttemptFence(),
+        context.sourceControlState(),
+        context.sourceControlEpoch().toString(),
+        context.accountLoginEvidenceDigest(),
+        context.sourceControlDigest());
   }
 
   private VerifiedPayload verifyObservation(
@@ -306,7 +420,11 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     verifyDetachedSignature(publicKey, canonical, signatureBytes);
 
     requireExactFields(root, ROOT_FIELDS);
-    requireText(root, "schema", OBSERVATION_SCHEMA);
+    String expectedSchema =
+        expected.ownerKind() == OwnerKind.ACCOUNT_FENCE
+            ? OBSERVATION_SCHEMA
+            : INITIAL_OBSERVATION_SCHEMA;
+    requireText(root, "schema", expectedSchema);
     requireText(root, "attestorBinding", trustedConfiguration.attestorBinding());
     requireText(root, "attestorKeyId", keyId);
     requireText(root, "acceptedAttestationDigest", request.acceptedAttestationDigest());
@@ -322,16 +440,38 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     }
 
     JsonNode owner = requiredObject(root, "owner");
-    requireExactFields(owner, OWNER_FIELDS);
-    requireText(owner, "operationId", expected.operationId().toString());
-    requireText(owner, "requestId", expected.requestId().toString());
-    requireText(owner, "accountId", expected.accountId().toString());
-    requireText(owner, "operationFence", expected.operationFence());
-    requireText(
-        owner, "plannedAccountAdmissionFence", expected.plannedAccountAdmissionFence().toString());
-    requireText(owner, "inventorySnapshotRevision", expected.inventorySnapshotRevision());
-    requireText(owner, "cohortDigest", expected.cohortDigest());
-    requireText(owner, "barrierTargetDigest", expected.barrierTargetDigest());
+    if (expected.ownerKind() == OwnerKind.ACCOUNT_FENCE) {
+      requireExactFields(owner, OWNER_FIELDS);
+      requireText(owner, "operationId", expected.operationId().toString());
+      requireText(owner, "requestId", expected.requestId().toString());
+      requireText(owner, "accountId", expected.accountId().toString());
+      requireText(owner, "operationFence", expected.operationFence());
+      requireText(
+          owner,
+          "plannedAccountAdmissionFence",
+          expected.plannedAccountAdmissionFence().toString());
+      requireText(owner, "inventorySnapshotRevision", expected.inventorySnapshotRevision());
+      requireText(owner, "cohortDigest", expected.cohortDigest());
+      requireText(owner, "barrierTargetDigest", expected.barrierTargetDigest());
+    } else {
+      requireExactFields(owner, INITIAL_OWNER_FIELDS);
+      requireText(owner, "ownerKind", OwnerKind.INITIAL_ACCOUNT_BARRIER.name());
+      requireText(owner, "initializerId", expected.operationId().toString());
+      requireText(owner, "originalRequestId", expected.requestId().toString());
+      requireText(
+          owner, "originalCallerContextId", expected.originalCallerContextId().toString());
+      if (requiredPositiveLong(owner, "originalAttemptFence")
+          != expected.originalAttemptFence()) {
+        throw new ObservationRejectedException("Protected INITIAL attempt fence differs");
+      }
+      requireText(owner, "accountId", expected.accountId().toString());
+      requireText(owner, "sourceControlState", expected.sourceControlState());
+      requireText(owner, "sourceControlEpoch", expected.sourceControlEpoch());
+      requireText(owner, "inventorySnapshotRevision", expected.inventorySnapshotRevision());
+      requireText(owner, "accountLoginEvidenceDigest", expected.accountLoginEvidenceDigest());
+      requireText(owner, "sourceControlDigest", expected.sourceControlDigest());
+      requireText(owner, "targetDigest", expected.barrierTargetDigest());
+    }
 
     JsonNode target = requiredObject(root, "target");
     requireExactFields(target, TARGET_FIELDS);
@@ -403,7 +543,11 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     return sorted.equals(nodes);
   }
 
-  private static void requireNoAmbientTransaction() {
+  private void requireNoAmbientTransaction() {
+    if (initialRepository != null) {
+      initialRepository.requireNoAmbientTransaction();
+      return;
+    }
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException(
@@ -798,8 +942,14 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     }
   }
 
-  /** Current owner and exact target tuple obtained from the actual SQL owners. */
+  enum OwnerKind {
+    ACCOUNT_FENCE,
+    INITIAL_ACCOUNT_BARRIER
+  }
+
+  /** Discriminated current owner and exact target tuple obtained from the actual SQL owners. */
   record CurrentContext(
+      OwnerKind ownerKind,
       UUID operationId,
       UUID requestId,
       UUID accountId,
@@ -813,7 +963,45 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       UUID playableStateNamespaceId,
       String tenantGameplayTag,
       String workloadNamespace,
-      int allocationVersion) {}
+      int allocationVersion,
+      UUID originalCallerContextId,
+      long originalAttemptFence,
+      String sourceControlState,
+      String sourceControlEpoch,
+      String accountLoginEvidenceDigest,
+      String sourceControlDigest) {
+    CurrentContext {
+      Objects.requireNonNull(ownerKind, "ownerKind");
+      Objects.requireNonNull(operationId, "operationId");
+      Objects.requireNonNull(requestId, "requestId");
+      Objects.requireNonNull(accountId, "accountId");
+      Objects.requireNonNull(tenantId, "tenantId");
+      Objects.requireNonNull(playableStateNamespaceId, "playableStateNamespaceId");
+      Objects.requireNonNull(tenantGameplayTag, "tenantGameplayTag");
+      Objects.requireNonNull(workloadNamespace, "workloadNamespace");
+      if (ownerKind == OwnerKind.ACCOUNT_FENCE) {
+        Objects.requireNonNull(plannedAccountAdmissionFence, "plannedAccountAdmissionFence");
+        Objects.requireNonNull(operationFence, "operationFence");
+        Objects.requireNonNull(cohortDigest, "cohortDigest");
+        Objects.requireNonNull(barrierTargetDigest, "barrierTargetDigest");
+      } else {
+        Objects.requireNonNull(originalCallerContextId, "originalCallerContextId");
+        Objects.requireNonNull(sourceControlState, "sourceControlState");
+        Objects.requireNonNull(sourceControlEpoch, "sourceControlEpoch");
+        Objects.requireNonNull(accountLoginEvidenceDigest, "accountLoginEvidenceDigest");
+        Objects.requireNonNull(sourceControlDigest, "sourceControlDigest");
+        if (originalAttemptFence <= 0L
+            || operationFence != null
+            || plannedAccountAdmissionFence != null
+            || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(sourceControlState)
+            || sourceControlEpoch == null
+            || !sourceControlEpoch.matches("0|[1-9][0-9]{0,255}")) {
+          throw new IllegalArgumentException(
+              "INITIAL owner context is not the positively read NO_ACTIVE arm");
+        }
+      }
+    }
+  }
 
   private record VerifiedPayload(
       String observationNonce,
@@ -856,6 +1044,42 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
 
     UUID operationId() {
       return context.operationId();
+    }
+
+    OwnerKind ownerKind() {
+      return context.ownerKind();
+    }
+
+    UUID requestId() {
+      return context.requestId();
+    }
+
+    UUID originalCallerContextId() {
+      return context.originalCallerContextId();
+    }
+
+    long originalAttemptFence() {
+      return context.originalAttemptFence();
+    }
+
+    String sourceControlState() {
+      return context.sourceControlState();
+    }
+
+    String sourceControlEpoch() {
+      return context.sourceControlEpoch();
+    }
+
+    String inventorySnapshotRevision() {
+      return context.inventorySnapshotRevision();
+    }
+
+    String accountLoginEvidenceDigest() {
+      return context.accountLoginEvidenceDigest();
+    }
+
+    String sourceControlDigest() {
+      return context.sourceControlDigest();
     }
 
     long targetOrdinal() {

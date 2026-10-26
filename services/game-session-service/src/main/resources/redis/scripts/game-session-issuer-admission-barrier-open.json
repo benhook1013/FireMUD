@@ -1,0 +1,44 @@
+{
+  "scriptId": "game-session.issuer-admission-barrier-open.v1",
+  "resourcePath": "redis/lua/game-session-issuer-admission-barrier-open.lua",
+  "sha256": "93c6c553ed9a4c245982448f90b34c2c2b03dace8a7a78a58545375edd5888eb",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "issuerAdmissionBarrier",
+      "ownedPrefix": "session:game:issuer-admission:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "issuerId"},
+    {"name": "tenantId"},
+    {"name": "playableStateNamespaceId"},
+    {"name": "tenantGameplayTag"},
+    {"name": "initializerOperationId"},
+    {"name": "admissionBarrierEpoch"},
+    {"name": "initializerTupleDigest"},
+    {"name": "exactBarrierPayloadDigest"},
+    {"name": "exactBarrierPayload"},
+    {"name": "state"},
+    {"name": "createMode"}
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "OPEN_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "OPEN_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDSET_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS_OR_TARGET", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "CLOSED_OR_CONFLICTING_STATE", "category": "STALE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "tailLossBehavior": "An issuer tenant barrier opens from absent Redis only with the one-use SQL-issued CREATE_ONCE permit consumed by the first initializer attempt. Later retries use REPLAY_ONLY and can confirm only the complete exact original OPEN tuple already present; absent, reset, CLOSED, malformed, changed source, or conflicting target state is non-admitting. The initializer and physical result remain pending for controlled recovery; this script does not recreate, reopen, renew, acknowledge issuer-wide coverage, or touch a global issuer key.",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}

@@ -105,6 +105,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
               CanonicalGameplayIssuerBootstrapCoverageRepository
                   .readInstalledAnchorForBindingPreparationInTransaction(
                       transaction, currentIssuerState);
+          CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
+              transaction, actualAnchor, currentIssuerState);
           InstalledAnchorPreparationContext context =
               new InstalledAnchorPreparationContext(revision, actualAnchor, currentIssuerState);
           CanonicalGameplayBindingTransitionRequest request =

@@ -2,7 +2,10 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
@@ -22,6 +25,8 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
+import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -210,11 +215,66 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void initialArmVerifiesExactOriginalAndNonzeroNoActiveEpochWithSameTrustedVerifier()
+      throws Exception {
+    try (InitialFixture fixture = InitialFixture.open()) {
+      ControlledSigner channel = new ControlledSigner(fixture.keyPair());
+      var receiver = fixture.receiver(channel);
+
+      var verified = receiver.observeForInitialAccountBarrier(fixture.original().requestId());
+
+      assertThat(verified.ownerKind())
+          .isEqualTo(
+              CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER);
+      assertThat(verified.requestId()).isEqualTo(fixture.original().requestId());
+      assertThat(verified.originalCallerContextId()).isEqualTo(fixture.original().callerContextId());
+      assertThat(verified.originalAttemptFence()).isEqualTo(17L);
+      assertThat(verified.accountId()).isEqualTo(fixture.accountId());
+      assertThat(verified.sourceControlState()).isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(verified.sourceControlEpoch()).isEqualTo("8");
+      assertThat(verified.acceptedAttestationDigest()).isEqualTo(ACCEPTED_ATTESTATION_DIGEST);
+      assertThat(verified.evidence()).isEqualTo(fixture.expectedEvidence());
+
+      var repeated = receiver.observeForInitialAccountBarrier(fixture.original().requestId());
+      assertThat(repeated.observationNonce()).isNotEqualTo(verified.observationNonce());
+      assertThat(repeated.incarnationDigest()).isEqualTo(verified.incarnationDigest());
+
+      for (Mutation mutation : List.of(Mutation.WRONG_INITIAL_SOURCE_EPOCH, Mutation.WRONG_INITIAL_ATTEMPT)) {
+        assertThatThrownBy(
+                () ->
+                    fixture
+                        .receiver(new ControlledSigner(fixture.keyPair(), mutation, null))
+                        .observeForInitialAccountBarrier(fixture.original().requestId()))
+            .isInstanceOf(
+                CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
+      }
+    }
+  }
+
+  @Test
+  void changedNoActiveEpochAfterInitialObservationCannotProduceVerifiedEvidence() throws Exception {
+    try (InitialFixture fixture = InitialFixture.open()) {
+      ControlledSigner channel =
+          new ControlledSigner(fixture.keyPair(), Mutation.NONE, fixture.dsl());
+
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .receiver(channel)
+                      .observeForInitialAccountBarrier(fixture.original().requestId()))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+      assertThat(channel.lastSigned()).isNotNull();
+    }
+  }
+
   private enum Mutation {
     NONE,
     WRONG_NONCE,
     WRONG_OPERATION_ID,
     WRONG_OPERATION_FENCE,
+    WRONG_INITIAL_SOURCE_EPOCH,
+    WRONG_INITIAL_ATTEMPT,
     WRONG_STORAGE_GENERATION,
     FOREIGN_ACCOUNT,
     FOREIGN_TENANT,
@@ -251,18 +311,43 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     public CanonicalGameplayProtectedIncarnationReceiver.SignedObservation observe(
         CanonicalGameplayProtectedIncarnationReceiver.ObservationRequest request) {
       if (contextMutationDsl != null) {
-        contextMutationDsl.execute(
-            "UPDATE game_session_canonical_account_admission_fence_intent"
-                + " SET cohort_digest = ? WHERE operation_id = ?",
-            "sha256:" + "f".repeat(64),
-            request.context().operationId());
+        if (request.context().ownerKind()
+            == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER) {
+          contextMutationDsl.execute(
+              "UPDATE game_session_canonical_account_coverage_control"
+                  + " SET last_operation_fence = 9 WHERE account_id = ?",
+              request.context().accountId());
+        } else {
+          contextMutationDsl.execute(
+              "UPDATE game_session_canonical_account_admission_fence_intent"
+                  + " SET cohort_digest = ? WHERE operation_id = ?",
+              "sha256:" + "f".repeat(64),
+              request.context().operationId());
+        }
       }
       Map<String, Object> root = payload(request);
       switch (mutation) {
         case WRONG_NONCE -> root.put("observationNonce", "A".repeat(43));
-        case WRONG_OPERATION_ID ->
-            asMap(root.get("owner")).put("operationId", UUID.randomUUID().toString());
-        case WRONG_OPERATION_FENCE -> asMap(root.get("owner")).put("operationFence", "999999");
+        case WRONG_OPERATION_ID -> {
+          String field =
+              request.context().ownerKind()
+                      == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER
+                  ? "initializerId"
+                  : "operationId";
+          asMap(root.get("owner")).put(field, UUID.randomUUID().toString());
+        }
+        case WRONG_OPERATION_FENCE -> {
+          String field =
+              request.context().ownerKind()
+                      == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER
+                  ? "sourceControlEpoch"
+                  : "operationFence";
+          asMap(root.get("owner")).put(field, "999999");
+        }
+        case WRONG_INITIAL_SOURCE_EPOCH ->
+            asMap(root.get("owner")).put("sourceControlEpoch", "9");
+        case WRONG_INITIAL_ATTEMPT ->
+            asMap(root.get("owner")).put("originalAttemptFence", 18L);
         case WRONG_STORAGE_GENERATION ->
             asMap(root.get("targetDeploymentEvidence"))
                 .put("storageGeneration", "storage-untrusted-response");
@@ -332,14 +417,32 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     var context = request.context();
     var evidence = request.expectedEvidence();
     Map<String, Object> owner = new LinkedHashMap<>();
-    owner.put("operationId", context.operationId().toString());
-    owner.put("requestId", context.requestId().toString());
-    owner.put("accountId", context.accountId().toString());
-    owner.put("operationFence", context.operationFence());
-    owner.put("plannedAccountAdmissionFence", context.plannedAccountAdmissionFence().toString());
-    owner.put("inventorySnapshotRevision", context.inventorySnapshotRevision());
-    owner.put("cohortDigest", context.cohortDigest());
-    owner.put("barrierTargetDigest", context.barrierTargetDigest());
+    boolean initial =
+        context.ownerKind()
+            == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER;
+    if (initial) {
+      owner.put("ownerKind", context.ownerKind().name());
+      owner.put("initializerId", context.operationId().toString());
+      owner.put("originalRequestId", context.requestId().toString());
+      owner.put("originalCallerContextId", context.originalCallerContextId().toString());
+      owner.put("originalAttemptFence", context.originalAttemptFence());
+      owner.put("accountId", context.accountId().toString());
+      owner.put("sourceControlState", context.sourceControlState());
+      owner.put("sourceControlEpoch", context.sourceControlEpoch());
+      owner.put("inventorySnapshotRevision", context.inventorySnapshotRevision());
+      owner.put("accountLoginEvidenceDigest", context.accountLoginEvidenceDigest());
+      owner.put("sourceControlDigest", context.sourceControlDigest());
+      owner.put("targetDigest", context.barrierTargetDigest());
+    } else {
+      owner.put("operationId", context.operationId().toString());
+      owner.put("requestId", context.requestId().toString());
+      owner.put("accountId", context.accountId().toString());
+      owner.put("operationFence", context.operationFence());
+      owner.put("plannedAccountAdmissionFence", context.plannedAccountAdmissionFence().toString());
+      owner.put("inventorySnapshotRevision", context.inventorySnapshotRevision());
+      owner.put("cohortDigest", context.cohortDigest());
+      owner.put("barrierTargetDigest", context.barrierTargetDigest());
+    }
 
     Map<String, Object> target = new LinkedHashMap<>();
     target.put("targetOrdinal", context.targetOrdinal());
@@ -363,7 +466,11 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     targetEvidence.put("aofGeneration", evidence.aofGeneration());
 
     Map<String, Object> root = new LinkedHashMap<>();
-    root.put("schema", "firemud.gs.protected-incarnation-read/v1");
+    root.put(
+        "schema",
+        initial
+            ? "firemud.gs.protected-initial-account-barrier-read/v1"
+            : "firemud.gs.protected-incarnation-read/v1");
     root.put("attestorBinding", request.attestorBinding());
     root.put("attestorKeyId", KEY_ID);
     root.put("acceptedAttestationDigest", request.acceptedAttestationDigest());
@@ -561,6 +668,243 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     public void close() {
       dropSchema(schema);
     }
+
+  private static final class InitialFixture implements AutoCloseable {
+    private final String schema;
+    private final DSLContext dsl;
+    private final InitialGameplayLoginAttemptCoordinates original;
+    private final UUID accountId;
+    private final UUID tenantId;
+    private final UUID namespaceId;
+    private final String targetWorkloadNamespace;
+    private final KeyPair keyPair;
+    private final CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence
+        expectedEvidence;
+    private final CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository;
+    private final CanonicalGameplayTenantGameplayTagRepository tenantTags;
+
+    private InitialFixture(
+        String schema,
+        DSLContext dsl,
+        InitialGameplayLoginAttemptCoordinates original,
+        UUID accountId,
+        UUID tenantId,
+        UUID namespaceId,
+        String targetWorkloadNamespace,
+        KeyPair keyPair,
+        CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence
+            expectedEvidence,
+        CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository,
+        CanonicalGameplayTenantGameplayTagRepository tenantTags) {
+      this.schema = schema;
+      this.dsl = dsl;
+      this.original = original;
+      this.accountId = accountId;
+      this.tenantId = tenantId;
+      this.namespaceId = namespaceId;
+      this.targetWorkloadNamespace = targetWorkloadNamespace;
+      this.keyPair = keyPair;
+      this.expectedEvidence = expectedEvidence;
+      this.initialRepository = initialRepository;
+      this.tenantTags = tenantTags;
+    }
+
+    private static InitialFixture open() throws Exception {
+      String schema = "gs_initial_incarnation_" + UUID.randomUUID().toString().replace("-", "");
+      DriverManagerDataSource dataSource = new DriverManagerDataSource();
+      dataSource.setDriverClassName("org.postgresql.Driver");
+      String jdbcUrl = postgres.getJdbcUrl();
+      String separator = jdbcUrl.contains("?") ? "&" : "?";
+      dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
+      dataSource.setUsername(postgres.getUsername());
+      dataSource.setPassword(postgres.getPassword());
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      UUID tenantId = UUID.randomUUID();
+      var runtime =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource, tenantId);
+      CanonicalGameplayBindingInventoryRepositoryIntegrationTest
+          .seedSyntheticVerifiedLegacyDisposition(dsl);
+
+      UUID accountId = UUID.randomUUID();
+      UUID transitionId = UUID.randomUUID();
+      UUID characterId = UUID.randomUUID();
+      var identity =
+          new CanonicalGameplayBindingIdentity(
+              accountId,
+              runtime.canonicalTenantId(),
+              runtime.playableStateNamespaceId(),
+              characterId,
+              "SHARED",
+              runtime.gameInstanceUuid(),
+              runtime.gameInstanceId(),
+              UUID.randomUUID().toString(),
+              UUID.randomUUID(),
+              BigInteger.ONE,
+              GameSessionAccountDelegationProfile.ISSUER,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.valueOf(16),
+              BigInteger.valueOf(32));
+      var reservation =
+          new CanonicalIssuerReservationFenceEvidence(
+              UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), BigInteger.ONE, BigInteger.ONE, BigInteger.ONE);
+      new CanonicalGameplayBindingInventoryRepository(dsl)
+          .prepare(
+              new CanonicalGameplayBindingTransitionRequest(
+                  transitionId, UUID.randomUUID(), identity, reservation, null, null));
+      dsl.execute(
+          "UPDATE game_session_canonical_account_coverage_control"
+              + " SET last_operation_fence = 8 WHERE account_id = ?",
+          accountId);
+
+      InitialGameplayLoginAttemptCoordinates original =
+          new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 17L);
+      var accountLogin = mockInitialLoginResult(original, accountId, UUID.randomUUID());
+      dsl.execute(
+          "INSERT INTO game_session_initial_gameplay_login_journal"
+              + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, ?)",
+          original.requestId(),
+          original.callerContextId(),
+          original.expectedAttemptFence());
+      dsl.execute(
+          "UPDATE game_session_initial_gameplay_login_journal"
+              + " SET verified_token_jti = ?, verified_token_sha256 = ?,"
+              + " verified_token_generation = 1, verified_issuance_fence = 1"
+              + " WHERE request_id = ?",
+          accountLogin.evidence().tokenJti(),
+          accountLogin.evidence().tokenSha256(),
+          original.requestId());
+      CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository =
+          new CanonicalGameplayAccountInitialBarrierInitializerRepository(dsl);
+      initialRepository.beginOrRead(
+          original, accountLogin, runtime.canonicalTenantId(), runtime.playableStateNamespaceId());
+      accountLogin.close();
+
+      KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+      generator.initialize(2048);
+      KeyPair keyPair = generator.generateKeyPair();
+      var expectedEvidence = controlledExpectedEvidence();
+      var tenantTags =
+          new CanonicalGameplayTenantGameplayTagRepository(
+              dsl, runtime.targetNamespace(), 1);
+      return new InitialFixture(
+          schema,
+          dsl,
+          original,
+          accountId,
+          runtime.canonicalTenantId(),
+          runtime.playableStateNamespaceId(),
+          runtime.targetNamespace(),
+          keyPair,
+          expectedEvidence,
+          initialRepository,
+          tenantTags);
+    }
+
+    private CanonicalGameplayProtectedIncarnationReceiver receiver(
+        CanonicalGameplayProtectedIncarnationReceiver.ProtectedObservationChannel channel) {
+      return receiver(
+          channel,
+          new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
+              ATTESTOR_BINDING,
+              ACCEPTED_ATTESTATION_DIGEST,
+              Map.of(KEY_ID, (java.security.interfaces.RSAPublicKey) keyPair.getPublic()),
+              expectedEvidence,
+              ACL_DIGEST,
+              CONFIG_DIGEST,
+              16 * 1024,
+              1,
+              Duration.ofSeconds(30)));
+    }
+
+    private CanonicalGameplayProtectedIncarnationReceiver receiver(
+        CanonicalGameplayProtectedIncarnationReceiver.ProtectedObservationChannel channel,
+        CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration configuration) {
+      return new CanonicalGameplayProtectedIncarnationReceiver(
+          initialRepository, tenantTags, channel, configuration, Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    private InitialGameplayLoginAttemptCoordinates original() {
+      return original;
+    }
+
+    private UUID accountId() {
+      return accountId;
+    }
+
+    private KeyPair keyPair() {
+      return keyPair;
+    }
+
+    private DSLContext dsl() {
+      return dsl;
+    }
+
+    private CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence
+        expectedEvidence() {
+      return expectedEvidence;
+    }
+
+    @Override
+    public void close() {
+      try (var connection =
+              java.sql.DriverManager.getConnection(
+                  postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+          var statement = connection.createStatement()) {
+        statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+      } catch (Exception failure) {
+        throw new IllegalStateException("Could not dispose INITIAL observation schema", failure);
+      }
+    }
+  }
+
+  private static CanonicalGameplayLoginResult mockInitialLoginResult(
+      InitialGameplayLoginAttemptCoordinates original, UUID accountId, UUID tokenJti) {
+    var evidence =
+        new CanonicalGameplayLoginResult.NonSecretEvidence(
+            accountId,
+            original.requestId(),
+            original.callerContextId(),
+            tokenJti,
+            "e".repeat(64),
+            GameSessionAccountDelegationProfile.PROFILE,
+            NOW.getEpochSecond(),
+            NOW.getEpochSecond(),
+            NOW.plusSeconds(120).getEpochSecond(),
+            "1",
+            "1",
+            ByteString.copyFromUtf8("{}"),
+            ByteString.copyFromUtf8("[]"),
+            ByteString.copyFromUtf8("[]"));
+    CanonicalGameplayLoginResult result = mock(CanonicalGameplayLoginResult.class);
+    when(result.evidence()).thenReturn(evidence);
+    return result;
+  }
+
+  private static
+      CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence
+          controlledExpectedEvidence() {
+    return new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
+        "controlled-target-deployment",
+        "generation-7",
+        List.of("redis-node-a"),
+        "redis-test-build",
+        "registry-test-v1",
+        "sha256:" + "d".repeat(64),
+        "READY",
+        "boot-7",
+        "startup-7",
+        "storage-7",
+        "aof-7");
+  }
 
     private static DriverManagerDataSource dataSource(String schema) {
       DriverManagerDataSource dataSource = new DriverManagerDataSource();

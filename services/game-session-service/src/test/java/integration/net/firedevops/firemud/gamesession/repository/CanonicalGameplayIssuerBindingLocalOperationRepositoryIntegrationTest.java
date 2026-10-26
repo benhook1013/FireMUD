@@ -149,6 +149,12 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     CanonicalGameplayIssuerInstalledAnchor anchor =
         initialCoverageOwner(dsl, currentState::get)
             .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    assertThatThrownBy(() -> operationRepository.beginOrResumeOrdinaryNew(firstRequest))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("positive live admission-control row");
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isZero();
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, currentState::get);
     String installedAnchorImage = anchorImage(dsl);
     String installedProofImage = proofImage(dsl);
     String initialReservationImage = reservationImage(dsl);

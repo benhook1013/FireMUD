@@ -215,8 +215,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var partitionOwner =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
             issuerRedisClient, issuerCatalog, issuerSource);
-    new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
-        .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
+    CanonicalGameplayIssuerInstalledAnchor installedAnchor =
+        new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
+            .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(installedAnchor, issuerSource);
     var request =
         new CanonicalGameplayIssuerBindingLocalOperation.Request(
             UUID.randomUUID(), transitionId, identity, null, null);

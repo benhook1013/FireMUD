@@ -1,0 +1,41 @@
+{
+  "scriptId": "game-session.account-admission-barrier-initial-open.v1",
+  "resourcePath": "redis/lua/game-session-account-admission-barrier-initial-open.lua",
+  "sha256": "472d1dc1097f67e35fedf7cd658694b29c9827604e3093c1426b5ed46bb8c20e",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "accountAdmissionBarrier",
+      "ownedPrefix": "session:game:account-admission:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "schema"},
+    {"name": "accountId"},
+    {"name": "tenantId"},
+    {"name": "playableStateNamespaceId"},
+    {"name": "tenantGameplayTag"},
+    {"name": "initializerId"},
+    {"name": "ownerFenceEpoch"},
+    {"name": "incarnationDigest"},
+    {"name": "state"}
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "OPEN_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "TARGET_ALREADY_PRESENT", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDS_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "The INITIAL OPEN barrier may be created once only for the persisted original request while the positive SQL account-control source remains at its exact captured NO_ACTIVE_ACCOUNT_WIDE_FLOW epoch. SQL records possible dispatch before the one-key call. Every retry after that point is read-only and requires exact original OPEN readback plus protected incarnation observation. A missing key after a possible dispatch is reset or unknown-outcome evidence and remains non-admitting; it is never a fresh OPEN source. Every existing key, including CLOSED, newer, malformed, expiring, or conflicting values, is refused without mutation. This local proof does not supply Account lease/currentness, issuer or region acknowledgements, final binding CAS, or gameplay admission.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}
