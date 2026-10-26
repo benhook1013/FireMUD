@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -204,6 +205,129 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
     }
   }
 
+  @org.junit.jupiter.api.Test
+  void barrierTargetAssignmentLocksControlBeforeIntentAndTarget() throws Exception {
+    String schema = "gs_tenant_tag_lock_order_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+      DSLContext dsl = dslForSchema(dataSource, schema);
+
+      UUID tenantId = UUID.randomUUID();
+      var runtime =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource, tenantId);
+      CanonicalGameplayBindingInventoryRepositoryIntegrationTest
+          .seedSyntheticVerifiedLegacyDisposition(dsl);
+      PreparedCandidate candidate = prepareCandidate(dsl, runtime);
+      var expected =
+          new CanonicalGameplayTenantGameplayTagRepository(dsl, runtime.targetNamespace(), 1)
+              .assignmentForTransition(candidate.transitionId());
+
+      UUID operationId = UUID.randomUUID();
+      seedCurrentBarrierTarget(
+          dsl, candidate.accountId(), tenantId, runtime.playableStateNamespaceId(), operationId);
+
+      String holderApplicationName =
+          "gs_tenant_tag_holder_" + UUID.randomUUID().toString().replace("-", "");
+      String assignmentApplicationName =
+          "gs_tenant_tag_assignment_" + UUID.randomUUID().toString().replace("-", "");
+      DSLContext holderDsl = dslForSchema(dataSource(schema, holderApplicationName), schema);
+      DSLContext assignmentDsl =
+          dslForSchema(dataSource(schema, assignmentApplicationName), schema);
+
+      CountDownLatch controlRowLocked = new CountDownLatch(1);
+      CountDownLatch allowIntentAndTargetLocks = new CountDownLatch(1);
+      CountDownLatch intentAndTargetLocked = new CountDownLatch(1);
+      CountDownLatch releaseControl = new CountDownLatch(1);
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      try {
+        Future<?> controlOwner =
+            executor.submit(
+                () ->
+                    holderDsl.transactionResult(
+                        configuration -> {
+                          DSLContext transaction = DSL.using(configuration);
+                          if (transaction.fetchOne(
+                                  "SELECT account_id FROM"
+                                      + " game_session_canonical_account_coverage_control"
+                                      + " WHERE account_id = ? FOR UPDATE",
+                                  candidate.accountId())
+                              == null) {
+                            throw new IllegalStateException(
+                                "Current account control row is missing");
+                          }
+                          controlRowLocked.countDown();
+                          await(allowIntentAndTargetLocks);
+                          if (transaction.fetchOne(
+                                  "SELECT operation_id FROM"
+                                      + " game_session_canonical_account_admission_fence_intent"
+                                      + " WHERE operation_id = ? AND intent_state ="
+                                      + " 'ACQUISITION_INTENT' FOR UPDATE NOWAIT",
+                                  operationId)
+                              == null) {
+                            throw new IllegalStateException(
+                                "Current acquisition intent is missing");
+                          }
+                          if (transaction.fetchOne(
+                                  "SELECT operation_id FROM"
+                                      + " game_session_canonical_account_admission_fence_intent_barrier_target"
+                                      + " WHERE operation_id = ? AND target_ordinal = 0"
+                                      + " AND target_state = 'REQUIRED' FOR UPDATE NOWAIT",
+                                  operationId)
+                              == null) {
+                            throw new IllegalStateException("Current barrier target is missing");
+                          }
+                          intentAndTargetLocked.countDown();
+                          await(releaseControl);
+                          return Boolean.TRUE;
+                        }));
+        try {
+          assertThat(controlRowLocked.await(10, TimeUnit.SECONDS)).isTrue();
+          Future<CanonicalGameplayTenantGameplayTagRepository.Assignment> assignment =
+              executor.submit(
+                  () ->
+                      new CanonicalGameplayTenantGameplayTagRepository(
+                              assignmentDsl, runtime.targetNamespace(), 1)
+                          .assignmentForBarrierTarget(operationId, 0L));
+          awaitControlLockWait(dsl, assignmentApplicationName);
+
+          // The reader is queued only on control: the control owner can still lock both later rows
+          // without waiting or receiving a lock-not-available error.
+          allowIntentAndTargetLocks.countDown();
+          assertThat(intentAndTargetLocked.await(10, TimeUnit.SECONDS)).isTrue();
+          releaseControl.countDown();
+          controlOwner.get(10, TimeUnit.SECONDS);
+
+          var actual = assignment.get(10, TimeUnit.SECONDS);
+          assertThat(actual.accountId()).isEqualTo(candidate.accountId());
+          assertThat(actual.tenantId()).isEqualTo(tenantId);
+          assertThat(actual.playableStateNamespaceId())
+              .isEqualTo(runtime.playableStateNamespaceId());
+          assertThat(actual.tenantGameplayTag()).isEqualTo(expected.tenantGameplayTag());
+          assertThat(actual.allocationVersion()).isEqualTo(expected.allocationVersion());
+          assertThat(actual.workloadNamespace()).isEqualTo(expected.workloadNamespace());
+          assertThat(actual.admissionFenceIntentOperationId()).isEqualTo(operationId);
+          assertThat(actual.barrierTargetOrdinal()).isEqualTo(0L);
+        } finally {
+          allowIntentAndTargetLocks.countDown();
+          releaseControl.countDown();
+          controlOwner.get(10, TimeUnit.SECONDS);
+        }
+      } finally {
+        executor.shutdownNow();
+      }
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
   private static PreparedCandidate prepareCandidate(
       DSLContext dsl, CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target) {
     UUID transitionId = UUID.randomUUID();
@@ -300,12 +424,40 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
     }
   }
 
+  private static void awaitControlLockWait(DSLContext observer, String applicationName)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      Boolean waiting =
+          Objects.requireNonNull(
+                  observer.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                          + " WHERE pid <> pg_backend_pid() AND application_name = ?"
+                          + " AND state = 'active' AND wait_event_type = 'Lock'"
+                          + " AND query ILIKE '%game_session_canonical_account_coverage_control%')",
+                      applicationName),
+                  "account control lock wait query")
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(waiting)) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    throw new AssertionError("Barrier target assignment did not wait on the account control row");
+  }
+
   private static DriverManagerDataSource dataSource(String schema) {
+    return dataSource(schema, null);
+  }
+
+  private static DriverManagerDataSource dataSource(String schema, String applicationName) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     String jdbcUrl = postgres.getJdbcUrl();
     String separator = jdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
+    String applicationNameParameter =
+        applicationName == null ? "" : "&ApplicationName=" + applicationName;
+    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema + applicationNameParameter);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;

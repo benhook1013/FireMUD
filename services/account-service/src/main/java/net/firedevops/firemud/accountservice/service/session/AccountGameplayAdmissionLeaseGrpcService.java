@@ -131,6 +131,9 @@ public final class AccountGameplayAdmissionLeaseGrpcService
     } catch (IllegalArgumentException malformed) {
       fail(observer, Status.INVALID_ARGUMENT);
       return;
+    } catch (RuntimeException malformed) {
+      fail(observer, Status.INTERNAL);
+      return;
     }
 
     final AccountGameplayAdmissionLeaseResponse response;
