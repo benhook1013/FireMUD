@@ -201,6 +201,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
         throw new IllegalStateException("Exact first-NEW region bridge retry changed its SQL ACK");
       }
+      requireMaterializedBridgeCaptured(dsl, transitionId);
       var status =
           new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
               .find(installation.source)
@@ -326,6 +327,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               installation, secondTransitionId, secondBinding.worldRequest());
       var secondAcknowledgement = bridgeOwner.bridge(secondInstallation).obligation();
       var secondLostReplyRetry = bridgeOwner.bridge(secondInstallation).obligation();
+      requireMaterializedBridgeCaptured(dsl, secondTransitionId);
       if (!secondAcknowledgement.equals(secondLostReplyRetry)
           || secondAcknowledgement.status()
               != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
@@ -517,6 +519,36 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
    * PostgreSQL/Redis bridge ACK, then proves exact cleanup retry/read preserves that ACK without
    * promoting the candidate or claiming cleanup completion.
    */
+  private static void requireMaterializedBridgeCaptured(DSLContext dsl, UUID transitionId) {
+    String exactRow =
+        dsl.fetchSingle(
+                "SELECT to_jsonb(g)::text FROM game_session_canonical_binding_region_bridge_obligation g"
+                    + " WHERE transition_id = ? AND bridge_operation_id IS NOT NULL",
+                transitionId)
+            .get(0, String.class);
+    java.math.BigDecimal revision =
+        dsl.fetchSingle(
+                "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                    + " WHERE singleton_id = 1")
+            .get(0, java.math.BigDecimal.class);
+    var captured =
+        dsl
+            .fetch(
+                CanonicalGameplayIssuerCohortSql.cohortSql(),
+                CanonicalGameplayIssuerCohortSql.cohortBindings(
+                    GameSessionAccountDelegationProfile.ISSUER, revision))
+            .stream()
+            .filter(
+                row ->
+                    "REGION_OBLIGATION".equals(row.get("source_kind", String.class))
+                        && transitionId.toString().equals(row.get("source_key", String.class)))
+            .toList();
+    if (captured.size() != 1
+        || !Objects.equals(exactRow, captured.getFirst().get("source_row_json", String.class))) {
+      throw new IllegalStateException("Issuer cohort omitted materialized region bridge evidence");
+    }
+  }
+
   public static AccountAbortProof abortAfterBridge(DSLContext dsl, Proof bridgeProof) {
     var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
     var before = inventory.readFirstNewAdmissionAbortSource(bridgeProof.transitionId());
