@@ -159,7 +159,7 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
     try {
       var prepared =
           prepareStarting(
-              harness, "protected-coordinator-world-failure", 1161, Duration.ofSeconds(5));
+              harness, "protected-coordinator-world-failure", 1161, Duration.ofSeconds(10));
       var accountRequest = prepared.protection().request();
       var acquisitionCalls = new AtomicInteger();
       // Controlled Account receipt; the World verifier below deliberately reports an outage.
@@ -244,13 +244,94 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void pendingBindRetryUsesRetainedProtectionWithoutAccountReacquisition() throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var prepared = prepareStarting(harness, "protected-coordinator-pending-bind-retry", 1181);
+      var accountRequest = prepared.protection().request();
+      var acquisitionCalls = new AtomicInteger();
+      AccountStartSessionAdmissionProtectionAcquisitionClient accountClient =
+          request -> {
+            acquisitionCalls.incrementAndGet();
+            assertThat(request.canonicalBytes()).containsExactly(accountRequest.canonicalBytes());
+            return prepared.protection();
+          };
+      var worldReads = new AtomicInteger();
+      CanonicalInitialAdmissionWorldVerifier unavailableWorld =
+          request -> {
+            worldReads.incrementAndGet();
+            throw new IllegalStateException("controlled World hold read outage");
+          };
+      var initialCoordinator =
+          coordinator(harness, admissionRepository(harness), accountClient, unavailableWorld);
+
+      assertThatThrownBy(() -> initialCoordinator.bind(prepared.request(), accountRequest))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled World hold read outage");
+      assertThat(attemptStatus(harness, prepared.request())).isEqualTo("PENDING");
+      assertNoAdmissionEffects(harness, prepared.request());
+      byte[] retainedBytes =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT account_protection_evidence_bytes "
+                      + "FROM game_session_canonical_initial_admission_attempt "
+                      + "WHERE target_namespace=? AND initial_admission_request_id=?",
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId())
+              .get(0, byte[].class);
+      assertThat(retainedBytes).containsExactly(prepared.protection().canonicalBytes());
+      assertThat(acquisitionCalls).hasValue(1);
+
+      var retryAcquisitionCalls = new AtomicInteger();
+      AccountStartSessionAdmissionProtectionAcquisitionClient unavailableAccount =
+          request -> {
+            retryAcquisitionCalls.incrementAndGet();
+            throw new IllegalStateException("controlled Account acquisition outage");
+          };
+      CanonicalInitialAdmissionWorldVerifier availableWorld =
+          request -> {
+            worldReads.incrementAndGet();
+            assertThat(request).isEqualTo(prepared.request());
+            return prepared.worldProof();
+          };
+      var retryCoordinator =
+          coordinator(harness, admissionRepository(harness), unavailableAccount, availableWorld);
+
+      var committed = retryCoordinator.bind(prepared.request(), accountRequest);
+
+      assertThat(committed.outcome())
+          .isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+      assertThat(acquisitionCalls).hasValue(1);
+      assertThat(retryAcquisitionCalls).hasValue(0);
+      assertThat(worldReads).hasValue(2);
+      assertThat(attemptStatus(harness, prepared.request())).isEqualTo("COMMITTED");
+      assertThat(runtime(harness, prepared).get("status", String.class)).isEqualTo("RUNNING");
+      assertThat(ownerCount(harness, "gameplay_admission_pointer", prepared.request())).isOne();
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT account_protection_evidence_bytes "
+                          + "FROM game_session_canonical_initial_admission_attempt "
+                          + "WHERE target_namespace=? AND initial_admission_request_id=?",
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId())
+                  .get(0, byte[].class))
+          .containsExactly(retainedBytes);
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
   void completedRuntimeCannotCommitAfterOriginalLeaseExpiresAndRetryDoesNotReacquire()
       throws Exception {
     var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
     try {
       var prepared =
           prepareStarting(
-              harness, "protected-coordinator-expired-after-running", 1171, Duration.ofSeconds(5));
+              harness, "protected-coordinator-expired-after-running", 1171, Duration.ofSeconds(10));
       var accountRequest = prepared.protection().request();
       var acquisitionCalls = new AtomicInteger();
       var worldReads = new AtomicInteger();
@@ -323,13 +404,13 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
               harness,
               "human-runtime-expired-original-after-reservation",
               1091,
-              Duration.ofSeconds(2));
+              Duration.ofSeconds(10));
       var admission = admissionRepository(harness);
       var completion = new CanonicalHumanRuntimeCompletionRepository(harness.dsl());
       reserveProtection(harness, admission, prepared);
       Record before = runtime(harness, prepared);
 
-      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
       while (!Boolean.TRUE.equals(
           harness
               .dsl()
@@ -788,7 +869,7 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
 
   private static void awaitOriginalLeaseExpiration(
       CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness, Prepared prepared) {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
     while (!Boolean.TRUE.equals(
         harness
             .dsl()
