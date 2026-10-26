@@ -11,13 +11,17 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
@@ -27,6 +31,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -585,6 +590,19 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               .orElseThrow();
       assertThat(reservationOnlyWork.bindingSourceRowOrdinal()).isNull();
       assertThat(reservationOnlyWork.bindingSourceRowDigest()).isNull();
+      var preparedBindingWork =
+          firstPlan.memberWorks().stream()
+              .filter(work -> work.reservationId().equals(prepared.issuerReservationId()))
+              .findFirst()
+              .orElseThrow();
+      assertThat(preparedBindingWork.reservationLifecycle()).isEqualTo("RESERVED");
+      assertThat(preparedBindingWork.bindingSourceRowOrdinal()).isNotNull();
+      assertThat(
+              firstPlan
+                  .cohortRows()
+                  .get(Math.toIntExact(preparedBindingWork.bindingSourceRowOrdinal()))
+                  .sourceRowJson())
+          .contains("CANDIDATE_PREPARED");
       assertThat(reservationOnlyWork.originalIssuerCoverageOperationId())
           .isNotEqualTo(reservationOnlyWork.plannedAnchorOperationId());
       assertThat(reservationOnlyWork.originalIssuerCoverageOperationFence())
@@ -903,6 +921,199 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   @Test
+  void retainedTerminalUnresolvedAndUnlinkedBoundReservationsBlockMemberIssuance() {
+    TestSchema testSchema = newTestSchema("gs_issuer_build_unresolved_");
+    try {
+      establishActualLegacyDisposition(testSchema.dsl());
+      CanonicalGameplayAdmissionAbortSource abortSource =
+          createActualRetainedTerminalUnresolved(testSchema);
+      assertThat(abortSource.isAccountAborted()).isTrue();
+      assertThat(abortSource.candidate().lifecycle())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                  .Lifecycle.TERMINAL_UNRESOLVED);
+      assertThat(abortSource.reservation().lifecycle())
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation
+                  .Lifecycle.RELEASE_PENDING);
+
+      // These standalone rows are controlled fixtures for the no-binding BOUND and
+      // RELEASE_PENDING cases. The linked TERMINAL_UNRESOLVED source above is produced by the
+      // existing binding inventory abort owner.
+      UUID unlinkedBoundReservationId = UUID.randomUUID();
+      UUID unlinkedReleasePendingReservationId = UUID.randomUUID();
+      insertReservationOnly(
+          testSchema.dsl(),
+          abortSource.candidate().identity(),
+          abortSource.transition().inventoryRevision(),
+          unlinkedBoundReservationId,
+          BigInteger.valueOf(17),
+          BigInteger.valueOf(19),
+          LAYOUT_VERSION,
+          PARTITION_COUNT,
+          PARTITION_CAPACITY,
+          false,
+          "BOUND",
+          UUID.randomUUID());
+      insertReservationOnly(
+          testSchema.dsl(),
+          abortSource.candidate().identity(),
+          abortSource.transition().inventoryRevision(),
+          unlinkedReleasePendingReservationId,
+          BigInteger.valueOf(17),
+          BigInteger.valueOf(19),
+          LAYOUT_VERSION,
+          PARTITION_COUNT,
+          PARTITION_CAPACITY,
+          false,
+          "RELEASE_PENDING",
+          UUID.randomUUID());
+
+      UUID requestId = UUID.randomUUID();
+      var intent =
+          new CanonicalGameplayIssuerLayoutBootstrapRepository(testSchema.dsl())
+              .beginInitialBootstrapIntent(
+                  requestId,
+                  descriptor(LAYOUT_VERSION, PARTITION_COUNT, PARTITION_CAPACITY),
+                  sourceCheckpoint(BigInteger.valueOf(7)));
+      List<String> bindingsBeforePlan =
+          rowImages(testSchema.dsl(), "game_session_canonical_gameplay_binding_inventory");
+      List<String> reservationsBeforePlan =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation");
+      List<String> transitionsBeforePlan =
+          rowImages(testSchema.dsl(), "game_session_canonical_binding_transition");
+
+      var owner = new CanonicalGameplayIssuerPartitionBuildRepository(testSchema.dsl());
+      var plan = owner.prepareInitialBuildPlan(intent.operationId(), requestId);
+
+      assertThat(plan.state()).isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.BLOCKED);
+      assertThat(plan.coverageGenerationState())
+          .isEqualTo(
+              CanonicalGameplayIssuerPartitionBuildPlan.CoverageGenerationState.NOT_YET_ISSUED);
+      assertThat(plan.coverageGeneration()).isNull();
+      assertThat(plan.cohortRows())
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::rowOrdinal)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::rowOrdinal)
+                  .toList());
+      assertThat(plan.cohortRows())
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::kind)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::kind)
+                  .toList());
+      assertThat(plan.cohortRows())
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
+                  .toList());
+      assertThat(plan.cohortRows())
+          .extracting(
+              CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceInventoryRevision)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(
+                      CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow
+                          ::sourceInventoryRevision)
+                  .toList());
+      assertThat(plan.cohortRows())
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+                  .toList());
+      assertThat(plan.cohortRows())
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
+                  .toList());
+      var retainedBindingRow =
+          plan.cohortRows().stream()
+              .filter(
+                  row ->
+                      row.kind() == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.BINDING)
+              .findFirst()
+              .orElseThrow();
+      assertThat(retainedBindingRow.sourceRowJson()).contains("TERMINAL_UNRESOLVED");
+      assertThat(plan.blockers())
+          .anySatisfy(
+              blocker -> {
+                assertThat(blocker.sourceRowOrdinal()).isEqualTo(retainedBindingRow.rowOrdinal());
+                assertThat(blocker.sourceRowDigest())
+                    .isEqualTo(retainedBindingRow.sourceRowDigest());
+                assertThat(blocker.code())
+                    .isEqualTo(
+                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                            .UNREPRESENTABLE_BINDING);
+              });
+      for (UUID reservationId :
+          List.of(unlinkedBoundReservationId, unlinkedReleasePendingReservationId)) {
+        var reservationRow =
+            plan.cohortRows().stream()
+                .filter(
+                    row ->
+                        row.kind()
+                                == CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind
+                                    .RESERVATION
+                            && row.sourceKey().equals(reservationId.toString()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(plan.blockers())
+            .anySatisfy(
+                blocker -> {
+                  assertThat(blocker.sourceRowOrdinal()).isEqualTo(reservationRow.rowOrdinal());
+                  assertThat(blocker.sourceRowDigest()).isEqualTo(reservationRow.sourceRowDigest());
+                  assertThat(blocker.code())
+                      .isEqualTo(
+                          CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                              .CONFLICTING_RESERVATION_LINK);
+                });
+      }
+      assertThatThrownBy(
+              () ->
+                  testSchema
+                      .dsl()
+                      .transactionResult(
+                          configuration -> {
+                            DSLContext transaction = DSL.using(configuration);
+                            return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                                .readPreparedPlanInTransaction(
+                                    transaction, intent.operationId(), requestId);
+                          }))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining(
+              "Blocked issuer partition build plan cannot issue member operations");
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM"
+                          + " game_session_canonical_issuer_bootstrap_member_operation")
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM"
+                          + " game_session_canonical_issuer_bootstrap_member_op_counter")
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_gameplay_binding_inventory"))
+          .containsExactlyElementsOf(bindingsBeforePlan);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation"))
+          .containsExactlyElementsOf(reservationsBeforePlan);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_binding_transition"))
+          .containsExactlyElementsOf(transitionsBeforePlan);
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void initialBootstrapBlocksReservationsFromAnotherLayoutOrNoncanonicalOriginalPartition() {
     TestSchema layoutSchema = newTestSchema("gs_issuer_build_layout_init_");
     try {
@@ -960,12 +1171,6 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           overCapacityPartition.equals(BigInteger.ZERO) ? BigInteger.ONE : BigInteger.ZERO;
       List<UUID> capacitySessionIds =
           new java.util.ArrayList<>(List.of(UUID.fromString(prepared.candidate().sessionId())));
-      testSchema
-          .dsl()
-          .execute(
-              "UPDATE game_session_canonical_issuer_partition_reservation"
-                  + " SET lifecycle = 'BOUND' WHERE reservation_id = ?",
-              prepared.issuerReservationId());
 
       UUID reservedReservationId = UUID.randomUUID();
       UUID reservedSessionId =
@@ -985,24 +1190,24 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
           false,
           "RESERVED",
           reservedSessionId);
-      UUID releasePendingReservationId = UUID.randomUUID();
-      UUID releasePendingSessionId =
+      UUID otherReservedReservationId = UUID.randomUUID();
+      UUID otherReservedSessionId =
           sessionUuidForPartition(
               prepared.candidate(), partitionCount, otherPartition, capacitySessionIds);
-      capacitySessionIds.add(releasePendingSessionId);
+      capacitySessionIds.add(otherReservedSessionId);
       insertReservationOnly(
           testSchema.dsl(),
           prepared.candidate(),
           prepared.inventoryRevision(),
-          releasePendingReservationId,
+          otherReservedReservationId,
           originalOperationFence,
           originalCoverageFence,
           LAYOUT_VERSION,
           partitionCount,
           partitionCapacity,
           false,
-          "RELEASE_PENDING",
-          releasePendingSessionId);
+          "RESERVED",
+          otherReservedSessionId);
       UUID releasedReservationId = UUID.randomUUID();
       UUID releasedSessionId =
           sessionUuidForPartition(
@@ -1081,7 +1286,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       assertThat(plan.memberWorks()).hasSize(4);
       assertThat(plan.memberWorks())
           .extracting(CanonicalGameplayIssuerPartitionBuildPlan.MemberWork::reservationLifecycle)
-          .containsExactlyInAnyOrder("BOUND", "RESERVED", "RELEASE_PENDING", "RELEASED");
+          .containsExactlyInAnyOrder("RESERVED", "RESERVED", "RESERVED", "RELEASED");
       assertThat(plan.memberWorks())
           .allSatisfy(
               work -> {
@@ -1126,12 +1331,12 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               .filter(work -> work.reservationId().equals(reservedReservationId))
               .findFirst()
               .orElseThrow();
-      var releasePendingWork =
+      var otherReservedWork =
           plan.memberWorks().stream()
-              .filter(work -> work.reservationId().equals(releasePendingReservationId))
+              .filter(work -> work.reservationId().equals(otherReservedReservationId))
               .findFirst()
               .orElseThrow();
-      var boundWork =
+      var preparedWork =
           plan.memberWorks().stream()
               .filter(work -> work.reservationId().equals(prepared.issuerReservationId()))
               .findFirst()
@@ -1142,12 +1347,12 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       assertThat(reservedWork.reservationLifecycle()).isEqualTo("RESERVED");
       assertThat(reservedWork.countsTowardCapacity()).isTrue();
       assertThat(reservedWork.originalPartitionId()).isEqualTo(overCapacityPartition);
-      assertThat(releasePendingWork.reservationLifecycle()).isEqualTo("RELEASE_PENDING");
-      assertThat(releasePendingWork.countsTowardCapacity()).isTrue();
-      assertThat(releasePendingWork.originalPartitionId()).isEqualTo(otherPartition);
-      assertThat(boundWork.reservationLifecycle()).isEqualTo("BOUND");
-      assertThat(boundWork.countsTowardCapacity()).isTrue();
-      assertThat(boundWork.originalPartitionId()).isEqualTo(overCapacityPartition);
+      assertThat(otherReservedWork.reservationLifecycle()).isEqualTo("RESERVED");
+      assertThat(otherReservedWork.countsTowardCapacity()).isTrue();
+      assertThat(otherReservedWork.originalPartitionId()).isEqualTo(otherPartition);
+      assertThat(preparedWork.reservationLifecycle()).isEqualTo("RESERVED");
+      assertThat(preparedWork.countsTowardCapacity()).isTrue();
+      assertThat(preparedWork.originalPartitionId()).isEqualTo(overCapacityPartition);
 
       assertThat(plan.blockers()).hasSize(5);
       assertThat(plan.blockers())
@@ -1164,7 +1369,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                 .filter(blocker -> blocker.sourceRowOrdinal() == work.reservationSourceRowOrdinal())
                 .map(CanonicalGameplayIssuerPartitionBuildPlan.Blocker::code)
                 .toList();
-        if (work.reservationId().equals(releasePendingWork.reservationId())) {
+        if (work.reservationId().equals(otherReservedWork.reservationId())) {
           assertThat(workBlockerCodes)
               .containsExactly(
                   CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
@@ -1351,6 +1556,147 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     byte[] eventBytes = event.canonicalJsonUtf8();
     return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
         ISSUER, issuerGeneration, eventBytes, eventBytes);
+  }
+
+  private static CanonicalGameplayAdmissionAbortSource createActualRetainedTerminalUnresolved(
+      TestSchema testSchema) {
+    var runtimeTarget =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            testSchema.dataSource(), TENANT_ID);
+    CanonicalGameplayBindingIdentity candidate =
+        new CanonicalGameplayBindingIdentity(
+            ACCOUNT_ID,
+            runtimeTarget.canonicalTenantId(),
+            runtimeTarget.playableStateNamespaceId(),
+            CHARACTER_ID,
+            runtimeTarget.playableStateScope(),
+            runtimeTarget.gameInstanceUuid(),
+            runtimeTarget.gameInstanceId(),
+            UUID.randomUUID().toString(),
+            REGION_ID,
+            BigInteger.valueOf(12),
+            ISSUER,
+            BigInteger.valueOf(7),
+            LAYOUT_VERSION,
+            PARTITION_COUNT,
+            PARTITION_CAPACITY);
+    UUID transitionId = UUID.randomUUID();
+    var reservation =
+        new CanonicalIssuerReservationFenceEvidence(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            BigInteger.ONE,
+            BigInteger.TWO,
+            BigInteger.ONE);
+    var inventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+    inventory.prepare(
+        new CanonicalGameplayBindingTransitionRequest(
+            transitionId, UUID.randomUUID(), candidate, reservation, null, null));
+    var prepared = inventory.readProvisionalCasEvidence(transitionId);
+    CanonicalPlayableTarget target = runtimeTarget.playableTarget();
+    var lease =
+        controlledLeaseEvidence(candidate, prepared.transition().bindingGeneration(), target);
+    inventory.markProvisional(
+        prepared,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            candidate,
+            prepared.transition().bindingGeneration(),
+            null,
+            target));
+    var source = inventory.readFirstNewAdmissionAbortSource(transitionId);
+    return inventory.recordFirstNewAccountAbort(source, UUID.randomUUID());
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target) {
+    long now = System.currentTimeMillis();
+    String nowSeconds = Long.toString(now / 1000L);
+    Map<String, Object> carrier = new java.util.LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
+    carrier.put("targetNamespace", target.targetNamespace());
+    carrier.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
+    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("leaseId", UUID.randomUUID().toString());
+    carrier.put("leaseFence", "1");
+    carrier.put(
+        "bindingScope",
+        Map.ofEntries(
+            Map.entry("accountId", candidate.accountId().toString()),
+            Map.entry("tenantId", candidate.tenantId().toString()),
+            Map.entry("realmId", target.realmId().toString()),
+            Map.entry("worldSlug", target.worldSlug()),
+            Map.entry("realmSlug", target.realmSlug()),
+            Map.entry("playableStateNamespaceId", target.playableStateNamespaceId().toString()),
+            Map.entry("playableStateScope", target.playableStateScope()),
+            Map.entry("gameInstanceId", target.canonicalGameInstanceId().toString()),
+            Map.entry("characterId", candidate.characterId().toString()),
+            Map.entry("sessionId", candidate.sessionId()),
+            Map.entry("bindingGeneration", bindingGeneration.toString()),
+            Map.entry("catalogRevision", Long.toString(target.catalogRevision())),
+            Map.entry("pointerVersion", Long.toString(target.pointerVersion())),
+            Map.entry("regionId", candidate.regionId().toString()),
+            Map.entry("regionEpoch", candidate.regionEpoch().toString())));
+    carrier.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration", candidate.issuerAuthGeneration().toString(),
+            "accountAuthorityGeneration", "1",
+            "tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "privateRealmGrantVersions", List.of()));
+    carrier.put("issuanceFence", "1");
+    carrier.put(
+        "membershipBaseline",
+        Map.of(
+            "membershipLifecycleState", "ACTIVE",
+            "membershipVersion", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", "1"));
+    String prefix = "account:auth-authority:v1:";
+    List<Map<String, Object>> checkpoints = new java.util.ArrayList<>();
+    for (String stream :
+        List.of(
+            "account/" + candidate.accountId(),
+            "issuer/" + candidate.issuerId(),
+            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
+            "tenant/" + candidate.tenantId())) {
+      checkpoints.add(
+          Map.of(
+              "outboxStreamKey",
+              prefix + stream,
+              "outboxSequence",
+              stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0"));
+    }
+    carrier.put("outboxCheckpoints", checkpoints);
+    carrier.put(
+        "tokenIdentityEvidence",
+        Map.ofEntries(
+            Map.entry("accountId", candidate.accountId().toString()),
+            Map.entry("operationId", UUID.randomUUID().toString()),
+            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
+            Map.entry("tokenJti", UUID.randomUUID().toString()),
+            Map.entry("tokenSHA256", "a".repeat(64)),
+            Map.entry("tokenProfile", "game-session-account-delegation"),
+            Map.entry("tokenGeneration", "1"),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("tokenIdentityFence", "1"),
+            Map.entry("issuedAt", nowSeconds),
+            Map.entry("notBefore", nowSeconds),
+            Map.entry("expiresAt", Long.toString(now / 1000L + 60L))));
+    carrier.put("evaluatedAt", Long.toString(now));
+    carrier.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
   }
 
   private static CanonicalGameplayBindingTransitionSnapshot prepareActualBinding(
