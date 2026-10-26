@@ -193,10 +193,60 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             source.regionId());
     if (row == null) return Optional.empty();
     TimelinePreparation preparation = toTimelinePreparation(row);
-    if (!preparation.source.equals(source) || !preparation.tenantRegionTag.equals(tag)) {
+    if (!sameRegionSource(preparation.source, source) || !preparation.tenantRegionTag.equals(tag)) {
       throw unavailable();
     }
     return Optional.of(preparation);
+  }
+
+  /**
+   * Matches the immutable region initialization source without treating a later lifecycle read's
+   * request correlation id as a different region. The stored first request and digest remain
+   * unchanged; all target, release, descriptor, lifecycle and region evidence stays exact.
+   */
+  boolean matchesInstalledTimelineInitialization(
+      TimelinePreparation preparation,
+      Source source,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation) {
+    Objects.requireNonNull(preparation, "preparation");
+    Objects.requireNonNull(source, "source");
+    Objects.requireNonNull(incarnation, "incarnation");
+    String tag =
+        CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+            source.tenantId(), source.gameInstanceId(), source.regionId());
+    return sameRegionSource(preparation.source, source)
+        && preparation.tenantRegionTag.equals(tag)
+        && preparation.matchesIncarnation(incarnation)
+        && preparation.regionEpoch == 1L
+        && preparation.lastCommittedTickId == -1L;
+  }
+
+  boolean matchesCurrentInstalledTimelineInitialization(
+      TimelinePreparation expected,
+      TimelinePreparation current,
+      Source candidateSource,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation,
+      CanonicalGameplayRegionRuntimeStatus status) {
+    Objects.requireNonNull(expected, "expectedPreparation");
+    Objects.requireNonNull(current, "currentPreparation");
+    Objects.requireNonNull(candidateSource, "candidateSource");
+    Objects.requireNonNull(incarnation, "incarnation");
+    Objects.requireNonNull(status, "status");
+    String expectedMetaDigest =
+        CanonicalGameplayRegionBindingBridgeProofs.initialMetaDigest(
+            current.tenantRegionTag, current.operationId, current.sourceDigest());
+    return samePreparation(expected, current)
+        && matchesInstalledTimelineInitialization(current, candidateSource, incarnation)
+        && current.phase == TimelinePreparationPhase.INSTALLED
+        && current.leaseTokenCorrelation != null
+        && current.leaseTokenCorrelation.equals(status.leaseTokenCorrelation())
+        && current.executorFence != null
+        && status.executorFence().equals(current.executorFence)
+        && current.redisMetaDigest != null
+        && current.redisMetaDigest.equals(expectedMetaDigest)
+        && matchesSource(status, current.source)
+        && status.regionEpoch() == current.regionEpoch
+        && status.lastCommittedTickId() == current.lastCommittedTickId;
   }
 
   boolean matchesTimelinePreparation(
@@ -809,10 +859,47 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && status.regionId().equals(source.regionId())
         && status.lifecycleEpoch() == source.lifecycleEpoch()
         && status.lifecycleRowVersion() == source.lifecycleRowVersion()
-        && status.lifecycleRequest().equals(source.lifecycleRequest())
+        && sameLifecycleRequestExceptReadRequestId(
+            status.lifecycleRequest(), source.lifecycleRequest())
         && status.captureId().equals(source.captureId())
         && status.graphSha256().equals(source.graphSha256())
         && status.preparationInputDigest().equals(source.preparationInputDigest());
+  }
+
+  static boolean sameRegionSource(Source expected, Source actual) {
+    return expected.tenantId().equals(actual.tenantId())
+        && expected.gameInstanceId().equals(actual.gameInstanceId())
+        && expected.canonicalRegionId().equals(actual.canonicalRegionId())
+        && expected.regionId().equals(actual.regionId())
+        && expected.lifecycleEpoch() == actual.lifecycleEpoch()
+        && expected.lifecycleRowVersion() == actual.lifecycleRowVersion()
+        && sameLifecycleRequestExceptReadRequestId(
+            expected.lifecycleRequest(), actual.lifecycleRequest())
+        && expected.captureId().equals(actual.captureId())
+        && expected.graphSha256().equals(actual.graphSha256())
+        && expected.preparationInputDigest().equals(actual.preparationInputDigest());
+  }
+
+  static boolean sameLifecycleRequestExceptReadRequestId(
+      WorldCanonicalInstanceLifecycleEvidence.Request expected,
+      WorldCanonicalInstanceLifecycleEvidence.Request actual) {
+    return expected.schemaVersion() == actual.schemaVersion()
+        && expected.targetNamespace().equals(actual.targetNamespace())
+        && expected.canonicalTenantId().equals(actual.canonicalTenantId())
+        && expected.worldSlug().equals(actual.worldSlug())
+        && expected.canonicalGameInstanceId().equals(actual.canonicalGameInstanceId())
+        && expected.playableStateNamespaceId().equals(actual.playableStateNamespaceId())
+        && expected.playableStateScope().equals(actual.playableStateScope())
+        && expected.publicProduction() == actual.publicProduction()
+        && expected.controlPlaneRequestId().equals(actual.controlPlaneRequestId())
+        && expected.canonicalVersionId().equals(actual.canonicalVersionId())
+        && expected
+            .expectedDescriptorRequestDigest()
+            .equals(actual.expectedDescriptorRequestDigest())
+        && expected.expectedDescriptorResultDigest().equals(actual.expectedDescriptorResultDigest())
+        && expected
+            .expectedReleaseAttestationDigest()
+            .equals(actual.expectedReleaseAttestationDigest());
   }
 
   private static boolean matchesLeaseGeneration(

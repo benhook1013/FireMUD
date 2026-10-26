@@ -100,7 +100,7 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       assertThat(runtime(harness, prepared).get("status", String.class)).isEqualTo("RUNNING");
       assertThat(attemptStatus(harness, prepared.request())).isEqualTo("PENDING");
       assertThat(
-              new CanonicalHumanRuntimeCompletionRepository(harness.dsl())
+              new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it")
                   .read(
                       prepared.request().targetNamespace(),
                       prepared.request().initialAdmissionRequestId()))
@@ -406,7 +406,8 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
               1091,
               Duration.ofSeconds(10));
       var admission = admissionRepository(harness);
-      var completion = new CanonicalHumanRuntimeCompletionRepository(harness.dsl());
+      var completion =
+          new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       reserveProtection(harness, admission, prepared);
       Record before = runtime(harness, prepared);
 
@@ -459,7 +460,8 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
     try {
       var prepared = prepareStarting(harness, "human-runtime-complete", 1101);
       var admission = admissionRepository(harness);
-      var completion = new CanonicalHumanRuntimeCompletionRepository(harness.dsl());
+      var completion =
+          new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       reserveProtection(harness, admission, prepared);
 
       Record before = runtime(harness, prepared);
@@ -569,7 +571,8 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
     try {
       var prepared = prepareStarting(harness, "human-runtime-completion-abort-race", 1401);
       var admission = admissionRepository(harness);
-      var completion = new CanonicalHumanRuntimeCompletionRepository(harness.dsl());
+      var completion =
+          new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       reserveProtection(harness, admission, prepared);
       var completionLocked = new CountDownLatch(1);
       var abortEntered = new CountDownLatch(1);
@@ -634,7 +637,8 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
     try {
       var prepared = prepareStarting(harness, "human-runtime-abort-first", 1201);
       var admission = admissionRepository(harness);
-      var completion = new CanonicalHumanRuntimeCompletionRepository(harness.dsl());
+      var completion =
+          new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       reserveProtection(harness, admission, prepared);
       harness
           .transactions()
@@ -678,7 +682,8 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       harness.migrateLatest();
 
       assertThat(runtime(harness, prepared).formatJSON()).isEqualTo(before.formatJSON());
-      var completion = new CanonicalHumanRuntimeCompletionRepository(harness.dsl());
+      var completion =
+          new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
       harness
           .transactions()
           .executeWithoutResult(
@@ -849,7 +854,7 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       CanonicalInitialAdmissionWorldVerifier worldVerifier) {
     return new ProtectedCanonicalInitialAdmissionCoordinator(
         admissions,
-        new CanonicalHumanRuntimeCompletionRepository(harness.dsl()),
+        new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it"),
         new AccountInitialAdmissionProtectionBindingRepository(harness.dsl()),
         accountClient,
         worldVerifier,

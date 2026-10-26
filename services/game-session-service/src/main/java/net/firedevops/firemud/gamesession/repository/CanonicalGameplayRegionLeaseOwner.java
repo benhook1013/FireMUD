@@ -61,6 +61,14 @@ final class CanonicalGameplayRegionLeaseOwner {
    */
   Installation installForTransition(
       UUID transitionId, CanonicalInitialPlayerLocationRequest worldRequest) {
+    return installForTransition(null, transitionId, worldRequest);
+  }
+
+  /** Installs another binding under a still-current private region grant. */
+  Installation installForTransition(
+      Installation existingRegionInstallation,
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(transitionId, "transitionId");
     Objects.requireNonNull(worldRequest, "worldRequest");
@@ -78,7 +86,9 @@ final class CanonicalGameplayRegionLeaseOwner {
 
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
+    boolean reusingRegionGrant = false;
     if (prior == null) {
+      if (existingRegionInstallation != null) throw unavailable();
       preparation = statusRepository.findTimelinePreparation(source).orElse(null);
       if (preparation == null) {
         CanonicalGameplayRegionLeaseRedisOwner.TimelineAbsenceProof absenceProof =
@@ -130,24 +140,48 @@ final class CanonicalGameplayRegionLeaseOwner {
           statusRepository
               .findTimelinePreparation(source)
               .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
-      if (!statusRepository.matchesTimelinePreparation(
-              preparation,
-              evidence,
-              worldRequest,
-              initialResolved.resolvedRegion,
-              source,
-              incarnation)
-          || preparation.phase()
-                  != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                      .INSTALLED
-              && preparation.phase()
-                  != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                      .REDIS_INITIALIZED) {
+      boolean sameInitializationAttempt =
+          preparation.transitionId().equals(evidence.transition().transitionId());
+      boolean matchesInitialization =
+          sameInitializationAttempt
+              ? statusRepository.matchesTimelinePreparation(
+                  preparation,
+                  evidence,
+                  worldRequest,
+                  initialResolved.resolvedRegion,
+                  source,
+                  incarnation)
+              : statusRepository.matchesInstalledTimelineInitialization(
+                  preparation, source, incarnation);
+      boolean resumablePhase =
+          sameInitializationAttempt
+              ? preparation.phase()
+                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                          .INSTALLED
+                  || preparation.phase()
+                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                          .REDIS_INITIALIZED
+              : preparation.phase()
+                  == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                      .INSTALLED;
+      if (!matchesInitialization || !resumablePhase) {
         throw unavailable();
       }
-      grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
+      if (existingRegionInstallation == null) {
+        grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
+      } else {
+        requireReusableRegionGrant(
+            existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
+        grant = existingRegionInstallation.grant;
+        reusingRegionGrant = true;
+      }
     }
-    redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
+    if (reusingRegionGrant) {
+      redisOwner.requireGrantScope(
+          grant, existingRegionInstallation.source, expectedRegionEpoch, runtimeIdentity);
+    } else {
+      redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
+    }
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterAcquire =
         resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId));
     requireSameSource(source, afterAcquire);
@@ -189,6 +223,41 @@ final class CanonicalGameplayRegionLeaseOwner {
     if (!installed.equals(finalStatus) || finalStatus.paused()) throw unavailable();
     return new Installation(
         transitionId, worldRequest, evidence, source, incarnation, preparation, grant, installed);
+  }
+
+  private void requireReusableRegionGrant(
+      Installation existing,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source candidateSource,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence currentIncarnation,
+      CanonicalGameplayRegionRuntimeStatus currentStatus,
+      long expectedRegionEpoch) {
+    if (existing == null
+        || !existing.owner.equals(this)
+        || !CanonicalGameplayRegionRuntimeStatusRepository.sameRegionSource(
+            existing.source, candidateSource)
+        || existing.status == null
+        || !existing.status.equals(currentStatus)
+        || currentStatus.paused()
+        || existing.status.regionEpoch() != expectedRegionEpoch) {
+      throw unavailable();
+    }
+    requireSameIncarnation(existing.incarnation, currentIncarnation);
+    CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation persistedPreparation =
+        statusRepository
+            .findTimelinePreparation(existing.preparation.source())
+            .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+    if (!statusRepository.matchesCurrentInstalledTimelineInitialization(
+        existing.preparation,
+        persistedPreparation,
+        candidateSource,
+        currentIncarnation,
+        currentStatus)) {
+      throw unavailable();
+    }
+    redisOwner.requireGrantScope(
+        existing.grant, existing.source, expectedRegionEpoch, runtimeIdentity);
+    redisOwner.requireCurrent(existing.grant);
+    redisOwner.verifyInitializedTimeline(existing.grant, persistedPreparation);
   }
 
   /**

@@ -213,6 +213,57 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void ownerGrantAcceptsOnlyChangedLifecycleReadCorrelationAndKeepsInitialRequestBytes() {
+    var initial =
+        repository.installOwner(
+            source,
+            1L,
+            null,
+            FIRST_LEASE_CORRELATION,
+            "game-session-service",
+            "instance-a",
+            Instant.parse("2026-10-26T00:00:01Z"));
+    var laterRequest =
+        lifecycleRequest(
+            source.lifecycleRequest(),
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            source.lifecycleRequest().controlPlaneRequestId());
+    var laterSource = source(source, laterRequest);
+
+    var later =
+        repository.installOwner(
+            laterSource,
+            1L,
+            initial,
+            SECOND_LEASE_CORRELATION,
+            "game-session-service",
+            "instance-b",
+            Instant.parse("2026-10-26T00:00:02Z"));
+
+    assertThat(later.executorFence()).isGreaterThan(initial.executorFence());
+    assertThat(later.regionEpoch()).isEqualTo(1L);
+    assertThat(later.lastCommittedTickId()).isEqualTo(-1L);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT lifecycle_request_bytes FROM game_session_region_runtime_status"
+                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
+                    TENANT_ID,
+                    GAME_INSTANCE_ID,
+                    OPERATIONAL_REGION_ID)
+                .get("lifecycle_request_bytes", byte[].class))
+        .containsExactly(source.lifecycleRequest().canonicalBytes());
+    assertThat(repository.find(laterSource)).contains(later);
+
+    var changedTargetSelector =
+        source(
+            source,
+            lifecycleRequest(
+                laterRequest, laterRequest.readRequestId(), "different-control-plane-request"));
+    assertThatThrownBy(() -> repository.find(changedTargetSelector))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
   void sameRegionInDifferentGameInstancesHasDistinctPersistedOwnerTags() {
     var first =
         repository.installOwner(
@@ -338,5 +389,42 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         captureId,
         GRAPH_DIGEST,
         PREPARATION_DIGEST);
+  }
+
+  private static CanonicalGameplayRegionRuntimeStatusRepository.Source source(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source original,
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    return new CanonicalGameplayRegionRuntimeStatusRepository.Source(
+        original.tenantId(),
+        original.gameInstanceId(),
+        original.canonicalRegionId(),
+        original.regionId(),
+        original.lifecycleEpoch(),
+        original.lifecycleRowVersion(),
+        request,
+        original.captureId(),
+        original.graphSha256(),
+        original.preparationInputDigest());
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest(
+      WorldCanonicalInstanceLifecycleEvidence.Request original,
+      UUID readRequestId,
+      String controlPlaneRequestId) {
+    return new WorldCanonicalInstanceLifecycleEvidence.Request(
+        original.schemaVersion(),
+        readRequestId,
+        original.targetNamespace(),
+        original.canonicalTenantId(),
+        original.worldSlug(),
+        original.canonicalGameInstanceId(),
+        original.playableStateNamespaceId(),
+        original.playableStateScope(),
+        original.publicProduction(),
+        controlPlaneRequestId,
+        original.canonicalVersionId(),
+        original.expectedDescriptorRequestDigest(),
+        original.expectedDescriptorResultDigest(),
+        original.expectedReleaseAttestationDigest());
   }
 }

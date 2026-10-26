@@ -144,7 +144,6 @@ public class AccountStartSessionAdmissionProtectionRepository {
     Record row = selectByRequestId(request.originalTuple().controlPlaneRequestId());
     StoredProtection stored = decodeProtection(row, readSources(protectionId(row)));
     requireSameOperation(request, capture, participation, stored);
-    if (inserted == 1 && stored.producerTransactionId() <= 0L) throw unavailable();
     return stored;
   }
 

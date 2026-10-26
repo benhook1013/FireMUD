@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProo
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -22,21 +24,30 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public final class CanonicalHumanRuntimeCompletionRepository {
   private static final String TABLE = "game_session_canonical_human_runtime_completion";
   private final DSLContext dsl;
+  private final String workloadNamespace;
+  private final CanonicalGameInstanceLaunchAssociationRepository launchRepository;
 
-  public CanonicalHumanRuntimeCompletionRepository(DSLContext dsl) {
+  public CanonicalHumanRuntimeCompletionRepository(DSLContext dsl, String workloadNamespace) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+      throw new IllegalArgumentException("Human completion workload namespace is invalid");
+    }
+    this.workloadNamespace = workloadNamespace;
+    this.launchRepository =
+        new CanonicalGameInstanceLaunchAssociationRepository(dsl, workloadNamespace);
   }
 
   /**
    * Completes only the exact protected STARTING row. It creates no admission pointer, terminal
    * attempt, Account settlement, or World hold release.
    */
-  @Transactional(isolation = Isolation.READ_COMMITTED)
+  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
   public Completion completeProtected(
       CanonicalInitialAdmissionRequest request,
       AccountStartSessionAdmissionProtectionEvidence protection,
       CanonicalInitialAdmissionWorldProof worldProof) {
     Objects.requireNonNull(request, "request");
+    requireWorkloadNamespace(request.targetNamespace());
     Objects.requireNonNull(protection, "protection");
     Objects.requireNonNull(worldProof, "worldProof");
     worldProof.requireMatches(request);
@@ -59,8 +70,6 @@ public final class CanonicalHumanRuntimeCompletionRepository {
           "Human runtime completion requires the exact nonterminal protected reservation");
     }
 
-    var launchRepository =
-        new CanonicalGameInstanceLaunchAssociationRepository(dsl, request.targetNamespace());
     CanonicalInitialAdmissionLaunchTarget launch =
         launchRepository.lockStartingForHumanRuntimeCompletion(
             request.targetNamespace(),
@@ -155,8 +164,15 @@ public final class CanonicalHumanRuntimeCompletionRepository {
 
   /** Historical readback only; this value grants no current runtime or admission authority. */
   public Optional<Completion> read(String namespace, String initialAdmissionRequestId) {
+    requireWorkloadNamespace(namespace);
     Record row = find(namespace, initialAdmissionRequestId, false);
     return row == null ? Optional.empty() : Optional.of(decode(row));
+  }
+
+  private void requireWorkloadNamespace(String namespace) {
+    if (!workloadNamespace.equals(namespace)) {
+      throw new IllegalArgumentException("Human completion targets another workload namespace");
+    }
   }
 
   private Record find(String namespace, String requestId, boolean forUpdate) {

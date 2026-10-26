@@ -35,6 +35,18 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     return regionLeaseOwner.installForTransition(transitionId, request);
   }
 
+  /**
+   * Installs another per-binding bridge under a still-current region installation created by this
+   * same manually composed owner. The supplied handle carries private grant authority; no token is
+   * accepted or reconstructed by the caller.
+   */
+  CanonicalGameplayRegionLeaseOwner.Installation installForTransition(
+      CanonicalGameplayRegionLeaseOwner.Installation existingRegionInstallation,
+      UUID transitionId,
+      net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
+    return regionLeaseOwner.installForTransition(existingRegionInstallation, transitionId, request);
+  }
+
   /** Executes only an exact first-NEW bridge from a privately created region installation. */
   CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement bridge(
       CanonicalGameplayRegionLeaseOwner.Installation installation) {

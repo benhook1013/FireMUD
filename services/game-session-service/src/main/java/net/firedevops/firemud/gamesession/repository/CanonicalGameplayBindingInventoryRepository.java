@@ -739,7 +739,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !assignment.captureId().equals(ownerStatus.captureId())
         || !assignment.graphSha256().equals(ownerStatus.graphSha256())
         || !assignment.preparationInputDigest().equals(ownerStatus.preparationInputDigest())
-        || !assignment.request().equals(ownerStatus.lifecycleRequest())
+        || !CanonicalGameplayRegionRuntimeStatusRepository.sameLifecycleRequestExceptReadRequestId(
+            assignment.request(), ownerStatus.lifecycleRequest())
         || assignment.lifecycleEpoch() != ownerStatus.lifecycleEpoch()
         || assignment.lifecycleRowVersion() != ownerStatus.lifecycleRowVersion()
         || ownerStatus.paused()
@@ -2306,7 +2307,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !transition.issuerReservationId().equals(issuer.get("reservation_id", UUID.class))
         || !transition.bindingGeneration().equals(readBigInteger(issuer, "binding_generation"))
         || !revision.equals(readBigInteger(issuer, "inventory_revision"))
-        || !"REQUIRED".equals(region.get("status", String.class))
+        || (!"REQUIRED".equals(region.get("status", String.class))
+            && !"ACKNOWLEDGED".equals(region.get("status", String.class)))
         || !Arrays.equals(bindingRef, region.get("binding_ref", byte[].class))
         || !transition.bindingGeneration().equals(readBigInteger(region, "binding_generation"))
         || !candidate.accountId().equals(region.get("account_id", UUID.class))
@@ -2327,6 +2329,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 DSL.field("transition_id", UUID.class).eq(transitionId))
             != 1) {
       throw conflict("Aborted first-NEW source lost a required retained index obligation");
+    }
+    if ("ACKNOWLEDGED".equals(region.get("status", String.class))) {
+      // Decode the complete retained ACK with the existing closed carrier contract. The exact
+      // candidate, identity and revision checks above remain independent of cleanup or admission.
+      toRegionObligation(region);
     }
     if ("ACKNOWLEDGED".equals(account.get("status", String.class))) {
       // This is historical ADD/readback evidence, never account-member removal or cleanup proof.

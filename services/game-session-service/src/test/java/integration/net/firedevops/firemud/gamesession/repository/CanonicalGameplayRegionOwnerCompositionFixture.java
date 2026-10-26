@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -13,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -20,11 +22,13 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
@@ -41,6 +45,7 @@ import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRe
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 
 /**
  * Test-only wrapper for the package-private Game Session region owners. It starts from an actual
@@ -66,6 +71,50 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalPlayableTarget currentTarget,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient)
+      throws Exception {
+    return installAndBridgeInternal(
+            dsl,
+            redisHost,
+            redisPort,
+            worldRequest,
+            currentTarget,
+            worldRegionResolver,
+            entityReferenceClient,
+            null)
+        .first();
+  }
+
+  /** Runs the real first owner chain, then exercises a second candidate under its private grant. */
+  public static TwoBindingProof installAndBridgeTwoCandidates(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest firstWorldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver firstWorldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient firstEntityReferenceClient,
+      SecondBinding secondBinding)
+      throws Exception {
+    return installAndBridgeInternal(
+        dsl,
+        redisHost,
+        redisPort,
+        firstWorldRequest,
+        currentTarget,
+        firstWorldRegionResolver,
+        firstEntityReferenceClient,
+        java.util.Objects.requireNonNull(secondBinding, "secondBinding"));
+  }
+
+  private static TwoBindingProof installAndBridgeInternal(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      SecondBinding secondBinding)
       throws Exception {
     UUID transitionId = UUID.randomUUID();
     UUID sessionId = UUID.randomUUID();
@@ -129,6 +178,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               "test",
               "test",
               "controlled-test-image");
+      CanonicalPreseededActorRuntimeReferenceClient bridgeEntityReferenceClient =
+          secondBinding == null ? entityReferenceClient : secondBinding.entityReferenceClient();
       var bridgeOwner =
           CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
               dsl,
@@ -136,7 +187,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               scriptCatalog,
               stableSource,
               worldRegionResolver,
-              entityReferenceClient,
+              bridgeEntityReferenceClient,
               runtimeIdentity,
               Duration.ofSeconds(30),
               Clock.systemUTC());
@@ -160,37 +211,444 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           || !"game-session-service".equals(status.ownerService())) {
         throw new IllegalStateException("Initial region SQL fence is not the expected live owner");
       }
+      String initialMetaKey =
+          CanonicalGameplayRegionRedisKeys.meta(
+              identity.tenantId(), identity.gameInstanceId(), status.regionId());
+      byte[] redisKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  identity.tenantId(), identity.gameInstanceId(), status.regionId()));
       byte[] currentTickState =
-          redis
-              .admin()
-              .hget(
-                  ascii(
-                      CanonicalGameplayRegionRedisKeys.meta(
-                          identity.tenantId(), identity.gameInstanceId(), status.regionId())),
-                  ascii("current_tick_state"));
+          redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       if (!Arrays.equals(currentTickState, ascii("APPLIED"))) {
         throw new IllegalStateException("Canonical Redis initial timeline metadata is absent");
       }
-      return new Proof(
-          transitionId,
-          sessionId,
-          identity.regionId(),
-          resolved.canonicalRegionInstanceId(),
-          status.lifecycleEpoch(),
-          status.lifecycleRowVersion(),
-          status.regionEpoch(),
-          status.executorFence(),
-          acknowledged.bridgeOperationId(),
-          acknowledged.runtimeEntityId(),
-          acknowledged.entityProjectionGeneration(),
-          acknowledged.entityProjectionFence(),
-          acknowledged.entityReferenceDigest(),
-          acknowledged.worldSourceDigest(),
-          acknowledged.redisReadbackDigest(),
-          acknowledged.inventoryRevision(),
-          acknowledged.acknowledgedAt(),
-          acknowledged.equals(replayed));
+      Proof firstProof =
+          new Proof(
+              transitionId,
+              sessionId,
+              identity.regionId(),
+              resolved.canonicalRegionInstanceId(),
+              status.lifecycleEpoch(),
+              status.lifecycleRowVersion(),
+              status.regionEpoch(),
+              status.executorFence(),
+              acknowledged.bridgeOperationId(),
+              acknowledged.runtimeEntityId(),
+              acknowledged.entityProjectionGeneration(),
+              acknowledged.entityProjectionFence(),
+              acknowledged.entityReferenceDigest(),
+              acknowledged.worldSourceDigest(),
+              acknowledged.redisReadbackDigest(),
+              acknowledged.inventoryRevision(),
+              acknowledged.acknowledgedAt(),
+              acknowledged.equals(replayed));
+      if (secondBinding == null) {
+        return new TwoBindingProof(firstProof, null, null, true, true, true, true, true);
+      }
+
+      AccountAbortProof firstAbort = abortAfterBridge(dsl, firstProof);
+      Record firstTimelineBefore =
+          dsl.fetchOne(
+              "SELECT initialization_operation_id, transition_id, lifecycle_request_bytes,"
+                  + " preparation_digest, world_source_digest"
+                  + " FROM game_session_region_timeline_preparation"
+                  + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
+              identity.tenantId(),
+              identity.gameInstanceId(),
+              identity.regionId());
+      Objects.requireNonNull(firstTimelineBefore, "first timeline source row");
+      String firstTimelineOperationId =
+          Objects.requireNonNull(
+                  firstTimelineBefore.get("initialization_operation_id", UUID.class),
+                  "first initialization operation")
+              .toString();
+      String firstTimelineDigest = firstTimelineBefore.get("preparation_digest", String.class);
+      String firstWorldSourceDigest = firstTimelineBefore.get("world_source_digest", String.class);
+      byte[] firstLifecycleRequest =
+          firstTimelineBefore.get("lifecycle_request_bytes", byte[].class);
+      byte[] firstMetaOperation =
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_operation_id"));
+      byte[] firstMetaDigest =
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
+
+      var secondResolved =
+          secondBinding.worldRegionResolver().resolve(secondBinding.worldRequest());
+      requireExactCurrentTarget(secondBinding.worldRequest(), secondBinding.currentTarget());
+      UUID secondTransitionId = UUID.randomUUID();
+      UUID secondSessionId = UUID.randomUUID();
+      var secondIdentity =
+          new CanonicalGameplayBindingIdentity(
+              UUID.fromString(secondBinding.worldRequest().getCanonicalAccountUuid()),
+              secondBinding.currentTarget().canonicalTenantId(),
+              secondBinding.currentTarget().playableStateNamespaceId(),
+              UUID.fromString(secondBinding.worldRequest().getCharacterUuid()),
+              secondBinding.currentTarget().playableStateScope(),
+              secondBinding.currentTarget().canonicalGameInstanceId(),
+              secondBinding.currentTarget().gameInstanceId(),
+              secondSessionId.toString(),
+              secondResolved.operationalRegionId(),
+              BigInteger.ONE,
+              GameSessionAccountDelegationProfile.ISSUER,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.valueOf(64));
+      var secondPrepared =
+          inventory.prepare(
+              new CanonicalGameplayBindingTransitionRequest(
+                  secondTransitionId,
+                  UUID.randomUUID(),
+                  secondIdentity,
+                  new CanonicalIssuerReservationFenceEvidence(
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      BigInteger.ONE,
+                      BigInteger.ONE,
+                      BigInteger.ONE),
+                  null,
+                  null));
+      AccountGameplayAdmissionLeaseEvidence secondLease =
+          controlledNewBindingLease(
+              secondIdentity, secondBinding.currentTarget(), secondPrepared.bindingGeneration());
+      inventory.markProvisional(
+          inventory.readProvisionalCasEvidence(secondTransitionId),
+          new CanonicalGameplayAdmissionDecision(
+              secondTransitionId,
+              secondLease,
+              secondIdentity,
+              secondPrepared.bindingGeneration(),
+              null,
+              secondBinding.currentTarget()));
+      var secondInstallation =
+          bridgeOwner.installForTransition(
+              installation, secondTransitionId, secondBinding.worldRequest());
+      var secondAcknowledgement = bridgeOwner.bridge(secondInstallation).obligation();
+      var secondLostReplyRetry = bridgeOwner.bridge(secondInstallation).obligation();
+      if (!secondAcknowledgement.equals(secondLostReplyRetry)
+          || secondAcknowledgement.status()
+              != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
+          || secondAcknowledgement.transitionId().equals(acknowledged.transitionId())
+          || secondAcknowledgement.bridgeOperationId().equals(acknowledged.bridgeOperationId())
+          || !secondAcknowledgement
+              .inventoryRevision()
+              .equals(secondLostReplyRetry.inventoryRevision())) {
+        throw new IllegalStateException("Second binding did not retain its independent exact ACK");
+      }
+      var secondStatus =
+          new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
+              .find(secondInstallation.source)
+              .orElseThrow();
+      Record firstTimelineAfter =
+          dsl.fetchOne(
+              "SELECT initialization_operation_id, transition_id, lifecycle_request_bytes,"
+                  + " preparation_digest, world_source_digest"
+                  + " FROM game_session_region_timeline_preparation"
+                  + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
+              identity.tenantId(),
+              identity.gameInstanceId(),
+              identity.regionId());
+      byte[] secondMetaOperation =
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_operation_id"));
+      byte[] secondMetaDigest =
+          redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
+      byte[] secondMetaRegionEpoch =
+          redis.admin().hget(ascii(initialMetaKey), ascii("region_epoch"));
+      byte[] secondMetaTickId = redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_id"));
+      byte[] secondMetaTickState =
+          redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
+      Objects.requireNonNull(firstTimelineAfter, "retained timeline source row");
+      boolean unchangedTimeline =
+          firstTimelineOperationId.equals(
+                  Objects.requireNonNull(
+                          firstTimelineAfter.get("initialization_operation_id", UUID.class),
+                          "retained initialization operation")
+                      .toString())
+              && transitionId.equals(firstTimelineAfter.get("transition_id", UUID.class))
+              && Arrays.equals(
+                  firstLifecycleRequest,
+                  firstTimelineAfter.get("lifecycle_request_bytes", byte[].class))
+              && firstTimelineDigest.equals(
+                  firstTimelineAfter.get("preparation_digest", String.class))
+              && firstWorldSourceDigest.equals(
+                  firstTimelineAfter.get("world_source_digest", String.class))
+              && Arrays.equals(firstMetaOperation, secondMetaOperation)
+              && Arrays.equals(firstMetaDigest, secondMetaDigest)
+              && Arrays.equals(secondMetaRegionEpoch, ascii("1"))
+              && Arrays.equals(secondMetaTickId, ascii("-1"))
+              && Arrays.equals(secondMetaTickState, ascii("APPLIED"))
+              && secondStatus.regionEpoch() == 1L
+              && secondStatus.lastCommittedTickId() == -1L;
+      if (!unchangedTimeline
+          || !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
+          || redis.admin().pttl(redisKey) <= 0L
+          || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
+        throw new IllegalStateException(
+            "Second binding changed first timeline provenance or lost the live region grant");
+      }
+      boolean regionLeaseStillLive = redis.admin().pttl(redisKey) > 0L;
+      List<List<String>> sqlBeforeForeignOwner =
+          snapshotRegionOwnerSqlState(
+              dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+      RegionRedisState redisBeforeForeignOwner =
+          snapshotRegionRedisState(redis, redisKey, initialMetaKey);
+      var foreignBridgeOwner =
+          CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
+              dsl,
+              redis.ownerClient(),
+              scriptCatalog,
+              stableSource,
+              secondBinding.worldRegionResolver(),
+              secondBinding.entityReferenceClient(),
+              runtimeIdentity,
+              Duration.ofSeconds(30),
+              Clock.systemUTC());
+      boolean foreignOwnerInstallationRejected;
+      try {
+        foreignBridgeOwner.installForTransition(
+            installation, secondTransitionId, secondBinding.worldRequest());
+        foreignOwnerInstallationRejected = false;
+      } catch (IllegalStateException expected) {
+        foreignOwnerInstallationRejected =
+            "Canonical Game Session region owner requires current exact assignment and lease evidence"
+                .equals(expected.getMessage());
+      }
+      boolean foreignOwnerCapabilityRejectedWithoutStateChange =
+          foreignOwnerInstallationRejected
+              && sqlBeforeForeignOwner.equals(
+                  snapshotRegionOwnerSqlState(
+                      dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))
+              && redisBeforeForeignOwner.equals(
+                  snapshotRegionRedisState(redis, redisKey, initialMetaKey))
+              && redis.admin().pttl(redisKey) > 0L
+              && redis.admin().pttl(ascii(initialMetaKey)) == -1L;
+      if (!foreignOwnerCapabilityRejectedWithoutStateChange) {
+        throw new IllegalStateException(
+            "A foreign region owner accepted or changed state for another owner's installation");
+      }
+      redis.admin().pexpire(redisKey, 0L);
+      List<List<String>> sqlBeforeExpiredGrant =
+          snapshotRegionOwnerSqlState(
+              dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+      RegionRedisState redisBeforeExpiredGrant =
+          snapshotRegionRedisState(redis, redisKey, initialMetaKey);
+      boolean expiredGrantInstallationRejected;
+      try {
+        bridgeOwner.installForTransition(
+            secondInstallation, secondTransitionId, secondBinding.worldRequest());
+        expiredGrantInstallationRejected = false;
+      } catch (IllegalStateException expected) {
+        expiredGrantInstallationRejected = true;
+      }
+      boolean expiredGrantRejectedWithoutStateChange =
+          expiredGrantInstallationRejected
+              && sqlBeforeExpiredGrant.equals(
+                  snapshotRegionOwnerSqlState(
+                      dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))
+              && redisBeforeExpiredGrant.equals(
+                  snapshotRegionRedisState(redis, redisKey, initialMetaKey))
+              && secondStatus.equals(
+                  new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
+                      .find(secondInstallation.source)
+                      .orElseThrow());
+      if (!expiredGrantRejectedWithoutStateChange) {
+        throw new IllegalStateException(
+            "An expired private region grant was accepted or changed SQL/Redis state");
+      }
+      Proof secondProof =
+          new Proof(
+              secondTransitionId,
+              secondSessionId,
+              secondIdentity.regionId(),
+              secondResolved.canonicalRegionInstanceId(),
+              secondStatus.lifecycleEpoch(),
+              secondStatus.lifecycleRowVersion(),
+              secondStatus.regionEpoch(),
+              secondStatus.executorFence(),
+              secondAcknowledgement.bridgeOperationId(),
+              secondAcknowledgement.runtimeEntityId(),
+              secondAcknowledgement.entityProjectionGeneration(),
+              secondAcknowledgement.entityProjectionFence(),
+              secondAcknowledgement.entityReferenceDigest(),
+              secondAcknowledgement.worldSourceDigest(),
+              secondAcknowledgement.redisReadbackDigest(),
+              secondAcknowledgement.inventoryRevision(),
+              secondAcknowledgement.acknowledgedAt(),
+              secondAcknowledgement.equals(secondLostReplyRetry));
+      return new TwoBindingProof(
+          firstProof,
+          secondProof,
+          firstAbort,
+          unchangedTimeline,
+          Arrays.equals(firstMetaOperation, secondMetaOperation)
+              && Arrays.equals(firstMetaDigest, secondMetaDigest),
+          regionLeaseStillLive,
+          foreignOwnerCapabilityRejectedWithoutStateChange,
+          expiredGrantRejectedWithoutStateChange);
     }
+  }
+
+  private static boolean sameAbortSource(
+      CanonicalGameplayAdmissionAbortSource expected,
+      CanonicalGameplayAdmissionAbortSource actual) {
+    var left = expected.originalDecision();
+    var right = actual.originalDecision();
+    // Independently loaded decisions are verified carriers, not value records.
+    return expected.transition().equals(actual.transition())
+        && expected.candidate().equals(actual.candidate())
+        && expected.reservation().equals(actual.reservation())
+        && Objects.equals(expected.orphanCleanupId(), actual.orphanCleanupId())
+        && left.bindingDecisionId().equals(right.bindingDecisionId())
+        && left.leaseEvidenceJson().equals(right.leaseEvidenceJson())
+        && left.leaseSha256().equals(right.leaseSha256())
+        && left.requestId().equals(right.requestId())
+        && left.leaseId().equals(right.leaseId())
+        && left.leaseFence().equals(right.leaseFence())
+        && left.candidate().equals(right.candidate())
+        && left.bindingGeneration().equals(right.bindingGeneration())
+        && Objects.equals(left.expectedOldBindingGeneration(), right.expectedOldBindingGeneration())
+        && Objects.equals(left.resumeEpisodeId(), right.resumeEpisodeId())
+        && left.targetEvidence().equals(right.targetEvidence());
+  }
+
+  /**
+   * Carries a controlled definitive Account abort through the actual repository after a real
+   * PostgreSQL/Redis bridge ACK, then proves exact cleanup retry/read preserves that ACK without
+   * promoting the candidate or claiming cleanup completion.
+   */
+  public static AccountAbortProof abortAfterBridge(DSLContext dsl, Proof bridgeProof) {
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var before = inventory.readFirstNewAdmissionAbortSource(bridgeProof.transitionId());
+    Record acknowledgedBefore =
+        dsl.fetchOne(
+            "SELECT status, inventory_revision, redis_readback_digest, acknowledged_at"
+                + " FROM game_session_canonical_binding_region_bridge_obligation"
+                + " WHERE transition_id = ?",
+            bridgeProof.transitionId());
+    if (acknowledgedBefore == null
+        || !"ACKNOWLEDGED".equals(acknowledgedBefore.get("status", String.class))
+        || !bridgeProof
+            .acknowledgedInventoryRevision()
+            .equals(
+                new BigInteger(
+                    Objects.requireNonNull(
+                            acknowledgedBefore.get("inventory_revision"), "original ACK revision")
+                        .toString()))
+        || !bridgeProof
+            .redisReadbackDigest()
+            .equals(acknowledgedBefore.get("redis_readback_digest", String.class))) {
+      throw new IllegalStateException("The exact region ACK is not the retained abort source");
+    }
+    String acknowledgementImageBefore =
+        dsl.fetchSingle(
+                "SELECT (to_jsonb(obligation) - 'inventory_revision')::text AS image"
+                    + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                    + " WHERE transition_id = ?",
+                bridgeProof.transitionId())
+            .get("image", String.class);
+    UUID cleanupId =
+        UUID.nameUUIDFromBytes(
+            ("controlled-region-bridge-account-abort/" + bridgeProof.transitionId())
+                .getBytes(StandardCharsets.UTF_8));
+    var aborted = inventory.recordFirstNewAccountAbort(before, cleanupId);
+    var retrySource = inventory.readFirstNewAdmissionAbortSource(bridgeProof.transitionId());
+    var retry = inventory.recordFirstNewAccountAbort(retrySource, cleanupId);
+    var retained =
+        inventory.readRetainedDefinitiveFirstNewAccountAbortSource(bridgeProof.transitionId());
+    Record acknowledgedAfter =
+        dsl.fetchOne(
+            "SELECT status, inventory_revision, redis_readback_digest, acknowledged_at"
+                + " FROM game_session_canonical_binding_region_bridge_obligation"
+                + " WHERE transition_id = ?",
+            bridgeProof.transitionId());
+    Objects.requireNonNull(acknowledgedAfter, "retained region ACK row");
+    String acknowledgementImageAfter =
+        dsl.fetchSingle(
+                "SELECT (to_jsonb(obligation) - 'inventory_revision')::text AS image"
+                    + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                    + " WHERE transition_id = ?",
+                bridgeProof.transitionId())
+            .get("image", String.class);
+    List<String> abortFailures = new ArrayList<>();
+    if (!sameAbortSource(aborted, retry)) {
+      abortFailures.add("abort retry changed the retained terminal result");
+    }
+    if (!sameAbortSource(aborted, retained)) {
+      abortFailures.add("retained abort read changed the terminal result");
+    }
+    if (!aborted.isAccountAborted()) {
+      abortFailures.add("the original Account abort is not retained");
+    }
+    if (!cleanupId.equals(aborted.orphanCleanupId())) {
+      abortFailures.add("the abort changed its exact orphan cleanup identity");
+    }
+    if (aborted.candidate().lifecycle()
+        != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+            .Lifecycle.TERMINAL_UNRESOLVED) {
+      abortFailures.add("the aborted candidate is not TERMINAL_UNRESOLVED");
+    }
+    if (aborted.reservation().lifecycle()
+        != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation.Lifecycle
+            .RELEASE_PENDING) {
+      abortFailures.add("the aborted reservation is not RELEASE_PENDING");
+    }
+    if (!"ACKNOWLEDGED".equals(acknowledgedAfter.get("status", String.class))) {
+      abortFailures.add("the retained region ACK status changed");
+    }
+    if (!aborted
+        .transition()
+        .inventoryRevision()
+        .equals(acknowledgedAfter.get("inventory_revision", BigInteger.class))) {
+      abortFailures.add("the retained region ACK revision differs from the aborted transition");
+    }
+    if (!bridgeProof
+        .redisReadbackDigest()
+        .equals(acknowledgedAfter.get("redis_readback_digest", String.class))) {
+      abortFailures.add("the retained region ACK Redis readback digest changed");
+    }
+    Instant persistedAcknowledgedAt = bridgeProof.acknowledgedAt().truncatedTo(ChronoUnit.MICROS);
+    if (!persistedAcknowledgedAt.equals(
+        acknowledgedAfter.get("acknowledged_at", java.time.OffsetDateTime.class).toInstant())) {
+      abortFailures.add(
+          "the retained region ACK timestamp changed after SQL precision normalization");
+    }
+    if (!acknowledgedBefore
+        .get("acknowledged_at", java.time.OffsetDateTime.class)
+        .equals(acknowledgedAfter.get("acknowledged_at", java.time.OffsetDateTime.class))) {
+      abortFailures.add("the region ACK timestamp changed across the Account abort");
+    }
+    if (!acknowledgementImageBefore.equals(acknowledgementImageAfter)) {
+      abortFailures.add("the retained region ACK row image changed");
+    }
+    if (!aborted
+        .transition()
+        .inventoryRevision()
+        .equals(
+            new BigInteger(
+                Objects.requireNonNull(
+                        acknowledgedAfter.get("inventory_revision"), "retained ACK revision")
+                    .toString()))) {
+      abortFailures.add(
+          "the retained region ACK revision changed in its SQL numeric representation");
+    }
+    if (aborted.transition().status()
+        != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
+            .Status.ABORTED) {
+      abortFailures.add("the aborted transition does not remain ABORTED");
+    }
+    if (!abortFailures.isEmpty()) {
+      throw new IllegalStateException(
+          "Definitive Account abort composition failed: " + String.join("; ", abortFailures));
+    }
+    return new AccountAbortProof(
+        bridgeProof.transitionId(),
+        cleanupId,
+        before.transition().inventoryRevision(),
+        aborted.transition().inventoryRevision(),
+        acknowledgementImageBefore.equals(acknowledgementImageAfter),
+        aborted.candidate().lifecycle().name(),
+        aborted.reservation().lifecycle().name());
   }
 
   private static void requireExactCurrentTarget(
@@ -446,6 +904,55 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         "1".repeat(64));
   }
 
+  private static List<List<String>> snapshotRegionOwnerSqlState(
+      DSLContext dsl, UUID tenantId, UUID gameInstanceId, UUID regionId) {
+    return List.of(
+        dsl.fetch(
+                "SELECT to_jsonb(runtime_status)::text AS image"
+                    + " FROM game_session_region_runtime_status runtime_status"
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                    + " ORDER BY tenant_id, game_instance_id, region_id",
+                tenantId,
+                gameInstanceId,
+                regionId)
+            .getValues("image", String.class),
+        dsl.fetch(
+                "SELECT to_jsonb(preparation)::text AS image"
+                    + " FROM game_session_region_timeline_preparation preparation"
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                    + " ORDER BY initialization_operation_id",
+                tenantId,
+                gameInstanceId,
+                regionId)
+            .getValues("image", String.class),
+        dsl.fetch(
+                "SELECT to_jsonb(obligation)::text AS image"
+                    + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                    + " ORDER BY transition_id",
+                tenantId,
+                gameInstanceId,
+                regionId)
+            .getValues("image", String.class));
+  }
+
+  private static RegionRedisState snapshotRegionRedisState(
+      RegionRedis redis, byte[] leaseKey, String metaKey) {
+    Map<String, String> metadata = new LinkedHashMap<>();
+    redis
+        .admin()
+        .hgetall(ascii(metaKey))
+        .forEach((field, value) -> metadata.put(asciiString(field), asciiString(value)));
+    return new RegionRedisState(
+        redis.admin().type(leaseKey),
+        asciiString(redis.admin().get(leaseKey)),
+        Map.copyOf(metadata));
+  }
+
+  private static String asciiString(byte[] value) {
+    return value == null ? null : new String(value, StandardCharsets.US_ASCII);
+  }
+
   private static byte[] ascii(String value) {
     return value.getBytes(StandardCharsets.US_ASCII);
   }
@@ -469,6 +976,37 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       BigInteger acknowledgedInventoryRevision,
       Instant acknowledgedAt,
       boolean exactLostReplyRetry) {}
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The generated Protocol Buffers request is immutable")
+  public record SecondBinding(
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {}
+
+  public record TwoBindingProof(
+      Proof first,
+      Proof second,
+      AccountAbortProof firstAbort,
+      boolean firstTimelineUnchanged,
+      boolean initialMetaUnchanged,
+      boolean regionLeaseStillLive,
+      boolean foreignOwnerCapabilityRejectedWithoutStateChange,
+      boolean expiredGrantRejectedWithoutStateChange) {}
+
+  private record RegionRedisState(
+      String leaseType, String leaseValue, Map<String, String> metadata) {}
+
+  public record AccountAbortProof(
+      UUID transitionId,
+      UUID cleanupId,
+      BigInteger acknowledgedRevision,
+      BigInteger abortRevision,
+      boolean exactAcknowledgementRetained,
+      String candidateLifecycle,
+      String reservationLifecycle) {}
 
   private static final class ControlledStableIncarnationSource
       implements CanonicalGameplayRegionIncarnationSource {

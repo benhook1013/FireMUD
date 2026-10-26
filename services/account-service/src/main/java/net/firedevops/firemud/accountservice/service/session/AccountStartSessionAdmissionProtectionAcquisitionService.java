@@ -176,7 +176,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
       return OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(request, response);
     } catch (StatusRuntimeException failure) {
       throw dependencyFailure(failure);
-    } catch (IllegalArgumentException malformed) {
+    } catch (IllegalArgumentException | IllegalStateException malformed) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Game Session current-attempt proof is malformed")
           .withCause(malformed)

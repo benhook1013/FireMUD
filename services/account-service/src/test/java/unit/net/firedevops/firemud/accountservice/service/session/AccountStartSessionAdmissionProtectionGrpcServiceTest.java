@@ -139,7 +139,8 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
   void sanitizesUnexpectedOwnerIllegalStateAsInternal() {
     AccountStartSessionAdmissionProtectionRequest request =
         AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE);
-    when(owner.acquire(any())).thenThrow(new IllegalStateException("private owner detail"));
+    var failure = new IllegalStateException("private owner detail");
+    when(owner.acquire(any())).thenThrow(failure);
     var response = new Capture();
 
     Context.current()
@@ -154,6 +155,7 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
     assertThat(response.errorDescription)
         .isEqualTo("Account admission-protection acquisition denied or unavailable")
         .doesNotContain("private owner detail");
+    assertThat(response.cause).isSameAs(failure);
     assertThat(response.value).isNull();
     assertThat(response.completed).isFalse();
     verify(owner).acquire(any());
@@ -193,6 +195,7 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
     assertThat(response.errorDescription)
         .isEqualTo("Account admission-protection acquisition denied or unavailable")
         .doesNotContain(failure.getMessage());
+    assertThat(response.cause).isSameAs(failure);
     assertThat(response.value).isNull();
     assertThat(response.completed).isFalse();
     verify(owner).acquire(any());
@@ -216,6 +219,7 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
     assertThat(response.errorDescription)
         .isEqualTo("Account admission-protection acquisition denied or unavailable")
         .doesNotContain("private database detail", "private SQL detail");
+    assertThat(response.cause).isSameAs(failure);
     assertThat(response.value).isNull();
     assertThat(response.completed).isFalse();
     verify(owner).acquire(any());
@@ -228,6 +232,7 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
 
   private static final class Capture
       implements StreamObserver<AcquireStartSessionAdmissionProtectionResponse> {
+    private Throwable cause;
     private AcquireStartSessionAdmissionProtectionResponse value;
     private Status.Code errorCode;
     private String errorDescription;
@@ -241,6 +246,7 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
     @Override
     public void onError(Throwable failure) {
       Status status = Status.fromThrowable(failure);
+      cause = status.getCause();
       errorCode = status.getCode();
       errorDescription = status.getDescription();
     }
