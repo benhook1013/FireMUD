@@ -14,7 +14,8 @@ import tools.jackson.databind.json.JsonMapper;
 public final class CanonicalGameplayRegionBindingBridgeRedisScriptContribution
     implements RedisScriptContribution {
   public static final String SCRIPT_ID = "game-session.region-session-binding-bridge.v1";
-  public static final String SCRIPT_PATH = "redis/lua/game-session-region-session-binding-bridge.lua";
+  public static final String SCRIPT_PATH =
+      "redis/lua/game-session-region-session-binding-bridge.lua";
   private static final String DESCRIPTOR_PATH =
       "/redis/scripts/game-session-region-session-binding-bridge.json";
   private static final JsonMapper JSON =

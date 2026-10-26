@@ -68,12 +68,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     if (absenceProof == null || !absenceProof.matches(source, incarnation)) throw unavailable();
     InitialTimelineInputs inputs =
         requireInitialTimelineInputs(
-            evidence,
-            worldRequest,
-            resolvedRegion,
-            source,
-            incarnation,
-            absenceProof.digest());
+            evidence, worldRequest, resolvedRegion, source, incarnation, absenceProof.digest());
     try {
       TimelinePreparation prepared =
           dsl.transactionResult(
@@ -92,7 +87,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 if (existingStatus != null) throw unavailable();
                 Record existingTransition =
                     transaction.fetchOne(
-                        "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ? FOR UPDATE",
+                        "SELECT * FROM "
+                            + PREPARATION_TABLE
+                            + " WHERE transition_id = ? FOR UPDATE",
                         evidence.transition().transitionId());
                 if (existingTransition != null) {
                   TimelinePreparation current = toTimelinePreparation(existingTransition);
@@ -182,8 +179,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   Optional<TimelinePreparation> findTimelinePreparation(Source source) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(source, "source");
-    String tag = CanonicalGameplayRegionRedisKeys.tenantRegionTag(
-        source.tenantId(), source.gameInstanceId(), source.regionId());
+    String tag =
+        CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+            source.tenantId(), source.gameInstanceId(), source.regionId());
     Record row =
         dsl.fetchOne(
             "SELECT * FROM "
@@ -261,7 +259,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                   OffsetDateTime.ofInstant(now, ZoneOffset.UTC),
                   current.operationId);
           if (updated != 1) throw unavailable();
-          return Optional.of(new InitialInitializationPermit(current.operationId, current.sourceDigest));
+          return Optional.of(
+              new InitialInitializationPermit(current.operationId, current.sourceDigest()));
         });
   }
 
@@ -431,7 +430,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         || !identity.characterId().toString().equals(worldRequest.getCharacterUuid())
         || !identity.tenantId().toString().equals(target.getCanonicalTenantUuid())
         || !identity.gameInstanceId().toString().equals(target.getGameInstanceId())
-        || !identity.playableStateNamespaceId()
+        || !identity
+            .playableStateNamespaceId()
             .toString()
             .equals(target.getPlayableStateNamespaceUuid())
         || !"SHARED".equals(identity.playableStateScope())
@@ -507,15 +507,13 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && Arrays.equals(preparation.incarnationScopeBytes, inputs.incarnationScopeBytes())
         && Arrays.equals(preparation.incarnationSourceBytes, inputs.incarnationSourceBytes())
         && Arrays.equals(
-            preparation.incarnationQualificationBytes,
-            inputs.incarnationQualificationBytes())
+            preparation.incarnationQualificationBytes, inputs.incarnationQualificationBytes())
         && preparation.incarnationDigest.equals(inputs.incarnationDigest())
         && preparation.timelinePreimageState.equals("ABSENT")
         && preparation.absenceProofDigest.equals(inputs.absenceProofDigest());
   }
 
-  private static boolean samePreparation(
-      TimelinePreparation expected, TimelinePreparation actual) {
+  private static boolean samePreparation(TimelinePreparation expected, TimelinePreparation actual) {
     return expected.operationId.equals(actual.operationId)
         && expected.transitionId.equals(actual.transitionId)
         && expected.source.equals(actual.source)
@@ -991,7 +989,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
       this.bindingGeneration = Objects.requireNonNull(bindingGeneration, "bindingGeneration");
       this.assignmentId = Objects.requireNonNull(assignmentId, "assignmentId");
-      this.assignmentIntentDigest = Objects.requireNonNull(assignmentIntentDigest, "assignmentIntentDigest");
+      this.assignmentIntentDigest =
+          Objects.requireNonNull(assignmentIntentDigest, "assignmentIntentDigest");
       this.canonicalRegionId = Objects.requireNonNull(canonicalRegionId, "canonicalRegionId");
       this.regionId = Objects.requireNonNull(regionId, "regionId");
       this.tenantRegionTag = Objects.requireNonNull(tenantRegionTag, "tenantRegionTag");
@@ -1006,7 +1005,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           Objects.requireNonNull(incarnationQualificationBytes, "incarnationQualificationBytes")
               .clone();
       this.incarnationDigest = Objects.requireNonNull(incarnationDigest, "incarnationDigest");
-      this.timelinePreimageState = Objects.requireNonNull(timelinePreimageState, "timelinePreimageState");
+      this.timelinePreimageState =
+          Objects.requireNonNull(timelinePreimageState, "timelinePreimageState");
       this.absenceProofDigest = Objects.requireNonNull(absenceProofDigest, "absenceProofDigest");
       if (!incarnationDigest.equals(
               CanonicalGameplayRegionIncarnationSource.digestBytes(this.incarnationSourceBytes))
@@ -1069,8 +1069,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       return executorFence;
     }
 
-    boolean matchesIncarnation(
-        CanonicalGameplayRegionIncarnationSource.StableEvidence current) {
+    boolean matchesIncarnation(CanonicalGameplayRegionIncarnationSource.StableEvidence current) {
       return current != null
           && timelinePreimageState.equals("ABSENT")
           && Arrays.equals(incarnationScopeBytes, current.scopeBytes())
@@ -1084,7 +1083,6 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     String absenceProofDigest() {
       return absenceProofDigest;
     }
-
   }
 
   static final class InitialInitializationPermit {

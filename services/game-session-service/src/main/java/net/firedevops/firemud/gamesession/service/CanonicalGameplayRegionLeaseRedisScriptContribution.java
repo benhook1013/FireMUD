@@ -40,7 +40,8 @@ public final class CanonicalGameplayRegionLeaseRedisScriptContribution
         read("/redis/scripts/game-session-region-lease-acquire.json", ACQUIRE_ID),
         read("/redis/scripts/game-session-region-lease-renew.json", RENEW_ID),
         read("/redis/scripts/game-session-region-lease-read.json", READ_ID),
-        read("/redis/scripts/game-session-region-timeline-initialize.json", TIMELINE_INITIALIZE_ID));
+        read(
+            "/redis/scripts/game-session-region-timeline-initialize.json", TIMELINE_INITIALIZE_ID));
   }
 
   private RedisScriptDescriptor read(String path, String id) {

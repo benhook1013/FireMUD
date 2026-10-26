@@ -4,7 +4,9 @@ import java.math.BigInteger;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Durable region bridge obligation projection; a private repository receipt carries ACK authority. */
+/**
+ * Durable region bridge obligation projection; a private repository receipt carries ACK authority.
+ */
 public record CanonicalGameplayBindingRegionBridgeObligation(
     UUID transitionId,
     CanonicalGameplayBindingRef bindingRef,
@@ -87,6 +89,7 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
         null,
         null);
   }
+
   public CanonicalGameplayBindingRegionBridgeObligation {
     requireNonNil(transitionId, "transitionId");
     Objects.requireNonNull(bindingRef, "bindingRef");

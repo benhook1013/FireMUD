@@ -29,7 +29,8 @@ final class CanonicalGameplayRegionRedisKeys {
 
   static String sessionBinding(
       UUID tenantId, UUID gameInstanceId, UUID regionId, long runtimeEntityId) {
-    if (runtimeEntityId <= 0L) throw new IllegalArgumentException("runtimeEntityId must be positive");
+    if (runtimeEntityId <= 0L)
+      throw new IllegalArgumentException("runtimeEntityId must be positive");
     return "tick:{"
         + tenantRegionTag(tenantId, gameInstanceId, regionId)
         + "}:session-binding:"

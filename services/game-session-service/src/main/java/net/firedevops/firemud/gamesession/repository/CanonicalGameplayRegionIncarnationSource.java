@@ -58,8 +58,8 @@ interface CanonicalGameplayRegionIncarnationSource {
   }
 
   /**
-   * Complete stable incarnation value. This carries the established deployment evidence shape;
-   * it does not verify a source, create a production provider, or reuse Account intent context.
+   * Complete stable incarnation value. This carries the established deployment evidence shape; it
+   * does not verify a source, create a production provider, or reuse Account intent context.
    */
   record StableEvidence(
       RegionScope scope,
@@ -79,17 +79,18 @@ interface CanonicalGameplayRegionIncarnationSource {
       requireDigest(coordOpsRoAclDigest);
       requireDigest(coordRedisConfigObservedDigest);
       if (!qualifiedNonResetProfile) throw unavailableException();
-      Objects.requireNonNull(timelineInitializationQualification, "timelineInitializationQualification");
+      Objects.requireNonNull(
+          timelineInitializationQualification, "timelineInitializationQualification");
       if (targetDeploymentEvidence.canonicalNodeSet().size() > 2048
           || scope.canonicalBytes().length > 4096
           || stableValueBytes(
-                  scope,
-                  attestorBinding,
-                  acceptedAttestationDigest,
-                  targetDeploymentEvidence,
-                  coordOpsRoAclDigest,
-                  coordRedisConfigObservedDigest)
-              .length
+                      scope,
+                      attestorBinding,
+                      acceptedAttestationDigest,
+                      targetDeploymentEvidence,
+                      coordOpsRoAclDigest,
+                      coordRedisConfigObservedDigest)
+                  .length
               > 65536
           || timelineInitializationQualification.canonicalBytes().length > 8192
           || !timelineInitializationQualification.matches(
@@ -157,13 +158,14 @@ interface CanonicalGameplayRegionIncarnationSource {
     }
 
     byte[] stableCanonicalBytes() {
-      return CanonicalGameplayRegionIncarnationSource.canonicalBytes(stableValue(
-          scope,
-          attestorBinding,
-          acceptedAttestationDigest,
-          targetDeploymentEvidence,
-          coordOpsRoAclDigest,
-          coordRedisConfigObservedDigest));
+      return CanonicalGameplayRegionIncarnationSource.canonicalBytes(
+          stableValue(
+              scope,
+              attestorBinding,
+              acceptedAttestationDigest,
+              targetDeploymentEvidence,
+              coordOpsRoAclDigest,
+              coordRedisConfigObservedDigest));
     }
 
     byte[] canonicalBytes() {
@@ -187,7 +189,9 @@ interface CanonicalGameplayRegionIncarnationSource {
     }
   }
 
-  /** Positive exact-scope evidence for all canonical first-metadata initialization prerequisites. */
+  /**
+   * Positive exact-scope evidence for all canonical first-metadata initialization prerequisites.
+   */
   record TimelineInitializationQualification(
       RegionScope scope,
       String stableIncarnationDigest,
@@ -331,7 +335,8 @@ interface CanonicalGameplayRegionIncarnationSource {
   }
 
   private static void requireText(String value) {
-    if (value == null || value.isBlank() || !value.equals(value.trim())) throw unavailableException();
+    if (value == null || value.isBlank() || !value.equals(value.trim()))
+      throw unavailableException();
   }
 
   private static void requireDigest(String value) {

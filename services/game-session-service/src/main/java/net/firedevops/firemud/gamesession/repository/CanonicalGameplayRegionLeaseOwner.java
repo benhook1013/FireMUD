@@ -8,9 +8,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
@@ -101,7 +101,8 @@ final class CanonicalGameplayRegionLeaseOwner {
               source,
               incarnation)
           || preparation.phase()
-              == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED) {
+              == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                  .INSTALLED) {
         throw unavailable();
       }
       Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit> permit =
@@ -137,9 +138,11 @@ final class CanonicalGameplayRegionLeaseOwner {
               source,
               incarnation)
           || preparation.phase()
-                  != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED
+                  != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                      .INSTALLED
               && preparation.phase()
-                  != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.REDIS_INITIALIZED) {
+                  != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                      .REDIS_INITIALIZED) {
         throw unavailable();
       }
       grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
@@ -202,10 +205,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
         readCurrentProvisionalEvidence(installation.transitionId);
     bindingInventory.requireSameProvisionalSource(installation.evidence, evidence);
-    ResolvedBridgeSource resolved =
-        resolveExactBridgeSource(installation.worldRequest, evidence);
-    CanonicalGameplayRegionRuntimeStatusRepository.Source currentSource =
-        resolved.source;
+    ResolvedBridgeSource resolved = resolveExactBridgeSource(installation.worldRequest, evidence);
+    CanonicalGameplayRegionRuntimeStatusRepository.Source currentSource = resolved.source;
     requireSameSource(installation.source, currentSource);
     requireSameIncarnation(installation.incarnation, readCurrentIncarnation(currentSource));
     CanonicalGameplayRegionRuntimeStatus current =
@@ -388,9 +389,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         incarnationSource.readCurrent(scope);
     if (current == null
         || !scope.equals(current.scope())
-        || !current
-            .timelineInitializationQualification()
-            .matches(scope, current.digest())) {
+        || !current.timelineInitializationQualification().matches(scope, current.digest())) {
       throw unavailable();
     }
     return current;

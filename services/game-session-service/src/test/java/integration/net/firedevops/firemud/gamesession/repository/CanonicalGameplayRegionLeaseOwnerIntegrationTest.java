@@ -100,14 +100,19 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var redisOwner =
           new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
       WorldFixture world = WorldFixture.open();
-      ControlledStableIncarnationSource incarnationSource =
-          new ControlledStableIncarnationSource();
+      ControlledStableIncarnationSource incarnationSource = new ControlledStableIncarnationSource();
       var bindingEvidence = provisionalEvidence(world.request());
       var bindingInventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(bindingInventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(bindingEvidence);
 
       var firstOwner =
-          owner(bindingInventory, statusRepository, redisOwner, world, "instance-a", incarnationSource);
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-a",
+              incarnationSource);
       var qualifiedSource = source(world.originalEvidence());
       byte[] redisKey =
           ascii(
@@ -140,7 +145,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       when(wrongTargetInventory.readProvisionalCasEvidence(TRANSITION_ID))
           .thenReturn(wrongTargetEvidence);
       var wrongTargetOwner =
-          owner(wrongTargetInventory, statusRepository, redisOwner, world, "wrong-target", incarnationSource);
+          owner(
+              wrongTargetInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "wrong-target",
+              incarnationSource);
       assertThatThrownBy(
               () -> wrongTargetOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
@@ -153,7 +164,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       when(wrongEpochInventory.readProvisionalCasEvidence(TRANSITION_ID))
           .thenReturn(wrongEpochEvidence);
       var wrongEpochOwner =
-          owner(wrongEpochInventory, statusRepository, redisOwner, world, "wrong-epoch", incarnationSource);
+          owner(
+              wrongEpochInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "wrong-epoch",
+              incarnationSource);
       assertThatThrownBy(() -> wrongEpochOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
@@ -169,8 +186,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               CanonicalGameplayRegionIncarnationSource.unavailable());
       assertThatThrownBy(
               () ->
-                  unavailableIncarnationOwner.installForTransition(
-                      TRANSITION_ID, world.request()))
+                  unavailableIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
@@ -186,8 +202,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
 
       world.setAfterRead(2, incarnationSource::changeRecoveryEvidence);
-      assertThatThrownBy(
-              () -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
+      assertThatThrownBy(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
       Record retainedPreparation =
@@ -279,19 +294,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           qualifiedSource.tenantId(),
           qualifiedSource.gameInstanceId(),
           qualifiedSource.regionId());
-      redis.admin().hset(
-          ascii(CanonicalGameplayRegionRedisKeys.meta(
-              qualifiedSource.tenantId(),
-              qualifiedSource.gameInstanceId(),
-              qualifiedSource.regionId())),
-          ascii("current_tick_id"),
-          ascii("0"),
-          ascii("current_tick_state"),
-          ascii("APPLIED"),
-          ascii("current_tick_terminal_at_ms"),
-          ascii("1792972800000"));
+      redis
+          .admin()
+          .hset(
+              ascii(
+                  CanonicalGameplayRegionRedisKeys.meta(
+                      qualifiedSource.tenantId(),
+                      qualifiedSource.gameInstanceId(),
+                      qualifiedSource.regionId())),
+              java.util.Map.of(
+                  ascii("current_tick_id"), ascii("0"),
+                  ascii("current_tick_state"), ascii("APPLIED"),
+                  ascii("current_tick_terminal_at_ms"), ascii("1792972800000")));
       var secondOwner =
-          owner(bindingInventory, statusRepository, redisOwner, world, "instance-b", incarnationSource);
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-b",
+              incarnationSource);
       secondOwner.installForTransition(TRANSITION_ID, world.request());
       var secondStatus = statusRepository.find(qualifiedSource).orElseThrow();
       assertThat(secondStatus.executorFence()).isGreaterThan(firstStatus.executorFence());
@@ -310,22 +332,29 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           qualifiedSource.tenantId(),
           qualifiedSource.gameInstanceId(),
           qualifiedSource.regionId());
-      redis.admin().hset(
-          ascii(CanonicalGameplayRegionRedisKeys.meta(
-              qualifiedSource.tenantId(),
-              qualifiedSource.gameInstanceId(),
-              qualifiedSource.regionId())),
-          ascii("current_tick_id"),
-          ascii("8"),
-          ascii("current_tick_state"),
-          ascii("APPLIED"),
-          ascii("current_tick_terminal_at_ms"),
-          ascii("1792972800000"));
+      redis
+          .admin()
+          .hset(
+              ascii(
+                  CanonicalGameplayRegionRedisKeys.meta(
+                      qualifiedSource.tenantId(),
+                      qualifiedSource.gameInstanceId(),
+                      qualifiedSource.regionId())),
+              java.util.Map.of(
+                  ascii("current_tick_id"), ascii("8"),
+                  ascii("current_tick_state"), ascii("APPLIED"),
+                  ascii("current_tick_terminal_at_ms"), ascii("1792972800000")));
       var progressed = statusRepository.find(qualifiedSource).orElseThrow();
       assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
 
       var thirdOwner =
-          owner(bindingInventory, statusRepository, redisOwner, world, "instance-c", incarnationSource);
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-c",
+              incarnationSource);
       var thirdInstallation = thirdOwner.installForTransition(TRANSITION_ID, world.request());
       var thirdStatus = statusRepository.find(qualifiedSource).orElseThrow();
       assertThat(thirdStatus.executorFence()).isGreaterThan(progressed.executorFence());
@@ -347,9 +376,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               "changed-incarnation",
               incarnationSource);
       assertThatThrownBy(
-              () ->
-                  changedIncarnationOwner.installForTransition(
-                      TRANSITION_ID, world.request()))
+              () -> changedIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().get(redisKey)).containsExactly(liveLeaseBeforeIncarnationChange);
       assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
@@ -360,7 +387,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       WorldCanonicalInstanceLifecycleEvidence changed = changedEvidence(world.originalEvidence());
       world.replaceOnRead(2, changed);
       var fourthOwner =
-          owner(bindingInventory, statusRepository, redisOwner, world, "instance-d", incarnationSource);
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-d",
+              incarnationSource);
       assertThatThrownBy(() -> fourthOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
@@ -369,7 +402,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       world.resetReads();
       world.replaceOnRead(3, changed);
       var fifthOwner =
-          owner(bindingInventory, statusRepository, redisOwner, world, "instance-e", incarnationSource);
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-e",
+              incarnationSource);
       assertThatThrownBy(() -> fifthOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       var installedBeforeChangedSourceGate = statusRepository.find(qualifiedSource).orElseThrow();
@@ -382,7 +421,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       world.resetReads();
       world.setAfterRead(2, POSTGRES::stop);
       var sixthOwner =
-          owner(bindingInventory, statusRepository, redisOwner, world, "instance-f", incarnationSource);
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "instance-f",
+              incarnationSource);
       assertThatThrownBy(() -> sixthOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(RuntimeException.class);
       assertThat(redis.admin().type(redisKey)).isEqualTo("string");
@@ -449,7 +494,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     public synchronized CanonicalGameplayRegionIncarnationSource.StableEvidence readCurrent(
         CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
       if (current == null) current = stableIncarnation(scope, "storage-generation-1");
-      if (!current.scope().equals(scope)) throw new IllegalStateException("Controlled scope changed");
+      if (!current.scope().equals(scope))
+        throw new IllegalStateException("Controlled scope changed");
       return current;
     }
 

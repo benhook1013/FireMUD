@@ -53,7 +53,9 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** Controlled Redis and test-PKI proof; the source peer is not a production Entity placement claim. */
+/**
+ * Controlled Redis and test-PKI proof; the source peer is not a production Entity placement claim.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @Timeout(60)
 @SuppressWarnings("resource")
@@ -113,18 +115,31 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
       String meta = CanonicalGameplayRegionRedisKeys.meta(TENANT_ID, GAME_INSTANCE_ID, REGION_ID);
       var absent =
           owner.probeSessionBinding(
-              grant, status, actor.runtimeEntityId(), SESSION_ID.toString(), java.math.BigInteger.ONE);
+              grant,
+              status,
+              actor.runtimeEntityId(),
+              SESSION_ID.toString(),
+              java.math.BigInteger.ONE);
       assertThat(absent.state())
           .isEqualTo(CanonicalGameplayRegionLeaseRedisOwner.PreimageState.ABSENT);
-      owner.applySessionBinding(grant, status, actor.runtimeEntityId(), SESSION_ID.toString(), java.math.BigInteger.ONE);
+      owner.applySessionBinding(
+          grant, status, actor.runtimeEntityId(), SESSION_ID.toString(), java.math.BigInteger.ONE);
       var exact =
           owner.probeSessionBinding(
-              grant, status, actor.runtimeEntityId(), SESSION_ID.toString(), java.math.BigInteger.ONE);
+              grant,
+              status,
+              actor.runtimeEntityId(),
+              SESSION_ID.toString(),
+              java.math.BigInteger.ONE);
       assertThat(exact.state())
           .isEqualTo(CanonicalGameplayRegionLeaseRedisOwner.PreimageState.EXACT);
       var readback =
           owner.readBackSessionBinding(
-              grant, status, actor.runtimeEntityId(), SESSION_ID.toString(), java.math.BigInteger.ONE);
+              grant,
+              status,
+              actor.runtimeEntityId(),
+              SESSION_ID.toString(),
+              java.math.BigInteger.ONE);
       assertThat(readback.runtimeEntityId()).isEqualTo(actor.runtimeEntityId());
       assertThat(readback.sessionId()).isEqualTo(SESSION_ID.toString());
       assertThat(readback.bindingGeneration()).isEqualTo(java.math.BigInteger.ONE);
@@ -134,11 +149,12 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
           .containsExactly(ascii("1"));
 
       byte[] foreignSession = ascii("88888888-8888-4888-8888-888888888888");
-      redis.admin().hset(
-          ascii(key),
-          java.util.Map.of(
-              ascii("session_id"), foreignSession,
-              ascii("binding_generation"), ascii("2")));
+      redis
+          .admin()
+          .hset(
+              ascii(key),
+              java.util.Map.of(
+                  ascii("session_id"), foreignSession, ascii("binding_generation"), ascii("2")));
       assertThatThrownBy(
               () ->
                   owner.probeSessionBinding(
@@ -157,7 +173,8 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
                       SESSION_ID.toString(),
                       java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
-      assertThat(redis.admin().hget(ascii(key), ascii("session_id"))).containsExactly(foreignSession);
+      assertThat(redis.admin().hget(ascii(key), ascii("session_id")))
+          .containsExactly(foreignSession);
       assertThat(redis.admin().hget(ascii(key), ascii("binding_generation")))
           .containsExactly(ascii("2"));
     }
@@ -225,22 +242,30 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
       RuntimeIdentity identity = runtimeIdentity("tick-zero");
       seedMeta(redis.admin(), source, "1");
       String meta = CanonicalGameplayRegionRedisKeys.meta(TENANT_ID, GAME_INSTANCE_ID, REGION_ID);
-      redis.admin().hset(
-          ascii(meta),
-          ascii("current_tick_id"),
-          ascii("0"),
-          ascii("current_tick_state"),
-          ascii("STAGED"));
+      redis
+          .admin()
+          .hset(
+              ascii(meta),
+              java.util.Map.of(
+                  ascii("current_tick_id"), ascii("0"),
+                  ascii("current_tick_state"), ascii("STAGED")));
       var grant = owner.acquire(source, 1L, Duration.ofSeconds(30), identity);
       var status = status(source, grant, identity);
       var actor = readActualEntityReference();
 
       owner.applySessionBinding(
           grant, status, actor.runtimeEntityId(), SESSION_ID.toString(), java.math.BigInteger.ONE);
-      assertThat(redis.admin().hget(
-              ascii(CanonicalGameplayRegionRedisKeys.sessionBinding(
-                  TENANT_ID, GAME_INSTANCE_ID, REGION_ID, actor.runtimeEntityId().value())),
-              ascii("session_id")))
+      assertThat(
+              redis
+                  .admin()
+                  .hget(
+                      ascii(
+                          CanonicalGameplayRegionRedisKeys.sessionBinding(
+                              TENANT_ID,
+                              GAME_INSTANCE_ID,
+                              REGION_ID,
+                              actor.runtimeEntityId().value())),
+                      ascii("session_id")))
           .containsExactly(ascii(SESSION_ID.toString()));
 
       assertThat(redis.admin().pexpire(ascii(meta), 60_000L)).isTrue();
@@ -424,14 +449,13 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       String epoch) {
     admin.hset(
-        ascii(CanonicalGameplayRegionRedisKeys.meta(
-            source.tenantId(), source.gameInstanceId(), source.regionId())),
-        ascii("region_epoch"),
-        ascii(epoch),
-        ascii("current_tick_id"),
-        ascii("-1"),
-        ascii("current_tick_state"),
-        ascii("APPLIED"));
+        ascii(
+            CanonicalGameplayRegionRedisKeys.meta(
+                source.tenantId(), source.gameInstanceId(), source.regionId())),
+        java.util.Map.of(
+            ascii("region_epoch"), ascii(epoch),
+            ascii("current_tick_id"), ascii("-1"),
+            ascii("current_tick_state"), ascii("APPLIED")));
   }
 
   private static final class RedisFixture implements AutoCloseable {

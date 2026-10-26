@@ -22,10 +22,10 @@ import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
-import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
-import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Manually composed region lease using the exact full-scope key, registered Lua, and readback. */
@@ -36,7 +36,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   private static final long COMMAND_TIMEOUT_MILLIS = 5_000L;
   private static final List<String> LEASE_ARGUMENTS =
       List.of("schema", "token", "expectedRegionEpoch", "leaseTtlMs");
-  private static final List<String> READ_ARGUMENTS = List.of("schema", "token", "expectedRegionEpoch");
+  private static final List<String> READ_ARGUMENTS =
+      List.of("schema", "token", "expectedRegionEpoch");
   private static final List<RedisScriptDescriptor.KeySpec> EXPECTED_KEYS =
       List.of(
           new RedisScriptDescriptor.KeySpec(
@@ -58,7 +59,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           "mayCreateFromAbsence");
   private static final String BRIDGE_SCHEMA = "gs_region_binding_bridge/v1";
   private static final List<String> BRIDGE_ARGUMENTS =
-      List.of("schema", "action", "leaseToken", "expectedRegionEpoch", "sessionId", "bindingGeneration");
+      List.of(
+          "schema",
+          "action",
+          "leaseToken",
+          "expectedRegionEpoch",
+          "sessionId",
+          "bindingGeneration");
   private static final List<RedisScriptDescriptor.KeySpec> BRIDGE_KEYS =
       List.of(
           new RedisScriptDescriptor.KeySpec(
@@ -150,8 +157,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       throw unavailable();
     }
     LeaseGrant grant =
-        new LeaseGrant(preparation.source(), preparation.regionEpoch(), UUID.randomUUID().toString(),
-            ownerService, ownerInstance);
+        new LeaseGrant(
+            preparation.source(),
+            preparation.regionEpoch(),
+            UUID.randomUUID().toString(),
+            ownerService,
+            ownerInstance);
     long outcome =
         executeTimeline(
             grant,
@@ -168,17 +179,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
     requireNoAmbientTransaction();
-    if (!grant.source.equals(preparation.source()) || grant.regionEpoch != preparation.regionEpoch()) {
+    if (!grant.source.equals(preparation.source())
+        || grant.regionEpoch != preparation.regionEpoch()) {
       throw unavailable();
     }
     long outcome =
         executeTimeline(
-            grant,
-            "VERIFY",
-            preparation.operationId(),
-            preparation.sourceDigest(),
-            1L,
-            false);
+            grant, "VERIFY", preparation.operationId(), preparation.sourceDigest(), 1L, false);
     if (outcome != 3L) throw unavailable();
   }
 
@@ -260,10 +267,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     byte[] script = scriptSource(descriptor);
     byte[][] keys =
         new byte[][] {
-          ascii(CanonicalGameplayRegionRedisKeys.lease(
-              source.tenantId(), source.gameInstanceId(), source.regionId())),
-          ascii(CanonicalGameplayRegionRedisKeys.meta(
-              source.tenantId(), source.gameInstanceId(), source.regionId()))
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  source.tenantId(), source.gameInstanceId(), source.regionId())),
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()))
         };
     byte[][] arguments =
         new byte[][] {
@@ -288,8 +297,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             ascii("firemud.gs.region-timeline-absent/v1"),
             incarnation.scopeBytes(),
             incarnation.canonicalBytes(),
-            ascii(CanonicalGameplayRegionRedisKeys.tenantRegionTag(
-                source.tenantId(), source.gameInstanceId(), source.regionId()))));
+            ascii(
+                CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+                    source.tenantId(), source.gameInstanceId(), source.regionId()))));
   }
 
   private static byte[] concat(byte[]... values) {
@@ -312,8 +322,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       String sessionId,
       BigInteger bindingGeneration) {
     long outcome =
-        executeBinding(
-            grant, durableOwner, runtimeEntityId, sessionId, bindingGeneration, "APPLY");
+        executeBinding(grant, durableOwner, runtimeEntityId, sessionId, bindingGeneration, "APPLY");
     if (outcome != 1L && outcome != 2L) throw unavailable();
   }
 
@@ -325,8 +334,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       String sessionId,
       BigInteger bindingGeneration) {
     long outcome =
-        executeBinding(
-            grant, durableOwner, runtimeEntityId, sessionId, bindingGeneration, "PROBE");
+        executeBinding(grant, durableOwner, runtimeEntityId, sessionId, bindingGeneration, "PROBE");
     if (outcome != 4L && outcome != 5L) throw unavailable();
     return new BindingPreimage(
         runtimeEntityId,
@@ -375,8 +383,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     if (bindingGeneration.signum() <= 0
         || bindingGeneration.toString().length() > 128
         || sessionId == null
-        || !sessionId.matches(
-            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        || !sessionId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
         || !"APPLY".equals(action) && !"READBACK".equals(action) && !"PROBE".equals(action)) {
       throw unavailable();
     }
@@ -386,13 +393,15 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     byte[][] keys =
         new byte[][] {
           ascii(grant.key()),
-          ascii(CanonicalGameplayRegionRedisKeys.meta(
-              grant.source.tenantId(), grant.source.gameInstanceId(), grant.source.regionId())),
-          ascii(CanonicalGameplayRegionRedisKeys.sessionBinding(
-              grant.source.tenantId(),
-              grant.source.gameInstanceId(),
-              grant.source.regionId(),
-              runtimeEntityId.value()))
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  grant.source.tenantId(), grant.source.gameInstanceId(), grant.source.regionId())),
+          ascii(
+              CanonicalGameplayRegionRedisKeys.sessionBinding(
+                  grant.source.tenantId(),
+                  grant.source.gameInstanceId(),
+                  grant.source.regionId(),
+                  runtimeEntityId.value()))
         };
     byte[][] arguments =
         new byte[][] {
@@ -420,7 +429,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         || !status.captureId().equals(grant.source.captureId())
         || !status.graphSha256().equals(grant.source.graphSha256())
         || !status.preparationInputDigest().equals(grant.source.preparationInputDigest())
-        || !status.tenantRegionTag()
+        || !status
+            .tenantRegionTag()
             .equals(
                 CanonicalGameplayRegionRedisKeys.tenantRegionTag(
                     grant.source.tenantId(),
@@ -449,8 +459,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     byte[][] keys =
         new byte[][] {
           ascii(grant.key()),
-          ascii(CanonicalGameplayRegionRedisKeys.meta(
-              grant.source.tenantId(), grant.source.gameInstanceId(), grant.source.regionId()))
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  grant.source.tenantId(), grant.source.gameInstanceId(), grant.source.regionId()))
         };
     byte[][] arguments = grant.arguments(includeTtl ? ttlMillis : null);
     if (arguments.length != expectedArguments.size()) throw unavailable();
@@ -465,9 +476,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       requirePrincipal(await(commands.aclWhoami()));
       String loadedSha = await(commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
-      Long result =
-          await(
-              commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments));
+      Long result = await(commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments));
       if (result == null) throw unavailable();
       return result;
     } catch (RuntimeException failure) {
@@ -479,10 +488,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     try {
       RedisScriptDescriptor descriptor =
           catalog.require(CanonicalGameplayRegionBindingBridgeRedisScriptContribution.SCRIPT_ID);
-      if (!CanonicalGameplayRegionBindingBridgeRedisScriptContribution.SCRIPT_ID
-              .equals(descriptor.scriptId())
-          || !CanonicalGameplayRegionBindingBridgeRedisScriptContribution.SCRIPT_PATH
-              .equals(descriptor.resourcePath())
+      if (!CanonicalGameplayRegionBindingBridgeRedisScriptContribution.SCRIPT_ID.equals(
+              descriptor.scriptId())
+          || !CanonicalGameplayRegionBindingBridgeRedisScriptContribution.SCRIPT_PATH.equals(
+              descriptor.resourcePath())
           || !"game-session-service".equals(descriptor.owner())
           || !PRINCIPAL.equals(descriptor.principal())
           || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION

@@ -2,9 +2,9 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
-import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 
 /** Manual owner for the initial-NEW region binding mutation and its durable local ACK. */
 final class CanonicalGameplayRegionBindingBridgeOwner {
@@ -15,7 +15,8 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
       CanonicalGameplayRegionLeaseOwner regionLeaseOwner,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
     this.regionLeaseOwner = Objects.requireNonNull(regionLeaseOwner, "regionLeaseOwner");
-    this.entityReferenceClient = Objects.requireNonNull(entityReferenceClient, "entityReferenceClient");
+    this.entityReferenceClient =
+        Objects.requireNonNull(entityReferenceClient, "entityReferenceClient");
   }
 
   /** Acquires the real region grant/fence, then performs the selected first-NEW bridge. */
@@ -25,7 +26,9 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     return bridge(regionLeaseOwner.installForTransition(transitionId, request));
   }
 
-  /** Returns the closed same-grant capability so a lost bridge reply can retry without reacquire. */
+  /**
+   * Returns the closed same-grant capability so a lost bridge reply can retry without reacquire.
+   */
   CanonicalGameplayRegionLeaseOwner.Installation installForTransition(
       UUID transitionId,
       net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
@@ -60,8 +63,7 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeWritePreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, beforeWriteReference);
     CanonicalGameplayBindingRegionBridgeObligation prepared =
-        regionLeaseOwner.prepareBridge(
-            installation, beforeWritePreimage, beforeWriteReference);
+        regionLeaseOwner.prepareBridge(installation, beforeWritePreimage, beforeWriteReference);
     regionLeaseOwner.applyRegionSessionBinding(installation, beforeWriteReference);
 
     CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference currentReference =
@@ -70,8 +72,7 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeReadbackPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, currentReference);
     prepared =
-        regionLeaseOwner.prepareBridge(
-            installation, beforeReadbackPreimage, currentReference);
+        regionLeaseOwner.prepareBridge(installation, beforeReadbackPreimage, currentReference);
 
     CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback =
         regionLeaseOwner.readBackRegionSessionBinding(
@@ -85,15 +86,10 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
       throw unavailable();
     }
     prepared =
-        regionLeaseOwner.prepareBridge(
-            installation, beforeAckPreimage, afterReadbackReference);
+        regionLeaseOwner.prepareBridge(installation, beforeAckPreimage, afterReadbackReference);
 
     return regionLeaseOwner.acknowledgeBridge(
-        installation,
-        prepared,
-        beforeAckPreimage.context(),
-        afterReadbackReference,
-        readback);
+        installation, prepared, beforeAckPreimage.context(), afterReadbackReference, readback);
   }
 
   private static ReadPreseededActorRuntimeReferenceRequest entityRequest(

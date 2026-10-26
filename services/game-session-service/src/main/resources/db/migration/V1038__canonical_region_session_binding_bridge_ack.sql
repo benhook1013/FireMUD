@@ -69,7 +69,9 @@ ALTER TABLE game_session_canonical_binding_region_bridge_obligation
                 AND entity_projection_fence IS NOT NULL
                 AND entity_projection_fence > 0
                 AND entity_workload_namespace IS NOT NULL
+                -- [jooq ignore start]
                 AND entity_workload_namespace <> ''
+                -- [jooq ignore stop]
                 AND assignment_uuid IS NOT NULL
                 AND assignment_uuid <> '00000000-0000-0000-0000-000000000000'::uuid
                 AND assignment_intent_digest IS NOT NULL

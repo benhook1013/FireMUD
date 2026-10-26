@@ -104,12 +104,13 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
           CanonicalGameplayRegionRedisKeys.meta(
               source.tenantId(), source.gameInstanceId(), source.regionId());
       seedMeta(redis.admin(), source);
-      redis.admin().hset(
-          ascii(metaKey),
-          ascii("current_tick_id"),
-          ascii("0"),
-          ascii("current_tick_state"),
-          ascii("STAGED"));
+      redis
+          .admin()
+          .hset(
+              ascii(metaKey),
+              java.util.Map.of(
+                  ascii("current_tick_id"), ascii("0"),
+                  ascii("current_tick_state"), ascii("STAGED")));
 
       var grant = owner.acquire(source, 7L, Duration.ofSeconds(10), identity("tick-zero"));
       owner.requireCurrent(grant);
@@ -185,14 +186,13 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       RedisCommands<byte[], byte[]> admin,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source) {
     admin.hset(
-        ascii(CanonicalGameplayRegionRedisKeys.meta(
-            source.tenantId(), source.gameInstanceId(), source.regionId())),
-        ascii("region_epoch"),
-        ascii("7"),
-        ascii("current_tick_id"),
-        ascii("-1"),
-        ascii("current_tick_state"),
-        ascii("APPLIED"));
+        ascii(
+            CanonicalGameplayRegionRedisKeys.meta(
+                source.tenantId(), source.gameInstanceId(), source.regionId())),
+        java.util.Map.of(
+            ascii("region_epoch"), ascii("7"),
+            ascii("current_tick_id"), ascii("-1"),
+            ascii("current_tick_state"), ascii("APPLIED")));
   }
 
   private static final class RedisFixture implements AutoCloseable {

@@ -6,11 +6,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
-import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 
 /** Closed digest projections for exact bridge sources and independently observed readback. */
 final class CanonicalGameplayRegionBindingBridgeProofs {
@@ -105,7 +106,8 @@ final class CanonicalGameplayRegionBindingBridgeProofs {
             + operationId
             + "\nfirst_timeline_source_digest="
             + sourceDigest;
-    return sha256(tag.getBytes(StandardCharsets.US_ASCII), baseline.getBytes(StandardCharsets.US_ASCII));
+    return sha256(
+        tag.getBytes(StandardCharsets.US_ASCII), baseline.getBytes(StandardCharsets.US_ASCII));
   }
 
   private static byte[] uuid(UUID value) {

@@ -2,8 +2,8 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.time.OffsetDateTime;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,10 +12,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
-import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
-import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
-import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
@@ -35,9 +31,13 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransi
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationDisposition;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
+import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
+import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -338,19 +338,20 @@ public final class CanonicalGameplayBindingInventoryRepository {
                         existing.leaseTokenCorrelation(), ownerStatus.leaseTokenCorrelation());
             if (sameGrant) return existing;
             return rewritePreparedBridgeForCurrentGrant(
-                transaction, currentRevision, currentEvidence, regionRow, existing, inputs, ownerStatus);
+                transaction,
+                currentRevision,
+                currentEvidence,
+                regionRow,
+                existing,
+                inputs,
+                ownerStatus);
           }
           if (preimage.state() != CanonicalGameplayRegionLeaseRedisOwner.PreimageState.ABSENT) {
             throw conflict("First region bridge operation requires a proven absent Redis preimage");
           }
           UUID operationId = UUID.randomUUID();
           return writePreparedBridge(
-              transaction,
-              currentRevision,
-              currentEvidence,
-              inputs,
-              ownerStatus,
-              operationId);
+              transaction, currentRevision, currentEvidence, inputs, ownerStatus, operationId);
         });
   }
 
@@ -378,8 +379,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if (!matchesPreparedOperation(prepared, inputs)
         || !readback.runtimeEntityId().equals(runtimeReference.runtimeEntityId())
         || !readback.sessionId().equals(expectedEvidence.candidate().identity().sessionId())
-        || !readback.bindingGeneration()
-            .equals(expectedEvidence.candidate().bindingGeneration())
+        || !readback.bindingGeneration().equals(expectedEvidence.candidate().bindingGeneration())
         || readback.regionEpoch() != ownerStatus.regionEpoch()
         || !readback.executorFence().equals(ownerStatus.executorFence())
         || !readback.leaseTokenCorrelation().equals(ownerStatus.leaseTokenCorrelation())) {
@@ -416,7 +416,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
               == CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
             if (!ownerStatus.executorFence().equals(readback.executorFence())
                 || !current.redisReadbackDigest().equals(readback.digest())) {
-              throw conflict("A completed region acknowledgement has different readback provenance");
+              throw conflict(
+                  "A completed region acknowledgement has different readback provenance");
             }
             return new RegionBridgeAcknowledgement(current);
           }
@@ -513,27 +514,27 @@ public final class CanonicalGameplayBindingInventoryRepository {
     writeRevisionRows(transaction, evidence, oldRevision, nextRevision);
     Object[] args =
         new Object[] {
-              operationId,
-              inputs.runtimeEntityId().value(),
-              inputs.projectionGeneration(),
-              inputs.projectionFence(),
-              inputs.workloadNamespace(),
-              inputs.assignmentId(),
-              inputs.assignmentIntentDigest(),
-              inputs.entityReferenceDigest(),
-              inputs.worldSourceDigest(),
-              inputs.canonicalRegionId(),
-              inputs.lifecycleEpoch(),
-              inputs.lifecycleRowVersion(),
-              inputs.captureId(),
-              inputs.graphSha256(),
-              inputs.preparationInputDigest(),
-              decimal(ownerStatus.executorFence()),
-              ownerStatus.leaseTokenCorrelation(),
-              decimal(nextRevision),
-              evidence.transition().transitionId(),
-              decimal(oldRevision)
-            };
+          operationId,
+          inputs.runtimeEntityId().value(),
+          inputs.projectionGeneration(),
+          inputs.projectionFence(),
+          inputs.workloadNamespace(),
+          inputs.assignmentId(),
+          inputs.assignmentIntentDigest(),
+          inputs.entityReferenceDigest(),
+          inputs.worldSourceDigest(),
+          inputs.canonicalRegionId(),
+          inputs.lifecycleEpoch(),
+          inputs.lifecycleRowVersion(),
+          inputs.captureId(),
+          inputs.graphSha256(),
+          inputs.preparationInputDigest(),
+          decimal(ownerStatus.executorFence()),
+          ownerStatus.leaseTokenCorrelation(),
+          decimal(nextRevision),
+          evidence.transition().transitionId(),
+          decimal(oldRevision)
+        };
     String sql =
         "UPDATE "
             + REGION_OBLIGATION
@@ -701,19 +702,26 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !worldRequest.getUnknownFields().asMap().isEmpty()
         || !reference.target().equals(target)
         || !reference.assignmentUuid().toString().equals(worldRequest.getAssignmentUuid())
-        || !reference.canonicalAccountUuid().toString().equals(worldRequest.getCanonicalAccountUuid())
+        || !reference
+            .canonicalAccountUuid()
+            .toString()
+            .equals(worldRequest.getCanonicalAccountUuid())
         || !reference.characterUuid().toString().equals(worldRequest.getCharacterUuid())
         || !reference.intentDigest().equals(worldRequest.getAssignmentIntentDigest())
         || !identity.accountId().toString().equals(worldRequest.getCanonicalAccountUuid())
         || !identity.characterId().toString().equals(worldRequest.getCharacterUuid())
         || !identity.tenantId().toString().equals(target.getCanonicalTenantUuid())
         || !identity.gameInstanceId().toString().equals(target.getGameInstanceId())
-        || !identity.playableStateNamespaceId()
+        || !identity
+            .playableStateNamespaceId()
             .toString()
             .equals(target.getPlayableStateNamespaceUuid())
         || !"SHARED".equals(identity.playableStateScope())
         || !reference.runtimeEntityId().tenantId().equals(identity.tenantId())
-        || !reference.runtimeEntityId().gameInstanceId().equals(identity.gameInstanceId().toString())
+        || !reference
+            .runtimeEntityId()
+            .gameInstanceId()
+            .equals(identity.gameInstanceId().toString())
         || !identity.tenantId().equals(assignment.request().canonicalTenantId())
         || !identity.gameInstanceId().equals(assignment.request().canonicalGameInstanceId())
         || !identity.regionId().equals(assignment.operationalRegionId())
@@ -766,22 +774,28 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !Objects.equals(row.get("canonical_region_id", UUID.class), expected.canonicalRegionId())
         || !Objects.equals(row.get("tenant_region_tag", String.class), expected.tenantRegionTag())
         || !Objects.equals(row.get("region_epoch", Long.class), expected.regionEpoch())
-        || !Objects.equals(row.get("executor_fence", Long.class), expected.executorFence().longValueExact())
+        || !Objects.equals(
+            row.get("executor_fence", Long.class), expected.executorFence().longValueExact())
         || !Objects.equals(
             row.get("lease_token_correlation", String.class), expected.leaseTokenCorrelation())
         || !Objects.equals(row.get("owner_service", String.class), expected.ownerService())
         || !Objects.equals(row.get("owner_instance_id", String.class), expected.ownerInstanceId())
         || !Objects.equals(row.get("lifecycle_epoch", Long.class), expected.lifecycleEpoch())
-        || !Objects.equals(row.get("lifecycle_row_version", Long.class), expected.lifecycleRowVersion())
+        || !Objects.equals(
+            row.get("lifecycle_row_version", Long.class), expected.lifecycleRowVersion())
         || !Objects.equals(row.get("capture_id", UUID.class), expected.captureId())
         || !Arrays.equals(
             row.get("lifecycle_request_bytes", byte[].class),
             expected.lifecycleRequest().canonicalBytes())
         || !Objects.equals(row.get("graph_sha256", String.class), expected.graphSha256())
-        || !Objects.equals(row.get("preparation_input_digest", String.class), expected.preparationInputDigest())
+        || !Objects.equals(
+            row.get("preparation_input_digest", String.class), expected.preparationInputDigest())
         || !Boolean.FALSE.equals(row.get("paused", Boolean.class))
-        || !Objects.equals(row.get("last_committed_tick_id", Long.class), expected.lastCommittedTickId())
-        || !Objects.equals(row.get("last_committed_tick_batch_id", String.class), expected.lastCommittedTickBatchId())) {
+        || !Objects.equals(
+            row.get("last_committed_tick_id", Long.class), expected.lastCommittedTickId())
+        || !Objects.equals(
+            row.get("last_committed_tick_batch_id", String.class),
+            expected.lastCommittedTickBatchId())) {
       throw conflict("Durable region owner, timeline, or executor fence changed");
     }
   }
@@ -813,8 +827,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
   static final class RegionBridgeAcknowledgement {
     private final CanonicalGameplayBindingRegionBridgeObligation obligation;
 
-    private RegionBridgeAcknowledgement(
-        CanonicalGameplayBindingRegionBridgeObligation obligation) {
+    private RegionBridgeAcknowledgement(CanonicalGameplayBindingRegionBridgeObligation obligation) {
       if (obligation.status()
           != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
         throw conflict("Only a persisted region bridge ACK can create its receipt");
