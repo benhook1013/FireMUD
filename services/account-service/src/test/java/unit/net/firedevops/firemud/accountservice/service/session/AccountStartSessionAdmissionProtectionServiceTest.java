@@ -160,6 +160,43 @@ class AccountStartSessionAdmissionProtectionServiceTest {
   }
 
   @Test
+  void acquisitionRejectsMalformedCurrentAttemptWrappersBeforeAccountWrites() {
+    for (RuntimeException malformed :
+        List.of(
+            new IllegalArgumentException("malformed direct owner read"),
+            new IllegalStateException("malformed client-wrapped owner read"))) {
+      var h = new AcquisitionHarness();
+      var fixture = fixture("admission-malformed-current-attempt");
+      when(h.participation.findHistoricalForOriginalTuple(any()))
+          .thenReturn(Optional.of(fixture.participation()));
+      when(h.attempts.findHistoricalExact(any(), any()))
+          .thenReturn(Optional.of(fixture.retainedAttempt()));
+      doThrow(malformed).when(h.currentAttemptReader).read(any());
+      var failure =
+          org.assertj.core.api.Assertions.catchThrowable(
+              () -> withGameSessionPeerResult(() -> h.service.acquire(fixture.request())));
+      assertThat(failure).isInstanceOf(StatusRuntimeException.class);
+      var status = Status.fromThrowable(failure);
+      assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(status.getDescription())
+          .isEqualTo("Game Session current-attempt proof is malformed");
+      assertThat(status.getCause()).isSameAs(malformed);
+      verifyNoInteractions(h.issuer, h.protections);
+    }
+    var h = new AcquisitionHarness();
+    var fixture = fixture("admission-unavailable-current-attempt");
+    when(h.participation.findHistoricalForOriginalTuple(any()))
+        .thenReturn(Optional.of(fixture.participation()));
+    when(h.attempts.findHistoricalExact(any(), any()))
+        .thenReturn(Optional.of(fixture.retainedAttempt()));
+    doThrow(Status.UNAVAILABLE.asRuntimeException()).when(h.currentAttemptReader).read(any());
+    assertCode(
+        Status.Code.UNAVAILABLE,
+        () -> withGameSessionPeerResult(() -> h.service.acquire(fixture.request())));
+    verifyNoInteractions(h.issuer, h.protections);
+  }
+
+  @Test
   void settlementReadsExactTerminalOutsideSqlAndCommitsImmutableReadback() {
     var fixture = fixture("admission-settle");
     var h = new SettlementHarness();
