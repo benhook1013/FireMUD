@@ -57,6 +57,27 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     POSTGRES.stop();
   }
 
+  @Test
+  void pendingLeaseWindowUsesDatabaseClockAndPreservesLifetime() {
+    var context = context();
+    long databaseTimeBefore =
+        context
+            .dsl()
+            .fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    var evidence = pending(context, 15000);
+    long databaseTimeAfter =
+        context
+            .dsl()
+            .fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    long evaluatedAt = Long.parseLong((String) evidence.carrier().get("evaluatedAt"));
+
+    assertThat(evaluatedAt).isBetween(databaseTimeBefore, databaseTimeAfter);
+    assertThat(Long.parseLong((String) evidence.carrier().get("expiresAt")))
+        .isEqualTo(evaluatedAt + 15000);
+  }
+
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
   private static final String RECEIPTS = "account_gameplay_admission_original_commit_ack_receipts";
@@ -961,15 +982,20 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                   new AccountRepository(context.dsl(), sources).save(account).getAccountUuid();
               var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
               var allocation = repository.allocate(accountId, UUID.randomUUID(), UUID.randomUUID());
-              var evidence = evidence(allocation, lifetime);
+              long databaseNow =
+                  context
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+                      .get(0, Long.class);
+              var evidence = evidence(allocation, lifetime, databaseNow);
               repository.beginPending(evidence);
               return evidence;
             });
   }
 
   private static AccountGameplayAdmissionLeaseEvidence evidence(
-      AccountGameplayAdmissionLeaseRepository.Allocation allocation, long lifetime) {
-    long now = Instant.now().toEpochMilli();
+      AccountGameplayAdmissionLeaseRepository.Allocation allocation, long lifetime, long now) {
     String account = allocation.accountId().toString();
     Map<String, Object> carrier = new LinkedHashMap<>();
     carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);

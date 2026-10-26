@@ -84,6 +84,28 @@ class CanonicalGameplayAccountMemberRepairRedisOwnerTest {
     }
   }
 
+  @Test
+  void refusesToOpenRedisWhileAmbientSynchronizationIsActiveWithoutSqlTransaction() {
+    RedisClient client = mock(RedisClient.class);
+    var owner =
+        new CanonicalGameplayAccountMemberRepairRedisOwner(
+            client, RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+    try {
+      TransactionSynchronizationManager.initSynchronization();
+      assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+      assertThatThrownBy(() -> owner.projectAndRead(operation()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("projection is unavailable");
+      verifyNoInteractions(client);
+    } finally {
+      if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
+    }
+  }
+
   static CanonicalGameplayAccountMemberRepairOperation operation() {
     UUID accountId = UUID.randomUUID();
     UUID tenantId = UUID.randomUUID();

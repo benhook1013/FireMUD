@@ -220,7 +220,8 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
 
     var request = CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(wireRequest);
     assertThatThrownBy(() -> response(request, lease, target(lease, "x".repeat(270_000))))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wire bound");
   }
 
   @Test
