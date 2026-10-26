@@ -48,6 +48,8 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   private static final AtomicLong NEXT_PRIVATE_KEY_BASE = new AtomicLong(71002);
   private static final List<String> PROBE_TABLES =
       List.of(
+          "world_instance",
+          "initial_admission_bind_hold",
           "world_topology_draft_commit",
           "world_design_publication_fence_owner",
           "world_draft_terminal_outcome",
@@ -186,7 +188,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       probeCurrent.validate();
       assertThat(probeCurrent.info().pending()).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.13");
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1044");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);
@@ -194,8 +196,14 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       assertThat(migrationHistory(upgradeDsl, "1042.11")).isEqualTo(history104211Before);
       assertThat(migrationHistory(upgradeDsl, "1042.12")).isEqualTo(history104212Before);
       assertThat(migrationHistory(upgradeDsl, "1042.13")).isNotNull();
+      assertThat(migrationHistory(upgradeDsl, "1044")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.12")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.13")).isNotNull();
+      assertThat(migrationHistory(freshDsl, "1044")).isNotNull();
+      assertThat(migrationHistory(probeDsl, "1044")).isNotNull();
+      assertCanonicalInitialAdmissionHoldLifecycleGuard(upgradeDsl, upgradeSchema);
+      assertCanonicalInitialAdmissionHoldLifecycleGuard(freshDsl, freshSchema);
+      assertCanonicalInitialAdmissionHoldLifecycleGuard(probeDsl, probeSchema);
       assertThat(applicationRows(upgradeDsl, upgradeSchema)).isEqualTo(applicationRowsBefore);
       assertThat(receiptRows(upgradeDsl, upgradeSchema)).isEqualTo(receiptRowsBefore);
 
@@ -302,6 +310,16 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
         .contains("encode(sha256(NEW.account_binding_bytes), 'hex')")
         .contains("world_start_location_receipt_matches(")
         .doesNotContain("encode(sha256(NEW.receipt_bytes), 'hex')");
+  }
+
+  private static void assertCanonicalInitialAdmissionHoldLifecycleGuard(
+      DSLContext dsl, String schema) {
+    assertThat(triggerMetadata(dsl, schema, "world_instance"))
+        .anySatisfy(
+            trigger ->
+                assertThat(trigger)
+                    .contains("aaa_world_canonical_initial_admission_hold_lifecycle")
+                    .contains("world_guard_canonical_initial_admission_hold_lifecycle"));
   }
 
   private static void cloneProbeTables(DSLContext dsl, String sourceSchema, String probeSchema) {
