@@ -27,8 +27,8 @@ public record CanonicalGameplayAdmissionAbortOutcome(
           };
       if (accountState != state
           || accountOperation.originalLeaseEvidence().leaseKind()
-              != net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence
-                  .LeaseKind.NEW_BINDING) {
+              != net.firedevops.firemud.common.account.admission
+                  .AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING) {
         throw new IllegalArgumentException("Account result is not the exact NEW abort operation");
       }
       if (state == State.ABORTED) {
@@ -46,8 +46,7 @@ public record CanonicalGameplayAdmissionAbortOutcome(
         if (orphanCleanupId != null
             || !transitionId.equals(accountOperation.bindingDecisionId())
             || accountOperation.originalAckReceipt() == null) {
-          throw new IllegalArgumentException(
-              "COMMITTED result must retain its exact ACK receipt");
+          throw new IllegalArgumentException("COMMITTED result must retain its exact ACK receipt");
         }
       } else if (orphanCleanupId != null
           || accountOperation.bindingDecisionId() != null

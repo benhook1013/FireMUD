@@ -63,14 +63,15 @@ class CanonicalGameplayAdmissionDecisionReadWorkloadGuardTest {
             .getGetCanonicalGameplayAdmissionDecisionMethod();
     assertRejected(invoke(method, null), Status.Code.UNAUTHENTICATED);
     assertRejected(
-        invoke(method, peer(NAMESPACE, "world-management-service")),
-        Status.Code.PERMISSION_DENIED);
+        invoke(method, peer(NAMESPACE, "world-management-service")), Status.Code.PERMISSION_DENIED);
     assertRejected(invoke(method, peer("other", "account-service")), Status.Code.PERMISSION_DENIED);
 
     SessionContext.setContext("account-1", List.of(), Map.of());
-    assertRejected(invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
+    assertRejected(
+        invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
     SessionContext.setContext(null, List.of(), Map.of(), true, "account-service", "instance");
-    assertRejected(invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
+    assertRejected(
+        invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
   }
 
   private void assertRejected(Invocation invocation, Status.Code code) {

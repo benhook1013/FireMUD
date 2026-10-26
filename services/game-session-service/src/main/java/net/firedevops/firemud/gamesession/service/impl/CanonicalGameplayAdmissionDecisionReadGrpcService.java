@@ -76,8 +76,8 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       String expectedCaller =
           "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service";
       if (lease.leaseKind()
-              != net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence
-                  .LeaseKind.NEW_BINDING
+              != net.firedevops.firemud.common.account.admission
+                  .AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING
           || !workloadNamespace.equals(targetNamespace)
           || !expectedCaller.equals(callerWorkload)) {
         fail(observer, Status.PERMISSION_DENIED);

@@ -14,8 +14,8 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCovera
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberRepairOperation;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingAccountIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingAccountIndexProjectionReceipt;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
@@ -471,7 +471,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
                       + ACCOUNT_OBLIGATION
                       + " SET inventory_revision = ? WHERE transition_id = ?"
                       + " AND inventory_revision = ?",
-                  decimal(nextRevision), transitionId, decimal(priorRevision)),
+                  decimal(nextRevision),
+                  transitionId,
+                  decimal(priorRevision)),
               "First-NEW Account abort lost its required account-index obligation");
           requireOne(
               transaction.execute(
@@ -479,7 +481,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
                       + ISSUER_OBLIGATION
                       + " SET inventory_revision = ? WHERE transition_id = ?"
                       + " AND inventory_revision = ?",
-                  decimal(nextRevision), transitionId, decimal(priorRevision)),
+                  decimal(nextRevision),
+                  transitionId,
+                  decimal(priorRevision)),
               "First-NEW Account abort lost its required issuer-index obligation");
           requireOne(
               transaction.execute(
@@ -487,7 +491,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
                       + REGION_OBLIGATION
                       + " SET inventory_revision = ? WHERE transition_id = ?"
                       + " AND inventory_revision = ?",
-                  decimal(nextRevision), transitionId, decimal(priorRevision)),
+                  decimal(nextRevision),
+                  transitionId,
+                  decimal(priorRevision)),
               "First-NEW Account abort lost its required region-bridge obligation");
           requireOne(
               transaction.execute(
@@ -1291,8 +1297,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       Record row,
       CanonicalGameplayBindingTransitionSnapshot transition,
       CanonicalGameplayBindingInventoryEntry candidate) {
-    if (row == null
-        || !transition.transitionId().equals(row.get("transition_id", UUID.class))) {
+    if (row == null || !transition.transitionId().equals(row.get("transition_id", UUID.class))) {
       throw conflict("Durable binding decision row is missing or changed");
     }
     String canonicalEvidence = row.get("admission_lease_evidence", String.class);
@@ -1576,8 +1581,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || transitionSnapshot.expectedPriorBindingGeneration() != null) {
       throw conflict("Admission abort owner accepts first-NEW transitions only");
     }
-    if (transitionSnapshot.status()
-            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+    if (transitionSnapshot.status() != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
         && transitionSnapshot.status()
             != CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED) {
       throw conflict("First-NEW admission abort source is not provisional or definitively aborted");
@@ -1593,7 +1597,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       candidate = provisional.candidate();
       reservation = provisional.candidateReservation();
     } else {
-      requireRetainedFirstNewAbortObligations(transaction, transitionId, transitionSnapshot);
+      requireRetainedFirstNewAbortObligations(
+          transaction, transitionId, transitionSnapshot, candidate);
     }
 
     AccountGameplayAdmissionLeaseEvidence lease;
@@ -1639,7 +1644,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static void requireRetainedFirstNewAbortObligations(
       DSLContext transaction,
       UUID transitionId,
-      CanonicalGameplayBindingTransitionSnapshot transition) {
+      CanonicalGameplayBindingTransitionSnapshot transition,
+      CanonicalGameplayBindingInventoryEntry retainedCandidate) {
     BigInteger revision = transition.inventoryRevision();
     byte[] bindingRef = transition.bindingRef().bytes();
     CanonicalGameplayBindingIdentity candidate = transition.candidate();
@@ -1656,19 +1662,19 @@ public final class CanonicalGameplayBindingInventoryRepository {
             bindingRef);
     Record region =
         transaction.fetchOne(
-            "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?",
-            transitionId);
+            "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?", transitionId);
     if (account == null
         || issuer == null
         || region == null
         || !"ADD_OR_RETAIN".equals(account.get("action", String.class))
         || !Arrays.equals(bindingRef, account.get("binding_ref", byte[].class))
         || !"BEFORE_FINAL_CAS".equals(account.get("execution_phase", String.class))
-        || !"REQUIRED".equals(account.get("status", String.class))
-        || !transition.bindingGeneration()
-            .equals(readBigInteger(account, "binding_generation"))
+        || !("REQUIRED".equals(account.get("status", String.class))
+            || "ACKNOWLEDGED".equals(account.get("status", String.class)))
+        || !transition.bindingGeneration().equals(readBigInteger(account, "binding_generation"))
         || nullableBigInteger(account, "expected_prior_generation") != null
-        || !transition.candidateAccountIndexFence()
+        || !transition
+            .candidateAccountIndexFence()
             .equals(account.get("account_index_fence", UUID.class))
         || !candidate.accountId().equals(account.get("account_id", UUID.class))
         || !candidate.tenantId().equals(account.get("tenant_id", UUID.class))
@@ -1676,8 +1682,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !"REQUIRED".equals(issuer.get("status", String.class))
         || !Arrays.equals(bindingRef, issuer.get("binding_ref", byte[].class))
         || !transition.issuerReservationId().equals(issuer.get("reservation_id", UUID.class))
-        || !transition.bindingGeneration()
-            .equals(readBigInteger(issuer, "binding_generation"))
+        || !transition.bindingGeneration().equals(readBigInteger(issuer, "binding_generation"))
         || !revision.equals(readBigInteger(issuer, "inventory_revision"))
         || !"REQUIRED".equals(region.get("status", String.class))
         || !Arrays.equals(bindingRef, region.get("binding_ref", byte[].class))
@@ -1692,18 +1697,47 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !candidate.regionEpoch().equals(readBigInteger(region, "region_epoch"))
         || !revision.equals(readBigInteger(region, "inventory_revision"))
         || transaction.fetchCount(
-                "SELECT transition_id FROM "
-                    + ACCOUNT_OBLIGATION
-                    + " WHERE transition_id = ?",
-                transitionId)
+                DSL.table(ACCOUNT_OBLIGATION),
+                DSL.field("transition_id", UUID.class).eq(transitionId))
             != 1
         || transaction.fetchCount(
-                "SELECT transition_id FROM "
-                    + ISSUER_OBLIGATION
-                    + " WHERE transition_id = ?",
-                transitionId)
+                DSL.table(ISSUER_OBLIGATION),
+                DSL.field("transition_id", UUID.class).eq(transitionId))
             != 1) {
       throw conflict("Aborted first-NEW source lost a required retained index obligation");
+    }
+    if ("ACKNOWLEDGED".equals(account.get("status", String.class))) {
+      // This is historical ADD/readback evidence, never account-member removal or cleanup proof.
+      Record repair = findMemberRepairOperation(transaction, transitionId, false);
+      if (repair == null) throw conflict("Retained abort lost its completed account-member repair");
+      var acknowledgement = toMemberAcknowledgement(repair);
+      var operation = acknowledgement.operation();
+      var obligation = loadAccountIndexObligations(transaction, transitionId, false).getFirst();
+      requireMemberRepairObligationCurrent(operation, retainedCandidate, obligation, true);
+      BigInteger completedRevision = readBigInteger(repair, "completed_inventory_revision");
+      if (!CanonicalGameplayAccountIndexMember.of(retainedCandidate)
+              .value()
+              .equals(operation.member())
+          || completedRevision.compareTo(operation.inventorySnapshotRevision()) <= 0
+          || completedRevision.compareTo(revision) >= 0
+          || (operation.originalObligation().projectionState()
+                  == CanonicalGameplayBindingAccountIndexObligation.ProjectionState.REQUIRED
+              && !completedRevision.equals(obligation.projectionInventoryRevision()))) {
+        throw conflict("Retained abort changed the original completed account-member readback");
+      }
+      Record control =
+          transaction.fetchOne(
+              "SELECT * FROM game_session_canonical_account_coverage_control WHERE account_id = ?",
+              operation.accountId());
+      if (control == null
+          || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(control.get("state", String.class))
+          || !readBigInteger(control, "last_operation_fence")
+              .equals(operation.accountControlEpoch())) {
+        throw conflict("Retained account-member acknowledgement has a different control epoch");
+      }
+    } else if (retainedCandidate.accountIndexState()
+        != CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED) {
+      throw conflict("Unacknowledged retained abort has contradictory account-index state");
     }
   }
 
@@ -1718,19 +1752,26 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !expectedTransition.bindingRef().equals(currentTransition.bindingRef())
         || !expectedTransition.issuerReservationId().equals(currentTransition.issuerReservationId())
         || !expectedTransition.reservationFence().equals(currentTransition.reservationFence())
-        || !expectedTransition.candidateAccountIndexFence()
+        || !expectedTransition
+            .candidateAccountIndexFence()
             .equals(currentTransition.candidateAccountIndexFence())
         || expectedTransition.expectedPriorBindingRef() != null
         || expectedTransition.expectedPriorBindingGeneration() != null
-        || !expectedTransition.accountCoverageEvidence()
+        || !expectedTransition
+            .accountCoverageEvidence()
             .equals(currentTransition.accountCoverageEvidence())
         || !expected.candidate().identity().equals(current.candidate().identity())
         || !expected.candidate().bindingRef().equals(current.candidate().bindingRef())
         || !expected.candidate().accountIndexFence().equals(current.candidate().accountIndexFence())
         || !expected.reservation().reservationId().equals(current.reservation().reservationId())
-        || !expected.reservation().reservationFence().equals(current.reservation().reservationFence())
-        || !expected.originalDecision().leaseEvidence().hasSameIdentity(
-            current.originalDecision().leaseEvidence())) {
+        || !expected
+            .reservation()
+            .reservationFence()
+            .equals(current.reservation().reservationFence())
+        || !expected
+            .originalDecision()
+            .leaseEvidence()
+            .hasSameIdentity(current.originalDecision().leaseEvidence())) {
       throw conflict("First-NEW admission abort source drifted before its guarded CAS");
     }
     if (expected.isAccountAborted()) {
@@ -1748,8 +1789,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       }
     } else if (currentTransition.status()
             != CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED
-        || currentTransition.inventoryRevision()
-            .compareTo(expectedTransition.inventoryRevision()) <= 0
+        || currentTransition.inventoryRevision().compareTo(expectedTransition.inventoryRevision())
+            <= 0
         || current.candidate().lifecycle()
             != CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED
         || !current.candidate().inventoryRevision().equals(currentTransition.inventoryRevision())
@@ -1760,23 +1801,37 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !expected.candidate().bindingRef().equals(current.candidate().bindingRef())
         || !expected.candidate().bindingGeneration().equals(current.candidate().bindingGeneration())
         || !expected.candidate().accountIndexFence().equals(current.candidate().accountIndexFence())
-        || !expected.candidate().issuerReservationId()
+        || !expected
+            .candidate()
+            .issuerReservationId()
             .equals(current.candidate().issuerReservationId())
         || !expected.candidate().transitionId().equals(current.candidate().transitionId())
         || expected.candidate().accountIndexState() != current.candidate().accountIndexState()
         || expected.candidate().issuerIndexState() != current.candidate().issuerIndexState()
         || !expected.reservation().reservationId().equals(current.reservation().reservationId())
         || !expected.reservation().owner().equals(current.reservation().owner())
-        || !expected.reservation().bindingGeneration().equals(current.reservation().bindingGeneration())
+        || !expected
+            .reservation()
+            .bindingGeneration()
+            .equals(current.reservation().bindingGeneration())
         || !expected.reservation().transitionId().equals(current.reservation().transitionId())
         || !expected.reservation().partitionId().equals(current.reservation().partitionId())
-        || !expected.reservation().reservationFence().equals(current.reservation().reservationFence())
-        || !expected.reservation().issuerCoverageOperationId()
+        || !expected
+            .reservation()
+            .reservationFence()
+            .equals(current.reservation().reservationFence())
+        || !expected
+            .reservation()
+            .issuerCoverageOperationId()
             .equals(current.reservation().issuerCoverageOperationId())
-        || !expected.reservation().issuerCoverageOperationFence()
+        || !expected
+            .reservation()
+            .issuerCoverageOperationFence()
             .equals(current.reservation().issuerCoverageOperationFence())
         || !expected.reservation().coverageFence().equals(current.reservation().coverageFence())
-        || !expected.reservation().inventorySnapshotRevision()
+        || !expected
+            .reservation()
+            .inventorySnapshotRevision()
             .equals(current.reservation().inventorySnapshotRevision())) {
       throw conflict("Concurrent first-NEW abort did not preserve the exact retained source");
     }

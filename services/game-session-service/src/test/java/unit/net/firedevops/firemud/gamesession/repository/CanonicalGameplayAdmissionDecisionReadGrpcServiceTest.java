@@ -22,7 +22,9 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisi
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-/** Controlled callback/parser failure tests; native owner composition is a separate PostgreSQL test. */
+/**
+ * Controlled callback/parser failure tests; native owner composition is a separate PostgreSQL test.
+ */
 class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   @Test
   void unexpectedParserFailureTerminatesOnceWithSanitizedInternalBeforeRepositoryRead() {
@@ -31,7 +33,8 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     var observer = observer();
     var request = GetCanonicalGameplayAdmissionDecisionRequest.getDefaultInstance();
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
-      codec.when(() -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request))
+      codec
+          .when(() -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request))
           .thenThrow(new IllegalStateException("private parser details"));
       new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
           .getCanonicalGameplayAdmissionDecision(request, observer);
@@ -55,21 +58,37 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
       var source = CanonicalGameplayAdmissionAbortOwnerTest.source(false);
       var decision = source.originalDecision();
       var lease = decision.leaseEvidence();
-      when(lease.carrier()).thenReturn(Map.of("targetNamespace", "test", "callerWorkload", "spiffe://firemud/ns/test/sa/game-session-service"));
+      when(lease.carrier())
+          .thenReturn(
+              Map.of(
+                  "targetNamespace",
+                  "test",
+                  "callerWorkload",
+                  "spiffe://firemud/ns/test/sa/game-session-service"));
       var selector = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.RequestEvidence.class);
       when(selector.expectedLeaseEvidence()).thenReturn(lease);
-      when(selector.bindingDecisionId()).thenReturn(decision.bindingDecisionId());
-      when(repository.readAdmissionDecision(decision.bindingDecisionId(), lease)).thenReturn(decision);
+      var decisionId = decision.bindingDecisionId();
+      when(selector.bindingDecisionId()).thenReturn(decisionId);
+      when(repository.readAdmissionDecision(decision.bindingDecisionId(), lease))
+          .thenReturn(decision);
       var response = GetCanonicalGameplayAdmissionDecisionResponse.getDefaultInstance();
       var callbackFailure = new IllegalStateException("observer callback failed");
       if (completionFailure) doThrow(callbackFailure).when(observer).onCompleted();
       else doThrow(callbackFailure).when(observer).onNext(response);
       try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
-        codec.when(() -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request)).thenReturn(selector);
-        codec.when(() -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(any(), any(), any(), any(), any(), any(), any(), any()))
+        codec
+            .when(() -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request))
+            .thenReturn(selector);
+        codec
+            .when(
+                () ->
+                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
+                        any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(response);
-        Runnable receive = () -> new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
-            .getCanonicalGameplayAdmissionDecision(request, observer);
+        Runnable receive =
+            () ->
+                new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test")
+                    .getCanonicalGameplayAdmissionDecision(request, observer);
         if (completionFailure) assertThatThrownBy(receive::run).isSameAs(callbackFailure);
         else receive.run();
       }

@@ -19,7 +19,8 @@ public record CanonicalGameplayAdmissionAbortSource(
     Objects.requireNonNull(originalDecision, "originalDecision");
     if (transition.expectedPriorBindingRef() != null
         || transition.expectedPriorBindingGeneration() != null
-        || originalDecision.leaseKind() != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING
+        || originalDecision.leaseKind()
+            != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING
         || originalDecision.expectedOldBindingGeneration() != null
         || !transition.transitionId().equals(originalDecision.bindingDecisionId())
         || !transition.transitionId().equals(candidate.transitionId())
@@ -35,12 +36,12 @@ public record CanonicalGameplayAdmissionAbortSource(
         || !transition.candidate().equals(reservation.owner())
         || !transition.inventoryRevision().equals(candidate.inventoryRevision())
         || !transition.inventoryRevision().equals(reservation.inventoryRevision())) {
-      throw new IllegalArgumentException("Abort source does not identify one exact first-NEW owner");
+      throw new IllegalArgumentException(
+          "Abort source does not identify one exact first-NEW owner");
     }
 
     if (transition.status() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL) {
-      if (candidate.lifecycle()
-              != CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL
+      if (candidate.lifecycle() != CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL
           || reservation.lifecycle() != CanonicalIssuerPartitionReservation.Lifecycle.RESERVED
           || orphanCleanupId != null) {
         throw new IllegalArgumentException("Provisional abort source has terminal storage state");
@@ -62,9 +63,12 @@ public record CanonicalGameplayAdmissionAbortSource(
     if (!candidate.identity().equals(originalDecision.candidate())
         || !transition.bindingGeneration().equals(originalDecision.bindingGeneration())
         || !target.canonicalTenantId().equals(candidate.identity().tenantId())
-        || !target.playableStateNamespaceId().equals(candidate.identity().playableStateNamespaceId())
+        || !target
+            .playableStateNamespaceId()
+            .equals(candidate.identity().playableStateNamespaceId())
         || lease.leaseKind() != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING) {
-      throw new IllegalArgumentException("Original decision differs from its exact first-NEW source");
+      throw new IllegalArgumentException(
+          "Original decision differs from its exact first-NEW source");
     }
   }
 

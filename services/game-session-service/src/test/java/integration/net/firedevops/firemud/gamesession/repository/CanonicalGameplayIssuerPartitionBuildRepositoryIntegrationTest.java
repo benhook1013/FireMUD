@@ -1407,18 +1407,36 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static List<String> rowImages(DSLContext dsl, String tableName) {
+    String image = "to_jsonb(retained_row)";
+    if (tableName.equals("game_session_canonical_binding_transition")) {
+      // V1035 adds only this nullable field. Keep every other source value and non-null abort UUID.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
+    }
     return dsl.fetch(
-            "SELECT to_jsonb(retained_row)::text AS row_image FROM "
+            "SELECT ("
+                + image
+                + ")::text AS row_image FROM "
                 + tableName
-                + " retained_row ORDER BY to_jsonb(retained_row)::text")
+                + " retained_row ORDER BY 1")
         .getValues("row_image", String.class);
   }
 
   private static List<String> rowImagesWithXmin(DSLContext dsl, String tableName) {
+    String image = "to_jsonb(retained_row)";
+    if (tableName.equals("game_session_canonical_binding_transition")) {
+      // Preserve xmin and all source data while comparing the one absent-equivalent V1035 field.
+      image =
+          "CASE WHEN to_jsonb(retained_row)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+              + " THEN to_jsonb(retained_row) - 'admission_orphan_cleanup_id' ELSE to_jsonb(retained_row) END";
+    }
     return dsl.fetch(
-            "SELECT xmin::text || ':' || to_jsonb(retained_row)::text AS row_image FROM "
+            "SELECT xmin::text || ':' || ("
+                + image
+                + ")::text AS row_image FROM "
                 + tableName
-                + " retained_row ORDER BY to_jsonb(retained_row)::text, xmin::text")
+                + " retained_row ORDER BY 1")
         .getValues("row_image", String.class);
   }
 

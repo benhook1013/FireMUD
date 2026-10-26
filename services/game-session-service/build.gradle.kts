@@ -162,11 +162,16 @@ val gameSessionMigrationDriverDist =
         }
     }
 
-// Cross-service owner proof exports classes without application or Flyway resources.
+// Cross-service proof exports owner classes and the exact member-repair script/descriptor.
+// Application configuration, service registration and Flyway resources remain excluded.
 val gameSessionClassesProofJar by tasks.registering(Jar::class) {
     archiveClassifier.set("classes-proof")
     dependsOn(tasks.named("classes"), tasks.named("compileIntegrationTestJava"))
     from(sourceSets.main.get().output.classesDirs)
+    from("src/main/resources") {
+        include("redis/lua/game-session-account-member-repair-add.lua")
+        include("redis/scripts/game-session-account-member-repair-add.json")
+    }
     from(sourceSets["integrationTest"].output.classesDirs) {
         include("integration/net/firedevops/firemud/gamesession/repository/CanonicalHumanPublicationOwnerTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingRuntimeTestFixtures*.class")

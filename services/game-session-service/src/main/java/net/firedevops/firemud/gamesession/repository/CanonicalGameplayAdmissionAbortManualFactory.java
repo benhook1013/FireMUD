@@ -38,7 +38,10 @@ public final class CanonicalGameplayAdmissionAbortManualFactory {
         repository, guard, workloadNamespace);
   }
 
-  /** Creates an unstarted mutual-TLS server; production registration remains an explicit owner decision. */
+  /**
+   * Creates an unstarted mutual-TLS server; production registration remains an explicit owner
+   * decision.
+   */
   public static Server createUnregisteredDecisionReadServer(
       String address,
       KeyManagerFactory keys,
@@ -65,8 +68,7 @@ public final class CanonicalGameplayAdmissionAbortManualFactory {
             GrpcRequestBytePolicy.ordinary(),
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
     factory.addService(
-        ServerInterceptors.interceptForward(
-            receiver, new GrpcPeerIdentityInterceptor(), guard));
+        ServerInterceptors.interceptForward(receiver, new GrpcPeerIdentityInterceptor(), guard));
     return factory.createServer();
   }
 }

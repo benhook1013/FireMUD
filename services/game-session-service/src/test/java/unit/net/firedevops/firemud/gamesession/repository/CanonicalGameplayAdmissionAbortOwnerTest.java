@@ -8,15 +8,15 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.nio.charset.StandardCharsets;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
@@ -29,8 +29,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import org.junit.jupiter.api.Test;
 
 class CanonicalGameplayAdmissionAbortOwnerTest {
-  private static final UUID TRANSITION_ID =
-      UUID.fromString("88888888-8888-4888-8888-888888888888");
+  private static final UUID TRANSITION_ID = UUID.fromString("88888888-8888-4888-8888-888888888888");
   private static final String ORIGINAL_LEASE = "canonical-original-lease-evidence";
 
   @Test
@@ -39,10 +38,7 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     var accountClient = mock(AccountGameplayAdmissionLeaseClient.class);
     var source = source(false);
     when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(source);
-    when(accountClient.abort(
-            eq("presented-initial-gsa"),
-            any(byte[].class),
-            eq(TRANSITION_ID)))
+    when(accountClient.abort(eq("presented-initial-gsa"), any(byte[].class), eq(TRANSITION_ID)))
         .thenThrow(new IllegalStateException("Account abort response unavailable"));
 
     var owner = new CanonicalGameplayAdmissionAbortOwner(repository, accountClient);
@@ -67,11 +63,14 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
   void retainedTerminalReplayStillAuthenticatesTheCurrentCallerAndCannotCasOnFailure() {
     var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
     var client = mock(AccountGameplayAdmissionLeaseClient.class);
-    when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(source(true));
+    var terminalSource = source(true);
+    when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(terminalSource);
     when(client.abort(eq("expired-or-revoked-caller"), any(byte[].class), eq(TRANSITION_ID)))
         .thenThrow(new IllegalStateException("current caller refused"));
-    assertThatThrownBy(() -> new CanonicalGameplayAdmissionAbortOwner(repository, client)
-        .abortFirstNew(TRANSITION_ID, "expired-or-revoked-caller"))
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                    .abortFirstNew(TRANSITION_ID, "expired-or-revoked-caller"))
         .hasMessage("current caller refused");
     verify(client).abort(eq("expired-or-revoked-caller"), any(byte[].class), eq(TRANSITION_ID));
     verify(repository, never()).recordFirstNewAccountAbort(any(), any());
@@ -82,11 +81,15 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     for (boolean actualTransaction : new boolean[] {false, true}) {
       var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
       var client = mock(AccountGameplayAdmissionLeaseClient.class);
-      org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
-      org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(actualTransaction);
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .initSynchronization();
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .setActualTransactionActive(actualTransaction);
       try {
-        assertThatThrownBy(() -> new CanonicalGameplayAdmissionAbortOwner(repository, client)
-            .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
+        assertThatThrownBy(
+                () ->
+                    new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                        .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
             .hasMessage("First-NEW Account abort requires no ambient SQL scope");
         org.mockito.Mockito.verifyNoInteractions(repository, client);
       } finally {
@@ -97,13 +100,18 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
 
   @Test
   void retainedAbortRejectsContradictoryAccountStatesOrChangedCleanupWithoutCas() {
-    for (var state : net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State.values()) {
+    for (var state :
+        net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State
+            .values()) {
       var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
       var client = mock(AccountGameplayAdmissionLeaseClient.class);
       var retained = source(true);
       var lease = retained.originalDecision().leaseEvidence();
       when(lease.hasSameIdentity(lease)).thenReturn(true);
-      var operation = mock(net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OperationEvidence.class);
+      var operation =
+          mock(
+              net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec
+                  .OperationEvidence.class);
       when(operation.originalLeaseEvidence()).thenReturn(lease);
       when(operation.state()).thenReturn(state);
       switch (state) {
@@ -113,14 +121,21 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
         }
         case COMMITTED -> {
           when(operation.bindingDecisionId()).thenReturn(TRANSITION_ID);
-          when(operation.originalAckReceipt()).thenReturn(mock(net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence.class));
+          when(operation.originalAckReceipt())
+              .thenReturn(
+                  mock(
+                      net.firedevops.firemud.common.account.admission
+                          .AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence
+                          .class));
         }
-        case PENDING -> { }
+        case PENDING -> {}
       }
       when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(retained);
       when(client.abort(any(), any(), any())).thenReturn(operation);
-      assertThatThrownBy(() -> new CanonicalGameplayAdmissionAbortOwner(repository, client)
-          .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                      .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
           .hasMessage("Account replay contradicts the retained definitive abort");
       verify(repository, never()).recordFirstNewAccountAbort(any(), any());
     }
@@ -193,7 +208,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
             UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"),
             null,
             null,
-            aborted ? CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED : CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL,
+            aborted
+                ? CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED
+                : CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL,
             CanonicalGameplayAccountCoverageEvidence.noActiveFlow());
     var candidate =
         new CanonicalGameplayBindingInventoryEntry(
@@ -203,7 +220,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
             transition.candidateAccountIndexFence(),
             transition.issuerReservationId(),
             TRANSITION_ID,
-            aborted ? CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED : CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL,
+            aborted
+                ? CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED
+                : CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL,
             CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED,
             CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED,
             BigInteger.ONE);
@@ -214,7 +233,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
             BigInteger.ONE,
             TRANSITION_ID,
             BigInteger.ZERO,
-            aborted ? CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING : CanonicalIssuerPartitionReservation.Lifecycle.RESERVED,
+            aborted
+                ? CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
+                : CanonicalIssuerPartitionReservation.Lifecycle.RESERVED,
             transition.reservationFence(),
             UUID.fromString("12121212-1212-4212-8212-121212121212"),
             BigInteger.ONE,
@@ -229,12 +250,10 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     when(decision.targetEvidence()).thenReturn(target);
     when(decision.leaseKind())
         .thenReturn(AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING);
-    when(lease.leaseKind())
-        .thenReturn(AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING);
+    when(lease.leaseKind()).thenReturn(AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING);
     when(decision.leaseEvidenceJson()).thenReturn(ORIGINAL_LEASE);
     when(lease.canonicalJson()).thenReturn(ORIGINAL_LEASE);
-    return
-        new CanonicalGameplayAdmissionAbortSource(
-            transition, candidate, reservation, decision, aborted ? CLEANUP_ID : null);
+    return new CanonicalGameplayAdmissionAbortSource(
+        transition, candidate, reservation, decision, aborted ? CLEANUP_ID : null);
   }
 }

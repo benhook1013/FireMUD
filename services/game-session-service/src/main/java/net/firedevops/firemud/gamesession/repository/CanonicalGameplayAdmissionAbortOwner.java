@@ -15,9 +15,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Unregistered first-NEW Account abort composer over the retained Game Session transition owner.
  *
- * <p>The original transition identifier selects the durable source. Its complete persisted lease
- * is sent to Account for the exact purpose-specific abort. The remote call is always outside SQL;
- * only a typed definitive Account ABORTED result can enter the guarded Game Session CAS.
+ * <p>The original transition identifier selects the durable source. Its complete persisted lease is
+ * sent to Account for the exact purpose-specific abort. The remote call is always outside SQL; only
+ * a typed definitive Account ABORTED result can enter the guarded Game Session CAS.
  */
 public final class CanonicalGameplayAdmissionAbortOwner {
   private final CanonicalGameplayBindingInventoryRepository repository;
@@ -48,13 +48,11 @@ public final class CanonicalGameplayAdmissionAbortOwner {
 
     CanonicalGameplayAdmissionAbortSource source =
         repository.readFirstNewAdmissionAbortSource(transitionId);
-    AccountGameplayAdmissionLeaseEvidence originalLease =
-        source.originalDecision().leaseEvidence();
+    AccountGameplayAdmissionLeaseEvidence originalLease = source.originalDecision().leaseEvidence();
     byte[] originalLeaseBytes =
         source.originalDecision().leaseEvidenceJson().getBytes(StandardCharsets.UTF_8);
     if (!Arrays.equals(
-        originalLeaseBytes,
-        originalLease.canonicalJson().getBytes(StandardCharsets.UTF_8))) {
+        originalLeaseBytes, originalLease.canonicalJson().getBytes(StandardCharsets.UTF_8))) {
       throw new IllegalStateException("Retained first-NEW lease bytes are not canonical");
     }
 
@@ -85,8 +83,7 @@ public final class CanonicalGameplayAdmissionAbortOwner {
     UUID cleanupId = accountOperation.orphanCleanupId();
     CanonicalGameplayAdmissionAbortSource terminalSource =
         repository.recordFirstNewAccountAbort(source, cleanupId);
-    if (!terminalSource.isAccountAborted()
-        || !cleanupId.equals(terminalSource.orphanCleanupId())) {
+    if (!terminalSource.isAccountAborted() || !cleanupId.equals(terminalSource.orphanCleanupId())) {
       throw new IllegalStateException("Game Session did not retain Account's exact abort result");
     }
     return new CanonicalGameplayAdmissionAbortOutcome(
@@ -97,10 +94,11 @@ public final class CanonicalGameplayAdmissionAbortOwner {
       CanonicalGameplayAdmissionAbortSource source,
       AccountGameplayAdmissionLeaseGrpcCodec.OperationEvidence operation,
       UUID transitionId) {
-    AccountGameplayAdmissionLeaseEvidence originalLease =
-        source.originalDecision().leaseEvidence();
+    AccountGameplayAdmissionLeaseEvidence originalLease = source.originalDecision().leaseEvidence();
     if (!originalLease.hasSameIdentity(operation.originalLeaseEvidence())
-        || !source.originalDecision().leaseEvidenceJson()
+        || !source
+            .originalDecision()
+            .leaseEvidenceJson()
             .equals(operation.originalLeaseEvidence().canonicalJson())
         || operation.originalLeaseEvidence().leaseKind()
             != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING) {

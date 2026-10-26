@@ -73,7 +73,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
           + " to_jsonb(i)::text AS source_row_json FROM game_session_canonical_gameplay_binding_inventory i"
           + " WHERE i.inventory_revision <= ?"
           + " UNION ALL SELECT 'TRANSITION' AS source_kind, t.transition_id::text AS source_key,"
-          + " t.inventory_revision AS source_revision, to_jsonb(t)::text AS source_row_json"
+          + " t.inventory_revision AS source_revision,"
+          // Preserve frozen pre-V1035 transition bytes for the absence-equivalent new NULL field.
+          // A definitive abort UUID remains part of the full captured source.
+          + " CASE WHEN to_jsonb(t)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(t) - 'admission_orphan_cleanup_id')::text"
+          + " ELSE to_jsonb(t)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"
           + " ELSE 'UNRESOLVED_LEGACY_RESERVATION' END AS source_kind,"

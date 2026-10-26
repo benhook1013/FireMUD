@@ -367,6 +367,28 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF OLD.lifecycle = 'RELEASE_PENDING' AND EXISTS (
+        SELECT 1 FROM game_session_canonical_binding_transition transition
+         WHERE transition.transition_id = OLD.transition_id
+           AND transition.issuer_reservation_id = OLD.reservation_id
+           AND transition.status = 'ABORTED'
+           AND transition.admission_orphan_cleanup_id IS NOT NULL
+    ) THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'Retained first-NEW abort reservation requires qualified release proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_reservation_retained';
+        END IF;
+        IF (to_jsonb(NEW) - 'inventory_revision') IS DISTINCT FROM (to_jsonb(OLD) - 'inventory_revision')
+           OR NEW.inventory_revision < OLD.inventory_revision THEN
+            RAISE EXCEPTION 'Retained first-NEW abort reservation is immutable without qualified release proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_reservation_retained';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
     IF OLD.lifecycle = 'RESERVED' AND NEW.lifecycle = 'RELEASE_PENDING' THEN
         IF NEW.inventory_revision <= OLD.inventory_revision
            OR ROW(
@@ -451,7 +473,7 @@ END;
 $$;
 
 CREATE TRIGGER game_session_first_new_abort_reservation_release
-    BEFORE UPDATE ON game_session_canonical_issuer_partition_reservation
+    BEFORE UPDATE OR DELETE ON game_session_canonical_issuer_partition_reservation
     FOR EACH ROW
     EXECUTE FUNCTION require_first_new_abort_reservation_release();
 
@@ -460,6 +482,28 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF OLD.lifecycle = 'TERMINAL_UNRESOLVED' AND EXISTS (
+        SELECT 1 FROM game_session_canonical_binding_transition transition
+         WHERE transition.transition_id = OLD.transition_id
+           AND transition.candidate_binding_ref = OLD.binding_ref
+           AND transition.status = 'ABORTED'
+           AND transition.admission_orphan_cleanup_id IS NOT NULL
+    ) THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'Retained first-NEW abort candidate requires qualified cleanup proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_candidate_retained';
+        END IF;
+        IF (to_jsonb(NEW) - 'inventory_revision') IS DISTINCT FROM (to_jsonb(OLD) - 'inventory_revision')
+           OR NEW.inventory_revision < OLD.inventory_revision THEN
+            RAISE EXCEPTION 'Retained first-NEW abort candidate is immutable without qualified cleanup proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_candidate_retained';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
     IF OLD.lifecycle = 'PROVISIONAL' AND NEW.lifecycle = 'TERMINAL_UNRESOLVED' THEN
         IF NEW.inventory_revision <= OLD.inventory_revision
            OR ROW(
@@ -538,7 +582,7 @@ END;
 $$;
 
 CREATE TRIGGER game_session_first_new_abort_candidate_retention
-    BEFORE UPDATE ON game_session_canonical_gameplay_binding_inventory
+    BEFORE UPDATE OR DELETE ON game_session_canonical_gameplay_binding_inventory
     FOR EACH ROW
     EXECUTE FUNCTION require_first_new_abort_candidate_retention();
 
@@ -546,7 +590,17 @@ CREATE FUNCTION require_first_new_abort_source_complete()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    affected_transition_id uuid;
 BEGIN
+    IF TG_OP = 'DELETE' THEN affected_transition_id := OLD.transition_id;
+    ELSE affected_transition_id := NEW.transition_id;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM game_session_canonical_binding_transition
+        WHERE transition_id = affected_transition_id AND status = 'ABORTED'
+          AND admission_orphan_cleanup_id IS NOT NULL) THEN
+        RETURN NULL;
+    END IF;
     IF NOT EXISTS (
         SELECT 1
           FROM game_session_canonical_binding_transition transition
@@ -562,7 +616,7 @@ BEGIN
            AND issuer_obligation.binding_ref = transition.candidate_binding_ref
           JOIN game_session_canonical_binding_region_bridge_obligation region_obligation
             ON region_obligation.transition_id = transition.transition_id
-         WHERE transition.transition_id = NEW.transition_id
+         WHERE transition.transition_id = affected_transition_id
            AND transition.status = 'ABORTED'
            AND transition.admission_lease_id IS NOT NULL
            AND transition.admission_lease_kind = 'NEW_BINDING'
@@ -613,7 +667,47 @@ BEGIN
            AND account_obligation.expected_prior_generation IS NULL
            AND account_obligation.account_index_fence = candidate.account_index_fence
            AND account_obligation.execution_phase = 'BEFORE_FINAL_CAS'
-           AND account_obligation.status = 'REQUIRED'
+           AND (
+               (account_obligation.status = 'REQUIRED' AND candidate.account_index_state = 'REPAIR_REQUIRED')
+               OR (account_obligation.status = 'ACKNOWLEDGED'
+                   AND candidate.account_index_state = 'ACKNOWLEDGED'
+                   AND account_obligation.projection_state = 'PRESENT_AWAITING_COVERAGE'
+                   AND EXISTS (
+                       SELECT 1 FROM game_session_canonical_account_member_repair_operation repair
+                       JOIN game_session_canonical_account_coverage_control control
+                         ON control.account_id = repair.account_id
+                      WHERE repair.transition_id = transition.transition_id
+                        AND repair.obligation_ordinal = 0
+                        AND repair.status = 'ACKNOWLEDGED'
+                        AND repair.binding_ref = candidate.binding_ref
+                        AND repair.account_id = candidate.account_id
+                        AND repair.tenant_id = candidate.tenant_id
+                        AND repair.binding_generation = candidate.binding_generation
+                        AND repair.account_index_fence = candidate.account_index_fence
+                        AND repair.original_action = 'ADD_OR_RETAIN'
+                        AND repair.original_expected_prior_generation IS NULL
+                        AND repair.original_execution_phase = 'BEFORE_FINAL_CAS'
+                        AND repair.original_status = 'REQUIRED'
+                        AND repair.desired_action = 'ADD_OR_RETAIN'
+                        AND repair.account_control_state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'
+                        AND control.state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW'
+                        AND control.last_operation_fence = repair.account_control_epoch
+                        AND repair.coverage_generation > repair.inventory_snapshot_revision
+                        AND repair.completed_inventory_revision > repair.inventory_snapshot_revision
+                        AND repair.completed_inventory_revision < transition.inventory_revision
+                        AND repair.readback_state = 'PRESENT'
+                        AND repair.readback_member = repair.member
+                        AND repair.member = account_obligation.projection_member
+                        AND repair.member = 'accountIndexMember/v1:'
+                            || rtrim(translate(replace(encode(candidate.binding_ref, 'base64'), E'\n', ''), '+/', '-_'), '=')
+                            || ':' || candidate.binding_generation::text || ':' || candidate.account_index_fence::text
+                        AND ((repair.original_projection_state = 'REQUIRED'
+                              AND account_obligation.projection_inventory_revision = repair.completed_inventory_revision)
+                            OR (repair.original_projection_state = 'PRESENT_AWAITING_COVERAGE'
+                                AND repair.original_projection_member = repair.member
+                                AND account_obligation.projection_inventory_revision = repair.original_projection_inventory_revision))
+                   ))
+           )
            AND (SELECT count(*)
                   FROM game_session_canonical_binding_account_index_obligation extra_account
                  WHERE extra_account.transition_id = transition.transition_id) = 1
@@ -655,6 +749,35 @@ CREATE CONSTRAINT TRIGGER game_session_first_new_abort_source_atomic
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW
     WHEN (NEW.status = 'ABORTED' AND NEW.admission_lease_id IS NOT NULL)
+    EXECUTE FUNCTION require_first_new_abort_source_complete();
+
+
+-- Retain the actual completed member-repair history. This does not authorize member removal.
+CREATE FUNCTION retain_first_new_abort_member_repair_history()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM game_session_canonical_binding_transition transition
+        WHERE transition.transition_id = OLD.transition_id AND transition.status = 'ABORTED'
+          AND transition.admission_orphan_cleanup_id IS NOT NULL) THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'Retained abort account-member repair history is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_member_history_retained';
+        END IF;
+        IF to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD) THEN
+            RAISE EXCEPTION 'Retained abort account-member repair history is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_member_history_retained';
+        END IF;
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER game_session_first_new_abort_member_history
+    BEFORE UPDATE OR DELETE ON game_session_canonical_account_member_repair_operation
+    FOR EACH ROW EXECUTE FUNCTION retain_first_new_abort_member_repair_history();
+CREATE CONSTRAINT TRIGGER game_session_first_new_abort_account_phase_atomic
+    AFTER UPDATE OR DELETE ON game_session_canonical_binding_account_index_obligation
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
     EXECUTE FUNCTION require_first_new_abort_source_complete();
 
 -- [jooq ignore stop]

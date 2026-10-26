@@ -51,7 +51,10 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
     return seedRunningLaunch(dataSource, canonicalTenantId, null);
   }
 
-  /** Fixed test namespace for authenticated cross-owner composition; upstream evidence is controlled. */
+  /**
+   * Fixed test namespace for authenticated cross-owner composition; upstream evidence is
+   * controlled.
+   */
   public static RuntimeTarget seedRunningLaunch(
       DataSource dataSource, UUID canonicalTenantId, String fixedNamespace) {
     if (canonicalTenantId == null || new UUID(0L, 0L).equals(canonicalTenantId)) {
