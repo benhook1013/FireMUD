@@ -36,6 +36,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
@@ -47,7 +48,7 @@ import org.jooq.DSLContext;
  * lease carrier, issuer reservation, and stable Redis incarnation are controlled test evidence.
  */
 public final class CanonicalGameplayRegionOwnerCompositionFixture {
-  private static final String REDIS_PRINCIPAL = "gamesession_region_owner_app";
+  private static final String REDIS_PRINCIPAL = "gamesession_coord_app";
   private static final String REDIS_PASSWORD = UUID.randomUUID().toString();
   private static final String REGION_ATTESTATION = "controlled-region-owner-composition";
 
@@ -115,7 +116,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     try (var redis = RegionRedis.open(redisHost, redisPort)) {
       var scriptCatalog =
           RedisScriptCatalog.fromContributions(
-              List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+              List.of(
+                  new CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                  new CanonicalGameplayRegionBindingBridgeRedisScriptContribution()));
       var stableSource = new ControlledStableIncarnationSource();
       var runtimeIdentity =
           new RuntimeIdentity(
@@ -163,9 +166,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .hget(
                   ascii(
                       CanonicalGameplayRegionRedisKeys.meta(
-                          identity.tenantId(),
-                          identity.gameInstanceId(),
-                          resolved.canonicalRegionInstanceId())),
+                          identity.tenantId(), identity.gameInstanceId(), status.regionId())),
                   ascii("current_tick_state"));
       if (!Arrays.equals(currentTickState, ascii("APPLIED"))) {
         throw new IllegalStateException("Canonical Redis initial timeline metadata is absent");

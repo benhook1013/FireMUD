@@ -234,15 +234,13 @@ BEGIN
                    launch.complete_launch_binding_evidence -> 'descriptor' ->> 'publishedReleaseBundleRef'
            )
            OR (
-               -- Human STARTING -> RUNNING rows retain their own immutable positive receipt. They
-               -- do not copy run-owned launch fields; a missing or conflicting route fails closed.
+               -- Human STARTING -> RUNNING rows retain their own immutable positive receipt and
+               -- original StartSession identity. The request/digest/release columns bind that
+               -- source identity; run-owned lifecycle epochs remain absent.
                NEW.admission_target_owner_proof_outcome = 'COMMITTED'
                AND NEW.admission_target_positive_durable_abort IS FALSE
                AND runtime.run_owned_start_preparing_epoch IS NULL
                AND runtime.run_owned_start_active_epoch IS NULL
-               AND runtime.run_owned_start_request_id IS NULL
-               AND runtime.run_owned_start_request_digest IS NULL
-               AND runtime.run_owned_start_published_release_bundle_ref IS NULL
                AND EXISTS (
                    SELECT 1
                      FROM game_session_canonical_human_runtime_completion completion
@@ -273,6 +271,22 @@ BEGIN
                       AND attempt.audit_event_id = NEW.admission_target_audit_event_id
                       AND attempt.commit_proof_digest = NEW.admission_target_owner_proof_digest
                       AND attempt.terminal_at = NEW.admission_target_terminal_at
+                     JOIN game_session_start_session_operator_attempt original
+                       ON original.target_namespace = completion.target_namespace
+                      AND original.owner_attempt_id = completion.original_owner_attempt_id
+                      AND original.owner_mutation_id = completion.original_owner_mutation_id
+                      AND original.owner_fence = completion.original_owner_fence
+                      AND original.canonical_tenant_id = completion.canonical_tenant_id
+                      AND original.control_plane_request_id = launch.control_plane_request_id
+                      AND original.post_authorization_execution_tuple =
+                          completion.original_start_session_tuple
+                      AND original.account_redemption_projection =
+                          completion.account_redemption_projection
+                      AND runtime.run_owned_start_request_id = original.control_plane_request_id
+                      AND runtime.run_owned_start_request_digest = original.mutation_digest
+                      AND runtime.run_owned_start_published_release_bundle_ref =
+                          launch.complete_launch_binding_evidence -> 'descriptor'
+                              ->> 'publishedReleaseBundleRef'
                      JOIN gameplay_admission_pointer pointer
                        ON pointer.id = attempt.pointer_id
                       AND pointer.representation_version = 3
@@ -402,7 +416,6 @@ BEGIN
                       AND pointer.requires_character_selection IS NULL
                       AND pointer.last_updated_by = 'game-session-canonical-initial-admission'
                       AND pointer.last_update_reason = 'World-held initial admission'
-                      AND pointer.prepared_version_upgrade_id IS NULL
                )
            )
        )

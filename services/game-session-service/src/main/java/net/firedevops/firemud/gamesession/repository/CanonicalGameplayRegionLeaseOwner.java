@@ -288,7 +288,11 @@ final class CanonicalGameplayRegionLeaseOwner {
     requireOwnedContext(installation, finalContext);
     if (!context.status.equals(finalContext.status)
         || !context.source.equals(finalContext.source)
-        || !context.resolvedRegion.equals(finalContext.resolvedRegion)) {
+        || !CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(
+                installation.worldRequest, context.resolvedRegion)
+            .equals(
+                CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(
+                    installation.worldRequest, finalContext.resolvedRegion))) {
       throw unavailable();
     }
     return bindingInventory.acknowledgeRegionBridge(

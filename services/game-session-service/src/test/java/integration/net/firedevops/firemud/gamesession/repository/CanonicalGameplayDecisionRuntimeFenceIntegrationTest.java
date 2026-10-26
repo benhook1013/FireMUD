@@ -254,8 +254,8 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
   }
 
   @Test
-  void runningRuntimeWithoutRetainedHumanCompletionOrRunOwnedMetadataCannotAcquireFence() {
-    String schema = "gs_runtime_fence_unowned_" + UUID.randomUUID().toString().replace("-", "");
+  void freshSourceBoundRuntimeWithoutHumanCompletionCannotLoseRunOwnedLaunchProvenance() {
+    String schema = "gs_runtime_fence_runowned_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
       migrate(schema, dataSource);
@@ -264,19 +264,22 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
       byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
 
-      assertThat(
-              dsl.execute(
-                  "UPDATE game_instances SET row_version = row_version + 1,"
-                      + " run_owned_start_request_id = NULL, run_owned_start_request_digest = NULL,"
-                      + " run_owned_start_published_release_bundle_ref = NULL,"
-                      + " run_owned_start_preparing_epoch = NULL, run_owned_start_active_epoch = NULL"
-                      + " WHERE tenant_id = ? AND id = ?",
-                  target.gameSessionTenantId(),
-                  target.gameInstanceId()))
-          .isEqualTo(1);
-
-      assertThatThrownBy(() -> markProvisional(dsl, target, candidateRef))
-          .hasMessageContaining("exact current RUNNING launch row and candidate identity");
+      // A fresh source-bound RUNNING row cannot be stripped of its run-owned launch association.
+      // The V26 deferred guard rejects that impossible setup before V1044's lease-bound fence runs.
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET row_version = row_version + 1,"
+                          + " run_owned_start_request_id = NULL,"
+                          + " run_owned_start_request_digest = NULL,"
+                          + " run_owned_start_published_release_bundle_ref = NULL,"
+                          + " run_owned_start_preparing_epoch = NULL,"
+                          + " run_owned_start_active_epoch = NULL"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining(
+              "Fresh Game Session instance requires one exact complete launch association");
 
       var runtimeReadback =
           dsl.fetchSingle(
@@ -287,13 +290,14 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
               target.gameSessionTenantId(),
               target.gameInstanceId());
       assertThat(runtimeReadback.get("status", String.class)).isEqualTo("RUNNING");
-      assertThat(runtimeReadback.get("row_version", Long.class)).isEqualTo(2L);
-      assertThat(runtimeReadback.get("run_owned_start_request_id", String.class)).isNull();
-      assertThat(runtimeReadback.get("run_owned_start_request_digest", String.class)).isNull();
+      assertThat(runtimeReadback.get("row_version", Long.class)).isEqualTo(1L);
+      assertThat(runtimeReadback.get("run_owned_start_request_id", String.class))
+          .isEqualTo(target.controlPlaneRequestId());
+      assertThat(runtimeReadback.get("run_owned_start_request_digest", String.class)).isNotNull();
       assertThat(runtimeReadback.get("run_owned_start_published_release_bundle_ref", String.class))
-          .isNull();
-      assertThat(runtimeReadback.get("run_owned_start_preparing_epoch", Long.class)).isNull();
-      assertThat(runtimeReadback.get("run_owned_start_active_epoch", Long.class)).isNull();
+          .isEqualTo(target.publishedReleaseBundleRef());
+      assertThat(runtimeReadback.get("run_owned_start_preparing_epoch", Long.class)).isNotNull();
+      assertThat(runtimeReadback.get("run_owned_start_active_epoch", Long.class)).isNotNull();
       assertThat(
               dsl.fetchSingle(
                       "SELECT count(*) AS actual_count"

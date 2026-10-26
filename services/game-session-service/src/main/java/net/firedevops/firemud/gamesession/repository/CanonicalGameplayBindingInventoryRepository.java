@@ -5,6 +5,7 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -371,6 +372,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Objects.requireNonNull(prepared, "prepared");
     Objects.requireNonNull(readback, "readback");
     Objects.requireNonNull(acknowledgedAt, "acknowledgedAt");
+    Instant persistedAcknowledgedAt = acknowledgedAt.truncatedTo(ChronoUnit.MICROS);
     CanonicalGameplayBindingProvisionalCasEvidence expectedEvidence =
         readProvisionalCasEvidence(prepared.transitionId());
     BridgeInputs inputs =
@@ -429,12 +431,12 @@ public final class CanonicalGameplayBindingInventoryRepository {
                   "UPDATE "
                       + REGION_OBLIGATION
                       + " SET status = 'ACKNOWLEDGED', redis_readback_digest = ?,"
-                      + " acknowledged_at = ?, inventory_revision = ?"
+                      + " acknowledged_at = ?::timestamptz, inventory_revision = ?"
                       + " WHERE transition_id = ? AND status = 'REQUIRED'"
                       + " AND bridge_operation_id = ? AND executor_fence = ?"
                       + " AND lease_token_correlation = ? AND inventory_revision = ?",
                   readback.digest(),
-                  OffsetDateTime.ofInstant(acknowledgedAt, ZoneOffset.UTC),
+                  OffsetDateTime.ofInstant(persistedAcknowledgedAt, ZoneOffset.UTC),
                   decimal(nextRevision),
                   prepared.transitionId(),
                   prepared.bridgeOperationId(),
@@ -456,7 +458,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
               || !acknowledged.executorFence().equals(ownerStatus.executorFence())
               || !acknowledged.leaseTokenCorrelation().equals(ownerStatus.leaseTokenCorrelation())
               || !acknowledged.redisReadbackDigest().equals(readback.digest())
-              || !acknowledged.acknowledgedAt().equals(acknowledgedAt)
+              || !acknowledged.acknowledgedAt().equals(persistedAcknowledgedAt)
               || !acknowledged.inventoryRevision().equals(nextRevision)) {
             throw conflict("Region bridge acknowledgement did not survive exact SQL readback");
           }
