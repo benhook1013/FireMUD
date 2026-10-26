@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -13,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -20,11 +22,13 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
@@ -253,8 +257,12 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               identity.tenantId(),
               identity.gameInstanceId(),
               identity.regionId());
+      Objects.requireNonNull(firstTimelineBefore, "first timeline source row");
       String firstTimelineOperationId =
-          firstTimelineBefore.get("initialization_operation_id", UUID.class).toString();
+          Objects.requireNonNull(
+                  firstTimelineBefore.get("initialization_operation_id", UUID.class),
+                  "first initialization operation")
+              .toString();
       String firstTimelineDigest = firstTimelineBefore.get("preparation_digest", String.class);
       String firstWorldSourceDigest = firstTimelineBefore.get("world_source_digest", String.class);
       byte[] firstLifecycleRequest =
@@ -350,9 +358,13 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       byte[] secondMetaTickId = redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_id"));
       byte[] secondMetaTickState =
           redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
+      Objects.requireNonNull(firstTimelineAfter, "retained timeline source row");
       boolean unchangedTimeline =
           firstTimelineOperationId.equals(
-                  firstTimelineAfter.get("initialization_operation_id", UUID.class).toString())
+                  Objects.requireNonNull(
+                          firstTimelineAfter.get("initialization_operation_id", UUID.class),
+                          "retained initialization operation")
+                      .toString())
               && transitionId.equals(firstTimelineAfter.get("transition_id", UUID.class))
               && Arrays.equals(
                   firstLifecycleRequest,
@@ -477,6 +489,29 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     }
   }
 
+  private static boolean sameAbortSource(
+      CanonicalGameplayAdmissionAbortSource expected,
+      CanonicalGameplayAdmissionAbortSource actual) {
+    var left = expected.originalDecision();
+    var right = actual.originalDecision();
+    // Independently loaded decisions are verified carriers, not value records.
+    return expected.transition().equals(actual.transition())
+        && expected.candidate().equals(actual.candidate())
+        && expected.reservation().equals(actual.reservation())
+        && Objects.equals(expected.orphanCleanupId(), actual.orphanCleanupId())
+        && left.bindingDecisionId().equals(right.bindingDecisionId())
+        && left.leaseEvidenceJson().equals(right.leaseEvidenceJson())
+        && left.leaseSha256().equals(right.leaseSha256())
+        && left.requestId().equals(right.requestId())
+        && left.leaseId().equals(right.leaseId())
+        && left.leaseFence().equals(right.leaseFence())
+        && left.candidate().equals(right.candidate())
+        && left.bindingGeneration().equals(right.bindingGeneration())
+        && Objects.equals(left.expectedOldBindingGeneration(), right.expectedOldBindingGeneration())
+        && Objects.equals(left.resumeEpisodeId(), right.resumeEpisodeId())
+        && left.targetEvidence().equals(right.targetEvidence());
+  }
+
   /**
    * Carries a controlled definitive Account abort through the actual repository after a real
    * PostgreSQL/Redis bridge ACK, then proves exact cleanup retry/read preserves that ACK without
@@ -495,7 +530,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         || !"ACKNOWLEDGED".equals(acknowledgedBefore.get("status", String.class))
         || !bridgeProof
             .acknowledgedInventoryRevision()
-            .equals(new BigInteger(acknowledgedBefore.get("inventory_revision").toString()))
+            .equals(
+                new BigInteger(
+                    Objects.requireNonNull(
+                            acknowledgedBefore.get("inventory_revision"), "original ACK revision")
+                        .toString()))
         || !bridgeProof
             .redisReadbackDigest()
             .equals(acknowledgedBefore.get("redis_readback_digest", String.class))) {
@@ -523,6 +562,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 + " FROM game_session_canonical_binding_region_bridge_obligation"
                 + " WHERE transition_id = ?",
             bridgeProof.transitionId());
+    Objects.requireNonNull(acknowledgedAfter, "retained region ACK row");
     String acknowledgementImageAfter =
         dsl.fetchSingle(
                 "SELECT (to_jsonb(obligation) - 'inventory_revision')::text AS image"
@@ -530,43 +570,76 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                     + " WHERE transition_id = ?",
                 bridgeProof.transitionId())
             .get("image", String.class);
-    if (!aborted.equals(retry)
-        || !aborted.equals(retained)
-        || !aborted.isAccountAborted()
-        || !cleanupId.equals(aborted.orphanCleanupId())
-        || aborted.candidate().lifecycle()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
-                .Lifecycle.TERMINAL_UNRESOLVED
-        || aborted.reservation().lifecycle()
-            != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation
-                .Lifecycle.RELEASE_PENDING
-        || !"ACKNOWLEDGED".equals(acknowledgedAfter.get("status", String.class))
-        || !aborted
-            .transition()
-            .inventoryRevision()
-            .equals(acknowledgedAfter.get("inventory_revision", BigInteger.class))
-        || !bridgeProof
-            .redisReadbackDigest()
-            .equals(acknowledgedAfter.get("redis_readback_digest", String.class))
-        || !bridgeProof
-            .acknowledgedAt()
-            .equals(
-                acknowledgedAfter
-                    .get("acknowledged_at", java.time.OffsetDateTime.class)
-                    .toInstant())
-        || !acknowledgedBefore
-            .get("acknowledged_at", java.time.OffsetDateTime.class)
-            .equals(acknowledgedAfter.get("acknowledged_at", java.time.OffsetDateTime.class))
-        || !acknowledgementImageBefore.equals(acknowledgementImageAfter)
-        || !aborted
-            .transition()
-            .inventoryRevision()
-            .equals(new BigInteger(acknowledgedAfter.get("inventory_revision").toString()))
-        || aborted.transition().status()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
-                .Status.ABORTED) {
+    List<String> abortFailures = new ArrayList<>();
+    if (!sameAbortSource(aborted, retry)) {
+      abortFailures.add("abort retry changed the retained terminal result");
+    }
+    if (!sameAbortSource(aborted, retained)) {
+      abortFailures.add("retained abort read changed the terminal result");
+    }
+    if (!aborted.isAccountAborted()) {
+      abortFailures.add("the original Account abort is not retained");
+    }
+    if (!cleanupId.equals(aborted.orphanCleanupId())) {
+      abortFailures.add("the abort changed its exact orphan cleanup identity");
+    }
+    if (aborted.candidate().lifecycle()
+        != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+            .Lifecycle.TERMINAL_UNRESOLVED) {
+      abortFailures.add("the aborted candidate is not TERMINAL_UNRESOLVED");
+    }
+    if (aborted.reservation().lifecycle()
+        != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation.Lifecycle
+            .RELEASE_PENDING) {
+      abortFailures.add("the aborted reservation is not RELEASE_PENDING");
+    }
+    if (!"ACKNOWLEDGED".equals(acknowledgedAfter.get("status", String.class))) {
+      abortFailures.add("the retained region ACK status changed");
+    }
+    if (!aborted
+        .transition()
+        .inventoryRevision()
+        .equals(acknowledgedAfter.get("inventory_revision", BigInteger.class))) {
+      abortFailures.add("the retained region ACK revision differs from the aborted transition");
+    }
+    if (!bridgeProof
+        .redisReadbackDigest()
+        .equals(acknowledgedAfter.get("redis_readback_digest", String.class))) {
+      abortFailures.add("the retained region ACK Redis readback digest changed");
+    }
+    Instant persistedAcknowledgedAt = bridgeProof.acknowledgedAt().truncatedTo(ChronoUnit.MICROS);
+    if (!persistedAcknowledgedAt.equals(
+        acknowledgedAfter.get("acknowledged_at", java.time.OffsetDateTime.class).toInstant())) {
+      abortFailures.add(
+          "the retained region ACK timestamp changed after SQL precision normalization");
+    }
+    if (!acknowledgedBefore
+        .get("acknowledged_at", java.time.OffsetDateTime.class)
+        .equals(acknowledgedAfter.get("acknowledged_at", java.time.OffsetDateTime.class))) {
+      abortFailures.add("the region ACK timestamp changed across the Account abort");
+    }
+    if (!acknowledgementImageBefore.equals(acknowledgementImageAfter)) {
+      abortFailures.add("the retained region ACK row image changed");
+    }
+    if (!aborted
+        .transition()
+        .inventoryRevision()
+        .equals(
+            new BigInteger(
+                Objects.requireNonNull(
+                        acknowledgedAfter.get("inventory_revision"), "retained ACK revision")
+                    .toString()))) {
+      abortFailures.add(
+          "the retained region ACK revision changed in its SQL numeric representation");
+    }
+    if (aborted.transition().status()
+        != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
+            .Status.ABORTED) {
+      abortFailures.add("the aborted transition does not remain ABORTED");
+    }
+    if (!abortFailures.isEmpty()) {
       throw new IllegalStateException(
-          "Definitive Account abort changed region ACK evidence or claimed admission/cleanup");
+          "Definitive Account abort composition failed: " + String.join("; ", abortFailures));
     }
     return new AccountAbortProof(
         bridgeProof.transitionId(),
@@ -904,6 +977,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       Instant acknowledgedAt,
       boolean exactLostReplyRetry) {}
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The generated Protocol Buffers request is immutable")
   public record SecondBinding(
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalPlayableTarget currentTarget,

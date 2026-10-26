@@ -3493,17 +3493,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .setResultDigest("e".repeat(64))
             .build();
     var secondLifecycle =
-        firstResolvedRegion
-            .observation()
-            .getLifecycle()
-            .toBuilder()
+        firstResolvedRegion.observation().getLifecycle().toBuilder()
             .setCanonicalRequestBytes(
                 com.google.protobuf.ByteString.copyFrom(secondLifecycleRequest.canonicalBytes()))
             .build();
     var secondObservation =
-        firstResolvedRegion
-            .observation()
-            .toBuilder()
+        firstResolvedRegion.observation().toBuilder()
             .setPlacementResult(secondPlacement)
             .setLifecycle(secondLifecycle)
             .build();
@@ -3518,8 +3513,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var lifecycleClient = Mockito.mock(WorldCanonicalInstanceLifecycleClient.class);
     Mockito.doAnswer(
             invocation -> {
-              WorldCanonicalInstanceLifecycleEvidence.Request request =
-                  invocation.getArgument(0);
+              WorldCanonicalInstanceLifecycleEvidence.Request request = invocation.getArgument(0);
               if (secondLifecycleRequest.equals(request)) return secondLifecycleEvidence;
               return actualLifecycleClient.read(request);
             })
@@ -3527,8 +3521,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         .read(Mockito.any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
     var secondWorldRegionResolver =
         new CanonicalInitialPlayerLocationRegionResolver(
-            initialLocationClient,
-            new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
+            initialLocationClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
 
     var entityReferenceClient = Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.class);
     var runtimeReference =
@@ -3551,8 +3544,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     when(runtimeReference.playableStateNamespaceId())
         .thenReturn(currentTarget.playableStateNamespaceId());
     when(runtimeReference.target()).thenReturn(toWire(assignmentTarget));
-    when(runtimeReference.publishedOwnerProofDigest())
-        .thenReturn(currentTarget.ownerProofDigest());
+    when(runtimeReference.publishedOwnerProofDigest()).thenReturn(currentTarget.ownerProofDigest());
     when(runtimeReference.corePayload())
         .thenReturn(
             net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
