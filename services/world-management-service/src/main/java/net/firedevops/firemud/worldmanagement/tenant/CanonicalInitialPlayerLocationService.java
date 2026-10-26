@@ -129,6 +129,26 @@ public final class CanonicalInitialPlayerLocationService {
     return retained;
   }
 
+  /**
+   * Reads a fresh initial-room region consequence after revalidating the immutable Entity receipt.
+   * The repository performs the retained placement, current location, topology, and ACTIVE
+   * lifecycle checks together in one read-only owner snapshot.
+   */
+  public Optional<WorldCanonicalInitialPlayerLocationRepository.RegionResult> readRegion(
+      CanonicalInitialPlayerLocationGrpcCodec.Selection selection) {
+    Objects.requireNonNull(selection, "selection");
+    requireNoAmbientTransaction("World initial-player location region read");
+    RequestSelector selector = requestSelector(selection);
+    Optional<Result> retained =
+        locationRepository.readByOperationId(selection.placementOperationId(), selector);
+    if (retained.isEmpty()) return Optional.empty();
+    if (retained.orElseThrow().outcome() != Outcome.APPLIED) {
+      throw failedPrecondition("Initial-player region resolution requires an APPLIED placement");
+    }
+    requireExactEntityReceipt(selection);
+    return locationRepository.readInitialPlayerLocationRegion(selector);
+  }
+
   private ReadPreseededActorAssignmentReceiptResponse requireExactEntityReceipt(
       CanonicalInitialPlayerLocationGrpcCodec.Selection selection) {
     // This is Entity's immutable historical assignment receipt, not current Account authority or

@@ -81,6 +81,16 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
       current.validate();
       assertThat(current.info().pending()).isEmpty();
 
+      // Plan the actual production join without inventing an ACTIVE owner or placement. This
+      // checks current-schema column references only; positive region/placement proof stays open.
+      var queryField =
+          WorldCanonicalInitialPlayerLocationRepository.class.getDeclaredField(
+              "INITIAL_REGION_MAPPING_SQL");
+      queryField.setAccessible(true);
+      String regionMappingSql = java.util.Objects.requireNonNull((String) queryField.get(null));
+      Object[] unboundSelectors = new Object[15];
+      assertThat(dsl.fetch("EXPLAIN " + regionMappingSql, unboundSelectors)).isNotEmpty();
+
       var associationRepository =
           new WorldCanonicalInstanceAssociationRepository(
               dsl,
@@ -114,6 +124,8 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
       assertThat(replay).isEqualTo(first);
       assertThat(repository.read(request)).isEmpty();
       assertThat(repository.readByOperationId(request.operationId(), selector(request, lifecycle)))
+          .isEmpty();
+      assertThat(repository.readInitialPlayerLocationRegion(selector(request, lifecycle)))
           .isEmpty();
 
       var downgradedTransactionManager =

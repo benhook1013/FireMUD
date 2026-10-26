@@ -1,12 +1,18 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import com.google.protobuf.ByteString;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.RegionResult;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationLifecycleConsequence;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRoom;
@@ -15,6 +21,9 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 final class CanonicalInitialPlayerLocationGrpcCodec {
   static final int SCHEMA_VERSION = 1;
   static final int MAX_REQUEST_BYTES = 16 * 1024;
+  static final int MAX_REGION_REQUEST_BYTES = 16 * 1024;
+  static final int MAX_REGION_RESPONSE_BYTES = 8 * 1024;
+  static final int MAX_LIFECYCLE_REQUEST_BYTES = 4 * 1024;
   private static final int MAX_RELEASE_REF_LENGTH = 128;
   private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern PREFIXED_SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
@@ -22,8 +31,17 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
   private CanonicalInitialPlayerLocationGrpcCodec() {}
 
   static Selection fromRequest(CanonicalInitialPlayerLocationRequest request) {
+    return fromRequest(request, MAX_REQUEST_BYTES);
+  }
+
+  static Selection fromRegionRequest(CanonicalInitialPlayerLocationRequest request) {
+    return fromRequest(request, MAX_REGION_REQUEST_BYTES);
+  }
+
+  private static Selection fromRequest(
+      CanonicalInitialPlayerLocationRequest request, int maximumRequestBytes) {
     if (request == null
-        || request.getSerializedSize() > MAX_REQUEST_BYTES
+        || request.getSerializedSize() > maximumRequestBytes
         || request.getSchemaVersion() != SCHEMA_VERSION
         || !request.getUnknownFields().asMap().isEmpty()
         || !request.hasExpectedTarget()
@@ -154,6 +172,73 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
     return response.build();
   }
 
+  static CanonicalInitialPlayerLocationRegionResponse toRegionResponse(
+      Selection selection, RegionResult result) {
+    Objects.requireNonNull(selection, "selection");
+    Objects.requireNonNull(result, "result");
+    var placement = toResponse(selection, result.placementResult());
+    var lifecycle = result.lifecycleEvidence();
+    WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest = lifecycle.request();
+    byte[] lifecycleRequestBytes = lifecycleRequest.canonicalBytes();
+    long placementRoomKey;
+    try {
+      placementRoomKey = Long.parseLong(placement.getPrivateRuntimeRoomKey());
+    } catch (NumberFormatException invalid) {
+      throw new IllegalStateException("Applied placement has an invalid private room key", invalid);
+    }
+    if (placement.getOutcome()
+            != CanonicalInitialPlayerLocationOutcome
+                .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED
+        || placementRoomKey != result.runtimeRoomInstanceKey()
+        || result.lifecycleEvidence().runtimeRoomInstanceId() != result.runtimeRoomInstanceKey()
+        || !result.placementResult().startLocation().equals(lifecycle.startLocation())
+        || !"ACTIVE".equals(lifecycle.lifecycleStatus())
+        || lifecycle.lifecycleEpoch() != selection.activeLifecycleEpoch()
+        || !lifecycleRequest.canonicalTenantId().equals(selection.canonicalTenantId())
+        || !lifecycleRequest.readRequestId().equals(lifecycleReadRequestId(selection))
+        || !lifecycleRequest.canonicalGameInstanceId().equals(selection.canonicalGameInstanceId())
+        || !lifecycleRequest.playableStateNamespaceId().equals(selection.playableStateNamespaceId())
+        || !lifecycleRequest.playableStateScope().equals(selection.playableStateScope())
+        || !lifecycleRequest.worldSlug().equals(selection.worldSlug())
+        || !lifecycleRequest.canonicalVersionId().equals(selection.canonicalVersionId())
+        || !lifecycleRequest.publicProduction()
+        || lifecycleRequestBytes.length > MAX_LIFECYCLE_REQUEST_BYTES
+        || result.canonicalRegionInstanceId().equals(new UUID(0L, 0L))
+        || result.operationalRegionId().equals(new UUID(0L, 0L))
+        || !result
+            .operationalRegionId()
+            .equals(
+                lifecycle.operationalRegionAssignments().get(result.canonicalRegionInstanceId()))) {
+      throw new IllegalStateException(
+          "Current World initial-location region evidence differs from the retained target or room");
+    }
+    var consequence =
+        CanonicalInitialPlayerLocationLifecycleConsequence.newBuilder()
+            .setCanonicalRequestBytes(ByteString.copyFrom(lifecycleRequestBytes))
+            .setLifecycleStatus(lifecycle.lifecycleStatus())
+            .setLifecycleEpoch(lifecycle.lifecycleEpoch())
+            .setRowVersion(lifecycle.rowVersion())
+            .setCaptureUuid(lifecycle.captureId().toString())
+            .setGraphSha256(lifecycle.graphSha256())
+            .setPreparationInputDigest(lifecycle.preparationInputDigest())
+            .build();
+    var response =
+        CanonicalInitialPlayerLocationRegionResponse.newBuilder()
+            .setSchemaVersion(SCHEMA_VERSION)
+            .setPlacementResult(placement)
+            .setExpectedTarget(selection.expectedTarget())
+            .setCanonicalRegionInstanceUuid(result.canonicalRegionInstanceId().toString())
+            .setOperationalRegionUuid(result.operationalRegionId().toString())
+            .setPrivateWorldInstanceKey(result.privateWorldInstanceKey())
+            .setObservedRuntimeRoomKey(result.runtimeRoomInstanceKey())
+            .setLifecycle(consequence)
+            .build();
+    if (response.getSerializedSize() > MAX_REGION_RESPONSE_BYTES) {
+      throw new IllegalStateException("World initial-location region response exceeds its bound");
+    }
+    return response;
+  }
+
   private static UUID uuid(String value, String field) {
     try {
       UUID parsed = UUID.fromString(value);
@@ -164,6 +249,13 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
     } catch (IllegalArgumentException invalid) {
       throw invalid(field + " must be canonical non-nil UUID text", invalid);
     }
+  }
+
+  private static UUID lifecycleReadRequestId(Selection selection) {
+    byte[] name =
+        ("firemud-world-initial-location-lifecycle-read/v1/" + selection.placementOperationId())
+            .getBytes(StandardCharsets.US_ASCII);
+    return UUID.nameUUIDFromBytes(name);
   }
 
   private static String rawDigest(String value, String field) {

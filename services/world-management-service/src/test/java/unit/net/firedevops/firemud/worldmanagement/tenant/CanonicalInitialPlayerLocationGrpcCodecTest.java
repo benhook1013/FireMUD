@@ -2,13 +2,18 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.UnknownFieldSet;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.RegionResult;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
@@ -178,6 +183,74 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
                     new Result(
                         Outcome.UNREGISTERED, null, null, null, null, null, null, null, false)))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void emitsFreshRegionConsequenceOutsideTheImmutablePlacementResult() {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
+    var start = new RoomTemplateRef(TENANT, VERSION, uuid("12121212-1212-4212-8212-121212121212"));
+    var placement =
+        new Result(
+            Outcome.APPLIED,
+            null,
+            start,
+            917L,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    UUID canonicalRegion = uuid("13131313-1313-4313-8313-131313131313");
+    UUID operationalRegion = uuid("14141414-1414-4414-8414-141414141414");
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            UUID.nameUUIDFromBytes(
+                ("firemud-world-initial-location-lifecycle-read/v1/"
+                        + selection.placementOperationId())
+                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII)),
+            "world-management",
+            TENANT,
+            selection.worldSlug(),
+            GAME_INSTANCE,
+            NAMESPACE,
+            "SHARED",
+            true,
+            "control-plane-17",
+            VERSION,
+            "sha256:" + "c".repeat(64),
+            "sha256:" + "d".repeat(64),
+            "sha256:" + "e".repeat(64));
+    var lifecycle = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+    when(lifecycle.request()).thenReturn(lifecycleRequest);
+    when(lifecycle.startLocation()).thenReturn(start);
+    when(lifecycle.runtimeRoomInstanceId()).thenReturn(917L);
+    when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
+    when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch());
+    when(lifecycle.rowVersion()).thenReturn(9L);
+    when(lifecycle.captureId()).thenReturn(uuid("16161616-1616-4616-8616-161616161616"));
+    when(lifecycle.graphSha256()).thenReturn("f".repeat(64));
+    when(lifecycle.preparationInputDigest()).thenReturn("sha256:" + "1".repeat(64));
+    when(lifecycle.operationalRegionAssignments())
+        .thenReturn(Map.of(canonicalRegion, operationalRegion));
+
+    var response =
+        CanonicalInitialPlayerLocationGrpcCodec.toRegionResponse(
+            selection,
+            new RegionResult(placement, 4L, 917L, canonicalRegion, operationalRegion, lifecycle));
+
+    assertThat(response.getPlacementResult().getRequestDigest())
+        .isEqualTo(placement.requestDigest());
+    assertThat(response.getPlacementResult().getResultDigest()).isEqualTo(placement.resultDigest());
+    assertThat(response.getExpectedTarget()).isEqualTo(selection.expectedTarget());
+    assertThat(response.getCanonicalRegionInstanceUuid()).isEqualTo(canonicalRegion.toString());
+    assertThat(response.getOperationalRegionUuid()).isEqualTo(operationalRegion.toString());
+    assertThat(response.getObservedRuntimeRoomKey()).isEqualTo(917L);
+    assertThat(response.getPrivateWorldInstanceKey()).isEqualTo(4L);
+    assertThat(response.getLifecycle().getCanonicalRequestBytes().toByteArray())
+        .containsExactly(lifecycleRequest.canonicalBytes());
+    assertThat(response.getSerializedSize())
+        .isLessThanOrEqualTo(CanonicalInitialPlayerLocationGrpcCodec.MAX_REGION_RESPONSE_BYTES);
   }
 
   private static void assertInvalid(CanonicalInitialPlayerLocationRequest request) {

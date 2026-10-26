@@ -91,6 +91,7 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         .thenThrow(upstreamFailure)
         .thenThrow(Status.NOT_FOUND.withDescription("secret Entity absence").asRuntimeException());
     when(service.read(any())).thenReturn(Optional.of(retained), Optional.empty());
+    when(service.readRegion(any())).thenReturn(Optional.empty());
     Server server = startServer(pki, service);
     try {
       ManagedChannel channel = channel(pki, "game-session", server.getPort());
@@ -108,6 +109,12 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         var read = stub.readInitialPlayerLocation(request);
         assertThat(read).isEqualTo(placed);
         assertThatThrownBy(() -> stub.readInitialPlayerLocation(request))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+        assertThatThrownBy(() -> stub.readInitialPlayerLocationRegion(request))
             .isInstanceOf(StatusRuntimeException.class)
             .satisfies(
                 failure ->
@@ -143,6 +150,8 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
             .place(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request));
         verify(service, times(2))
             .read(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request));
+        verify(service)
+            .readRegion(CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request));
 
         assertThatThrownBy(
                 () ->
@@ -163,11 +172,14 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
           var stub =
               CanonicalInitialPlayerLocationServiceGrpc.newBlockingStub(rejectedPeerChannel)
                   .withDeadlineAfter(10, TimeUnit.SECONDS);
-          for (boolean read : new boolean[] {false, true}) {
+          for (int method : new int[] {0, 1, 2}) {
             assertThatThrownBy(
                     () -> {
-                      if (read) stub.readInitialPlayerLocation(request());
-                      else stub.placeInitialPlayer(request());
+                      switch (method) {
+                        case 0 -> stub.placeInitialPlayer(request());
+                        case 1 -> stub.readInitialPlayerLocation(request());
+                        default -> stub.readInitialPlayerLocationRegion(request());
+                      }
                     })
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(

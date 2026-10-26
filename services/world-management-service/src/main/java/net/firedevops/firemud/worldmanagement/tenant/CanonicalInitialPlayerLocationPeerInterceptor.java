@@ -11,12 +11,14 @@ import io.grpc.Status;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 
-/** Exact same-namespace Game Session certificate guard for the two initial-location RPCs. */
+/** Exact same-namespace Game Session certificate guard for initial-location owner RPCs. */
 public final class CanonicalInitialPlayerLocationPeerInterceptor implements ServerInterceptor {
   public static final String PLACE_METHOD_NAME =
       "world_management.v1.CanonicalInitialPlayerLocationService/PlaceInitialPlayer";
   public static final String READ_METHOD_NAME =
       "world_management.v1.CanonicalInitialPlayerLocationService/ReadInitialPlayerLocation";
+  public static final String READ_REGION_METHOD_NAME =
+      "world_management.v1.CanonicalInitialPlayerLocationService/ReadInitialPlayerLocationRegion";
   private static final Context.Key<GrpcPeerIdentity> VERIFIED_GAME_SESSION_PEER =
       Context.key("firemud-canonical-initial-player-location-peer");
 
@@ -34,7 +36,9 @@ public final class CanonicalInitialPlayerLocationPeerInterceptor implements Serv
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     String methodName = call.getMethodDescriptor().getFullMethodName();
-    if (!PLACE_METHOD_NAME.equals(methodName) && !READ_METHOD_NAME.equals(methodName)) {
+    if (!PLACE_METHOD_NAME.equals(methodName)
+        && !READ_METHOD_NAME.equals(methodName)
+        && !READ_REGION_METHOD_NAME.equals(methodName)) {
       return next.startCall(call, headers);
     }
 

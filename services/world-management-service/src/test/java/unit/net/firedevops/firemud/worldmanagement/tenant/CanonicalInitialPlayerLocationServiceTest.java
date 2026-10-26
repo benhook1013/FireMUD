@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -139,6 +140,54 @@ class CanonicalInitialPlayerLocationServiceTest {
     assertThat(service.read(selection)).contains(retained);
     assertThat(entityReads.get()).isEqualTo(1);
     verifyNoInteractions(associations, holds, gameSession);
+  }
+
+  @Test
+  void regionReadRequiresRetainedAppliedPlacementAndFreshExactEntityReceipt() {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
+    var placement =
+        new Result(
+            Outcome.APPLIED,
+            null,
+            new RoomTemplateRef(TENANT, VERSION, uuid("abababab-abab-4bab-8bab-abababababab")),
+            9182L,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var location = mock(WorldCanonicalInitialPlayerLocationRepository.class);
+    when(location.readByOperationId(
+            eq(selection.placementOperationId()), any(RequestSelector.class)))
+        .thenReturn(Optional.of(placement));
+    UUID canonicalRegion = uuid("abababab-abab-4bab-8bab-abababababac");
+    UUID operationalRegion = uuid("abababab-abab-4bab-8bab-abababababaf");
+    var lifecycle = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+    when(lifecycle.operationalRegionAssignments())
+        .thenReturn(Map.of(canonicalRegion, operationalRegion));
+    var region =
+        new WorldCanonicalInitialPlayerLocationRepository.RegionResult(
+            placement, 77L, 9182L, canonicalRegion, operationalRegion, lifecycle);
+    when(location.readInitialPlayerLocationRegion(any(RequestSelector.class)))
+        .thenReturn(Optional.of(region));
+    var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var entityReads = new AtomicInteger();
+    var service =
+        service(
+            selection,
+            location,
+            holds,
+            gameSession,
+            ignored -> {
+              entityReads.incrementAndGet();
+              return entityReceipt(selection);
+            });
+
+    assertThat(service.readRegion(selection)).contains(region);
+    assertThat(entityReads.get()).isEqualTo(1);
+    verify(location).readInitialPlayerLocationRegion(any(RequestSelector.class));
+    verifyNoInteractions(holds, gameSession);
   }
 
   @Test
