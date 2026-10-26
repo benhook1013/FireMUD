@@ -3388,15 +3388,28 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   .isEqualTo(currentTarget.activeWorldEpoch());
               assertThat(worldRegion.operationalRegionId()).isNotEqualTo(new UUID(0L, 0L));
 
-              var regionProof =
-                  CanonicalGameplayRegionOwnerCompositionFixture.installAndBridge(
+              var secondBinding =
+                  controlledSecondBinding(
+                      placementRequest,
+                      currentTarget,
+                      assignmentTarget,
+                      initialLocationClient,
+                      lifecycleClient,
+                      runtimeReferenceClient,
+                      lifecycleClient.read(worldRegion.lifecycleAssignment().request()),
+                      worldRegion);
+              var regionProofs =
+                  CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeTwoCandidates(
                       gs.dsl(),
                       REDIS.getHost(),
                       REDIS.getMappedPort(6379),
                       placementRequest,
                       currentTarget,
-                      regionResolver,
-                      runtimeReferenceClient);
+                      secondBinding.worldRegionResolver(),
+                      runtimeReferenceClient,
+                      secondBinding);
+              var regionProof = regionProofs.first();
+              var secondRegionProof = regionProofs.second();
               assertThat(regionProof.operationalRegionId())
                   .isEqualTo(worldRegion.operationalRegionId());
               assertThat(regionProof.canonicalRegionId())
@@ -3414,6 +3427,27 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               assertThat(regionProof.acknowledgedInventoryRevision()).isPositive();
               assertThat(regionProof.acknowledgedAt()).isNotNull();
               assertThat(regionProof.exactLostReplyRetry()).isTrue();
+              assertThat(secondRegionProof).isNotNull();
+              assertThat(secondRegionProof.transitionId()).isNotEqualTo(regionProof.transitionId());
+              assertThat(secondRegionProof.bridgeOperationId())
+                  .isNotEqualTo(regionProof.bridgeOperationId());
+              assertThat(secondRegionProof.redisReadbackDigest())
+                  .isNotEqualTo(regionProof.redisReadbackDigest());
+              assertThat(secondRegionProof.exactLostReplyRetry()).isTrue();
+              assertThat(regionProofs.firstAbort().exactAcknowledgementRetained()).isTrue();
+              assertThat(regionProofs.firstAbort().acknowledgedRevision())
+                  .isEqualTo(regionProof.acknowledgedInventoryRevision());
+              assertThat(regionProofs.firstAbort().abortRevision())
+                  .isGreaterThan(regionProofs.firstAbort().acknowledgedRevision());
+              assertThat(regionProofs.firstAbort().candidateLifecycle())
+                  .isEqualTo("TERMINAL_UNRESOLVED");
+              assertThat(regionProofs.firstAbort().reservationLifecycle())
+                  .isEqualTo("RELEASE_PENDING");
+              assertThat(regionProofs.firstTimelineUnchanged()).isTrue();
+              assertThat(regionProofs.initialMetaUnchanged()).isTrue();
+              assertThat(regionProofs.regionLeaseStillLive()).isTrue();
+              assertThat(regionProofs.foreignOwnerCapabilityRejectedWithoutStateChange()).isTrue();
+              assertThat(regionProofs.expiredGrantRejectedWithoutStateChange()).isTrue();
             }
           } finally {
             shutdown(worldLocationServer);
@@ -3452,6 +3486,166 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         .setCommittedPointerVersion(currentTarget.pointerVersion())
         .setAuditEventId(currentTarget.auditEventId())
         .build();
+  }
+
+  private static CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding
+      controlledSecondBinding(
+          CanonicalInitialPlayerLocationRequest firstRequest,
+          CanonicalPlayableTarget currentTarget,
+          PreseededActorAssignmentExpectedTarget assignmentTarget,
+          CanonicalInitialPlayerLocationClient actualInitialLocationClient,
+          WorldCanonicalInstanceLifecycleClient actualLifecycleClient,
+          CanonicalPreseededActorRuntimeReferenceClient actualEntityReferenceClient,
+          WorldCanonicalInstanceLifecycleEvidence firstLifecycleEvidence,
+          CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion firstResolvedRegion) {
+    UUID placementOperationId = UUID.randomUUID();
+    UUID assignmentId = UUID.randomUUID();
+    UUID characterId = UUID.randomUUID();
+    CanonicalInitialPlayerLocationRequest secondRequest =
+        firstRequest.toBuilder()
+            .setPlacementOperationUuid(placementOperationId.toString())
+            .setAssignmentUuid(assignmentId.toString())
+            .setCharacterUuid(characterId.toString())
+            .setAssignmentIntentDigest("c".repeat(64))
+            .build();
+    var originalLifecycleRequest = firstLifecycleEvidence.request();
+    var secondLifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            originalLifecycleRequest.schemaVersion(),
+            worldInitialLocationLifecycleReadId(placementOperationId),
+            originalLifecycleRequest.targetNamespace(),
+            originalLifecycleRequest.canonicalTenantId(),
+            originalLifecycleRequest.worldSlug(),
+            originalLifecycleRequest.canonicalGameInstanceId(),
+            originalLifecycleRequest.playableStateNamespaceId(),
+            originalLifecycleRequest.playableStateScope(),
+            originalLifecycleRequest.publicProduction(),
+            originalLifecycleRequest.controlPlaneRequestId(),
+            originalLifecycleRequest.canonicalVersionId(),
+            originalLifecycleRequest.expectedDescriptorRequestDigest(),
+            originalLifecycleRequest.expectedDescriptorResultDigest(),
+            originalLifecycleRequest.expectedReleaseAttestationDigest());
+    var secondLifecycleEvidence =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            secondLifecycleRequest,
+            firstLifecycleEvidence.launchBinding(),
+            firstLifecycleEvidence.startLocation(),
+            firstLifecycleEvidence.runtimeRoomInstanceId(),
+            firstLifecycleEvidence.lifecycleStatus(),
+            firstLifecycleEvidence.lifecycleEpoch(),
+            firstLifecycleEvidence.rowVersion(),
+            firstLifecycleEvidence.captureId(),
+            firstLifecycleEvidence.graphSha256(),
+            firstLifecycleEvidence.preparationInputDigest(),
+            firstLifecycleEvidence.operationalRegionAssignments());
+
+    var initialLocationClient = Mockito.mock(CanonicalInitialPlayerLocationClient.class);
+    var originalPlacement = firstResolvedRegion.observation().getPlacementResult();
+    var secondPlacement =
+        originalPlacement.toBuilder()
+            .setPlacementOperationUuid(secondRequest.getPlacementOperationUuid())
+            .setCanonicalAccountUuid(secondRequest.getCanonicalAccountUuid())
+            .setCharacterUuid(secondRequest.getCharacterUuid())
+            .setAssignmentUuid(secondRequest.getAssignmentUuid())
+            .setAssignmentIntentDigest(secondRequest.getAssignmentIntentDigest())
+            .setRequestDigest("d".repeat(64))
+            .setResultDigest("e".repeat(64))
+            .build();
+    var secondLifecycle =
+        firstResolvedRegion
+            .observation()
+            .getLifecycle()
+            .toBuilder()
+            .setCanonicalRequestBytes(
+                com.google.protobuf.ByteString.copyFrom(secondLifecycleRequest.canonicalBytes()))
+            .build();
+    var secondObservation =
+        firstResolvedRegion
+            .observation()
+            .toBuilder()
+            .setPlacementResult(secondPlacement)
+            .setLifecycle(secondLifecycle)
+            .build();
+    Mockito.doAnswer(
+            invocation -> {
+              CanonicalInitialPlayerLocationRequest request = invocation.getArgument(0);
+              if (secondRequest.equals(request)) return secondObservation;
+              return actualInitialLocationClient.readInitialPlayerLocationRegion(request);
+            })
+        .when(initialLocationClient)
+        .readInitialPlayerLocationRegion(Mockito.any(CanonicalInitialPlayerLocationRequest.class));
+    var lifecycleClient = Mockito.mock(WorldCanonicalInstanceLifecycleClient.class);
+    Mockito.doAnswer(
+            invocation -> {
+              WorldCanonicalInstanceLifecycleEvidence.Request request =
+                  invocation.getArgument(0);
+              if (secondLifecycleRequest.equals(request)) return secondLifecycleEvidence;
+              return actualLifecycleClient.read(request);
+            })
+        .when(lifecycleClient)
+        .read(Mockito.any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
+    var secondWorldRegionResolver =
+        new CanonicalInitialPlayerLocationRegionResolver(
+            initialLocationClient,
+            new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
+
+    var entityReferenceClient = Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.class);
+    var runtimeReference =
+        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference.class);
+    var runtimeEntityId =
+        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId.class);
+    when(runtimeEntityId.tenantId()).thenReturn(currentTarget.canonicalTenantId());
+    when(runtimeEntityId.gameInstanceId())
+        .thenReturn(currentTarget.canonicalGameInstanceId().toString());
+    when(runtimeEntityId.value()).thenReturn(900_002L);
+    when(runtimeReference.workloadNamespace()).thenReturn(currentTarget.targetNamespace());
+    when(runtimeReference.runtimeEntityId()).thenReturn(runtimeEntityId);
+    when(runtimeReference.projectionGeneration()).thenReturn(2L);
+    when(runtimeReference.projectionFence()).thenReturn(2L);
+    when(runtimeReference.assignmentUuid()).thenReturn(assignmentId);
+    when(runtimeReference.canonicalAccountUuid())
+        .thenReturn(UUID.fromString(secondRequest.getCanonicalAccountUuid()));
+    when(runtimeReference.characterUuid()).thenReturn(characterId);
+    when(runtimeReference.intentDigest()).thenReturn(secondRequest.getAssignmentIntentDigest());
+    when(runtimeReference.playableStateNamespaceId())
+        .thenReturn(currentTarget.playableStateNamespaceId());
+    when(runtimeReference.target()).thenReturn(toWire(assignmentTarget));
+    when(runtimeReference.publishedOwnerProofDigest())
+        .thenReturn(currentTarget.ownerProofDigest());
+    when(runtimeReference.corePayload())
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
+                .newBuilder()
+                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                .setDisplayName("Controlled Second Region Player")
+                .build());
+    var secondEntityReferenceSelector =
+        ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(secondRequest.getAssignmentUuid())
+            .setCanonicalAccountUuid(secondRequest.getCanonicalAccountUuid())
+            .setExpectedTarget(secondRequest.getExpectedTarget())
+            .setCharacterUuid(secondRequest.getCharacterUuid())
+            .setIntentDigest(secondRequest.getAssignmentIntentDigest())
+            .build();
+    Mockito.doAnswer(
+            invocation -> {
+              ReadPreseededActorRuntimeReferenceRequest request = invocation.getArgument(0);
+              if (secondEntityReferenceSelector.equals(request)) {
+                return runtimeReference;
+              }
+              return actualEntityReferenceClient.read(request);
+            })
+        .when(entityReferenceClient)
+        .read(Mockito.any(ReadPreseededActorRuntimeReferenceRequest.class));
+    return new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
+        secondRequest, currentTarget, secondWorldRegionResolver, entityReferenceClient);
+  }
+
+  private static UUID worldInitialLocationLifecycleReadId(UUID placementOperationId) {
+    return UUID.nameUUIDFromBytes(
+        ("firemud-world-initial-location-lifecycle-read/v1/" + placementOperationId)
+            .getBytes(StandardCharsets.US_ASCII));
   }
 
   private static AssignPreseededActorRequest toWire(PreseededActorAssignmentRequest request) {
