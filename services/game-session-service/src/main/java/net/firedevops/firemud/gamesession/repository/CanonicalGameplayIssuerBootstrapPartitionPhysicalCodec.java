@@ -250,6 +250,15 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
           plan.memberWorks().get(Math.toIntExact(operation.workOrdinal()));
       var reservation = value.reservation();
       var memberRef = value.owner().bindingRef();
+      var bindingLifecycle = operation.bindingLifecycle();
+      boolean lifecycleHasBinding =
+          bindingLifecycle
+                  == net.firedevops.firemud.gamesession.binding
+                      .CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE
+              || bindingLifecycle
+                  == net.firedevops.firemud.gamesession.binding
+                      .CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL;
+      boolean hasBindingSourceRow = planned.bindingSourceRowOrdinal() != null;
       if (operation.status()
               != CanonicalGameplayIssuerBootstrapMemberOperation.Status.PENDING_PHYSICAL_PROOF
           || !operation.bootstrapOperationId().equals(intent.operationId())
@@ -305,7 +314,8 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
               != (value.reservation().lifecycle()
                   != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation
                       .Lifecycle.RELEASED)
-          || operation.expectedBindingPresent() != (planned.bindingSourceRowOrdinal() != null)) {
+          || operation.expectedBindingPresent() != lifecycleHasBinding
+          || (bindingLifecycle == null) != !hasBindingSourceRow) {
         throw invalid("SQL-issued member differs from the complete frozen preparation tuple");
       }
     }

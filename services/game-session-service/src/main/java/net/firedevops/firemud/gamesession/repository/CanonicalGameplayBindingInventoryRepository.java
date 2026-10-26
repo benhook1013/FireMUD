@@ -888,6 +888,22 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   /**
+   * Reads only an already recorded definitive first-NEW Account abort for issuer cleanup. Its
+   * original transition, candidate, reservation, and cleanup identity remain authoritative; a later
+   * mutable Account-control value does not rewrite that retained terminal provenance.
+   */
+  CanonicalGameplayAdmissionAbortSource readRetainedDefinitiveFirstNewAccountAbortSource(
+      UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return loadFirstNewAdmissionAbortSource(transaction, transitionId, false, true);
+        });
+  }
+
+  /**
    * Read-only package seam for the local issuer release owner inside its guarded SQL transaction.
    */
   static CanonicalGameplayAdmissionAbortSource readFirstNewAdmissionAbortSourceInTransaction(
@@ -895,6 +911,15 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Objects.requireNonNull(transaction, "transaction");
     Objects.requireNonNull(transitionId, "transitionId");
     return loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate);
+  }
+
+  /** Read-only/update-locked seam for exact retained terminal cleanup inside the caller's SQL. */
+  static CanonicalGameplayAdmissionAbortSource
+      readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
+          DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    Objects.requireNonNull(transaction, "transaction");
+    Objects.requireNonNull(transitionId, "transitionId");
+    return loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate, true);
   }
 
   /**
@@ -2136,6 +2161,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   private static CanonicalGameplayAdmissionAbortSource loadFirstNewAdmissionAbortSource(
       DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    return loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate, false);
+  }
+
+  private static CanonicalGameplayAdmissionAbortSource loadFirstNewAdmissionAbortSource(
+      DSLContext transaction,
+      UUID transitionId,
+      boolean forUpdate,
+      boolean retainedDefinitiveAbortCleanup) {
     String lock = forUpdate ? " FOR UPDATE" : "";
     Record transition =
         transaction.fetchOne(
@@ -2207,7 +2240,12 @@ public final class CanonicalGameplayBindingInventoryRepository {
       throw conflict("First-NEW transition changed its complete Account lease evidence");
     }
 
-    if (forUpdate) {
+    if (retainedDefinitiveAbortCleanup) {
+      if (!source.isAccountAborted() || source.orphanCleanupId() == null) {
+        throw conflict(
+            "Issuer cleanup requires the exact retained definitive first-NEW Account abort");
+      }
+    } else if (forUpdate) {
       requireAccountCoverageEvidenceCurrent(
           transaction,
           candidate.identity().accountId(),
@@ -4322,7 +4360,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         toAccountCoverageEvidence(row, identity.accountId()));
   }
 
-  private static CanonicalGameplayAccountCoverageEvidence toAccountCoverageEvidence(
+  static CanonicalGameplayAccountCoverageEvidence toAccountCoverageEvidence(
       Record row, UUID accountId) {
     String state = row.get("account_coverage_state", String.class);
     if ("NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(state)) {

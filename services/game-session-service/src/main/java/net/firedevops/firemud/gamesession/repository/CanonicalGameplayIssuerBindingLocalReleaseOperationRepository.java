@@ -52,7 +52,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   CanonicalGameplayIssuerBindingLocalReleaseOperation prepareOrResume(UUID transitionId) {
     Objects.requireNonNull(transitionId, "transitionId");
     requireNoAmbientTransaction();
-    var sourceBefore = inventoryRepository.readFirstNewAdmissionAbortSource(transitionId);
+    var sourceBefore =
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId);
     requireAbortedSource(sourceBefore);
     var issuerStateBefore = readCurrentIssuerState();
     var original = localOperationRepository.readOriginalForIssuerRelease(sourceBefore);
@@ -64,7 +65,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               var source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, true);
               requireSameAbortSource(sourceBefore, source);
               Record existing =
@@ -88,7 +89,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   transaction, source, priorRevision, sourceRevision, currentRevision);
               source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, false);
               var counters =
                   CanonicalGameplayIssuerBindingLocalOperationRepository.allocateLocalCounters(
@@ -147,8 +148,52 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     requireSameAbortIdentity(
-        sourceBefore, inventoryRepository.readFirstNewAdmissionAbortSource(transitionId));
+        sourceBefore,
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId));
     return operation;
+  }
+
+  /** Reads only an existing, committed release receipt for a physical-retirement caller. */
+  CanonicalGameplayIssuerBindingLocalReleaseOperation readCommittedRelease(UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    requireNoAmbientTransaction();
+    CanonicalGameplayAdmissionAbortSource sourceBefore =
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId);
+    requireAbortedSource(sourceBefore);
+    var issuerStateBefore = readCurrentIssuerState();
+    CanonicalGameplayIssuerBindingLocalOperation original =
+        localOperationRepository.readOriginalForIssuerRelease(sourceBefore);
+    CanonicalGameplayIssuerBindingLocalReleaseOperation committed =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              CanonicalGameplayAdmissionAbortSource source =
+                  CanonicalGameplayBindingInventoryRepository
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
+                          transaction, transitionId, false);
+              requireSameAbortSource(sourceBefore, source);
+              Record existing =
+                  transaction.fetchOne(
+                      "SELECT * FROM " + RELEASE + " WHERE transition_id = ?", transitionId);
+              if (existing == null) {
+                throw conflict(
+                    "Physical retirement requires an existing committed release receipt");
+              }
+              CanonicalGameplayIssuerBindingLocalReleaseOperation operation =
+                  readOperation(transaction, existing, source, original);
+              if (operation.status()
+                  != CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
+                throw conflict(
+                    "Physical retirement requires a committed original RELEASED receipt");
+              }
+              return operation;
+            });
+    requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
+    requireSameAbortSource(
+        committed.abortSource(),
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId));
+    return committed;
   }
 
   /** Completes only the exact private physical-owner readback and returns its durable receipt. */
@@ -173,7 +218,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
               UUID transitionId = expected.abortSource().transition().transitionId();
               var source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, true);
               requireExactReleaseSource(expected, source);
               Record releaseRow =
@@ -333,7 +378,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   "Issuer release lost the current inventory-clock compare-and-set");
               var completedSource =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, false);
               Record completedRow =
                   transaction.fetchOne(
@@ -346,7 +391,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     CanonicalGameplayAdmissionAbortSource sourceAfter =
-        inventoryRepository.readFirstNewAdmissionAbortSource(
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(
             completed.abortSource().transition().transitionId());
     // The decision is reparsed on each read and deliberately has no object-identity equality.
     // Compare the complete durable value source and its exact original lease/target instead.

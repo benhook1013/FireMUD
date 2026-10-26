@@ -165,10 +165,16 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          Record anchorProbe =
+              transaction.fetchOne(
+                  "SELECT issuer_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
+          if (anchorProbe == null) return Optional.empty();
+          CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
+              new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
           CanonicalGameplayIssuerPartitionBuildPlan plan =
-              new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                  .readPreparedPlanInTransaction(
-                      transaction, bootstrapOperationId, bootstrapRequestId);
+              buildRepository.readInstalledPlanForAnchorInTransaction(
+                  transaction, bootstrapOperationId, bootstrapRequestId);
           requireCurrentState(currentState, plan.bootstrapIntent());
           Record row =
               transaction.fetchOne(
@@ -404,11 +410,18 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
           CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
               new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
+          Record anchorProbe =
+              transaction.fetchOne(
+                  "SELECT issuer_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
           CanonicalGameplayIssuerPartitionBuildPlan plan =
-              buildRepository.readPreparedPlanInTransaction(
-                  transaction, bootstrapOperationId, bootstrapRequestId);
+              anchorProbe == null
+                  ? buildRepository.readPreparedPlanInTransaction(
+                      transaction, bootstrapOperationId, bootstrapRequestId)
+                  : buildRepository.readInstalledPlanForAnchorInTransaction(
+                      transaction, bootstrapOperationId, bootstrapRequestId);
           CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
           requireCurrentState(currentState, intent);
           Record existing =

@@ -29,14 +29,21 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
   }
 
   /**
-   * Completes or replays one exact pending initial bootstrap operation. Its finite partition range,
-   * complete source cohort, and partition work are all read from the persisted SQL owners.
+   * Completes one initial installation or returns the retained result for its exact original retry.
+   * An installed result is historical installation evidence, not fresh physical coverage.
    */
   public CanonicalGameplayIssuerInstalledAnchor completeInitialBootstrap(
       UUID bootstrapOperationId, UUID bootstrapRequestId) {
     requireNonNil(bootstrapOperationId, "bootstrapOperationId");
     requireNonNil(bootstrapRequestId, "bootstrapRequestId");
     requireNoAmbientTransaction();
+
+    CanonicalGameplayIssuerBootstrapCoverageRepository coverageRepository =
+        new CanonicalGameplayIssuerBootstrapCoverageRepository(dsl);
+    Optional<CanonicalGameplayIssuerInstalledAnchor> retainedInstallation =
+        coverageRepository.readInstalledAnchor(
+            bootstrapOperationId, bootstrapRequestId, readFreshCurrentState());
+    if (retainedInstallation.isPresent()) return retainedInstallation.get();
 
     CanonicalGameplayIssuerPartitionBuildPlan plan =
         new CanonicalGameplayIssuerPartitionBuildRepository(dsl)
@@ -46,13 +53,11 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
     }
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState initialState =
         readAndRequireCurrentState(plan);
-    CanonicalGameplayIssuerBootstrapCoverageRepository coverageRepository =
-        new CanonicalGameplayIssuerBootstrapCoverageRepository(dsl);
     Optional<CanonicalGameplayIssuerInstalledAnchor> installed =
         coverageRepository.readInstalledAnchor(
             bootstrapOperationId, bootstrapRequestId, initialState);
     if (installed.isPresent()) {
-      return readInstalledAnchorPartitions(plan, installed.get(), coverageRepository, initialState);
+      return installed.get();
     }
 
     CanonicalGameplayIssuerBootstrapMemberOperationRepository memberOperationRepository =
@@ -83,6 +88,32 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
         coverageRepository.installInitialAnchor(
             bootstrapOperationId, bootstrapRequestId, beforeInstall);
     return anchor;
+  }
+
+  /**
+   * Performs a separate read-only physical verification of the original installed baseline. This
+   * gate intentionally requires the current inventory to still match that frozen baseline.
+   */
+  CanonicalGameplayIssuerInstalledAnchor verifyInstalledPhysicalCoverage(
+      UUID bootstrapOperationId, UUID bootstrapRequestId) {
+    requireNonNil(bootstrapOperationId, "bootstrapOperationId");
+    requireNonNil(bootstrapRequestId, "bootstrapRequestId");
+    requireNoAmbientTransaction();
+    CanonicalGameplayIssuerPartitionBuildPlan plan =
+        new CanonicalGameplayIssuerPartitionBuildRepository(dsl)
+            .prepareInitialBuildPlan(bootstrapOperationId, bootstrapRequestId);
+    if (plan.state() != CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED) {
+      throw unavailable("Complete issuer bootstrap plan contains unresolved blockers");
+    }
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState =
+        readAndRequireCurrentState(plan);
+    CanonicalGameplayIssuerBootstrapCoverageRepository coverageRepository =
+        new CanonicalGameplayIssuerBootstrapCoverageRepository(dsl);
+    CanonicalGameplayIssuerInstalledAnchor installed =
+        coverageRepository
+            .readInstalledAnchor(bootstrapOperationId, bootstrapRequestId, currentState)
+            .orElseThrow(() -> unavailable("Original issuer bootstrap has no installed anchor"));
+    return readInstalledAnchorPartitions(plan, installed, coverageRepository, currentState);
   }
 
   private CanonicalGameplayIssuerInstalledAnchor readInstalledAnchorPartitions(

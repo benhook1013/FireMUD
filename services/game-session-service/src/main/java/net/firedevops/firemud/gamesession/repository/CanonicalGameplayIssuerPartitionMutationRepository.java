@@ -269,6 +269,10 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
         || exactReadbackFieldSetBytes.length > 17_825_792) {
       throw conflict("Issuer partition mutation readback is missing or oversized");
     }
+    Map<String, byte[]> readbackFields =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+            exactReadbackFieldSetBytes);
+    requireRevisionField(readbackFields, expected.successorRevision());
     String readbackDigest = CanonicalGameplayIssuerMemberV2Codec.sha256(exactReadbackFieldSetBytes);
     Record head = lockCurrentHead(transaction, expected.partitionId());
     Record row =

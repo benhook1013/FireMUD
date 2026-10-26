@@ -205,15 +205,13 @@ final class CanonicalGameplayIssuerBindingLocalRetirementRedisOwner {
                   CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD.getBytes(
                       StandardCharsets.US_ASCII)));
       if (!Arrays.equals(
-              revision,
-              operation
-                  .physicalMutation()
-                  .successorRevision()
-                  .toString()
-                  .getBytes(StandardCharsets.US_ASCII))
-          || actual.size() != allowed.size() + 1) {
-        throw unavailable(
-            "Issuer retirement lacks the exact successor fence or current field count");
+          revision,
+          operation
+              .physicalMutation()
+              .successorRevision()
+              .toString()
+              .getBytes(StandardCharsets.US_ASCII))) {
+        throw unavailable("Issuer retirement lacks its exact successor fence");
       }
       for (Map.Entry<String, byte[]> field : work.baselineFields().entrySet()) {
         byte[] value = actual.get(b64(field.getKey().getBytes(StandardCharsets.UTF_8)));

@@ -35,11 +35,13 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
+import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -214,6 +216,44 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     assertThat(readback.physicalCountedCapacityCount()).isZero();
     assertThat(readback.plannedAggregateCapacityCount()).isEqualTo(BigInteger.ONE);
     assertThat(administratorCommands.hlen(key)).isEqualTo(2L);
+    assertThat(statusesRemainPending(fixture.dsl())).isTrue();
+  }
+
+  @Test
+  void candidatePreparedSourceRowRetainsCapacityWithoutCreatingPhysicalBinding() {
+    Fixture fixture = fixtureWithPreparedCandidate();
+    CanonicalGameplayIssuerBootstrapPartitionWork work =
+        partitionWork(fixture, fixture.partitionId());
+    var candidateOperation =
+        work.memberOperations().stream()
+            .filter(
+                operation ->
+                    operation.bindingLifecycle()
+                        == net.firedevops.firemud.gamesession.binding
+                            .CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED)
+            .findFirst()
+            .orElseThrow();
+
+    assertThat(candidateOperation.expectedBindingPresent()).isFalse();
+    assertThat(candidateOperation.countsTowardCapacity()).isTrue();
+    assertThat(candidateOperation.expectedMemberValue().reservation().lifecycle())
+        .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RESERVED);
+    var readback = owner(work, currentState(fixture, work)).buildAndRead(work);
+
+    assertThat(readback.physicalPartitionReservationCount()).isEqualTo(2);
+    assertThat(readback.physicalBindingCount()).isEqualTo(1);
+    assertThat(readback.physicalCountedCapacityCount()).isEqualTo(2);
+    assertThat(readback.plannedAggregateCapacityCount()).isEqualTo(BigInteger.valueOf(2));
+    byte[] key = key(fixture, fixture.partitionId());
+    byte[] bindingRef = candidateOperation.expectedMemberValue().owner().bindingRef().bytes();
+    byte[] reservationField =
+        ascii(
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                candidateOperation.expectedMemberValue().reservation().reservationId()));
+    assertThat(administratorCommands.hget(key, bindingRef)).isNull();
+    assertThat(administratorCommands.hget(key, reservationField))
+        .containsExactly(candidateOperation.exactMemberValueBytes());
+    assertThat(administratorCommands.hlen(key)).isEqualTo(5L);
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
   }
 
@@ -520,6 +560,76 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
             .prepareInitialBuildPlan(intent.operationId(), requestId);
     assertThat(plan.state()).isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
     return new Fixture(testSchema, active, intent, requestId, source, partitionId);
+  }
+
+  private Fixture fixtureWithPreparedCandidate() {
+    TestSchema testSchema = newTestSchemaAtVersion("gs_issuer_prepared_physical_", "1030");
+    schemas.add(testSchema);
+    establishActualLegacyDisposition(testSchema.dsl());
+    CanonicalGameplayBindingIdentity active =
+        CanonicalGameplayBindingInventoryRepositoryIntegrationTest.identity(
+            UUID.randomUUID().toString());
+    CanonicalGameplayBindingInventoryRepositoryIntegrationTest.seedActiveSource(
+        testSchema.dsl(), active);
+    BigInteger partitionId = active.bindingRef().partitionId(PARTITION_COUNT);
+    CanonicalGameplayBindingIdentity candidate = preparedCandidateIdentity(partitionId);
+    var reservationEvidence =
+        new CanonicalIssuerReservationFenceEvidence(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            BigInteger.valueOf(13),
+            BigInteger.valueOf(17),
+            BigInteger.valueOf(7));
+    new CanonicalGameplayBindingInventoryRepository(testSchema.dsl())
+        .prepare(
+            new CanonicalGameplayBindingTransitionRequest(
+                UUID.randomUUID(), UUID.randomUUID(), candidate, reservationEvidence, null, null));
+
+    UUID requestId = UUID.randomUUID();
+    var source = sourceCheckpoint(BigInteger.valueOf(7));
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(testSchema.dsl())
+            .beginInitialBootstrapIntent(requestId, descriptor(), source);
+    migrateRemaining(testSchema);
+    var plan =
+        new CanonicalGameplayIssuerPartitionBuildRepository(testSchema.dsl())
+            .prepareInitialBuildPlan(intent.operationId(), requestId);
+    assertThat(plan.state()).isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
+    return new Fixture(testSchema, active, intent, requestId, source, partitionId);
+  }
+
+  private static CanonicalGameplayBindingIdentity preparedCandidateIdentity(
+      BigInteger targetPartition) {
+    for (int candidate = 0; candidate < 10_000; candidate++) {
+      String seed = "prepared-physical-candidate-" + candidate;
+      CanonicalGameplayBindingIdentity identity =
+          new CanonicalGameplayBindingIdentity(
+              namedUuid(seed + "-account"),
+              namedUuid(seed + "-tenant"),
+              namedUuid(seed + "-namespace"),
+              namedUuid(seed + "-character"),
+              "SHARED",
+              namedUuid(seed + "-game"),
+              90_000L + candidate,
+              namedUuid(seed + "-session").toString(),
+              namedUuid(seed + "-region"),
+              BigInteger.valueOf(12),
+              ISSUER,
+              BigInteger.valueOf(7),
+              LAYOUT_VERSION,
+              PARTITION_COUNT,
+              PARTITION_CAPACITY);
+      if (identity.bindingRef().partitionId(PARTITION_COUNT).equals(targetPartition)) {
+        return identity;
+      }
+    }
+    throw new IllegalStateException(
+        "Could not create a prepared candidate in the target partition");
+  }
+
+  private static UUID namedUuid(String value) {
+    return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
   }
 
   private CanonicalGameplayIssuerBootstrapPartitionWork partitionWork(

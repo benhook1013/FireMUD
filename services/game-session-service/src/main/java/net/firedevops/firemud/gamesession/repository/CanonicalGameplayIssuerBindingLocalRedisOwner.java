@@ -201,7 +201,6 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
 
       Map<String, byte[]> baseline = work.baselineFields();
       Map<String, byte[]> allowed = work.allowedFields();
-      if (actual.size() != allowed.size() + 1) throw unavailable();
       byte[] physicalRevision =
           actual.get(
               Base64.getEncoder()
