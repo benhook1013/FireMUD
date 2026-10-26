@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -19,8 +21,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
@@ -32,7 +34,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
-  void missingPhysicalValueAfterPossibleDispatchRefusesWithoutFreshScriptAttempt() throws Exception {
+  void missingPhysicalValueAfterPossibleDispatchRefusesWithoutFreshScriptAttempt()
+      throws Exception {
     UUID requestId = UUID.randomUUID();
     UUID callerContextId = UUID.randomUUID();
     UUID initializerId = UUID.randomUUID();
@@ -80,7 +83,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
 
     var observation = mock(CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation.class);
     when(observation.ownerKind())
-        .thenReturn(CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER);
+        .thenReturn(
+            CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER);
     when(observation.operationId()).thenReturn(initializerId);
     when(observation.requestId()).thenReturn(requestId);
     when(observation.originalCallerContextId()).thenReturn(callerContextId);
@@ -105,8 +109,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     when(redis.connect(any(ByteArrayCodec.class))).thenReturn(connection);
     when(connection.isOpen()).thenReturn(true);
     when(connection.async()).thenReturn(commands);
-    when(commands.aclWhoami()).thenReturn(future("gamesession_coord_app"));
-    when(commands.type(any(byte[].class))).thenReturn(future("none"));
+    doReturn(future("gamesession_coord_app")).when(commands).aclWhoami();
+    doReturn(future("none")).when(commands).type(any(byte[].class));
     RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
 
     var owner =
@@ -114,16 +118,14 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
             redis, catalog, repository, tenantTags, receiver);
     var proof =
         owner.initializeOnce(
-            original,
-            mock(CanonicalGameplayLoginResult.class),
-            tenantId,
-            namespaceId);
+            original, mock(CanonicalGameplayLoginResult.class), tenantId, namespaceId);
 
     assertThat(proof)
         .isEqualTo(
             new CanonicalGameplayAccountInitialOpenProof.Refused(
                 CanonicalGameplayAccountInitialOpenProof.Reason.REMOTE_OUTCOME_UNCERTAIN));
-    verify(repository).beginOrRead(original, org.mockito.ArgumentMatchers.any(), tenantId, namespaceId);
+    verify(repository)
+        .beginOrRead(eq(original), any(), eq(tenantId), eq(namespaceId));
     verify(commands).type(any(byte[].class));
     verifyNoInteractions(catalog);
   }
@@ -206,10 +208,7 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
 
     var proof =
         owner.initializeOnce(
-            original,
-            mock(CanonicalGameplayLoginResult.class),
-            tenantId,
-            namespaceId);
+            original, mock(CanonicalGameplayLoginResult.class), tenantId, namespaceId);
 
     assertThat(proof)
         .isEqualTo(
@@ -274,28 +273,32 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
         CanonicalGameplayAccountInitialBarrierValue.open(
             accountId, tenantId, namespaceId, tag, initializerId, BigInteger.valueOf(8), DIGEST);
     Map<byte[], byte[]> raw = new HashMap<>();
-    expected.fields().forEach(
-        (field, value) ->
-            raw.put(
-                field.getBytes(StandardCharsets.US_ASCII),
-                value.getBytes(StandardCharsets.US_ASCII)));
+    expected
+        .fields()
+        .forEach(
+            (field, value) ->
+                raw.put(
+                    field.getBytes(StandardCharsets.US_ASCII),
+                    value.getBytes(StandardCharsets.US_ASCII)));
     RedisClient redis = mock(RedisClient.class);
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);
     when(redis.connect(any(ByteArrayCodec.class))).thenReturn(connection);
     when(connection.isOpen()).thenReturn(true);
     when(connection.async()).thenReturn(commands);
-    when(commands.aclWhoami()).thenReturn(future("gamesession_coord_app"));
-    when(commands.type(any(byte[].class))).thenReturn(future("hash"));
-    when(commands.pttl(any(byte[].class))).thenReturn(future(-1L));
-    when(commands.hlen(any(byte[].class))).thenReturn(future(9L));
-    when(commands.hgetall(any(byte[].class))).thenReturn(future(raw));
+    doReturn(future("gamesession_coord_app")).when(commands).aclWhoami();
+    doReturn(future("hash")).when(commands).type(any(byte[].class));
+    doReturn(future(-1L)).when(commands).pttl(any(byte[].class));
+    doReturn(future(9L)).when(commands).hlen(any(byte[].class));
+    doReturn(future(raw)).when(commands).hgetall(any(byte[].class));
     RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
     var owner =
         new CanonicalGameplayAccountInitialBarrierRedisOwner(
             redis, catalog, repository, tenantTags, receiver);
 
-    var proof = owner.initializeOnce(original, mock(CanonicalGameplayLoginResult.class), tenantId, namespaceId);
+    var proof =
+        owner.initializeOnce(
+            original, mock(CanonicalGameplayLoginResult.class), tenantId, namespaceId);
 
     assertThat(proof).isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
     var current = (CanonicalGameplayAccountInitialOpenProof.CurrentOpen) proof;
@@ -303,7 +306,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     assertThat(current.sourceControlEpoch()).isEqualTo(BigInteger.valueOf(8));
     assertThat(current.exactFields()).isEqualTo(expected.fields());
     verify(repository, org.mockito.Mockito.times(2)).readCurrent(requestId);
-    verify(repository).beginOrRead(original, org.mockito.ArgumentMatchers.any(), tenantId, namespaceId);
+    verify(repository)
+        .beginOrRead(eq(original), any(), eq(tenantId), eq(namespaceId));
     verify(repository, org.mockito.Mockito.times(3)).requireNoAmbientTransaction();
     verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
     verifyNoInteractions(catalog);
@@ -391,34 +395,38 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
         CanonicalGameplayAccountInitialBarrierValue.open(
             accountId, tenantId, namespaceId, tag, initializerId, BigInteger.valueOf(8), DIGEST);
     Map<byte[], byte[]> raw = new HashMap<>();
-    expected.fields().forEach(
-        (field, value) ->
-            raw.put(
-                field.getBytes(StandardCharsets.US_ASCII),
-                value.getBytes(StandardCharsets.US_ASCII)));
+    expected
+        .fields()
+        .forEach(
+            (field, value) ->
+                raw.put(
+                    field.getBytes(StandardCharsets.US_ASCII),
+                    value.getBytes(StandardCharsets.US_ASCII)));
     RedisClient redis = mock(RedisClient.class);
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);
     when(redis.connect(any(ByteArrayCodec.class))).thenReturn(connection);
     when(connection.isOpen()).thenReturn(true);
     when(connection.async()).thenReturn(commands);
-    when(commands.aclWhoami()).thenReturn(future("gamesession_coord_app"));
-    when(commands.type(any(byte[].class))).thenReturn(future("hash"));
-    when(commands.pttl(any(byte[].class))).thenReturn(future(-1L));
-    when(commands.hlen(any(byte[].class))).thenReturn(future(9L));
-    when(commands.hgetall(any(byte[].class))).thenReturn(future(raw));
+    doReturn(future("gamesession_coord_app")).when(commands).aclWhoami();
+    doReturn(future("hash")).when(commands).type(any(byte[].class));
+    doReturn(future(-1L)).when(commands).pttl(any(byte[].class));
+    doReturn(future(9L)).when(commands).hlen(any(byte[].class));
+    doReturn(future(raw)).when(commands).hgetall(any(byte[].class));
     RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
     var owner =
         new CanonicalGameplayAccountInitialBarrierRedisOwner(
             redis, catalog, repository, tenantTags, receiver);
 
-    var proof = owner.initializeOnce(original, mock(CanonicalGameplayLoginResult.class), tenantId, namespaceId);
+    var proof =
+        owner.initializeOnce(
+            original, mock(CanonicalGameplayLoginResult.class), tenantId, namespaceId);
 
     assertThat(proof).isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
     var current = (CanonicalGameplayAccountInitialOpenProof.CurrentOpen) proof;
     assertThat(current.originalRequestId()).isEqualTo(requestId);
     assertThat(current.exactFields()).isEqualTo(expected.fields());
-    verify(repository).acceptOpenReadback(requestId, org.mockito.ArgumentMatchers.any());
+    verify(repository).acceptOpenReadback(eq(requestId), any());
     verify(repository).readCurrent(requestId);
     verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
     verifyNoInteractions(catalog);
@@ -460,10 +468,12 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
 
   private static CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation
       initialObservation(
-          CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot snapshot) {
+          CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot
+              snapshot) {
     var observation = mock(CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation.class);
     when(observation.ownerKind())
-        .thenReturn(CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER);
+        .thenReturn(
+            CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.INITIAL_ACCOUNT_BARRIER);
     when(observation.operationId()).thenReturn(snapshot.initializerId());
     when(observation.requestId()).thenReturn(snapshot.originalRequestId());
     when(observation.originalCallerContextId()).thenReturn(snapshot.originalCallerContextId());
@@ -475,7 +485,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     when(observation.sourceControlEpoch()).thenReturn(snapshot.sourceControlEpoch().toString());
     when(observation.inventorySnapshotRevision())
         .thenReturn(snapshot.inventorySnapshotRevision().toString());
-    when(observation.accountLoginEvidenceDigest()).thenReturn(snapshot.accountLoginEvidenceDigest());
+    when(observation.accountLoginEvidenceDigest())
+        .thenReturn(snapshot.accountLoginEvidenceDigest());
     when(observation.sourceControlDigest()).thenReturn(snapshot.sourceControlDigest());
     when(observation.barrierTargetDigest()).thenReturn(snapshot.targetDigest());
     when(observation.incarnationDigest()).thenReturn(DIGEST);

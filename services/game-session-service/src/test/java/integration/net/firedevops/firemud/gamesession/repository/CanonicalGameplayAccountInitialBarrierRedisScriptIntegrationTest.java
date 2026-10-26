@@ -91,20 +91,27 @@ class CanonicalGameplayAccountInitialBarrierRedisScriptIntegrationTest {
     UUID initializerId = UUID.randomUUID();
     String gameplayTag = "g8-" + "b".repeat(32);
     String key =
-        "session:game:account-admission:{"
-            + gameplayTag
-            + "}:" + accountId + ":" + namespaceId;
+        "session:game:account-admission:{" + gameplayTag + "}:" + accountId + ":" + namespaceId;
     Map<String, String> expectedOpen =
         Map.of(
-            "schema", SCHEMA,
-            "accountId", accountId.toString(),
-            "tenantId", tenantId.toString(),
-            "playableStateNamespaceId", namespaceId.toString(),
-            "tenantGameplayTag", gameplayTag,
-            "ownerOperationId", initializerId.toString(),
-            "ownerFenceEpoch", "8",
-            "incarnationDigest", INCARNATION,
-            "state", "OPEN");
+            "schema",
+            SCHEMA,
+            "accountId",
+            accountId.toString(),
+            "tenantId",
+            tenantId.toString(),
+            "playableStateNamespaceId",
+            namespaceId.toString(),
+            "tenantGameplayTag",
+            gameplayTag,
+            "ownerOperationId",
+            initializerId.toString(),
+            "ownerFenceEpoch",
+            "8",
+            "incarnationDigest",
+            INCARNATION,
+            "state",
+            "OPEN");
     RedisScriptDescriptor descriptor =
         RedisScriptCatalog.fromContributions(
                 List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution()))
@@ -126,10 +133,9 @@ class CanonicalGameplayAccountInitialBarrierRedisScriptIntegrationTest {
       byte[][] arguments =
           openArguments(accountId, tenantId, namespaceId, gameplayTag, initializerId, "8");
 
-      assertThat(
-              commands.evalsha(
-                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments))
-          .isEqualTo(1L);
+      Long createReply =
+          commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments);
+      assertThat(createReply).isEqualTo(1L);
       assertThat(commands.type(ascii(key))).isEqualTo("hash");
       assertThat(commands.pttl(ascii(key))).isEqualTo(-1L);
       assertThat(commands.hlen(ascii(key))).isEqualTo(9L);
@@ -137,10 +143,9 @@ class CanonicalGameplayAccountInitialBarrierRedisScriptIntegrationTest {
 
       // A lost response cannot turn the key into a mutable replay; the SQL owner handles retries
       // with exact readback and never executes this create script again after DISPATCH_POSSIBLE.
-      assertThat(
-              commands.evalsha(
-                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments))
-          .isEqualTo(0L);
+      Long repeatCreateReply =
+          commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments);
+      assertThat(repeatCreateReply).isEqualTo(0L);
       assertThat(readFields(commands, key)).isEqualTo(expectedOpen);
 
       administratorCommands.del(ascii(key));
@@ -149,10 +154,9 @@ class CanonicalGameplayAccountInitialBarrierRedisScriptIntegrationTest {
       newerClosed.put("state", "CLOSED");
       writeFields(administratorCommands, key, newerClosed);
       Map<String, String> beforeRefusedOpen = readFields(administratorCommands, key);
-      assertThat(
-              commands.evalsha(
-                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments))
-          .isEqualTo(0L);
+      Long closedTargetReply =
+          commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments);
+      assertThat(closedTargetReply).isEqualTo(0L);
       assertThat(readFields(administratorCommands, key)).isEqualTo(beforeRefusedOpen);
       assertThat(readFields(administratorCommands, key)).containsEntry("state", "CLOSED");
       assertThat(readFields(administratorCommands, key)).containsEntry("ownerFenceEpoch", "9");

@@ -53,7 +53,14 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
   private static final ObjectMapper JSON =
       new ObjectMapper(JSON_FACTORY).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private static final Set<String> ROOT_FIELDS =
-      Set.of("purpose", "bindingDecisionId", "leaseEvidence", "binding", "target", "transition", "reservation");
+      Set.of(
+          "purpose",
+          "bindingDecisionId",
+          "leaseEvidence",
+          "binding",
+          "target",
+          "transition",
+          "reservation");
   private static final Set<String> BINDING_FIELDS =
       Set.of(
           "accountId",
@@ -155,8 +162,8 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
           "issuerCoverageOperationFence",
           false);
       requireCounterLimit(candidate.reservation().coverageFence(), "coverageFence", false);
-      requireCounterLimit(candidate.reservation().inventorySnapshotRevision(),
-          "inventorySnapshotRevision", false);
+      requireCounterLimit(
+          candidate.reservation().inventorySnapshotRevision(), "inventorySnapshotRevision", false);
 
       ObjectNode root = JSON.createObjectNode();
       root.put("purpose", CanonicalGameplayOriginalNewCandidate.PURPOSE);
@@ -242,7 +249,8 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
           && candidate.transition().bindingGeneration().equals(transition.bindingGeneration())
           && candidate.transition().issuerReservationId().equals(transition.issuerReservationId())
           && candidate.transition().reservationFence().equals(transition.reservationFence())
-          && candidate.transition()
+          && candidate
+              .transition()
               .candidateAccountIndexFence()
               .equals(transition.candidateAccountIndexFence())
           && candidate.transition().bindingRef().equals(entry.bindingRef())
@@ -327,7 +335,9 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
         || !transition.transitionId().equals(reservation.transitionId())
         || !transition.issuerReservationId().equals(reservation.reservationId())
         || !transition.reservationFence().equals(reservation.reservationFence())
-        || !reservation.partitionId().equals(binding.bindingRef().partitionId(binding.issuerIndexPartitionCount()))) {
+        || !reservation
+            .partitionId()
+            .equals(binding.bindingRef().partitionId(binding.issuerIndexPartitionCount()))) {
       throw invalid("Candidate source identities, generation, or fences do not agree");
     }
     if (!isPublicProductionNewLease(candidate.leaseEvidence())) {
@@ -454,15 +464,14 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
     node.put("lifecycle", CanonicalIssuerPartitionReservation.Lifecycle.RESERVED.name());
     node.put("reservationFence", reservation.reservationFence().toString());
     node.put("issuerCoverageOperationId", reservation.issuerCoverageOperationId().toString());
-    node.put(
-        "issuerCoverageOperationFence", reservation.issuerCoverageOperationFence().toString());
+    node.put("issuerCoverageOperationFence", reservation.issuerCoverageOperationFence().toString());
     node.put("coverageFence", reservation.coverageFence().toString());
     node.put("inventorySnapshotRevision", reservation.inventorySnapshotRevision().toString());
     return node;
   }
 
-  private static JsonNode parseCanonicalLeaseNode(
-      AccountGameplayAdmissionLeaseEvidence evidence) throws IOException {
+  private static JsonNode parseCanonicalLeaseNode(AccountGameplayAdmissionLeaseEvidence evidence)
+      throws IOException {
     return JSON.readTree(evidence.canonicalJson());
   }
 
@@ -477,8 +486,7 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
         new String(canonical, StandardCharsets.UTF_8));
   }
 
-  private static CanonicalGameplayBindingIdentity parseBinding(JsonNode source)
-      throws IOException {
+  private static CanonicalGameplayBindingIdentity parseBinding(JsonNode source) throws IOException {
     ObjectNode node = requireObject(source, "binding");
     requireFields(node, BINDING_FIELDS, "binding");
     return new CanonicalGameplayBindingIdentity(
@@ -570,7 +578,8 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
       JsonNode source) throws IOException {
     ObjectNode node = requireObject(source, "reservation");
     requireFields(node, RESERVATION_FIELDS, "reservation");
-    if (!text(node, "lifecycle").equals(CanonicalIssuerPartitionReservation.Lifecycle.RESERVED.name())) {
+    if (!text(node, "lifecycle")
+        .equals(CanonicalIssuerPartitionReservation.Lifecycle.RESERVED.name())) {
       throw invalid("Original NEW candidate reservation must remain RESERVED");
     }
     return new CanonicalGameplayOriginalNewCandidate.ReservationSource(
@@ -666,8 +675,7 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
     }
   }
 
-  private static <E extends Enum<E>> E enumValue(
-      Class<E> enumType, String value, String field) {
+  private static <E extends Enum<E>> E enumValue(Class<E> enumType, String value, String field) {
     try {
       return Enum.valueOf(enumType, value);
     } catch (IllegalArgumentException malformed) {
@@ -693,7 +701,9 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
   private static void requireCounterLimit(BigInteger value, String name, boolean zeroAllowed) {
     Objects.requireNonNull(value, name);
     int digits = value.toString().length();
-    if (digits > MAX_COUNTER_DIGITS || value.signum() < 0 || (!zeroAllowed && value.signum() == 0)) {
+    if (digits > MAX_COUNTER_DIGITS
+        || value.signum() < 0
+        || (!zeroAllowed && value.signum() == 0)) {
       throw invalid(name + " exceeds its canonical integer bounds");
     }
   }

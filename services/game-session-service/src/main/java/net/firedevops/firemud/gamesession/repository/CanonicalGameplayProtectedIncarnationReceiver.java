@@ -198,11 +198,12 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     }
     requireAvailable(OwnerKind.ACCOUNT_FENCE);
     CurrentContext before = loadCurrentContext(operationId, targetOrdinal);
-    return observeCurrentContext(
-        before, () -> loadCurrentContext(operationId, targetOrdinal));
+    return observeCurrentContext(before, () -> loadCurrentContext(operationId, targetOrdinal));
   }
 
-  /** Reads a separate INITIAL original-attempt context under the same trusted signature verifier. */
+  /**
+   * Reads a separate INITIAL original-attempt context under the same trusted signature verifier.
+   */
   VerifiedIncarnation observeForInitialAccountBarrier(UUID originalRequestId) {
     requireNoAmbientTransaction();
     requireNonNil(originalRequestId, "originalRequestId");
@@ -458,10 +459,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       requireText(owner, "ownerKind", OwnerKind.INITIAL_ACCOUNT_BARRIER.name());
       requireText(owner, "initializerId", expected.operationId().toString());
       requireText(owner, "originalRequestId", expected.requestId().toString());
-      requireText(
-          owner, "originalCallerContextId", expected.originalCallerContextId().toString());
-      if (requiredPositiveLong(owner, "originalAttemptFence")
-          != expected.originalAttemptFence()) {
+      requireText(owner, "originalCallerContextId", expected.originalCallerContextId().toString());
+      if (requiredPositiveLong(owner, "originalAttemptFence") != expected.originalAttemptFence()) {
         throw new ObservationRejectedException("Protected INITIAL attempt fence differs");
       }
       requireText(owner, "accountId", expected.accountId().toString());

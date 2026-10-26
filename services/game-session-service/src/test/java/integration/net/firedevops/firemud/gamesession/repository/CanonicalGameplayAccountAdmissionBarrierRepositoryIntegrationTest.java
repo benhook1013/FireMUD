@@ -241,7 +241,8 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
           .anySatisfy(
               row -> {
                 assertThat(row.kind())
-                    .isEqualTo(CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET);
+                    .isEqualTo(
+                        CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET);
                 assertThat(row.sourceKey()).isEqualTo(initial.initializerId() + ":0");
                 assertThat(row.tenantId()).isEqualTo(OTHER_TENANT_ID);
                 assertThat(row.playableStateNamespaceId()).isEqualTo(OTHER_NAMESPACE_ID);
@@ -282,7 +283,9 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
                           CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER,
                           CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET));
       assertThatThrownBy(
-              () -> insertControlledInitialTarget(testSchema.dsl(), ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
+              () ->
+                  insertControlledInitialTarget(
+                      testSchema.dsl(), ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
@@ -311,8 +314,9 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
           .execute(
               "UPDATE game_session_canonical_binding_inventory_clock"
                   + " SET inventory_revision = 1 WHERE singleton_id = 1");
-      var original = new net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates(
-          UUID.randomUUID(), UUID.randomUUID(), 17L);
+      var original =
+          new net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates(
+              UUID.randomUUID(), UUID.randomUUID(), 17L);
       var login = mockLoginResult(original, UUID.randomUUID(), UUID.randomUUID());
 
       assertThatThrownBy(
@@ -576,7 +580,9 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
             transitionId, UUID.randomUUID(), candidate, reservation, null, null));
   }
 
-  /** Controlled durable SQL source used only to exercise the existing inventory/control lock order. */
+  /**
+   * Controlled durable SQL source used only to exercise the existing inventory/control lock order.
+   */
   private static ControlledInitialTarget insertControlledInitialTarget(
       DSLContext dsl, UUID accountId, UUID tenantId, UUID namespaceId) {
     UUID originalRequestId = UUID.randomUUID();
@@ -642,10 +648,11 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
     return new ControlledInitialTarget(initializerId, originalRequestId);
   }
 
-  private static net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult mockLoginResult(
-      net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates coordinates,
-      UUID accountId,
-      UUID tokenJti) {
+  private static net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult
+      mockLoginResult(
+          net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates coordinates,
+          UUID accountId,
+          UUID tokenJti) {
     var evidence =
         new net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult.NonSecretEvidence(
             accountId,
@@ -670,7 +677,8 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
   private static void insertCommittedOriginalLogin(
       DSLContext dsl,
       net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates original,
-      net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult.NonSecretEvidence evidence) {
+      net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult.NonSecretEvidence
+          evidence) {
     dsl.execute(
         "INSERT INTO game_session_initial_gameplay_login_journal"
             + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, ?)",

@@ -49,7 +49,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
 
   /**
    * Captures one exact initial target under the same inventory-clock then account-control order
-   * used by account-wide acquisition. The Account account id is taken from the authenticated result.
+   * used by account-wide acquisition. The Account account id is taken from the authenticated
+   * result.
    */
   InitializerSnapshot beginOrRead(
       InitialGameplayLoginAttemptCoordinates original,
@@ -72,7 +73,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
           Record control = lockExistingControl(transaction, accountEvidence.accountId());
           AccountControlSource source = readNoActiveControl(control, accountEvidence.accountId());
           if (inventoryRevision.signum() <= 0) {
-            throw conflict("Initial account barrier requires positive canonical inventory revision");
+            throw conflict(
+                "Initial account barrier requires positive canonical inventory revision");
           }
           requireExactOriginalLogin(transaction, original, accountEvidence);
 
@@ -150,7 +152,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
           Record row = readInitializer(transaction, originalRequestId, false);
           if (row == null) throw conflict("Exact original INITIAL account target is missing");
           InitializerSnapshot snapshot = toSnapshot(row);
-          AccountControlSource current = readCurrentNoActiveControl(transaction, snapshot.accountId());
+          AccountControlSource current =
+              readCurrentNoActiveControl(transaction, snapshot.accountId());
           requireSameCurrentSource(snapshot, current);
           requireOriginalJournalStillCurrent(transaction, snapshot);
           return InitialObservationContext.from(snapshot);
@@ -165,7 +168,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
           DSLContext transaction = DSL.using(configuration);
           transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
           InitializerSnapshot snapshot = readRequiredCurrent(transaction, originalRequestId, false);
-          AccountControlSource current = readCurrentNoActiveControl(transaction, snapshot.accountId());
+          AccountControlSource current =
+              readCurrentNoActiveControl(transaction, snapshot.accountId());
           requireSameCurrentSource(snapshot, current);
           requireOriginalJournalStillCurrent(transaction, snapshot);
           return snapshot;
@@ -235,8 +239,7 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
    * admission decision.
    */
   InitializerSnapshot acceptOpenReadback(
-      UUID originalRequestId,
-      CanonicalGameplayAccountInitialBarrierRedisOwner.Readback readback) {
+      UUID originalRequestId, CanonicalGameplayAccountInitialBarrierRedisOwner.Readback readback) {
     requireNonNil(originalRequestId, "originalRequestId");
     Objects.requireNonNull(readback, "readback");
     requireNoAmbientTransaction();
@@ -320,7 +323,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     }
   }
 
-  private static void requireReadback(CanonicalGameplayAccountInitialBarrierRedisOwner.Readback readback) {
+  private static void requireReadback(
+      CanonicalGameplayAccountInitialBarrierRedisOwner.Readback readback) {
     CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before =
         readback.beforeIncarnation();
     CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after =
@@ -329,10 +333,12 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
         || !CanonicalGameplayAccountInitialBarrierValue.FIELDS.equals(
             readback.barrierFields().keySet())
         || !"OPEN".equals(readback.barrierFields().get("state"))
-        || !readback.beforeIncarnation()
+        || !readback
+            .beforeIncarnation()
             .sourceControlEpoch()
             .equals(readback.barrierFields().get("ownerFenceEpoch"))
-        || !readback.afterIncarnation()
+        || !readback
+            .afterIncarnation()
             .sourceControlEpoch()
             .equals(readback.barrierFields().get("ownerFenceEpoch"))
         || !before.incarnationDigest().equals(after.incarnationDigest())
@@ -356,7 +362,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
         || !current.accountLoginEvidenceDigest().equals(readback.accountLoginEvidenceDigest())
         || !current.sourceControlDigest().equals(readback.sourceControlDigest())
         || !current.inventorySnapshotRevision().equals(readback.inventorySnapshotRevision())
-        || !readback.key()
+        || !readback
+            .key()
             .equals(
                 CanonicalGameplayAccountInitialBarrierKey.forTarget(
                     readback.assignment(), current.initializerId(), current.originalRequestId()))) {
@@ -367,7 +374,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
         || !current.accountId().toString().equals(fields.get("accountId"))
         || !current.sourceControlEpoch().toString().equals(fields.get("ownerFenceEpoch"))
         || !current.tenantId().toString().equals(fields.get("tenantId"))
-        || !current.playableStateNamespaceId()
+        || !current
+            .playableStateNamespaceId()
             .toString()
             .equals(fields.get("playableStateNamespaceId"))
         || !readback.assignment().tenantGameplayTag().equals(fields.get("tenantGameplayTag"))) {
@@ -389,7 +397,9 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
         || !snapshot.playableStateNamespaceId().equals(observation.playableStateNamespaceId())
         || !NO_ACTIVE.equals(observation.sourceControlState())
         || !snapshot.sourceControlEpoch().toString().equals(observation.sourceControlEpoch())
-        || !snapshot.inventorySnapshotRevision().toString()
+        || !snapshot
+            .inventorySnapshotRevision()
+            .toString()
             .equals(observation.inventorySnapshotRevision())
         || !snapshot.accountLoginEvidenceDigest().equals(observation.accountLoginEvidenceDigest())
         || !snapshot.sourceControlDigest().equals(observation.sourceControlDigest())
@@ -498,10 +508,13 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
   private static BigInteger lockInventoryRevision(DSLContext transaction) {
     Record row =
         transaction.fetchOne(
-            "SELECT inventory_revision FROM " + INVENTORY_CLOCK + " WHERE singleton_id = 1 FOR UPDATE");
+            "SELECT inventory_revision FROM "
+                + INVENTORY_CLOCK
+                + " WHERE singleton_id = 1 FOR UPDATE");
     if (row == null) throw conflict("Canonical binding inventory clock is missing");
     BigInteger revision = readBigInteger(row, "inventory_revision");
-    if (revision.signum() <= 0) throw conflict("Initial account barrier inventory revision is not positive");
+    if (revision.signum() <= 0)
+      throw conflict("Initial account barrier inventory revision is not positive");
     return revision;
   }
 
@@ -509,14 +522,17 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     Record row =
         transaction.fetchOne(
             "SELECT * FROM " + CONTROL + " WHERE account_id = ? FOR UPDATE", accountId);
-    if (row == null) throw conflict("Account coverage control row is missing; absence is not source");
+    if (row == null)
+      throw conflict("Account coverage control row is missing; absence is not source");
     return row;
   }
 
   private static AccountControlSource readCurrentNoActiveControl(
       DSLContext transaction, UUID accountId) {
-    Record row = transaction.fetchOne("SELECT * FROM " + CONTROL + " WHERE account_id = ?", accountId);
-    if (row == null) throw conflict("Account coverage control row is missing; absence is not source");
+    Record row =
+        transaction.fetchOne("SELECT * FROM " + CONTROL + " WHERE account_id = ?", accountId);
+    if (row == null)
+      throw conflict("Account coverage control row is missing; absence is not source");
     return readNoActiveControl(row, accountId);
   }
 
@@ -550,13 +566,15 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
     fields.put("currentFenceIntentId", uuidText(row, "current_fence_intent_id"));
     fields.put("currentOperationFence", nullableInteger(row, "current_operation_fence"));
     fields.put("accountAdmissionFence", uuidText(row, "account_admission_fence"));
-    fields.put("historicalAccountAdmissionFence", uuidText(row, "historical_account_admission_fence"));
+    fields.put(
+        "historicalAccountAdmissionFence", uuidText(row, "historical_account_admission_fence"));
     fields.put("coverageFence", uuidText(row, "coverage_fence"));
     fields.put("inventorySnapshotRevision", nullableInteger(row, "inventory_snapshot_revision"));
     fields.put("coverageGeneration", nullableInteger(row, "coverage_generation"));
     try {
-      return digest(net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-          JSON.writeValueAsString(fields)));
+      return digest(
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              JSON.writeValueAsString(fields)));
     } catch (Exception invalid) {
       throw conflict("Account control source digest could not be computed");
     }
@@ -581,8 +599,9 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
         "outboxSourceEventEvidenceCanonicalJson",
         e.outboxSourceEventEvidenceCanonicalJson().toStringUtf8());
     try {
-      return digest(net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-          JSON.writeValueAsString(fields)));
+      return digest(
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              JSON.writeValueAsString(fields)));
     } catch (Exception invalid) {
       throw conflict("Authenticated Account response evidence digest could not be computed");
     }
@@ -611,8 +630,9 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
 
   private static String digestUnchecked(Object fields) {
     try {
-      return digest(net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-          JSON.writeValueAsString(fields)));
+      return digest(
+          net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              JSON.writeValueAsString(fields)));
     } catch (Exception invalid) {
       throw conflict("Canonical INITIAL source digest could not be computed");
     }
@@ -620,7 +640,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
 
   private static String digest(byte[] bytes) {
     try {
-      return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
@@ -748,7 +769,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
 
   private static void requireNonNil(UUID value, String name) {
     Objects.requireNonNull(value, name);
-    if (value.equals(new UUID(0L, 0L))) throw new IllegalArgumentException(name + " must not be nil");
+    if (value.equals(new UUID(0L, 0L)))
+      throw new IllegalArgumentException(name + " must not be nil");
   }
 
   private static void requireOne(int actual, String message) {

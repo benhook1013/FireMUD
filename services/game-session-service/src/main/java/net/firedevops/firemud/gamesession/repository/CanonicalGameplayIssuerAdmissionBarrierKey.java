@@ -21,10 +21,11 @@ final class CanonicalGameplayIssuerAdmissionBarrierKey {
     Objects.requireNonNull(tenantId, "tenantId");
     Objects.requireNonNull(namespaceId, "playableStateNamespaceId");
     Objects.requireNonNull(tag, "tenantGameplayTag");
-    if (!net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.ISSUER
-            .equals(issuerId)
+    if (!net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.ISSUER.equals(
+            issuerId)
         || !tag.matches("g[1-9][0-9]{0,9}-[0-9a-f]{32}")) {
-      throw new IllegalArgumentException("Issuer barrier key requires exact Account issuer placement");
+      throw new IllegalArgumentException(
+          "Issuer barrier key requires exact Account issuer placement");
     }
     return "session:game:issuer-admission:{"
         + tag

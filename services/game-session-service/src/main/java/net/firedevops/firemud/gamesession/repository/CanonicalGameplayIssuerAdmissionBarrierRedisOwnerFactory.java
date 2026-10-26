@@ -12,7 +12,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwnerFactory {
       RedisClient redisClient,
       RedisScriptCatalog catalog,
       CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository repository,
-      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource currentStateSource) {
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+          currentStateSource) {
     return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
         Objects.requireNonNull(redisClient, "redisClient"),
         Objects.requireNonNull(catalog, "catalog"),

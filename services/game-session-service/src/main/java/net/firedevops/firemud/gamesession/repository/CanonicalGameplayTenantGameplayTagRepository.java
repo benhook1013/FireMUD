@@ -477,11 +477,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
       implements Target {}
 
   private record InitialTarget(
-      UUID initializerId,
-      UUID originalRequestId,
-      UUID accountId,
-      UUID tenantId,
-      UUID namespaceId)
+      UUID initializerId, UUID originalRequestId, UUID accountId, UUID tenantId, UUID namespaceId)
       implements Target {}
 
   /** Owner-issued immutable mapping plus the exact SQL source needed by the key builder. */

@@ -120,8 +120,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
       this.incarnationDigest = requireDigest(incarnationDigest, "incarnationDigest");
       requireDigestMatches(this.incarnationBytes, this.incarnationDigest, "incarnation");
       this.registeredTargetBytes = nonEmpty(registeredTargetBytes, "registeredTargetBytes");
-      this.registeredTargetDigest =
-          requireDigest(registeredTargetDigest, "registeredTargetDigest");
+      this.registeredTargetDigest = requireDigest(registeredTargetDigest, "registeredTargetDigest");
       requireDigestMatches(
           this.registeredTargetBytes, this.registeredTargetDigest, "registered target");
       long boundedBytes =
@@ -207,32 +206,101 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
       }
     }
 
-    String issuerId() { return issuerId; }
-    UUID tenantId() { return tenantId; }
-    UUID playableStateNamespaceId() { return playableStateNamespaceId; }
-    String tenantGameplayTag() { return tenantGameplayTag; }
-    UUID operationId() { return operationId; }
-    BigInteger admissionEpoch() { return admissionEpoch; }
-    UUID transitionId() { return transitionId; }
-    UUID accountId() { return accountId; }
-    byte[] bindingRefBytes() { return bindingRefBytes.clone(); }
-    byte[] reservationBytes() { return reservationBytes.clone(); }
-    String reservationDigest() { return reservationDigest; }
-    byte[] anchorBytes() { return anchorBytes.clone(); }
-    String anchorDigest() { return anchorDigest; }
-    BigInteger accountIssuerAuthGeneration() { return accountIssuerAuthGeneration; }
-    byte[] accountCheckpointBytes() { return accountCheckpointBytes.clone(); }
-    String accountCheckpointDigest() { return accountCheckpointDigest; }
+    String issuerId() {
+      return issuerId;
+    }
+
+    UUID tenantId() {
+      return tenantId;
+    }
+
+    UUID playableStateNamespaceId() {
+      return playableStateNamespaceId;
+    }
+
+    String tenantGameplayTag() {
+      return tenantGameplayTag;
+    }
+
+    UUID operationId() {
+      return operationId;
+    }
+
+    BigInteger admissionEpoch() {
+      return admissionEpoch;
+    }
+
+    UUID transitionId() {
+      return transitionId;
+    }
+
+    UUID accountId() {
+      return accountId;
+    }
+
+    byte[] bindingRefBytes() {
+      return bindingRefBytes.clone();
+    }
+
+    byte[] reservationBytes() {
+      return reservationBytes.clone();
+    }
+
+    String reservationDigest() {
+      return reservationDigest;
+    }
+
+    byte[] anchorBytes() {
+      return anchorBytes.clone();
+    }
+
+    String anchorDigest() {
+      return anchorDigest;
+    }
+
+    BigInteger accountIssuerAuthGeneration() {
+      return accountIssuerAuthGeneration;
+    }
+
+    byte[] accountCheckpointBytes() {
+      return accountCheckpointBytes.clone();
+    }
+
+    String accountCheckpointDigest() {
+      return accountCheckpointDigest;
+    }
+
     byte[] accountSourceEventBytes() {
       return accountSourceEventBytes == null ? null : accountSourceEventBytes.clone();
     }
-    String accountSourceEventDigest() { return accountSourceEventDigest; }
-    byte[] incarnationBytes() { return incarnationBytes.clone(); }
-    String incarnationDigest() { return incarnationDigest; }
-    byte[] registeredTargetBytes() { return registeredTargetBytes.clone(); }
-    String registeredTargetDigest() { return registeredTargetDigest; }
-    byte[] exactBytes() { return exactBytes.clone(); }
-    String exactDigest() { return exactDigest; }
+
+    String accountSourceEventDigest() {
+      return accountSourceEventDigest;
+    }
+
+    byte[] incarnationBytes() {
+      return incarnationBytes.clone();
+    }
+
+    String incarnationDigest() {
+      return incarnationDigest;
+    }
+
+    byte[] registeredTargetBytes() {
+      return registeredTargetBytes.clone();
+    }
+
+    String registeredTargetDigest() {
+      return registeredTargetDigest;
+    }
+
+    byte[] exactBytes() {
+      return exactBytes.clone();
+    }
+
+    String exactDigest() {
+      return exactDigest;
+    }
 
     boolean matchesCurrentIssuerState(
         CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current) {
@@ -359,14 +427,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
       }
       CanonicalGameplayIssuerAdmissionBarrierValue result =
           new CanonicalGameplayIssuerAdmissionBarrierValue(
-              issuerId,
-              tenantId,
-              namespaceId,
-              tag,
-              state,
-              epoch,
-              ownerOperationId,
-              initializer);
+              issuerId, tenantId, namespaceId, tag, state, epoch, ownerOperationId, initializer);
       if (in.available() != 0 || !Arrays.equals(bytes, result.exactBytes())) throw malformed();
       return result;
     } catch (IOException | RuntimeException invalid) {
@@ -390,20 +451,50 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
         });
   }
 
-  String issuerId() { return issuerId; }
-  UUID tenantId() { return tenantId; }
-  UUID playableStateNamespaceId() { return playableStateNamespaceId; }
-  String tenantGameplayTag() { return tenantGameplayTag; }
-  State state() { return state; }
-  BigInteger admissionEpoch() { return admissionEpoch; }
-  UUID ownerOperationId() { return ownerOperationId; }
-  Initializer initializer() { return initializer; }
-  byte[] exactBytes() { return exactBytes.clone(); }
-  String exactDigest() { return exactDigest; }
+  String issuerId() {
+    return issuerId;
+  }
+
+  UUID tenantId() {
+    return tenantId;
+  }
+
+  UUID playableStateNamespaceId() {
+    return playableStateNamespaceId;
+  }
+
+  String tenantGameplayTag() {
+    return tenantGameplayTag;
+  }
+
+  State state() {
+    return state;
+  }
+
+  BigInteger admissionEpoch() {
+    return admissionEpoch;
+  }
+
+  UUID ownerOperationId() {
+    return ownerOperationId;
+  }
+
+  Initializer initializer() {
+    return initializer;
+  }
+
+  byte[] exactBytes() {
+    return exactBytes.clone();
+  }
+
+  String exactDigest() {
+    return exactDigest;
+  }
 
   static String sha256(byte[] bytes) {
     try {
-      return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (Exception failure) {
       throw new IllegalStateException("Could not digest exact issuer admission bytes", failure);
     }
@@ -488,7 +579,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
 
   private static String decodeUtf8(byte[] bytes) throws IOException {
     try {
-      return StandardCharsets.UTF_8.newDecoder()
+      return StandardCharsets.UTF_8
+          .newDecoder()
           .onMalformedInput(CodingErrorAction.REPORT)
           .onUnmappableCharacter(CodingErrorAction.REPORT)
           .decode(java.nio.ByteBuffer.wrap(bytes))
@@ -512,7 +604,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierValue {
 
   private static UUID requireNonNil(UUID value, String name) {
     Objects.requireNonNull(value, name);
-    if (value.equals(new UUID(0L, 0L))) throw new IllegalArgumentException(name + " must not be nil");
+    if (value.equals(new UUID(0L, 0L)))
+      throw new IllegalArgumentException(name + " must not be nil");
     return value;
   }
 

@@ -34,15 +34,24 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
     assertThat(value.fields())
         .containsExactlyInAnyOrderEntriesOf(
             Map.of(
-                "schema", CanonicalGameplayAccountInitialBarrierValue.SCHEMA,
-                "accountId", accountId.toString(),
-                "tenantId", tenantId.toString(),
-                "playableStateNamespaceId", namespaceId.toString(),
-                "tenantGameplayTag", "g7-" + "b".repeat(32),
-                "ownerOperationId", initializerId.toString(),
-                "ownerFenceEpoch", "0",
-                "incarnationDigest", DIGEST,
-                "state", "OPEN"));
+                "schema",
+                CanonicalGameplayAccountInitialBarrierValue.SCHEMA,
+                "accountId",
+                accountId.toString(),
+                "tenantId",
+                tenantId.toString(),
+                "playableStateNamespaceId",
+                namespaceId.toString(),
+                "tenantGameplayTag",
+                "g7-" + "b".repeat(32),
+                "ownerOperationId",
+                initializerId.toString(),
+                "ownerFenceEpoch",
+                "0",
+                "incarnationDigest",
+                DIGEST,
+                "state",
+                "OPEN"));
     assertThat(value.fields().keySet())
         .containsExactlyInAnyOrderElementsOf(CanonicalGameplayAccountInitialBarrierValue.FIELDS);
   }
@@ -74,7 +83,12 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
             accountId,
             tenantId,
             namespaceId,
-            "session:game:account-admission:{g8-" + "c".repeat(32) + "}:" + accountId + ":" + namespaceId,
+            "session:game:account-admission:{g8-"
+                + "c".repeat(32)
+                + "}:"
+                + accountId
+                + ":"
+                + namespaceId,
             BigInteger.valueOf(9),
             BigInteger.ONE,
             DIGEST,
@@ -152,8 +166,7 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
     when(assignment.isInitialBarrierTarget()).thenReturn(true);
     when(assignment.initialBarrierInitializerId()).thenReturn(initializerId);
     when(assignment.initialBarrierOriginalRequestId()).thenReturn(requestId);
-    when(assignment.tenantGameplayTag())
-        .thenReturn("g7-" + tenantId.toString().replace("-", ""));
+    when(assignment.tenantGameplayTag()).thenReturn("g7-" + tenantId.toString().replace("-", ""));
     when(assignment.accountId()).thenReturn(accountId);
     when(assignment.playableStateNamespaceId()).thenReturn(namespaceId);
 
@@ -164,7 +177,7 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
         .isEqualTo(
             "session:game:account-admission:{g7-"
                 + tenantId.toString().replace("-", "")
-                + "]:"
+                + "}:"
                 + accountId
                 + ":"
                 + namespaceId);
@@ -173,8 +186,7 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
                 CanonicalGameplayAccountInitialBarrierKey.forTarget(
                     assignment, UUID.randomUUID(), requestId))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () -> CanonicalGameplaySessionRedisKeys.accountAdmissionBarrier(assignment))
+    assertThatThrownBy(() -> CanonicalGameplaySessionRedisKeys.accountAdmissionBarrier(assignment))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

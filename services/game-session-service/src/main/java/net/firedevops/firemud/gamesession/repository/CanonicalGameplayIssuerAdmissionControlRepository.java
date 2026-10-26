@@ -5,14 +5,14 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import org.jooq.DSLContext;
@@ -26,7 +26,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
   private static final String CONTROL = "game_session_canonical_issuer_admission_control";
   private static final String COUNTER = "game_session_canonical_issuer_admission_epoch_counter";
   private static final String OPERATION = "game_session_canonical_issuer_admission_operation";
-  private static final String LAYOUT_CONTROL = "game_session_canonical_issuer_layout_bootstrap_control";
+  private static final String LAYOUT_CONTROL =
+      "game_session_canonical_issuer_layout_bootstrap_control";
   private static final String ANCHOR = "game_session_canonical_issuer_installed_anchor";
   private static final String LOCAL_OPERATION =
       "game_session_canonical_issuer_binding_local_operation";
@@ -52,27 +53,32 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
    */
   CanonicalGameplayIssuerAdmissionControlValue installInitialOpen(
       CanonicalGameplayIssuerInstalledAnchor anchor,
-      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource currentStateSource) {
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+          currentStateSource) {
     Objects.requireNonNull(anchor, "anchor");
     Objects.requireNonNull(currentStateSource, "currentStateSource");
     requireNoAmbientTransaction();
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState before =
-        Objects.requireNonNull(currentStateSource.readFreshCurrentState(), "current state source returned null");
+        Objects.requireNonNull(
+            currentStateSource.readFreshCurrentState(), "current state source returned null");
     CanonicalGameplayIssuerAdmissionControlValue installed =
         dsl.transactionResult(
             configuration -> installInitialInTransaction(DSL.using(configuration), anchor, before));
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState after =
-        Objects.requireNonNull(currentStateSource.readFreshCurrentState(), "current state source returned null after install");
+        Objects.requireNonNull(
+            currentStateSource.readFreshCurrentState(),
+            "current state source returned null after install");
     if (!installed.matchesCurrentIssuerState(after)) {
-      throw conflict("Current Account issuer source or stable incarnation moved during live-control installation");
+      throw conflict(
+          "Current Account issuer source or stable incarnation moved during live-control installation");
     }
     return installed;
   }
 
   /**
    * Freezes the complete current issuer cohort and advances the positive live-control epoch before
-   * any tenant-local CLOSED writes are attempted. Tenant keys come from the locked cohort and
-   * each key must have its exact positive current SQL tenant-tag mapping.
+   * any tenant-local CLOSED writes are attempted. Tenant keys come from the locked cohort and each
+   * key must have its exact positive current SQL tenant-tag mapping.
    */
   CanonicalGameplayIssuerAdmissionControlValue beginCutoff(
       UUID cutoffOperationId,
@@ -125,10 +131,12 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
           }
           if (control.state() != CanonicalGameplayIssuerAdmissionControlValue.State.OPEN
               || control.currentOperationKind()
-                  != CanonicalGameplayIssuerAdmissionControlValue.OperationKind.INITIAL_ANCHOR_INSTALL
+                  != CanonicalGameplayIssuerAdmissionControlValue.OperationKind
+                      .INITIAL_ANCHOR_INSTALL
               || !control.currentOperationId().equals(anchor.bootstrapOperationId())
               || priorOperation != null) {
-            throw conflict("Issuer live control cannot be reset, reopened, or replaced by this cutoff");
+            throw conflict(
+                "Issuer live control cannot be reset, reopened, or replaced by this cutoff");
           }
           requireInitialOperationCurrent(transaction, control);
 
@@ -142,7 +150,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
           BigInteger priorEpoch = control.liveBarrierEpoch();
           Record allocated =
               transaction.fetchOne(
-                  "UPDATE " + COUNTER
+                  "UPDATE "
+                      + COUNTER
                       + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1,"
                       + " updated_at = CURRENT_TIMESTAMP"
                       + " WHERE issuer_id = ? AND last_live_barrier_epoch = ?"
@@ -156,19 +165,11 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
           String cohortDigest = digestCohort(rows);
           CanonicalGameplayIssuerAdmissionControlValue pending =
               control.cutoffPending(
-                  cutoffOperationId,
-                  cutoffEpoch,
-                  snapshotRevision,
-                  rows.size(),
-                  cohortDigest);
+                  cutoffOperationId, cutoffEpoch, snapshotRevision, rows.size(), cohortDigest);
           insertCutoffOperation(transaction, pending, requestId, priorEpoch);
           updateControl(transaction, pending, control.liveBarrierEpoch());
           insertCohortRows(transaction, pending.currentOperationId(), rows);
-          insertCutoffTargets(
-              transaction,
-              pending,
-              targets,
-              tagByTarget);
+          insertCutoffTargets(transaction, pending, targets, tagByTarget);
           verifyFrozenCohort(transaction, pending);
           verifyCutoffTargets(transaction, pending);
           return pending;
@@ -197,11 +198,13 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
           requireExactAnchorAndCurrentSource(control, anchor, currentState);
           requireCounterMatchesCurrent(transaction, control.liveBarrierEpoch());
           if (!control.currentOperationId().equals(cutoffOperationId)
-              || control.state() != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING
+              || control.state()
+                  != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING
               || control.currentOperationKind()
                   != CanonicalGameplayIssuerAdmissionControlValue.OperationKind.CUTOFF) {
             if (control.currentOperationId().equals(cutoffOperationId)
-                && control.state() == CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED) {
+                && control.state()
+                    == CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED) {
               requireCutoffOperationCurrent(transaction, control);
               verifyFrozenCohort(transaction, control);
               verifyCutoffTargets(transaction, control);
@@ -214,18 +217,22 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
           verifyCutoffTargets(transaction, control);
           Record remaining =
               transaction.fetchOne(
-                  "SELECT EXISTS (SELECT 1 FROM " + CUTOFF_TARGET
+                  "SELECT EXISTS (SELECT 1 FROM "
+                      + CUTOFF_TARGET
                       + " WHERE operation_id = ? AND issuer_id = ? AND target_state <> 'CLOSED')"
                       + " AS has_open_target",
                   cutoffOperationId,
                   ISSUER);
-          if (remaining == null || Boolean.TRUE.equals(remaining.get("has_open_target", Boolean.class))) {
-            throw conflict("Every frozen issuer tenant target must read back CLOSED before installation");
+          if (remaining == null
+              || Boolean.TRUE.equals(remaining.get("has_open_target", Boolean.class))) {
+            throw conflict(
+                "Every frozen issuer tenant target must read back CLOSED before installation");
           }
           CanonicalGameplayIssuerAdmissionControlValue installed = control.installed();
           int updatedOperation =
               transaction.execute(
-                  "UPDATE " + OPERATION
+                  "UPDATE "
+                      + OPERATION
                       + " SET operation_state = 'INSTALLED', installed_at = CURRENT_TIMESTAMP"
                       + " WHERE operation_id = ? AND issuer_id = ? AND operation_kind = 'CUTOFF'"
                       + " AND operation_state = 'CUTOFF_PENDING' AND live_barrier_epoch = ?"
@@ -234,12 +241,14 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
                   ISSUER,
                   control.liveBarrierEpoch(),
                   control.liveBarrierEpoch().subtract(BigInteger.ONE));
-          if (updatedOperation != 1) throw conflict("Issuer cutoff operation changed before installation");
+          if (updatedOperation != 1)
+            throw conflict("Issuer cutoff operation changed before installation");
           updateControl(transaction, installed, control.liveBarrierEpoch());
           Record saved =
               transaction.fetchOne(
                   "SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
-          if (saved == null || !Arrays.equals(loadControl(saved).exactBytes(), installed.exactBytes())) {
+          if (saved == null
+              || !Arrays.equals(loadControl(saved).exactBytes(), installed.exactBytes())) {
             throw conflict("Installed issuer cutoff did not read back exactly");
           }
           return installed;
@@ -267,7 +276,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
     verifyCutoffTargets(transaction, control);
     Record target =
         transaction.fetchOne(
-            "SELECT * FROM " + CUTOFF_TARGET
+            "SELECT * FROM "
+                + CUTOFF_TARGET
                 + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
                 + " AND playable_state_namespace_id = ? FOR UPDATE",
             control.currentOperationId(),
@@ -359,11 +369,13 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         .map(
             row -> {
               String json = text(row, "source_row_json");
-              String digest = CanonicalGameplayIssuerAdmissionControlValue.sha256(
-                  json.getBytes(StandardCharsets.UTF_8));
+              String digest =
+                  CanonicalGameplayIssuerAdmissionControlValue.sha256(
+                      json.getBytes(StandardCharsets.UTF_8));
               BigInteger revision = integer(row, "source_revision");
               if (revision.signum() <= 0 || revision.compareTo(snapshotRevision) > 0) {
-                throw conflict("Issuer cutoff cohort contains a source outside its locked snapshot");
+                throw conflict(
+                    "Issuer cutoff cohort contains a source outside its locked snapshot");
               }
               return new CohortRow(
                   text(row, "source_kind"),
@@ -416,7 +428,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
     }
     Record future = transaction.fetchOne(sql, binds.toArray());
     if (future == null || Boolean.TRUE.equals(future.get("has_future_rows", Boolean.class))) {
-      throw conflict("Issuer cutoff found source rows newer than its serialized inventory snapshot");
+      throw conflict(
+          "Issuer cutoff found source rows newer than its serialized inventory snapshot");
     }
   }
 
@@ -436,7 +449,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       BigInteger priorEpoch) {
     int inserted =
         transaction.execute(
-            "INSERT INTO " + OPERATION
+            "INSERT INTO "
+                + OPERATION
                 + " (operation_id, request_id, issuer_id, operation_kind, operation_state,"
                 + " live_barrier_epoch, prior_live_barrier_epoch, bootstrap_operation_id,"
                 + " bootstrap_request_id, bootstrap_control_epoch, anchor_exact_bytes,"
@@ -474,7 +488,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       CohortRow row = rows.get(index);
       int inserted =
           transaction.execute(
-              "INSERT INTO " + COHORT
+              "INSERT INTO "
+                  + COHORT
                   + " (operation_id, issuer_id, row_ordinal, source_kind, source_key,"
                   + " source_inventory_revision, source_row_json, source_row_digest)"
                   + " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -502,7 +517,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       if (tenantTag == null) throw conflict("Issuer cutoff target has no current SQL tenant tag");
       Record initializerRow =
           transaction.fetchOne(
-              "SELECT * FROM " + INITIALIZER
+              "SELECT * FROM "
+                  + INITIALIZER
                   + " WHERE issuer_id = ? AND tenant_id = ? AND playable_state_namespace_id = ?"
                   + " AND live_barrier_epoch <= ? ORDER BY live_barrier_epoch DESC LIMIT 1 FOR UPDATE",
               ISSUER,
@@ -524,7 +540,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         openDigest = text(initializerRow, "open_payload_digest");
         if (!CanonicalGameplayIssuerAdmissionControlValue.sha256(initializerBytes)
                 .equals(initializerDigest)
-            || !CanonicalGameplayIssuerAdmissionControlValue.sha256(openPayload).equals(openDigest)) {
+            || !CanonicalGameplayIssuerAdmissionControlValue.sha256(openPayload)
+                .equals(openDigest)) {
           throw conflict("Persisted original issuer initializer digest is invalid");
         }
         CanonicalGameplayIssuerAdmissionBarrierValue decoded =
@@ -544,14 +561,20 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
             || !initializer.tenantGameplayTag().equals(tenantTag)
             || !Arrays.equals(initializer.anchorBytes(), control.anchorExactBytes())
             || !initializer.anchorDigest().equals(control.anchorExactDigest())
-            || !initializer.accountIssuerAuthGeneration().equals(control.accountIssuerAuthGeneration())
-            || !Arrays.equals(initializer.accountCheckpointBytes(), control.accountCheckpointBytes())
+            || !initializer
+                .accountIssuerAuthGeneration()
+                .equals(control.accountIssuerAuthGeneration())
+            || !Arrays.equals(
+                initializer.accountCheckpointBytes(), control.accountCheckpointBytes())
             || !initializer.accountCheckpointDigest().equals(control.accountCheckpointDigest())
-            || !Arrays.equals(initializer.accountSourceEventBytes(), control.accountSourceEventBytes())
-            || !Objects.equals(initializer.accountSourceEventDigest(), control.accountSourceEventDigest())
+            || !Arrays.equals(
+                initializer.accountSourceEventBytes(), control.accountSourceEventBytes())
+            || !Objects.equals(
+                initializer.accountSourceEventDigest(), control.accountSourceEventDigest())
             || !Arrays.equals(initializer.incarnationBytes(), control.stableIncarnationBytes())
             || !initializer.incarnationDigest().equals(control.stableIncarnationDigest())) {
-          throw conflict("Captured original OPEN initializer differs from the frozen issuer source");
+          throw conflict(
+              "Captured original OPEN initializer differs from the frozen issuer source");
         }
       }
       String targetDigest = digestTargetSource(entry.getValue());
@@ -566,7 +589,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
               initializer);
       int inserted =
           transaction.execute(
-              "INSERT INTO " + CUTOFF_TARGET
+              "INSERT INTO "
+                  + CUTOFF_TARGET
                   + " (operation_id, issuer_id, target_ordinal, tenant_id,"
                   + " playable_state_namespace_id, tenant_gameplay_tag, target_source_digest,"
                   + " captured_initializer_operation_id, captured_initializer_epoch,"
@@ -597,7 +621,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
     List<CohortRow> rows =
         transaction
             .fetch(
-                "SELECT * FROM " + COHORT
+                "SELECT * FROM "
+                    + COHORT
                     + " WHERE operation_id = ? AND issuer_id = ? ORDER BY row_ordinal",
                 control.currentOperationId(),
                 ISSUER)
@@ -608,7 +633,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
                   if (!CanonicalGameplayIssuerAdmissionControlValue.sha256(
                           json.getBytes(StandardCharsets.UTF_8))
                       .equals(storedDigest)) {
-                    throw conflict("Issuer cutoff cohort source digest differs from its stored JSON");
+                    throw conflict(
+                        "Issuer cutoff cohort source digest differs from its stored JSON");
                   }
                   return new CohortRow(
                       text(row, "source_kind"),
@@ -626,7 +652,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       }
       Record ordinal =
           transaction.fetchOne(
-              "SELECT row_ordinal FROM " + COHORT
+              "SELECT row_ordinal FROM "
+                  + COHORT
                   + " WHERE operation_id = ? AND issuer_id = ? AND source_kind = ? AND source_key = ?",
               control.currentOperationId(),
               ISSUER,
@@ -645,7 +672,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
   private static String requireCurrentTenantTagMapping(DSLContext transaction, UUID tenantId) {
     Record mapping =
         transaction.fetchOne(
-            "SELECT allocation_version, tenant_gameplay_tag FROM " + TENANT_TAG
+            "SELECT allocation_version, tenant_gameplay_tag FROM "
+                + TENANT_TAG
                 + " WHERE tenant_id = ? FOR SHARE",
             tenantId);
     Integer version = mapping == null ? null : mapping.get("allocation_version", Integer.class);
@@ -664,7 +692,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       DSLContext transaction, CanonicalGameplayIssuerAdmissionControlValue control) {
     List<Record> rows =
         transaction.fetch(
-            "SELECT * FROM " + CUTOFF_TARGET
+            "SELECT * FROM "
+                + CUTOFF_TARGET
                 + " WHERE operation_id = ? AND issuer_id = ? ORDER BY target_ordinal",
             control.currentOperationId(),
             ISSUER);
@@ -750,14 +779,24 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         || !control.bootstrapControlEpoch().equals(integer(operation, "bootstrap_control_epoch"))
         || !Arrays.equals(control.anchorExactBytes(), bytes(operation, "anchor_exact_bytes"))
         || !control.anchorExactDigest().equals(text(operation, "anchor_exact_digest"))
-        || !control.accountIssuerAuthGeneration().equals(integer(operation, "account_issuer_auth_generation"))
-        || !Arrays.equals(control.accountCheckpointBytes(), bytes(operation, "account_checkpoint_bytes"))
+        || !control
+            .accountIssuerAuthGeneration()
+            .equals(integer(operation, "account_issuer_auth_generation"))
+        || !Arrays.equals(
+            control.accountCheckpointBytes(), bytes(operation, "account_checkpoint_bytes"))
         || !control.accountCheckpointDigest().equals(text(operation, "account_checkpoint_digest"))
-        || !Arrays.equals(control.accountSourceEventBytes(), nullableBytes(operation, "account_source_event_bytes"))
-        || !Objects.equals(control.accountSourceEventDigest(), nullableText(operation, "account_source_event_digest"))
-        || !Arrays.equals(control.stableIncarnationBytes(), bytes(operation, "stable_incarnation_bytes"))
+        || !Arrays.equals(
+            control.accountSourceEventBytes(),
+            nullableBytes(operation, "account_source_event_bytes"))
+        || !Objects.equals(
+            control.accountSourceEventDigest(),
+            nullableText(operation, "account_source_event_digest"))
+        || !Arrays.equals(
+            control.stableIncarnationBytes(), bytes(operation, "stable_incarnation_bytes"))
         || !control.stableIncarnationDigest().equals(text(operation, "stable_incarnation_digest"))
-        || !control.inventorySnapshotRevision().equals(integer(operation, "inventory_snapshot_revision"))
+        || !control
+            .inventorySnapshotRevision()
+            .equals(integer(operation, "inventory_snapshot_revision"))
         || control.cohortRowCount() != longInteger(operation, "cohort_row_count")
         || !control.cohortDigest().equals(text(operation, "cohort_digest"))) {
       throw conflict("Live issuer cutoff has no exact current durable operation");
@@ -765,10 +804,13 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
   }
 
   private static void updateControl(
-      DSLContext transaction, CanonicalGameplayIssuerAdmissionControlValue value, BigInteger expectedEpoch) {
+      DSLContext transaction,
+      CanonicalGameplayIssuerAdmissionControlValue value,
+      BigInteger expectedEpoch) {
     int updated =
         transaction.execute(
-            "UPDATE " + CONTROL
+            "UPDATE "
+                + CONTROL
                 + " SET state = ?, live_barrier_epoch = ?, current_operation_id = ?,"
                 + " current_operation_kind = ?, bootstrap_operation_id = ?, bootstrap_request_id = ?,"
                 + " bootstrap_control_epoch = ?, anchor_exact_bytes = ?, anchor_exact_digest = ?,"
@@ -808,14 +850,13 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
   private static String digestCohort(List<CohortRow> rows) {
     MessageDigest digest = sha256Digest();
     rows.stream()
-        .sorted(
-            Comparator.comparing(CohortRow::sourceKind)
-                .thenComparing(CohortRow::sourceKey))
+        .sorted(Comparator.comparing(CohortRow::sourceKind).thenComparing(CohortRow::sourceKey))
         .forEach(
             row -> {
               updateFramed(digest, row.sourceKind().getBytes(StandardCharsets.UTF_8));
               updateFramed(digest, row.sourceKey().getBytes(StandardCharsets.UTF_8));
-              updateFramed(digest, row.sourceRevision().toString().getBytes(StandardCharsets.US_ASCII));
+              updateFramed(
+                  digest, row.sourceRevision().toString().getBytes(StandardCharsets.US_ASCII));
               updateFramed(digest, row.sourceDigest().getBytes(StandardCharsets.US_ASCII));
             });
     return "sha256:" + HexFormat.of().formatHex(digest.digest());
@@ -824,9 +865,7 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
   private static String digestTargetSource(List<CohortRow> rows) {
     MessageDigest digest = sha256Digest();
     rows.stream()
-        .sorted(
-            Comparator.comparing(CohortRow::sourceKind)
-                .thenComparing(CohortRow::sourceKey))
+        .sorted(Comparator.comparing(CohortRow::sourceKind).thenComparing(CohortRow::sourceKey))
         .forEach(
             row -> {
               updateFramed(digest, row.sourceKind().getBytes(StandardCharsets.UTF_8));
@@ -885,8 +924,11 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
     Objects.requireNonNull(anchor, "anchor");
     Objects.requireNonNull(currentState, "currentState");
     lockLayoutControl(transaction, anchor);
-    Record row = transaction.fetchOne("SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
-    if (row == null) throw conflict("Ordinary issuer work requires a positive live admission-control row");
+    Record row =
+        transaction.fetchOne(
+            "SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    if (row == null)
+      throw conflict("Ordinary issuer work requires a positive live admission-control row");
     CanonicalGameplayIssuerAdmissionControlValue value = loadControl(row);
     requireExactAnchorAndCurrentSource(value, anchor, currentState);
     if (value.state() != CanonicalGameplayIssuerAdmissionControlValue.State.OPEN
@@ -905,7 +947,9 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState) {
     CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
     lockLayoutControl(transaction, anchor);
-    Record existing = transaction.fetchOne("SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    Record existing =
+        transaction.fetchOne(
+            "SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
     if (existing != null) {
       CanonicalGameplayIssuerAdmissionControlValue prior = loadControl(existing);
       requireExactAnchorAndCurrentSource(prior, anchor, currentState);
@@ -920,7 +964,9 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       throw conflict("Existing issuer admission control cannot be reset or reopened");
     }
 
-    Record counter = transaction.fetchOne("SELECT * FROM " + COUNTER + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    Record counter =
+        transaction.fetchOne(
+            "SELECT * FROM " + COUNTER + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
     if (counter == null) throw conflict("The positive live issuer epoch counter is missing");
     BigInteger last = integer(counter, "last_live_barrier_epoch");
     if (last.signum() != 0) {
@@ -938,13 +984,15 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
 
     Record allocated =
         transaction.fetchOne(
-            "UPDATE " + COUNTER
+            "UPDATE "
+                + COUNTER
                 + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1,"
                 + " updated_at = CURRENT_TIMESTAMP"
                 + " WHERE issuer_id = ? AND last_live_barrier_epoch = 0"
                 + " RETURNING last_live_barrier_epoch",
             ISSUER);
-    if (allocated == null) throw conflict("Live issuer epoch allocation lost its serialized counter");
+    if (allocated == null)
+      throw conflict("Live issuer epoch allocation lost its serialized counter");
     BigInteger liveEpoch = integer(allocated, "last_live_barrier_epoch");
     CanonicalGameplayIssuerAdmissionControlValue requested =
         CanonicalGameplayIssuerAdmissionControlValue.initialOpen(
@@ -953,11 +1001,14 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
             liveEpoch,
             0L,
             CanonicalGameplayIssuerAdmissionControlValue.sha256(
-                "issuer-admission-initial-cohort/v1".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                "issuer-admission-initial-cohort/v1"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
     insertInitialOperation(transaction, requested);
     insertControl(transaction, requested);
-    Record saved = transaction.fetchOne("SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    Record saved =
+        transaction.fetchOne(
+            "SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
     if (saved == null) throw conflict("Initial live issuer control did not persist");
     CanonicalGameplayIssuerAdmissionControlValue result = loadControl(saved);
     if (!Arrays.equals(result.exactBytes(), requested.exactBytes())) {
@@ -978,10 +1029,15 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         || !anchor.controlEpoch().equals(integer(control, "control_epoch"))
         || !anchor.operationFence().equals(integer(control, "current_operation_fence"))
         || !anchor.coverageFence().equals(integer(control, "current_coverage_fence"))) {
-      throw conflict("Live admission control requires its exact immutable V1030 bootstrap provenance");
+      throw conflict(
+          "Live admission control requires its exact immutable V1030 bootstrap provenance");
     }
     Record anchorRow =
-        transaction.fetchOne("SELECT exact_anchor_bytes, exact_anchor_digest FROM " + ANCHOR + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+        transaction.fetchOne(
+            "SELECT exact_anchor_bytes, exact_anchor_digest FROM "
+                + ANCHOR
+                + " WHERE issuer_id = ? FOR UPDATE",
+            ISSUER);
     if (anchorRow == null
         || !Arrays.equals(bytes(anchorRow, "exact_anchor_bytes"), anchor.exactAnchorBytes())
         || !anchor.exactAnchorDigest().equals(text(anchorRow, "exact_anchor_digest"))) {
@@ -993,7 +1049,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       DSLContext transaction, CanonicalGameplayIssuerAdmissionControlValue value) {
     int inserted =
         transaction.execute(
-            "INSERT INTO " + OPERATION
+            "INSERT INTO "
+                + OPERATION
                 + " (operation_id, request_id, issuer_id, operation_kind, operation_state,"
                 + " live_barrier_epoch, prior_live_barrier_epoch, bootstrap_operation_id,"
                 + " bootstrap_request_id, bootstrap_control_epoch, anchor_exact_bytes,"
@@ -1028,7 +1085,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       DSLContext transaction, CanonicalGameplayIssuerAdmissionControlValue value) {
     int inserted =
         transaction.execute(
-            "INSERT INTO " + CONTROL
+            "INSERT INTO "
+                + CONTROL
                 + " (issuer_id, state, live_barrier_epoch, current_operation_id, current_operation_kind,"
                 + " bootstrap_operation_id, bootstrap_request_id, bootstrap_control_epoch,"
                 + " anchor_exact_bytes, anchor_exact_digest, account_issuer_auth_generation,"
@@ -1081,11 +1139,15 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         || !value.bootstrapControlEpoch().equals(integer(row, "bootstrap_control_epoch"))
         || !Arrays.equals(value.anchorExactBytes(), bytes(row, "anchor_exact_bytes"))
         || !value.anchorExactDigest().equals(text(row, "anchor_exact_digest"))
-        || !value.accountIssuerAuthGeneration().equals(integer(row, "account_issuer_auth_generation"))
+        || !value
+            .accountIssuerAuthGeneration()
+            .equals(integer(row, "account_issuer_auth_generation"))
         || !Arrays.equals(value.accountCheckpointBytes(), bytes(row, "account_checkpoint_bytes"))
         || !value.accountCheckpointDigest().equals(text(row, "account_checkpoint_digest"))
-        || !Arrays.equals(value.accountSourceEventBytes(), nullableBytes(row, "account_source_event_bytes"))
-        || !Objects.equals(value.accountSourceEventDigest(), nullableText(row, "account_source_event_digest"))
+        || !Arrays.equals(
+            value.accountSourceEventBytes(), nullableBytes(row, "account_source_event_bytes"))
+        || !Objects.equals(
+            value.accountSourceEventDigest(), nullableText(row, "account_source_event_digest"))
         || !Arrays.equals(value.stableIncarnationBytes(), bytes(row, "stable_incarnation_bytes"))
         || !value.stableIncarnationDigest().equals(text(row, "stable_incarnation_digest"))
         || !value.inventorySnapshotRevision().equals(integer(row, "inventory_snapshot_revision"))
@@ -1111,7 +1173,9 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
   }
 
   private static void requireCounterMatchesCurrent(DSLContext transaction, BigInteger liveEpoch) {
-    Record counter = transaction.fetchOne("SELECT * FROM " + COUNTER + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+    Record counter =
+        transaction.fetchOne(
+            "SELECT * FROM " + COUNTER + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
     if (counter == null || !integer(counter, "last_live_barrier_epoch").equals(liveEpoch)) {
       throw conflict("Live issuer admission epoch differs from its positive owner counter");
     }
@@ -1119,7 +1183,10 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
 
   private static void requireInitialOperationCurrent(
       DSLContext transaction, CanonicalGameplayIssuerAdmissionControlValue value) {
-    Record operation = transaction.fetchOne("SELECT * FROM " + OPERATION + " WHERE operation_id = ? FOR UPDATE", value.currentOperationId());
+    Record operation =
+        transaction.fetchOne(
+            "SELECT * FROM " + OPERATION + " WHERE operation_id = ? FOR UPDATE",
+            value.currentOperationId());
     if (operation == null
         || !ISSUER.equals(text(operation, "issuer_id"))
         || !"INITIAL_ANCHOR_INSTALL".equals(text(operation, "operation_kind"))
@@ -1130,14 +1197,23 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         || !value.bootstrapControlEpoch().equals(integer(operation, "bootstrap_control_epoch"))
         || !Arrays.equals(value.anchorExactBytes(), bytes(operation, "anchor_exact_bytes"))
         || !value.anchorExactDigest().equals(text(operation, "anchor_exact_digest"))
-        || !value.accountIssuerAuthGeneration().equals(integer(operation, "account_issuer_auth_generation"))
-        || !Arrays.equals(value.accountCheckpointBytes(), bytes(operation, "account_checkpoint_bytes"))
+        || !value
+            .accountIssuerAuthGeneration()
+            .equals(integer(operation, "account_issuer_auth_generation"))
+        || !Arrays.equals(
+            value.accountCheckpointBytes(), bytes(operation, "account_checkpoint_bytes"))
         || !value.accountCheckpointDigest().equals(text(operation, "account_checkpoint_digest"))
-        || !Arrays.equals(value.accountSourceEventBytes(), nullableBytes(operation, "account_source_event_bytes"))
-        || !Objects.equals(value.accountSourceEventDigest(), nullableText(operation, "account_source_event_digest"))
-        || !Arrays.equals(value.stableIncarnationBytes(), bytes(operation, "stable_incarnation_bytes"))
+        || !Arrays.equals(
+            value.accountSourceEventBytes(), nullableBytes(operation, "account_source_event_bytes"))
+        || !Objects.equals(
+            value.accountSourceEventDigest(),
+            nullableText(operation, "account_source_event_digest"))
+        || !Arrays.equals(
+            value.stableIncarnationBytes(), bytes(operation, "stable_incarnation_bytes"))
         || !value.stableIncarnationDigest().equals(text(operation, "stable_incarnation_digest"))
-        || !value.inventorySnapshotRevision().equals(integer(operation, "inventory_snapshot_revision"))
+        || !value
+            .inventorySnapshotRevision()
+            .equals(integer(operation, "inventory_snapshot_revision"))
         || value.cohortRowCount() != longInteger(operation, "cohort_row_count")
         || !value.cohortDigest().equals(text(operation, "cohort_digest"))) {
       throw conflict("Live issuer control has no exact persisted initial-anchor operation");

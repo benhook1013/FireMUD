@@ -7,7 +7,6 @@ import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
@@ -61,7 +60,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
           currentStateSource) {
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Redis client is required");
     this.catalog = Objects.requireNonNull(catalog, "Manual Redis script catalog is required");
-    this.repository = Objects.requireNonNull(repository, "Actual SQL projection repository is required");
+    this.repository =
+        Objects.requireNonNull(repository, "Actual SQL projection repository is required");
     this.currentStateSource =
         Objects.requireNonNull(currentStateSource, "Fresh issuer source is required");
   }
@@ -75,11 +75,12 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       requireCurrentState(prepared.value().initializer());
       repository.requireStillCurrent(prepared);
       String createMode = prepared.consumeCreatePermit() ? "CREATE_ONCE" : "REPLAY_ONLY";
-      RedisScriptDescriptor descriptor = requireDescriptor(
-          CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.OPEN_SCRIPT_ID,
-          CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.OPEN_RESOURCE_PATH,
-          OPEN_ARGUMENTS,
-          OPEN_OUTCOMES);
+      RedisScriptDescriptor descriptor =
+          requireDescriptor(
+              CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.OPEN_SCRIPT_ID,
+              CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.OPEN_RESOURCE_PATH,
+              OPEN_ARGUMENTS,
+              OPEN_OUTCOMES);
       byte[] script = scriptSource(descriptor);
       CanonicalGameplayIssuerAdmissionBarrierValue value = prepared.value();
       byte[] payload = value.exactBytes();
@@ -121,11 +122,12 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       PreparedCutoffTarget prepared =
           repository.readPreparedCutoffTarget(operationId, tenantId, namespaceId);
       repository.requireStillCurrent(prepared);
-      RedisScriptDescriptor descriptor = requireDescriptor(
-          CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.CLOSE_SCRIPT_ID,
-          CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.CLOSE_RESOURCE_PATH,
-          CLOSE_ARGUMENTS,
-          CLOSE_OUTCOMES);
+      RedisScriptDescriptor descriptor =
+          requireDescriptor(
+              CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.CLOSE_SCRIPT_ID,
+              CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.CLOSE_RESOURCE_PATH,
+              CLOSE_ARGUMENTS,
+              CLOSE_OUTCOMES);
       byte[] script = scriptSource(descriptor);
       CanonicalGameplayIssuerAdmissionBarrierValue closed = prepared.closedValue();
       CanonicalGameplayIssuerAdmissionBarrierValue.Initializer initializer = closed.initializer();
@@ -191,7 +193,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       for (Map.Entry<byte[], byte[]> entry : raw.entrySet()) {
         String field = asciiString(entry.getKey());
         if (!FIELDS.contains(field)
-            || actual.putIfAbsent(field, Objects.requireNonNull(entry.getValue()).clone()) != null) {
+            || actual.putIfAbsent(field, Objects.requireNonNull(entry.getValue()).clone())
+                != null) {
           throw unavailable();
         }
       }
@@ -222,10 +225,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       Long reply =
           await(
               commands.evalsha(
-                  sha,
-                  ScriptOutputType.INTEGER,
-                  new byte[][] {ascii(key)},
-                  arguments));
+                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments));
       if (reply == null) throw unavailable();
       return reply;
     } catch (RuntimeException failure) {
@@ -297,9 +297,14 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
     fields.put("state", ascii(value.state().name()));
     fields.put("admissionEpoch", ascii(value.admissionEpoch().toString()));
     fields.put("ownerOperationId", ascii(value.ownerOperationId().toString()));
-    fields.put("initializerOperationId", ascii(initializer == null ? "none" : initializer.operationId().toString()));
-    fields.put("initializerEpoch", ascii(initializer == null ? "0" : initializer.admissionEpoch().toString()));
-    fields.put("initializerDigest", ascii(initializer == null ? "none" : initializer.exactDigest()));
+    fields.put(
+        "initializerOperationId",
+        ascii(initializer == null ? "none" : initializer.operationId().toString()));
+    fields.put(
+        "initializerEpoch",
+        ascii(initializer == null ? "0" : initializer.admissionEpoch().toString()));
+    fields.put(
+        "initializerDigest", ascii(initializer == null ? "none" : initializer.exactDigest()));
     fields.put("payloadDigest", ascii(value.exactDigest()));
     fields.put("payload", value.exactBytes());
     return fields;
@@ -384,15 +389,25 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
           new RedisScriptDescriptor.ArgumentSpec("createMode"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> OPEN_OUTCOMES =
       List.of(
-          outcome("OPEN_CREATED", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+          outcome(
+              "OPEN_CREATED",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
               RedisScriptDescriptor.MutationEffect.MUTATING),
-          outcome("OPEN_REPLAY", RedisScriptDescriptor.OutcomeCategory.REPLAY,
+          outcome(
+              "OPEN_REPLAY",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome("TYPE_TTL_OR_FIELDSET_REFUSED", RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+          outcome(
+              "TYPE_TTL_OR_FIELDSET_REFUSED",
+              RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome("INVALID_ARGUMENTS_OR_TARGET", RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+          outcome(
+              "INVALID_ARGUMENTS_OR_TARGET",
+              RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome("CLOSED_OR_CONFLICTING_STATE", RedisScriptDescriptor.OutcomeCategory.STALE,
+          outcome(
+              "CLOSED_OR_CONFLICTING_STATE",
+              RedisScriptDescriptor.OutcomeCategory.STALE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING));
   private static final List<RedisScriptDescriptor.ArgumentSpec> CLOSE_ARGUMENTS =
       List.of(
@@ -412,17 +427,29 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
           new RedisScriptDescriptor.ArgumentSpec("state"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> CLOSE_OUTCOMES =
       List.of(
-          outcome("CLOSED_CREATED", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+          outcome(
+              "CLOSED_CREATED",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
               RedisScriptDescriptor.MutationEffect.MUTATING),
-          outcome("CLOSED_REPLAY", RedisScriptDescriptor.OutcomeCategory.REPLAY,
+          outcome(
+              "CLOSED_REPLAY",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome("CAPTURED_OPEN_CLOSED", RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+          outcome(
+              "CAPTURED_OPEN_CLOSED",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
               RedisScriptDescriptor.MutationEffect.MUTATING),
-          outcome("TYPE_TTL_OR_FIELDSET_REFUSED", RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+          outcome(
+              "TYPE_TTL_OR_FIELDSET_REFUSED",
+              RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome("INVALID_ARGUMENTS_OR_TARGET", RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
+          outcome(
+              "INVALID_ARGUMENTS_OR_TARGET",
+              RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome("NEWER_CLOSED_OR_UNEXPECTED_STATE", RedisScriptDescriptor.OutcomeCategory.STALE,
+          outcome(
+              "NEWER_CLOSED_OR_UNEXPECTED_STATE",
+              RedisScriptDescriptor.OutcomeCategory.STALE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING));
 
   private static RedisScriptDescriptor.OutcomeSpec outcome(
@@ -482,10 +509,21 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       }
     }
 
-    CanonicalGameplayIssuerAdmissionBarrierValue value() { return value; }
-    CanonicalGameplayTenantGameplayTagRepository.Assignment assignment() { return assignment; }
-    UUID requestOperationId() { return requestOperationId; }
-    String key() { return key; }
+    CanonicalGameplayIssuerAdmissionBarrierValue value() {
+      return value;
+    }
+
+    CanonicalGameplayTenantGameplayTagRepository.Assignment assignment() {
+      return assignment;
+    }
+
+    UUID requestOperationId() {
+      return requestOperationId;
+    }
+
+    String key() {
+      return key;
+    }
 
     /** Consumes the SQL owner's first-attempt authority before any Redis command is attempted. */
     boolean consumeCreatePermit() {
@@ -502,7 +540,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       Objects.requireNonNull(key, "key");
       if (closedValue.state() != CanonicalGameplayIssuerAdmissionBarrierValue.State.CLOSED
           || (expectedOpenValue != null
-              && (expectedOpenValue.state() != CanonicalGameplayIssuerAdmissionBarrierValue.State.OPEN
+              && (expectedOpenValue.state()
+                      != CanonicalGameplayIssuerAdmissionBarrierValue.State.OPEN
                   || closedValue.initializer() == null
                   || !Arrays.equals(
                       closedValue.initializer().exactBytes(),
@@ -532,8 +571,16 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       if (!Arrays.equals(value.exactBytes(), this.exactPhysicalPayload)) throw unavailable();
     }
 
-    CanonicalGameplayIssuerAdmissionBarrierValue value() { return value; }
-    long scriptOutcome() { return scriptOutcome; }
-    byte[] exactPhysicalPayload() { return exactPhysicalPayload.clone(); }
+    CanonicalGameplayIssuerAdmissionBarrierValue value() {
+      return value;
+    }
+
+    long scriptOutcome() {
+      return scriptOutcome;
+    }
+
+    byte[] exactPhysicalPayload() {
+      return exactPhysicalPayload.clone();
+    }
   }
 }

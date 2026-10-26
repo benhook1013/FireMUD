@@ -17,8 +17,8 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 /**
  * Exact, typed source bytes for the non-admitting original {@code NEW} session candidate.
  *
- * <p>This is a data carrier only. It does not prove that any input came from Account or the
- * durable Game Session owners, establish a physical Redis readback, finalize the Account lease, or
+ * <p>This is a data carrier only. It does not prove that any input came from Account or the durable
+ * Game Session owners, establish a physical Redis readback, finalize the Account lease, or
  * authorize gameplay. Authenticated session readers must reject its separate purpose discriminator.
  *
  * <p>The payload retains the complete immutable Account lease and original decision sources plus
@@ -109,7 +109,9 @@ public final class CanonicalGameplayOriginalNewCandidate {
     return transition;
   }
 
-  /** Immutable reservation identity, fences and original snapshot; current revisions may advance. */
+  /**
+   * Immutable reservation identity, fences and original snapshot; current revisions may advance.
+   */
   public ReservationSource reservation() {
     return reservation;
   }
@@ -136,7 +138,9 @@ public final class CanonicalGameplayOriginalNewCandidate {
     return CanonicalGameplayOriginalNewCandidateCodec.matchesOriginalDecision(this, decision);
   }
 
-  /** Checks stable source identity while allowing only the documented PREPARED/PROVISIONAL retry. */
+  /**
+   * Checks stable source identity while allowing only the documented PREPARED/PROVISIONAL retry.
+   */
   public boolean matchesProvisionalSources(
       CanonicalGameplayBindingProvisionalCasEvidence evidence) {
     return CanonicalGameplayOriginalNewCandidateCodec.matchesProvisionalSources(this, evidence);

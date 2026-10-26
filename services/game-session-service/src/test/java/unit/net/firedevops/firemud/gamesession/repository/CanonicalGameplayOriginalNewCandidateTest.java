@@ -60,7 +60,10 @@ class CanonicalGameplayOriginalNewCandidateTest {
     assertThat(
             first.matchesProvisionalSources(
                 provisionalEvidence(
-                    prepared.identity(), prepared.bindingGeneration(), BigInteger.valueOf(28), true)))
+                    prepared.identity(),
+                    prepared.bindingGeneration(),
+                    BigInteger.valueOf(28),
+                    true)))
         .isTrue();
 
     CanonicalGameplayOriginalNewCandidate decoded =
@@ -73,9 +76,15 @@ class CanonicalGameplayOriginalNewCandidateTest {
     assertThat(decoded.transition().transitionId()).isEqualTo(prepared.decision().transitionId());
     assertThat(decoded.reservation().bindingGeneration()).isEqualTo(BigInteger.valueOf(7));
     assertThat(decoded.reservation().inventorySnapshotRevision()).isEqualTo(BigInteger.valueOf(19));
-    assertThat(first.matchesProvisionalSources(provisionalEvidence(
-        prepared.identity(), prepared.bindingGeneration(), BigInteger.valueOf(28), true,
-        BigInteger.valueOf(20)))).isFalse();
+    assertThat(
+            first.matchesProvisionalSources(
+                provisionalEvidence(
+                    prepared.identity(),
+                    prepared.bindingGeneration(),
+                    BigInteger.valueOf(28),
+                    true,
+                    BigInteger.valueOf(20))))
+        .isFalse();
 
     String encoded = first.canonicalJson();
     assertThat(encoded)
@@ -92,7 +101,8 @@ class CanonicalGameplayOriginalNewCandidateTest {
             "raw-original-jwt",
             "private-rebind-handle");
     assertThat(first.toString())
-        .doesNotContain(prepared.leaseEvidence().sha256(), "raw-original-jwt", "private-rebind-handle");
+        .doesNotContain(
+            prepared.leaseEvidence().sha256(), "raw-original-jwt", "private-rebind-handle");
   }
 
   @Test
@@ -165,19 +175,29 @@ class CanonicalGameplayOriginalNewCandidateTest {
                 preparedEvidence(original), original.decision())
             .canonicalJson();
 
-    rejects(canonical.replace(
-        "\"purpose\":\"" + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\"",
-        "\"purpose\":\"" + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\",\"extra\":\"x\""));
-    rejects(canonical.replace(
-        "\"purpose\":\"" + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\"",
-        "\"purpose\":\"" + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\",\"purpose\":\""
-            + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\""));
-    rejects(canonical.replace(
-        "\"leaseKind\":\"NEW_BINDING\"",
-        "\"leaseKind\":\"NEW_BINDING\",\"leaseKind\":\"NEW_BINDING\""));
+    rejects(
+        canonical.replace(
+            "\"purpose\":\"" + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\"",
+            "\"purpose\":\""
+                + CanonicalGameplayOriginalNewCandidate.PURPOSE
+                + "\",\"extra\":\"x\""));
+    rejects(
+        canonical.replace(
+            "\"purpose\":\"" + CanonicalGameplayOriginalNewCandidate.PURPOSE + "\"",
+            "\"purpose\":\""
+                + CanonicalGameplayOriginalNewCandidate.PURPOSE
+                + "\",\"purpose\":\""
+                + CanonicalGameplayOriginalNewCandidate.PURPOSE
+                + "\""));
+    rejects(
+        canonical.replace(
+            "\"leaseKind\":\"NEW_BINDING\"",
+            "\"leaseKind\":\"NEW_BINDING\",\"leaseKind\":\"NEW_BINDING\""));
     rejects(" " + canonical);
     rejects(canonical.replace("\"bindingGeneration\":\"7\"", "\"bindingGeneration\":\"07\""));
-    rejects(canonical.replace("\"bindingDecisionId\":\"" + id(500) + "\"", "\"bindingDecisionId\":\"not-a-uuid\""));
+    rejects(
+        canonical.replace(
+            "\"bindingDecisionId\":\"" + id(500) + "\"", "\"bindingDecisionId\":\"not-a-uuid\""));
     rejects("{");
 
     byte[] canonicalBytes = canonical.getBytes(StandardCharsets.UTF_8);
@@ -209,7 +229,8 @@ class CanonicalGameplayOriginalNewCandidateTest {
       BigInteger generation,
       BigInteger inventoryRevision,
       boolean provisional) {
-    return provisionalEvidence(identity, generation, inventoryRevision, provisional, BigInteger.valueOf(19));
+    return provisionalEvidence(
+        identity, generation, inventoryRevision, provisional, BigInteger.valueOf(19));
   }
 
   private static CanonicalGameplayBindingProvisionalCasEvidence provisionalEvidence(
@@ -335,7 +356,12 @@ class CanonicalGameplayOriginalNewCandidateTest {
         null,
         null,
         new CanonicalGameplayLegacyMigrationDisposition(
-            id(505), id(506), id(507), BigInteger.ONE, BigInteger.TWO, BigInteger.valueOf(3),
+            id(505),
+            id(506),
+            id(507),
+            BigInteger.ONE,
+            BigInteger.TWO,
+            BigInteger.valueOf(3),
             "sha256:" + "f".repeat(64)));
   }
 
@@ -347,8 +373,7 @@ class CanonicalGameplayOriginalNewCandidateTest {
         AccountGameplayAdmissionLeaseEvidence.fromCarrier(
             leaseCarrier(identity, target, alternateLease, generation));
     var decision =
-        new CanonicalGameplayAdmissionDecision(
-            id(500), lease, identity, generation, null, target);
+        new CanonicalGameplayAdmissionDecision(id(500), lease, identity, generation, null, target);
     return new Bundle(identity, generation, target, lease, decision);
   }
 
@@ -472,11 +497,10 @@ class CanonicalGameplayOriginalNewCandidateTest {
             .map(
                 stream ->
                     Map.of(
-                        "outboxStreamKey", stream,
+                        "outboxStreamKey",
+                        stream,
                         "outboxSequence",
-                            stream.contains("tenant/") || stream.contains("membership/")
-                                ? "4"
-                                : "0"))
+                        stream.contains("tenant/") || stream.contains("membership/") ? "4" : "0"))
             .toList());
     carrier.put(
         "tokenIdentityEvidence",
@@ -499,7 +523,7 @@ class CanonicalGameplayOriginalNewCandidateTest {
   }
 
   private static UUID id(long value) {
-    return new UUID(0L, value);
+    return new UUID(0x4000L, Long.MIN_VALUE | value);
   }
 
   private record Bundle(

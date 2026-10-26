@@ -82,7 +82,8 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
     this.state = Objects.requireNonNull(state, "state");
     this.liveBarrierEpoch = requirePositive(liveBarrierEpoch, "liveBarrierEpoch");
     this.currentOperationId = requireNonNil(currentOperationId, "currentOperationId");
-    this.currentOperationKind = Objects.requireNonNull(currentOperationKind, "currentOperationKind");
+    this.currentOperationKind =
+        Objects.requireNonNull(currentOperationKind, "currentOperationKind");
     this.bootstrapOperationId = requireNonNil(bootstrapOperationId, "bootstrapOperationId");
     this.bootstrapRequestId = requireNonNil(bootstrapRequestId, "bootstrapRequestId");
     this.bootstrapControlEpoch = requirePositive(bootstrapControlEpoch, "bootstrapControlEpoch");
@@ -92,27 +93,34 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
     this.accountIssuerAuthGeneration =
         requirePositive(accountIssuerAuthGeneration, "accountIssuerAuthGeneration");
     this.accountCheckpointBytes = nonEmpty(accountCheckpointBytes, "accountCheckpointBytes");
-    this.accountCheckpointDigest = requireDigest(accountCheckpointDigest, "accountCheckpointDigest");
+    this.accountCheckpointDigest =
+        requireDigest(accountCheckpointDigest, "accountCheckpointDigest");
     requireDigestMatches(
         this.accountCheckpointBytes, this.accountCheckpointDigest, "Account checkpoint");
     if ((accountSourceEventBytes == null) != (accountSourceEventDigest == null)) {
       throw new IllegalArgumentException("Account source event bytes and digest must be paired");
     }
     this.accountSourceEventBytes =
-        accountSourceEventBytes == null ? null : nonEmpty(accountSourceEventBytes, "accountSourceEventBytes");
+        accountSourceEventBytes == null
+            ? null
+            : nonEmpty(accountSourceEventBytes, "accountSourceEventBytes");
     this.accountSourceEventDigest =
-        accountSourceEventDigest == null ? null : requireDigest(accountSourceEventDigest, "accountSourceEventDigest");
+        accountSourceEventDigest == null
+            ? null
+            : requireDigest(accountSourceEventDigest, "accountSourceEventDigest");
     if (this.accountSourceEventBytes != null) {
       requireDigestMatches(
           this.accountSourceEventBytes, this.accountSourceEventDigest, "Account source event");
     }
     this.stableIncarnationBytes = nonEmpty(stableIncarnationBytes, "stableIncarnationBytes");
-    this.stableIncarnationDigest = requireDigest(stableIncarnationDigest, "stableIncarnationDigest");
+    this.stableIncarnationDigest =
+        requireDigest(stableIncarnationDigest, "stableIncarnationDigest");
     requireDigestMatches(
         this.stableIncarnationBytes, this.stableIncarnationDigest, "stable incarnation");
     this.inventorySnapshotRevision =
         requirePositive(inventorySnapshotRevision, "inventorySnapshotRevision");
-    if (cohortRowCount < 0) throw new IllegalArgumentException("cohortRowCount must not be negative");
+    if (cohortRowCount < 0)
+      throw new IllegalArgumentException("cohortRowCount must not be negative");
     this.cohortRowCount = cohortRowCount;
     this.cohortDigest = requireDigest(cohortDigest, "cohortDigest");
     if ((state == State.OPEN) != (currentOperationKind == OperationKind.INITIAL_ANCHOR_INSTALL)) {
@@ -143,7 +151,8 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
         || !Arrays.equals(
             anchor.incarnationBytes(),
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(current.incarnation()))) {
-      throw new IllegalArgumentException("Live issuer control requires the exact current anchor sources");
+      throw new IllegalArgumentException(
+          "Live issuer control requires the exact current anchor sources");
     }
     return new CanonicalGameplayIssuerAdmissionControlValue(
         anchor.issuerId(),
@@ -304,34 +313,101 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(current.incarnation()));
   }
 
-  String issuerId() { return issuerId; }
-  State state() { return state; }
-  BigInteger liveBarrierEpoch() { return liveBarrierEpoch; }
-  UUID currentOperationId() { return currentOperationId; }
-  OperationKind currentOperationKind() { return currentOperationKind; }
-  UUID bootstrapOperationId() { return bootstrapOperationId; }
-  UUID bootstrapRequestId() { return bootstrapRequestId; }
-  BigInteger bootstrapControlEpoch() { return bootstrapControlEpoch; }
-  byte[] anchorExactBytes() { return anchorExactBytes.clone(); }
-  String anchorExactDigest() { return anchorExactDigest; }
-  BigInteger accountIssuerAuthGeneration() { return accountIssuerAuthGeneration; }
-  byte[] accountCheckpointBytes() { return accountCheckpointBytes.clone(); }
-  String accountCheckpointDigest() { return accountCheckpointDigest; }
-  byte[] accountSourceEventBytes() { return accountSourceEventBytes == null ? null : accountSourceEventBytes.clone(); }
-  String accountSourceEventDigest() { return accountSourceEventDigest; }
-  byte[] stableIncarnationBytes() { return stableIncarnationBytes.clone(); }
-  String stableIncarnationDigest() { return stableIncarnationDigest; }
-  BigInteger inventorySnapshotRevision() { return inventorySnapshotRevision; }
-  long cohortRowCount() { return cohortRowCount; }
-  String cohortDigest() { return cohortDigest; }
-  byte[] exactBytes() { return exactBytes.clone(); }
-  String exactDigest() { return exactDigest; }
+  String issuerId() {
+    return issuerId;
+  }
+
+  State state() {
+    return state;
+  }
+
+  BigInteger liveBarrierEpoch() {
+    return liveBarrierEpoch;
+  }
+
+  UUID currentOperationId() {
+    return currentOperationId;
+  }
+
+  OperationKind currentOperationKind() {
+    return currentOperationKind;
+  }
+
+  UUID bootstrapOperationId() {
+    return bootstrapOperationId;
+  }
+
+  UUID bootstrapRequestId() {
+    return bootstrapRequestId;
+  }
+
+  BigInteger bootstrapControlEpoch() {
+    return bootstrapControlEpoch;
+  }
+
+  byte[] anchorExactBytes() {
+    return anchorExactBytes.clone();
+  }
+
+  String anchorExactDigest() {
+    return anchorExactDigest;
+  }
+
+  BigInteger accountIssuerAuthGeneration() {
+    return accountIssuerAuthGeneration;
+  }
+
+  byte[] accountCheckpointBytes() {
+    return accountCheckpointBytes.clone();
+  }
+
+  String accountCheckpointDigest() {
+    return accountCheckpointDigest;
+  }
+
+  byte[] accountSourceEventBytes() {
+    return accountSourceEventBytes == null ? null : accountSourceEventBytes.clone();
+  }
+
+  String accountSourceEventDigest() {
+    return accountSourceEventDigest;
+  }
+
+  byte[] stableIncarnationBytes() {
+    return stableIncarnationBytes.clone();
+  }
+
+  String stableIncarnationDigest() {
+    return stableIncarnationDigest;
+  }
+
+  BigInteger inventorySnapshotRevision() {
+    return inventorySnapshotRevision;
+  }
+
+  long cohortRowCount() {
+    return cohortRowCount;
+  }
+
+  String cohortDigest() {
+    return cohortDigest;
+  }
+
+  byte[] exactBytes() {
+    return exactBytes.clone();
+  }
+
+  String exactDigest() {
+    return exactDigest;
+  }
 
   static String sha256(byte[] bytes) {
     try {
-      return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (Exception failure) {
-      throw new IllegalStateException("Could not digest exact issuer admission-control bytes", failure);
+      throw new IllegalStateException(
+          "Could not digest exact issuer admission-control bytes", failure);
     }
   }
 
@@ -343,7 +419,8 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
       }
       return bytes.toByteArray();
     } catch (IOException impossible) {
-      throw new IllegalStateException("Could not encode issuer admission-control bytes", impossible);
+      throw new IllegalStateException(
+          "Could not encode issuer admission-control bytes", impossible);
     }
   }
 
@@ -381,7 +458,8 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
   private static String readText(DataInputStream in) throws IOException {
     byte[] bytes = readBytes(in);
     try {
-      return StandardCharsets.UTF_8.newDecoder()
+      return StandardCharsets.UTF_8
+          .newDecoder()
           .onMalformedInput(CodingErrorAction.REPORT)
           .onUnmappableCharacter(CodingErrorAction.REPORT)
           .decode(ByteBuffer.wrap(bytes))
@@ -432,7 +510,8 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
 
   private static UUID requireNonNil(UUID value, String name) {
     Objects.requireNonNull(value, name);
-    if (value.equals(new UUID(0L, 0L))) throw new IllegalArgumentException(name + " must not be nil");
+    if (value.equals(new UUID(0L, 0L)))
+      throw new IllegalArgumentException(name + " must not be nil");
     return value;
   }
 
@@ -454,7 +533,8 @@ final class CanonicalGameplayIssuerAdmissionControlValue {
 
   private static String requireDigest(String digest, String name) {
     Objects.requireNonNull(digest, name);
-    if (!digest.matches("sha256:[0-9a-f]{64}")) throw new IllegalArgumentException(name + " is malformed");
+    if (!digest.matches("sha256:[0-9a-f]{64}"))
+      throw new IllegalArgumentException(name + " is malformed");
     return digest;
   }
 

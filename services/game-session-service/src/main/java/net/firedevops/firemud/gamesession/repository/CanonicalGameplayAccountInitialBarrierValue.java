@@ -1,13 +1,15 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import java.math.BigInteger;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.math.BigInteger;
 import java.util.UUID;
 
-/** Exact nine-field physical INITIAL OPEN value; it carries no later Account or issuer authority. */
+/**
+ * Exact nine-field physical INITIAL OPEN value; it carries no later Account or issuer authority.
+ */
 final class CanonicalGameplayAccountInitialBarrierValue {
   static final String SCHEMA = "gs_account_admission_barrier/v1";
   static final String OPEN = "OPEN";

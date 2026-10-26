@@ -37,7 +37,8 @@ public final class CanonicalGameplayIssuerAdmissionBarrierRedisScriptContributio
 
   @Override
   public Collection<RedisScriptDescriptor> descriptors() {
-    return List.of(readDescriptor(OPEN_DESCRIPTOR_PATH, OPEN_SCRIPT_ID),
+    return List.of(
+        readDescriptor(OPEN_DESCRIPTOR_PATH, OPEN_SCRIPT_ID),
         readDescriptor(CLOSE_DESCRIPTOR_PATH, CLOSE_SCRIPT_ID));
   }
 

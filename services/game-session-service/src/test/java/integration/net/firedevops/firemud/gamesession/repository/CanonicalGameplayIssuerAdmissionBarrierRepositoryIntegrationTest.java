@@ -19,13 +19,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
@@ -33,8 +33,8 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
-import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -127,9 +127,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     assertThat(cutoffTargets).hasSize(1);
     var target = cutoffTargets.getFirst();
     var closed =
-        state.owner().closeAndRead(
-            cutoffOperationId, target.closedValue().tenantId(),
-            target.closedValue().playableStateNamespaceId());
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
     assertThat(closed.scriptOutcome()).isEqualTo(1L);
 
     var newerClosed =
@@ -145,10 +148,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     byte[] newerBytes = newerClosed.exactBytes();
     assertThatThrownBy(
             () ->
-                state.owner().closeAndRead(
-                    cutoffOperationId,
-                    target.closedValue().tenantId(),
-                    target.closedValue().playableStateNamespaceId()))
+                state
+                    .owner()
+                    .closeAndRead(
+                        cutoffOperationId,
+                        target.closedValue().tenantId(),
+                        target.closedValue().playableStateNamespaceId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.hget(bytes(target.key()), bytes("payload")))
         .containsExactly(newerBytes);
@@ -301,7 +306,8 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
               }
             } catch (InterruptedException interrupted) {
               Thread.currentThread().interrupt();
-              throw new IllegalStateException("Controlled initializer gate was interrupted", interrupted);
+              throw new IllegalStateException(
+                  "Controlled initializer gate was interrupted", interrupted);
             }
             return prepared;
           }
@@ -341,8 +347,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     ExecutorService executor = Executors.newSingleThreadExecutor();
     try {
       var initializerAttempt =
-          executor.submit(
-              () -> state.owner(gatedRepository).initializeAndRead(operationId));
+          executor.submit(() -> state.owner(gatedRepository).initializeAndRead(operationId));
       assertThat(preparedForRedis.await(10, TimeUnit.SECONDS)).isTrue();
       assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
 
@@ -356,10 +361,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
       var targets = state.repository().readPreparedCutoffTargets(cutoffOperationId);
       assertThat(targets).hasSize(1);
       var closed =
-          state.owner().closeAndRead(
-              cutoffOperationId,
-              targets.getFirst().closedValue().tenantId(),
-              targets.getFirst().closedValue().playableStateNamespaceId());
+          state
+              .owner()
+              .closeAndRead(
+                  cutoffOperationId,
+                  targets.getFirst().closedValue().tenantId(),
+                  targets.getFirst().closedValue().playableStateNamespaceId());
       assertThat(closed.scriptOutcome()).isEqualTo(1L);
       assertThat(countReceipt(state, operationId)).isZero();
     } finally {
@@ -377,7 +384,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl())
         .recordFirstNewAccountAbort(state.fixture().source(), UUID.randomUUID());
     assertThat(
-            state.fixture().dsl()
+            state
+                .fixture()
+                .dsl()
                 .fetchOne(
                     "SELECT status FROM game_session_canonical_binding_transition"
                         + " WHERE transition_id = ?",
@@ -391,22 +400,27 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     assertThat(targets).hasSize(1);
     var target = targets.getFirst();
     assertThat(target.expectedOpenValue()).isNotNull();
-    assertThat(target.expectedOpenValue().exactBytes()).containsExactly(opened.exactPhysicalPayload());
+    assertThat(target.expectedOpenValue().exactBytes())
+        .containsExactly(opened.exactPhysicalPayload());
     assertThat(target.closedValue().initializer().exactBytes())
         .containsExactly(opened.value().initializer().exactBytes());
 
     var closed =
-        state.owner().closeAndRead(
-            cutoffOperationId,
-            target.closedValue().tenantId(),
-            target.closedValue().playableStateNamespaceId());
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
     assertThat(closed.scriptOutcome()).isEqualTo(1L);
     var installed = state.repository().completeCutoff(cutoffOperationId);
     assertThat(installed.state())
         .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
 
     var frozenInitializer =
-        state.fixture().dsl()
+        state
+            .fixture()
+            .dsl()
             .fetchOne(
                 "SELECT operation_id, open_payload_bytes FROM"
                     + " game_session_canonical_issuer_admission_initializer"
@@ -431,8 +445,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     assertThat(secondAccountId).isNotEqualTo(state.candidate().accountId());
 
     CanonicalGameplayIssuerBindingLocalOperation currentOperation =
-        prepareCurrentOperation(
-            state, "same-target-different-account", secondAccountId);
+        prepareCurrentOperation(state, "same-target-different-account", secondAccountId);
     var originalRetry = state.owner().initializeAndRead(originalOperationId);
     assertThat(originalRetry.scriptOutcome()).isEqualTo(2L);
     assertThat(originalRetry.exactPhysicalPayload()).containsExactly(originalPayload);
@@ -441,7 +454,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl())
         .recordFirstNewAccountAbort(abortSource, UUID.randomUUID());
     assertThat(
-            state.fixture().dsl()
+            state
+                .fixture()
+                .dsl()
                 .fetchOne(
                     "SELECT status FROM game_session_canonical_binding_transition"
                         + " WHERE transition_id = ?",
@@ -453,13 +468,14 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     assertThat(abortedOriginRetry.scriptOutcome()).isEqualTo(2L);
     assertThat(abortedOriginRetry.exactPhysicalPayload()).containsExactly(originalPayload);
 
-    var currentCandidateReadback =
-        state.owner().initializeAndRead(currentOperation.operationId());
+    var currentCandidateReadback = state.owner().initializeAndRead(currentOperation.operationId());
     assertThat(currentCandidateReadback.scriptOutcome()).isEqualTo(2L);
     assertThat(currentCandidateReadback.exactPhysicalPayload()).containsExactly(originalPayload);
 
     var storedInitializer =
-        state.fixture().dsl()
+        state
+            .fixture()
+            .dsl()
             .fetchOne(
                 "SELECT operation_id, open_payload_bytes FROM"
                     + " game_session_canonical_issuer_admission_initializer"
@@ -471,15 +487,13 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
         .containsExactly(originalPayload);
 
     state.currentState().set(currentIssuerState(state.candidate(), "moved-source"));
-    assertThatThrownBy(
-            () -> state.owner().initializeAndRead(currentOperation.operationId()))
+    assertThatThrownBy(() -> state.owner().initializeAndRead(currentOperation.operationId()))
         .isInstanceOf(IllegalStateException.class);
 
     state.currentState().set(currentIssuerState(state.candidate()));
     var prepared = state.repository().readPreparedInitializer(currentOperation.operationId());
     administratorCommands.del(bytes(prepared.key()));
-    assertThatThrownBy(
-            () -> state.owner().initializeAndRead(currentOperation.operationId()))
+    assertThatThrownBy(() -> state.owner().initializeAndRead(currentOperation.operationId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
   }
@@ -489,35 +503,45 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     FixtureState state = fixtureState();
     var dsl = state.fixture().dsl();
     var current = state.currentState().get();
-    var anchor = dsl.transactionResult(configuration -> {
-      var transaction = org.jooq.impl.DSL.using(configuration);
-      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-      return CanonicalGameplayIssuerBootstrapCoverageRepository
-          .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-    });
+    var anchor =
+        dsl.transactionResult(
+            configuration -> {
+              var transaction = org.jooq.impl.DSL.using(configuration);
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+              return CanonicalGameplayIssuerBootstrapCoverageRepository
+                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+            });
     AtomicBoolean sourceCalled = new AtomicBoolean();
-    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source = () -> {
-      sourceCalled.set(true);
-      return current;
-    };
-    dsl.transaction(configuration -> {
-      var transaction = org.jooq.impl.DSL.using(configuration);
-      var repository = new CanonicalGameplayIssuerAdmissionBarrierRepository(
-          transaction,
-          new CanonicalGameplayTenantGameplayTagRepository(
-              transaction, state.fixture().target().targetNamespace(), 1),
-          source);
-      assertThatThrownBy(() -> repository.readPreparedInitializer(state.fixture().originalOperationId()))
-          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-          .hasMessageContaining("jOOQ transaction");
-      assertThatThrownBy(() -> new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
-          .installInitialOpen(anchor, source))
-          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-          .hasMessageContaining("jOOQ transaction");
-    });
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source =
+        () -> {
+          sourceCalled.set(true);
+          return current;
+        };
+    dsl.transaction(
+        configuration -> {
+          var transaction = org.jooq.impl.DSL.using(configuration);
+          var repository =
+              new CanonicalGameplayIssuerAdmissionBarrierRepository(
+                  transaction,
+                  new CanonicalGameplayTenantGameplayTagRepository(
+                      transaction, state.fixture().target().targetNamespace(), 1),
+                  source);
+          assertThatThrownBy(
+                  () -> repository.readPreparedInitializer(state.fixture().originalOperationId()))
+              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+              .hasMessageContaining("jOOQ transaction");
+          assertThatThrownBy(
+                  () ->
+                      new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
+                          .installInitialOpen(anchor, source))
+              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+              .hasMessageContaining("jOOQ transaction");
+        });
     assertThat(sourceCalled).isFalse();
-    assertThat(dsl.fetchCount(org.jooq.impl.DSL.table(
-        "game_session_canonical_issuer_admission_initializer"))).isZero();
+    assertThat(
+            dsl.fetchCount(
+                org.jooq.impl.DSL.table("game_session_canonical_issuer_admission_initializer")))
+        .isZero();
   }
 
   private FixtureState fixtureState() {
@@ -605,7 +629,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             identity,
             operation.preparedTransition().bindingGeneration(),
             null,
-            state.fixture().target()));
+            state.fixture().source().originalDecision().targetEvidence()));
     var localCatalog =
         RedisScriptCatalog.fromContributions(
             List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution()));
@@ -779,7 +803,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   }
 
   private static String initializationState(FixtureState state, UUID operationId) {
-    return state.fixture().dsl()
+    return state
+        .fixture()
+        .dsl()
         .fetchOne(
             "SELECT initialization_state FROM game_session_canonical_issuer_admission_initializer"
                 + " WHERE operation_id = ?",
@@ -788,7 +814,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   }
 
   private static long countReceipt(FixtureState state, UUID operationId) {
-    return state.fixture().dsl()
+    return state
+        .fixture()
+        .dsl()
         .fetchOne(
             "SELECT count(*) AS receipt_count"
                 + " FROM game_session_canonical_issuer_admission_initializer_receipt"
@@ -797,8 +825,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
         .get("receipt_count", Long.class);
   }
 
-  private void writePhysicalValue(
-      String key, CanonicalGameplayIssuerAdmissionBarrierValue value) {
+  private void writePhysicalValue(String key, CanonicalGameplayIssuerAdmissionBarrierValue value) {
     var initializer = value.initializer();
     Map<String, String> fields = new LinkedHashMap<>();
     fields.put("schema", CanonicalGameplayIssuerAdmissionBarrierValue.SCHEMA);
@@ -809,8 +836,11 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     fields.put("state", value.state().name());
     fields.put("admissionEpoch", value.admissionEpoch().toString());
     fields.put("ownerOperationId", value.ownerOperationId().toString());
-    fields.put("initializerOperationId", initializer == null ? "none" : initializer.operationId().toString());
-    fields.put("initializerEpoch", initializer == null ? "0" : initializer.admissionEpoch().toString());
+    fields.put(
+        "initializerOperationId",
+        initializer == null ? "none" : initializer.operationId().toString());
+    fields.put(
+        "initializerEpoch", initializer == null ? "0" : initializer.admissionEpoch().toString());
     fields.put("initializerDigest", initializer == null ? "none" : initializer.exactDigest());
     fields.put("payloadDigest", value.exactDigest());
     for (Map.Entry<String, String> field : fields.entrySet()) {
@@ -851,7 +881,8 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     }
 
     private CanonicalGameplayIssuerAdmissionBarrierRedisOwner owner(
-        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository projectionRepository) {
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository
+            projectionRepository) {
       return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
           ownerClient,
           RedisScriptCatalog.fromContributions(

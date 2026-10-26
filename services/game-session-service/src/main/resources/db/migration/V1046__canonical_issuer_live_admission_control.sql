@@ -155,7 +155,9 @@ CREATE TABLE game_session_canonical_issuer_admission_cohort_row (
     source_row_json text NOT NULL,
     source_row_digest character varying(71) NOT NULL,
     CONSTRAINT pk_gs_issuer_admission_cohort_row PRIMARY KEY (operation_id, row_ordinal),
+    -- [jooq ignore start]
     CONSTRAINT uq_gs_issuer_admission_cohort_source UNIQUE (operation_id, source_kind, source_key),
+    -- [jooq ignore stop]
     CONSTRAINT fk_gs_issuer_admission_cohort_operation
         FOREIGN KEY (operation_id, issuer_id)
         REFERENCES game_session_canonical_issuer_admission_operation (operation_id, issuer_id),
@@ -278,7 +280,7 @@ CREATE TABLE game_session_canonical_issuer_admission_cutoff_target (
             OR (target_state = 'CLOSED'
                 AND octet_length(exact_closed_readback_bytes) BETWEEN 1 AND 524288
                 AND exact_closed_readback_digest ~ '^sha256:[0-9a-f]{64}$'
-                AND script_outcome IN (1, 2, 3)))
+                AND script_outcome IN (1, 2, 3))))
 );
 
 CREATE INDEX ix_gs_issuer_admission_cutoff_target_state

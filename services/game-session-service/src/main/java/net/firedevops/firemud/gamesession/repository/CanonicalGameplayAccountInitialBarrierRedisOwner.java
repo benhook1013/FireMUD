@@ -94,7 +94,8 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
 
   /**
    * Starts one original-attempt target or performs read-only same-original verification. The SQL
-   * DISPATCH_POSSIBLE state commits before the only Redis write call; every later path is read-only.
+   * DISPATCH_POSSIBLE state commits before the only Redis write call; every later path is
+   * read-only.
    */
   CanonicalGameplayAccountInitialOpenProof initializeOnce(
       InitialGameplayLoginAttemptCoordinates original,
@@ -148,7 +149,7 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
       return refused(CanonicalGameplayAccountInitialOpenProof.Reason.TARGET_NEVER_DISPATCHED);
     }
     if (snapshot.state()
-        == CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE
+            == CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE
         && snapshot.beforeIncarnationDigest() == null) {
       return refused(CanonicalGameplayAccountInitialOpenProof.Reason.REMOTE_OUTCOME_UNCERTAIN);
     }
@@ -160,8 +161,11 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
           incarnationReceiver.observeForInitialAccountBarrier(originalRequestId);
       requireObservation(snapshot, before);
       if (!before.incarnationDigest().equals(snapshot.beforeIncarnationDigest())
-          || !before.acceptedAttestationDigest().equals(snapshot.beforeAcceptedAttestationDigest())) {
-        return refused(CanonicalGameplayAccountInitialOpenProof.Reason.PROTECTED_OBSERVATION_UNAVAILABLE);
+          || !before
+              .acceptedAttestationDigest()
+              .equals(snapshot.beforeAcceptedAttestationDigest())) {
+        return refused(
+            CanonicalGameplayAccountInitialOpenProof.Reason.PROTECTED_OBSERVATION_UNAVAILABLE);
       }
       CanonicalGameplayAccountInitialBarrierValue value =
           CanonicalGameplayAccountInitialBarrierValue.open(
@@ -183,19 +187,12 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
           || !before.acceptedAttestationDigest().equals(after.acceptedAttestationDigest())
           || after.issuedAtEpochMillis() < before.issuedAtEpochMillis()
           || after.observedAtEpochMillis() < before.observedAtEpochMillis()) {
-        return refused(CanonicalGameplayAccountInitialOpenProof.Reason.PROTECTED_OBSERVATION_UNAVAILABLE);
+        return refused(
+            CanonicalGameplayAccountInitialOpenProof.Reason.PROTECTED_OBSERVATION_UNAVAILABLE);
       }
 
       Readback readback =
-          new Readback(
-              snapshot,
-              assignment,
-              key,
-              value,
-              physical,
-              before,
-              after,
-              0L);
+          new Readback(snapshot, assignment, key, value, physical, before, after, 0L);
       if (snapshot.state()
           == CanonicalGameplayAccountInitialBarrierInitializerRepository.State.OPEN_INSTALLED) {
         var current = repository.readCurrent(originalRequestId);
@@ -281,7 +278,9 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
         || !snapshot.playableStateNamespaceId().equals(observation.playableStateNamespaceId())
         || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(observation.sourceControlState())
         || !snapshot.sourceControlEpoch().toString().equals(observation.sourceControlEpoch())
-        || !snapshot.inventorySnapshotRevision().toString()
+        || !snapshot
+            .inventorySnapshotRevision()
+            .toString()
             .equals(observation.inventorySnapshotRevision())
         || !snapshot.accountLoginEvidenceDigest().equals(observation.accountLoginEvidenceDigest())
         || !snapshot.sourceControlDigest().equals(observation.sourceControlDigest())
@@ -308,7 +307,8 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
       for (Map.Entry<byte[], byte[]> entry : raw.entrySet()) {
         String field = asciiString(entry.getKey());
         String value = asciiString(Objects.requireNonNull(entry.getValue()));
-        if (!FIELDS.contains(field) || actual.putIfAbsent(field, value) != null) throw unavailable();
+        if (!FIELDS.contains(field) || actual.putIfAbsent(field, value) != null)
+          throw unavailable();
       }
       if (!expected.fields().equals(actual)) throw unavailable();
       return Map.copyOf(actual);
@@ -326,7 +326,9 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
       String sha = await(commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
       Long reply =
-          await(commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments));
+          await(
+              commands.evalsha(
+                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments));
       if (reply == null) throw unavailable();
       return reply;
     } catch (RuntimeException failure) {

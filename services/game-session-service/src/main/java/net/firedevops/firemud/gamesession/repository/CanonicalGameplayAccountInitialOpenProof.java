@@ -5,7 +5,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Owner-issued current OPEN proof, or a typed refusal that cannot be used as admission evidence. */
+/**
+ * Owner-issued current OPEN proof, or a typed refusal that cannot be used as admission evidence.
+ */
 sealed interface CanonicalGameplayAccountInitialOpenProof
     permits CanonicalGameplayAccountInitialOpenProof.CurrentOpen,
         CanonicalGameplayAccountInitialOpenProof.Refused {
@@ -27,7 +29,7 @@ sealed interface CanonicalGameplayAccountInitialOpenProof
       long expiresAtEpochMillis,
       Map<String, String> exactFields)
       implements CanonicalGameplayAccountInitialOpenProof {
-    CurrentOpen {
+    public CurrentOpen {
       Objects.requireNonNull(initializerId, "initializerId");
       Objects.requireNonNull(originalRequestId, "originalRequestId");
       Objects.requireNonNull(originalCallerContextId, "originalCallerContextId");
@@ -53,7 +55,8 @@ sealed interface CanonicalGameplayAccountInitialOpenProof
           || !initializerId.toString().equals(exactFields.get("ownerOperationId"))
           || !accountId.toString().equals(exactFields.get("accountId"))
           || !tenantId.toString().equals(exactFields.get("tenantId"))
-          || !playableStateNamespaceId.toString()
+          || !playableStateNamespaceId
+              .toString()
               .equals(exactFields.get("playableStateNamespaceId"))
           || !incarnationDigest.equals(exactFields.get("incarnationDigest"))) {
         throw new IllegalArgumentException("Current INITIAL OPEN proof is malformed");
@@ -62,7 +65,7 @@ sealed interface CanonicalGameplayAccountInitialOpenProof
   }
 
   record Refused(Reason reason) implements CanonicalGameplayAccountInitialOpenProof {
-    Refused {
+    public Refused {
       Objects.requireNonNull(reason, "reason");
     }
   }

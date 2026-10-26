@@ -50,8 +50,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     requireNoAmbientTransaction();
     Record originalOperationInitializer =
         dsl.fetchOne(
-            "SELECT operation_id FROM " + INITIALIZER
-                + " WHERE operation_id = ? AND issuer_id = ?",
+            "SELECT operation_id FROM " + INITIALIZER + " WHERE operation_id = ? AND issuer_id = ?",
             operationId,
             ISSUER);
     CanonicalGameplayTenantGameplayTagRepository.Assignment requestAssignment =
@@ -79,14 +78,14 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                       transaction, anchor, before);
               Record byOperation =
                   transaction.fetchOne(
-                      "SELECT * FROM " + INITIALIZER
+                      "SELECT * FROM "
+                          + INITIALIZER
                           + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
                       operationId,
                       ISSUER);
               if (byOperation != null) {
                 CanonicalGameplayIssuerAdmissionBarrierValue frozen =
-                    readFrozenInitializer(
-                        transaction, byOperation, null, anchor, control, before);
+                    readFrozenInitializer(transaction, byOperation, null, anchor, control, before);
                 if (requestAssignment != null) {
                   requireSameTargetAssignment(requestAssignment, frozen.initializer());
                 }
@@ -97,11 +96,11 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
               }
 
               CurrentRequestTarget requestTarget =
-                  requireCurrentRequestTarget(
-                      transaction, operationId, requestAssignment, before);
+                  requireCurrentRequestTarget(transaction, operationId, requestAssignment, before);
               Record targetInitializer =
                   transaction.fetchOne(
-                      "SELECT * FROM " + INITIALIZER
+                      "SELECT * FROM "
+                          + INITIALIZER
                           + " WHERE issuer_id = ? AND tenant_id = ?"
                           + " AND playable_state_namespace_id = ? AND live_barrier_epoch = ?"
                           + " FOR UPDATE",
@@ -182,7 +181,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     requireNonNil(cutoffOperationId, "cutoffOperationId");
     List<Record> targets =
         dsl.fetch(
-            "SELECT tenant_id, playable_state_namespace_id FROM " + CUTOFF_TARGET
+            "SELECT tenant_id, playable_state_namespace_id FROM "
+                + CUTOFF_TARGET
                 + " WHERE operation_id = ? AND issuer_id = ? ORDER BY target_ordinal",
             cutoffOperationId,
             ISSUER);
@@ -225,7 +225,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
               .verifyCurrentCutoffTarget(transaction, control, tenantId, namespaceId, null);
           Record target =
               transaction.fetchOne(
-                  "SELECT * FROM " + CUTOFF_TARGET
+                  "SELECT * FROM "
+                      + CUTOFF_TARGET
                       + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
                       + " AND playable_state_namespace_id = ? FOR UPDATE",
                   cutoffOperationId,
@@ -297,7 +298,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
           }
           Record saved =
               transaction.fetchOne(
-                  "SELECT * FROM " + INITIALIZER
+                  "SELECT * FROM "
+                      + INITIALIZER
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
                   initializer.operationId(),
                   ISSUER);
@@ -336,8 +338,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                   closed.tenantId(),
                   closed.playableStateNamespaceId(),
                   closed.exactBytes());
-          requireCurrentTagMapping(
-              transaction, closed.tenantId(), closed.tenantGameplayTag());
+          requireCurrentTagMapping(transaction, closed.tenantId(), closed.tenantGameplayTag());
           return null;
         });
   }
@@ -369,7 +370,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
               transaction, anchor, current);
           Record initializer =
               transaction.fetchOne(
-                  "SELECT * FROM " + INITIALIZER
+                  "SELECT * FROM "
+                      + INITIALIZER
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
                   value.initializer().operationId(),
                   ISSUER);
@@ -379,7 +381,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
             throw conflict("OPEN readback has no durable first-attempt initializer state");
           }
           transaction.execute(
-              "INSERT INTO " + INITIALIZER_RECEIPT
+              "INSERT INTO "
+                  + INITIALIZER_RECEIPT
                   + " (operation_id, issuer_id, exact_open_payload_bytes,"
                   + " exact_open_payload_digest, script_outcome) VALUES (?, ?, ?, ?, ?)"
                   + " ON CONFLICT (operation_id) DO NOTHING",
@@ -390,20 +393,25 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
               (short) readback.scriptOutcome());
           Record receipt =
               transaction.fetchOne(
-                  "SELECT * FROM " + INITIALIZER_RECEIPT
+                  "SELECT * FROM "
+                      + INITIALIZER_RECEIPT
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
                   value.initializer().operationId(),
                   ISSUER);
           if (receipt == null
-              || !Arrays.equals(requireBytes(receipt, "exact_open_payload_bytes"), value.exactBytes())
+              || !Arrays.equals(
+                  requireBytes(receipt, "exact_open_payload_bytes"), value.exactBytes())
               || !value.exactDigest().equals(receipt.get("exact_open_payload_digest", String.class))
-              || !List.of((short) 1, (short) 2).contains(receipt.get("script_outcome", Short.class))) {
-            throw conflict("Original OPEN readback receipt conflicts with durable initializer bytes");
+              || !List.of((short) 1, (short) 2)
+                  .contains(receipt.get("script_outcome", Short.class))) {
+            throw conflict(
+                "Original OPEN readback receipt conflicts with durable initializer bytes");
           }
           if ("INITIALIZING".equals(initializationState)) {
             int confirmed =
                 transaction.execute(
-                    "UPDATE " + INITIALIZER
+                    "UPDATE "
+                        + INITIALIZER
                         + " SET initialization_state = 'OPEN_CONFIRMED'"
                         + " WHERE operation_id = ? AND issuer_id = ?"
                         + " AND initialization_state = 'INITIALIZING'",
@@ -441,7 +449,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
           CanonicalGameplayIssuerAdmissionControlValue control =
               readCurrentControl(transaction, anchor, current);
           if (!value.ownerOperationId().equals(control.currentOperationId())
-              || control.state() != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING) {
+              || control.state()
+                  != CanonicalGameplayIssuerAdmissionControlValue.State.CUTOFF_PENDING) {
             throw conflict("CLOSED readback is not owned by the current pending cutoff");
           }
           new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
@@ -451,11 +460,11 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                   value.tenantId(),
                   value.playableStateNamespaceId(),
                   value.exactBytes());
-          requireCurrentTagMapping(
-              transaction, value.tenantId(), value.tenantGameplayTag());
+          requireCurrentTagMapping(transaction, value.tenantId(), value.tenantGameplayTag());
           Record target =
               transaction.fetchOne(
-                  "SELECT * FROM " + CUTOFF_TARGET
+                  "SELECT * FROM "
+                      + CUTOFF_TARGET
                       + " WHERE operation_id = ? AND issuer_id = ? AND tenant_id = ?"
                       + " AND playable_state_namespace_id = ? FOR UPDATE",
                   value.ownerOperationId(),
@@ -471,7 +480,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
           if ("REQUIRED".equals(state)) {
             int updated =
                 transaction.execute(
-                    "UPDATE " + CUTOFF_TARGET
+                    "UPDATE "
+                        + CUTOFF_TARGET
                         + " SET exact_closed_readback_bytes = ?, exact_closed_readback_digest = ? ,"
                         + " script_outcome = ?, target_state = 'CLOSED'"
                         + " WHERE operation_id = ? AND target_ordinal = ? AND target_state = 'REQUIRED'",
@@ -482,8 +492,11 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                     target.get("target_ordinal", Long.class));
             if (updated != 1) throw conflict("CLOSED target changed during receipt persistence");
           } else if (!"CLOSED".equals(state)
-              || !Arrays.equals(requireBytes(target, "exact_closed_readback_bytes"), value.exactBytes())
-              || !value.exactDigest().equals(target.get("exact_closed_readback_digest", String.class))
+              || !Arrays.equals(
+                  requireBytes(target, "exact_closed_readback_bytes"), value.exactBytes())
+              || !value
+                  .exactDigest()
+                  .equals(target.get("exact_closed_readback_digest", String.class))
               || !List.of((short) 1, (short) 2, (short) 3)
                   .contains(target.get("script_outcome", Short.class))) {
             throw conflict("CLOSED retry conflicts with its immutable durable readback");
@@ -508,7 +521,9 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                 + " t.admission_target_owner_proof_outcome, t.admission_target_positive_durable_abort,"
                 + " i.account_id, i.tenant_id, i.playable_state_namespace_id, i.lifecycle,"
                 + " i.binding_ref AS inventory_binding_ref, r.reservation_id"
-                + " FROM " + LOCAL_OPERATION + " op"
+                + " FROM "
+                + LOCAL_OPERATION
+                + " op"
                 + " JOIN game_session_canonical_binding_transition t ON t.transition_id = op.transition_id"
                 + " JOIN game_session_canonical_gameplay_binding_inventory i"
                 + " ON i.binding_ref = op.binding_ref AND i.transition_id = op.transition_id"
@@ -534,7 +549,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
         || !tenantId.equals(row.get("admission_target_tenant_id", UUID.class))
         || !namespaceId.equals(row.get("admission_target_playable_state_namespace_id", UUID.class))
         || !"COMMITTED".equals(row.get("admission_target_owner_proof_outcome", String.class))
-        || !Boolean.FALSE.equals(row.get("admission_target_positive_durable_abort", Boolean.class))) {
+        || !Boolean.FALSE.equals(
+            row.get("admission_target_positive_durable_abort", Boolean.class))) {
       throw conflict("Current issuer NEW request is not the exact registered tenant target");
     }
     byte[] memberBytes = requireBytes(row, "member_value_bytes");
@@ -552,7 +568,9 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
         || !member.owner().accountId().equals(assignment.accountId())
         || !Arrays.equals(member.owner().bindingRef().bytes(), bindingRef)
         || !member.sourceCheckpoint().issuerId().equals(ISSUER)
-        || !member.sourceCheckpoint().issuerAuthGeneration()
+        || !member
+            .sourceCheckpoint()
+            .issuerAuthGeneration()
             .equals(current.accountCheckpoint().issuerAuthGeneration())
         || !Arrays.equals(
             member.sourceCheckpoint().exactCheckpointBytes(),
@@ -582,7 +600,9 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
         transaction.fetchOne(
             "SELECT op.transition_id, op.binding_ref, to_jsonb(t)::text AS registered_target_json,"
                 + " to_jsonb(r)::text AS reservation_json"
-                + " FROM " + LOCAL_OPERATION + " op"
+                + " FROM "
+                + LOCAL_OPERATION
+                + " op"
                 + " JOIN game_session_canonical_binding_transition t ON t.transition_id = op.transition_id"
                 + " JOIN game_session_canonical_gameplay_binding_inventory i"
                 + " ON i.binding_ref = op.binding_ref AND i.transition_id = op.transition_id"
@@ -595,10 +615,10 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     if (row == null
         || !expected.transitionId().equals(requiredUuid(row, "transition_id"))
         || !Arrays.equals(expected.bindingRef(), requireBytes(row, "binding_ref"))) {
-      throw conflict("Current issuer NEW target changed before its original initializer was captured");
+      throw conflict(
+          "Current issuer NEW target changed before its original initializer was captured");
     }
-    byte[] reservationBytes =
-        requireText(row, "reservation_json").getBytes(StandardCharsets.UTF_8);
+    byte[] reservationBytes = requireText(row, "reservation_json").getBytes(StandardCharsets.UTF_8);
     byte[] targetBytes =
         requireText(row, "registered_target_json").getBytes(StandardCharsets.UTF_8);
     CanonicalGameplayIssuerAdmissionBarrierValue.Initializer initializer =
@@ -654,8 +674,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
         || !List.of("PREPARED", "INITIALIZING", "OPEN_CONFIRMED").contains(state)) {
       throw conflict("Frozen tenant initializer differs from current positive source and control");
     }
-    requireCurrentTagMapping(
-        transaction, initializer.tenantId(), initializer.tenantGameplayTag());
+    requireCurrentTagMapping(transaction, initializer.tenantId(), initializer.tenantGameplayTag());
     if (expectedTarget != null) requireSameTargetAssignment(expectedTarget, initializer);
     return value;
   }
@@ -664,7 +683,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
       DSLContext transaction, UUID tenantId, String expectedTag) {
     Record mapping =
         transaction.fetchOne(
-            "SELECT allocation_version, tenant_gameplay_tag FROM " + TENANT_TAG
+            "SELECT allocation_version, tenant_gameplay_tag FROM "
+                + TENANT_TAG
                 + " WHERE tenant_id = ? FOR SHARE",
             tenantId);
     Integer version = mapping == null ? null : mapping.get("allocation_version", Integer.class);
@@ -692,7 +712,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     }
     int inserted =
         transaction.execute(
-            "INSERT INTO " + INITIALIZER
+            "INSERT INTO "
+                + INITIALIZER
                 + " (operation_id, issuer_id, tenant_id, playable_state_namespace_id,"
                 + " tenant_gameplay_tag, live_barrier_epoch, initialization_state,"
                 + " initializer_exact_bytes,"
@@ -722,8 +743,9 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     if (row == null
         || !expected.issuerId().equals(row.get("issuer_id", String.class))
         || !expected.tenantId().equals(row.get("tenant_id", UUID.class))
-        || !expected.playableStateNamespaceId().equals(
-            row.get("playable_state_namespace_id", UUID.class))
+        || !expected
+            .playableStateNamespaceId()
+            .equals(row.get("playable_state_namespace_id", UUID.class))
         || !expected.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class))
         || !expected.admissionEpoch().equals(readBigInteger(row, "live_barrier_epoch"))
         || !Arrays.equals(
@@ -745,10 +767,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
         assignment,
         requestOperationId,
         CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
-            ISSUER,
-            value.tenantId(),
-            value.playableStateNamespaceId(),
-            value.tenantGameplayTag()),
+            ISSUER, value.tenantId(), value.playableStateNamespaceId(), value.tenantGameplayTag()),
         createPermit);
   }
 
@@ -772,11 +791,13 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                   transaction, anchor, current);
           if (!control.liveBarrierEpoch().equals(value.admissionEpoch())
               || !control.currentOperationId().equals(anchor.bootstrapOperationId())) {
-            throw conflict("Original initializer no longer belongs to the current OPEN live control");
+            throw conflict(
+                "Original initializer no longer belongs to the current OPEN live control");
           }
           Record saved =
               transaction.fetchOne(
-                  "SELECT * FROM " + INITIALIZER
+                  "SELECT * FROM "
+                      + INITIALIZER
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
                   operationId,
                   ISSUER);
@@ -785,7 +806,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
           if ("PREPARED".equals(state)) {
             Record origin =
                 transaction.fetchOne(
-                    "SELECT transition.status AS transition_status FROM " + LOCAL_OPERATION
+                    "SELECT transition.status AS transition_status FROM "
+                        + LOCAL_OPERATION
                         + " operation JOIN game_session_canonical_binding_transition transition"
                         + " ON transition.transition_id = operation.transition_id"
                         + " WHERE operation.operation_id = ? AND operation.issuer_id = ?"
@@ -804,7 +826,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
             }
             int claimed =
                 transaction.execute(
-                    "UPDATE " + INITIALIZER
+                    "UPDATE "
+                        + INITIALIZER
                         + " SET initialization_state = 'INITIALIZING'"
                         + " WHERE operation_id = ? AND issuer_id = ?"
                         + " AND initialization_state = 'PREPARED'",
@@ -823,7 +846,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
   private UUID transitionForLocalOperation(UUID operationId) {
     Record row =
         dsl.fetchOne(
-            "SELECT transition_id FROM " + LOCAL_OPERATION
+            "SELECT transition_id FROM "
+                + LOCAL_OPERATION
                 + " WHERE operation_id = ? AND issuer_id = ?",
             operationId,
             ISSUER);
@@ -851,19 +875,22 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
             "SELECT * FROM " + CONTROL + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
     if (row == null) throw conflict("The positive live issuer admission-control row is missing");
     CanonicalGameplayIssuerAdmissionControlValue value =
-        CanonicalGameplayIssuerAdmissionControlValue.decode(requireBytes(row, "control_exact_bytes"));
+        CanonicalGameplayIssuerAdmissionControlValue.decode(
+            requireBytes(row, "control_exact_bytes"));
     if (!CanonicalGameplayIssuerAdmissionControlValue.sha256(value.exactBytes())
             .equals(row.get("control_exact_digest", String.class))
         || !value.issuerId().equals(row.get("issuer_id", String.class))
         || !value.matchesCurrentIssuerState(current)
         || !Arrays.equals(value.anchorExactBytes(), anchor.exactAnchorBytes())
         || !value.anchorExactDigest().equals(anchor.exactAnchorDigest())) {
-      throw conflict("Issuer control differs from its exact installed anchor and fresh current source");
+      throw conflict(
+          "Issuer control differs from its exact installed anchor and fresh current source");
     }
     return value;
   }
 
-  private CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState readCurrentState() {
+  private CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState
+      readCurrentState() {
     try {
       return Objects.requireNonNull(
           currentStateSource.readFreshCurrentState(), "Current issuer source returned null");
@@ -960,11 +987,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
       CanonicalGameplayTenantGameplayTagRepository.Assignment requestAssignment) {}
 
   private record CurrentRequestTarget(
-      UUID transitionId,
-      UUID tenantId,
-      UUID namespaceId,
-      UUID accountId,
-      byte[] bindingRef) {
+      UUID transitionId, UUID tenantId, UUID namespaceId, UUID accountId, byte[] bindingRef) {
     private CurrentRequestTarget {
       Objects.requireNonNull(transitionId, "transitionId");
       Objects.requireNonNull(tenantId, "tenantId");
