@@ -2689,7 +2689,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       assertThat(pendingWorldState.holdStatus().name()).isEqualTo("PENDING");
       assertThat(pendingWorldState.isPendingAtExpectedActiveEpoch()).isTrue();
 
-      var completionRepository = new CanonicalHumanRuntimeCompletionRepository(gs.dsl());
+      var completionRepository = new CanonicalHumanRuntimeCompletionRepository(gs.dsl(), NAMESPACE);
       var beforeCompletion =
           gs.dsl()
               .fetchSingle(
@@ -3408,13 +3408,16 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var identity = pki.server(service);
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
-            .maxInboundMessageSize(
-                AccountInitialAdmissionSettlementReadGrpcCodec.MAX_REQUEST_WIRE_BYTES)
             .sslContext(
                 GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    if (Arrays.stream(receivers)
+        .anyMatch(AccountInitialAdmissionSettlementReadGrpcService.class::isInstance)) {
+      builder.maxInboundMessageSize(
+          AccountInitialAdmissionSettlementReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+    }
     if (additionalService != null)
       builder.addService(
           ServerInterceptors.intercept(additionalService.get(), new GrpcPeerIdentityInterceptor()));

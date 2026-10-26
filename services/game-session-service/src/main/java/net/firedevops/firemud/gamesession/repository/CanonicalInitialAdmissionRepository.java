@@ -659,19 +659,10 @@ public class CanonicalInitialAdmissionRepository {
                 request.realmId(),
                 request.canonicalGameInstanceId(),
                 requireRunning);
-    CanonicalGameInstanceLaunchAssociation association = launch.association();
-    if (!request.targetNamespace().equals(association.targetNamespace())
-        || !request.canonicalTenantId().equals(association.canonicalTenantId())
-        || !request.worldSlug().equals(association.worldSlug())
-        || !request.realmId().equals(launch.realmId())
-        || !request.playableStateNamespaceId().equals(association.playableStateNamespaceId())
-        || !request.playableStateScope().equals(association.playableStateScope().name())
-        || !request.canonicalGameInstanceId().equals(association.gameInstanceUuid())
-        || !request.canonicalVersionId().equals(launch.canonicalVersionId())
-        || !association.publicProduction()) {
-      throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "Canonical launch association does not match the exact initial-admission request");
-    }
+    requireLaunchMatchesRequest(
+        request,
+        launch,
+        "Canonical launch association does not match the exact initial-admission request");
     return launch;
   }
 
@@ -684,19 +675,10 @@ public class CanonicalInitialAdmissionRepository {
                 request.canonicalTenantId(),
                 request.realmId(),
                 request.canonicalGameInstanceId());
-    CanonicalGameInstanceLaunchAssociation association = launch.association();
-    if (!request.targetNamespace().equals(association.targetNamespace())
-        || !request.canonicalTenantId().equals(association.canonicalTenantId())
-        || !request.worldSlug().equals(association.worldSlug())
-        || !request.realmId().equals(launch.realmId())
-        || !request.playableStateNamespaceId().equals(association.playableStateNamespaceId())
-        || !request.playableStateScope().equals(association.playableStateScope().name())
-        || !request.canonicalGameInstanceId().equals(association.gameInstanceUuid())
-        || !request.canonicalVersionId().equals(launch.canonicalVersionId())
-        || !association.publicProduction()) {
-      throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "Canonical STARTING launch does not match the exact Human completion request");
-    }
+    requireLaunchMatchesRequest(
+        request,
+        launch,
+        "Canonical STARTING launch does not match the exact Human completion request");
     return launch;
   }
 
@@ -716,6 +698,16 @@ public class CanonicalInitialAdmissionRepository {
       CanonicalRealmCatalogSnapshot catalog,
       CanonicalInitialAdmissionLaunchTarget launch) {
     requireRequestMatchesCatalog(request, catalog);
+    requireLaunchMatchesRequest(
+        request,
+        launch,
+        "Canonical catalog and launch do not match the exact initial-admission request");
+  }
+
+  private static void requireLaunchMatchesRequest(
+      CanonicalInitialAdmissionRequest request,
+      CanonicalInitialAdmissionLaunchTarget launch,
+      String message) {
     CanonicalGameInstanceLaunchAssociation association = launch.association();
     if (!request.targetNamespace().equals(association.targetNamespace())
         || !request.canonicalTenantId().equals(association.canonicalTenantId())
@@ -726,8 +718,7 @@ public class CanonicalInitialAdmissionRepository {
         || !request.canonicalGameInstanceId().equals(association.gameInstanceUuid())
         || !request.canonicalVersionId().equals(launch.canonicalVersionId())
         || !association.publicProduction()) {
-      throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "Canonical catalog and launch do not match the exact initial-admission request");
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(message);
     }
   }
 
