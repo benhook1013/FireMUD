@@ -27,6 +27,10 @@ dependencies {
       "crossServiceTestImplementation",
       project(mapOf("path" to ":game-session-service", "configuration" to "gameSessionClassesProof"))
   )
+  add(
+      "crossServiceTestImplementation",
+      project(mapOf("path" to ":entity-management-service", "configuration" to "entityClassesProof"))
+  )
   add("crossServiceTestImplementation", testFixtures(project(":common-test-support")))
   add("crossServiceTestImplementation", "io.grpc:grpc-util:${libs.versions.grpc.get()}")
 }

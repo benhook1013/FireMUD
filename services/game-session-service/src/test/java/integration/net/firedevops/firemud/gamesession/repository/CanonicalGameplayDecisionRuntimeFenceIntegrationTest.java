@@ -194,7 +194,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
                           + " SELECT transition_id FROM game_session_canonical_binding_transition"
                           + " WHERE candidate_binding_ref = ?)",
                       candidateRef))
-          .hasMessageContaining("terminal owner reconciliation");
+          .hasMessageContaining("definitive first-NEW Account abort evidence");
 
       assertThat(
               java.util.Objects.requireNonNull(
@@ -246,6 +246,72 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
                               + " WHERE candidate_binding_ref = ?",
                           candidateRef),
                       "binding transition row")
+                  .get("status", String.class))
+          .isEqualTo("PREPARED");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void freshSourceBoundRuntimeWithoutHumanCompletionCannotLoseRunOwnedLaunchProvenance() {
+    String schema = "gs_runtime_fence_runowned_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
+      byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
+
+      // A fresh source-bound RUNNING row cannot be stripped of its run-owned launch association.
+      // The V26 deferred guard rejects that impossible setup before V1044's lease-bound fence runs.
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET row_version = row_version + 1,"
+                          + " run_owned_start_request_id = NULL,"
+                          + " run_owned_start_request_digest = NULL,"
+                          + " run_owned_start_published_release_bundle_ref = NULL,"
+                          + " run_owned_start_preparing_epoch = NULL,"
+                          + " run_owned_start_active_epoch = NULL"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining(
+              "Fresh Game Session instance requires one exact complete launch association");
+
+      var runtimeReadback =
+          dsl.fetchSingle(
+              "SELECT status, row_version, run_owned_start_request_id,"
+                  + " run_owned_start_request_digest, run_owned_start_published_release_bundle_ref,"
+                  + " run_owned_start_preparing_epoch, run_owned_start_active_epoch"
+                  + " FROM game_instances WHERE tenant_id = ? AND id = ?",
+              target.gameSessionTenantId(),
+              target.gameInstanceId());
+      assertThat(runtimeReadback.get("status", String.class)).isEqualTo("RUNNING");
+      assertThat(runtimeReadback.get("row_version", Long.class)).isEqualTo(1L);
+      assertThat(runtimeReadback.get("run_owned_start_request_id", String.class))
+          .isEqualTo(target.controlPlaneRequestId());
+      assertThat(runtimeReadback.get("run_owned_start_request_digest", String.class)).isNotNull();
+      assertThat(runtimeReadback.get("run_owned_start_published_release_bundle_ref", String.class))
+          .isEqualTo(target.publishedReleaseBundleRef());
+      assertThat(runtimeReadback.get("run_owned_start_preparing_epoch", Long.class)).isNotNull();
+      assertThat(runtimeReadback.get("run_owned_start_active_epoch", Long.class)).isNotNull();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS actual_count"
+                          + " FROM game_session_canonical_human_runtime_completion"
+                          + " WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      target.targetNamespace(),
+                      target.initialAdmissionRequestId())
+                  .get("actual_count", Long.class))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition"
+                          + " WHERE candidate_binding_ref = ?",
+                      candidateRef)
                   .get("status", String.class))
           .isEqualTo("PREPARED");
     } finally {

@@ -208,7 +208,7 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
             CanonicalGameplayIssuerMemberV2Codec.sha256(memberBytes),
             CanonicalGameplayIssuerMemberV2Codec.sha256(readbackBytes),
             2,
-            3,
+            4,
             1,
             1,
             1),

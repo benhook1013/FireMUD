@@ -1,0 +1,27 @@
+{
+  "scriptId": "game-session.region-lease-acquire.v1",
+  "resourcePath": "redis/lua/game-session-region-lease-acquire.lua",
+  "sha256": "f13d30294753b98b715b9652749d6e25285a847f98d57677c3b193d1cc7aee93",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionMeta", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [{"name": "schema"}, {"name": "token"}, {"name": "expectedRegionEpoch"}, {"name": "leaseTtlMs"}],
+  "category": "TICK_LOCK",
+  "outcomes": [
+    {"code": "LEASE_ACQUIRED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "LEASE_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "LEASE_BUSY", "category": "CONTENTION", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "TYPE_OR_LEASE_STATE_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "REGION",
+  "lossClass": "STAGED_EFFECT_OR_RETRY",
+  "tailLossBehavior": "Lease loss or expiry ends the current owner attempt. The durable region timeline remains authoritative and a successor must acquire a new lease, install a new durable fence, and revalidate that exact grant before any bridge or tick work.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "none"}],
+  "legacyPayloadShape": null
+}

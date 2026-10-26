@@ -1,0 +1,32 @@
+{
+  "scriptId": "game-session.region-timeline-initialize.v1",
+  "resourcePath": "redis/lua/game-session-region-timeline-initialize.lua",
+  "sha256": "93204b35a25e88883633d6a2e33ddc622d21ac69c82c6c7843251ced56138c3b",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionMeta", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [
+    {"name": "schema"}, {"name": "action"}, {"name": "token"}, {"name": "expectedRegionEpoch"},
+    {"name": "initializationOperationId"}, {"name": "preparationDigest"}, {"name": "leaseTtlMs"},
+    {"name": "mayCreateFromAbsence"}
+  ],
+  "category": "TICK_LOCK",
+  "outcomes": [
+    {"code": "TIMELINE_INITIALIZED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "INITIALIZATION_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TIMELINE_ABSENT", "category": "SUCCESS", "effect": "NON_MUTATING"},
+    {"code": "EXISTING_OR_CONFLICTING_STATE", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "TYPE_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "REGION",
+  "lossClass": "STAGED_EFFECT_OR_RETRY",
+  "tailLossBehavior": "Only the original durable preparation may establish the complete epoch-1 and tick-minus-one APPLIED baseline. An exact retained marker permits same-operation lease recovery; absent, changed, or partial state never triggers a new initialization.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "none"}],
+  "legacyPayloadShape": null
+}

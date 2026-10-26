@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,9 +44,11 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -60,6 +63,16 @@ import org.testcontainers.containers.GenericContainer;
  * replaces the GS reverse decision read.
  */
 public final class CanonicalGameplayAdmissionAbortCompositionFixture implements AutoCloseable {
+  private static final String SERVICE_MIGRATIONS =
+      "filesystem:"
+          + Path.of("../game-session-service/src/main/resources/db/migration")
+              .toAbsolutePath()
+              .normalize();
+  private static final String SHARED_SAGA_MIGRATIONS =
+      "filesystem:"
+          + Path.of("../common-saga/src/main/resources/db/migration/saga")
+              .toAbsolutePath()
+              .normalize();
   private final DriverManagerDataSource dataSource;
   private final String schema =
       "gs_abort_composition_" + UUID.randomUUID().toString().replace("-", "");
@@ -86,11 +99,34 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   private final RedisScriptCatalog issuerCatalog;
   private final Map<String, CanonicalGameplayIssuerBindingLocalOperation> otherOperations =
       new HashMap<>();
+  private final Map<String, AccountGameplayAdmissionLeaseEvidence> otherLeases = new HashMap<>();
 
   public CanonicalGameplayAdmissionAbortCompositionFixture(
       DriverManagerDataSource accountDataSource,
       Candidate accountCandidate,
       RedisClient issuerRedisClient) {
+    this(accountDataSource, accountCandidate, issuerRedisClient, 0);
+  }
+
+  /** Installs actual retained reservations as part of the qualified initial bootstrap cohort. */
+  public CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount) {
+    this(accountDataSource, accountCandidate, issuerRedisClient, seedBootstrapMemberCount, null);
+  }
+
+  /** Starts from a retained migration frontier when a composition test must upgrade live rows. */
+  public CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget) {
+    if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
+      throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
+    }
     this.issuerRedisClient =
         java.util.Objects.requireNonNull(issuerRedisClient, "issuerRedisClient");
     dataSource = new DriverManagerDataSource();
@@ -100,18 +136,15 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             .replaceAll("currentSchema=[^&]+", "currentSchema=" + schema));
     dataSource.setUsername(accountDataSource.getUsername());
     dataSource.setPassword(accountDataSource.getPassword());
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:"
-                + Path.of("../game-session-service/src/main/resources/db/migration")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS);
+    if (migrationTarget != null) migration.target(migrationTarget);
+    migration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     var runtime =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
@@ -135,6 +168,9 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             accountCandidate.issuerIndexPartitionCount(),
             accountCandidate.issuerIndexPartitionCapacity());
     establishActualLegacyDisposition(dsl);
+    if (seedBootstrapMemberCount > 0) {
+      seedQualifiedBootstrapMembers(seedBootstrapMemberCount);
+    }
     repository = new CanonicalGameplayBindingInventoryRepository(dsl);
     BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
     BigInteger partitionCount = identity.issuerIndexPartitionCount();
@@ -193,6 +229,16 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     new CanonicalGameplayIssuerBindingLocalRedisOwner(
             issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
         .projectAndRead(localOperation);
+  }
+
+  public CanonicalGameplayIssuerInstalledAnchor retryOriginalIssuerBootstrap() {
+    CanonicalGameplayIssuerInstalledAnchor originalAnchor = localOperation.anchor();
+    var partitionOwner =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
+            issuerRedisClient, issuerCatalog, issuerSource);
+    return new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
+        .completeInitialBootstrap(
+            originalAnchor.bootstrapOperationId(), originalAnchor.bootstrapRequestId());
   }
 
   /**
@@ -417,6 +463,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             .exactBytes();
   }
 
+  /** Uses a controlled Account lease input and the actual provisional SQL/Redis owners. */
+  public void publishOriginalWithControlledAccountLease() {
+    publish(controlledLeaseEvidence(identity, generation, target));
+  }
+
   /**
    * Start the disposable GS role before lease allocation so container startup consumes no lease
    * lifetime.
@@ -495,6 +546,86 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .get(0, String.class);
   }
 
+  /** Preserves the retained terminal source and every proof row across a Flyway upgrade. */
+  public String retainedFirstNewAbortRowsImage() {
+    return dsl.fetchSingle(
+            "WITH target AS (SELECT * FROM game_session_canonical_binding_transition"
+                + " WHERE transition_id = ?)"
+                + " SELECT jsonb_build_object("
+                + "'transition', (SELECT to_jsonb(target) FROM target),"
+                + " 'candidate', (SELECT to_jsonb(candidate)"
+                + " FROM game_session_canonical_gameplay_binding_inventory candidate"
+                + " JOIN target ON candidate.binding_ref = target.candidate_binding_ref),"
+                + " 'reservation', (SELECT to_jsonb(reservation)"
+                + " FROM game_session_canonical_issuer_partition_reservation reservation"
+                + " JOIN target ON reservation.reservation_id = target.issuer_reservation_id),"
+                + " 'account_obligations', (SELECT coalesce(jsonb_agg(to_jsonb(obligation)"
+                + " ORDER BY obligation.obligation_ordinal), '[]'::jsonb)"
+                + " FROM game_session_canonical_binding_account_index_obligation obligation"
+                + " JOIN target ON obligation.transition_id = target.transition_id),"
+                + " 'issuer_obligations', (SELECT coalesce(jsonb_agg(to_jsonb(obligation)"
+                + " ORDER BY obligation.binding_ref), '[]'::jsonb)"
+                + " FROM game_session_canonical_binding_issuer_index_obligation obligation"
+                + " JOIN target ON obligation.transition_id = target.transition_id),"
+                + " 'region_obligations', (SELECT coalesce(jsonb_agg(to_jsonb(obligation)"
+                + " ORDER BY obligation.region_id), '[]'::jsonb)"
+                + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                + " JOIN target ON obligation.transition_id = target.transition_id),"
+                + " 'account_member_repairs', (SELECT coalesce(jsonb_agg(to_jsonb(repair)"
+                + " ORDER BY repair.operation_id), '[]'::jsonb)"
+                + " FROM game_session_canonical_account_member_repair_operation repair"
+                + " JOIN target ON repair.transition_id = target.transition_id))::text"
+                + " FROM target",
+            transitionId)
+        .get(0, String.class);
+  }
+
+  /** Captures exact existing Flyway rows so a forward upgrade can prove append-only history. */
+  public List<String> migrationHistoryImage() {
+    return dsl.fetch(
+            "SELECT to_jsonb(history_row)::text AS row_json FROM flyway_schema_history"
+                + " history_row ORDER BY installed_rank")
+        .getValues("row_json", String.class);
+  }
+
+  /** Applies pending Game Session migrations with Flyway's default version ordering. */
+  public int upgradeWithDefaultGameSessionMigrations(MigrationVersion migrationTarget) {
+    Flyway flyway =
+        Flyway.configure()
+            .target(Objects.requireNonNull(migrationTarget, "migrationTarget"))
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS)
+            .load();
+    var result = flyway.migrate();
+    flyway.validate();
+    return result.migrationsExecuted;
+  }
+
+  /**
+   * Exercises the deferred initial-abort SQL guard after the actual GS abort owner has written its
+   * source, then advances Account control before the enclosing transaction commits.
+   */
+  public void recordOriginalAccountAbortThenAdvanceControlBeforeCommit() {
+    var source = repository.readFirstNewAdmissionAbortSource(transitionId);
+    dsl.transaction(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          var transactionRepository = new CanonicalGameplayBindingInventoryRepository(transaction);
+          transactionRepository.recordFirstNewAccountAbort(
+              source,
+              UUID.nameUUIDFromBytes(
+                  "original-controller-stale-control-cleanup".getBytes(StandardCharsets.UTF_8)));
+          new CanonicalGameplayAccountAdmissionBarrierRepository(transaction)
+              .beginFenceIntent(
+                  identity.accountId(),
+                  UUID.nameUUIDFromBytes(
+                      "original-controller-stale-control-intent".getBytes(StandardCharsets.UTF_8)));
+        });
+  }
+
   /** Independent read under the same real GS role; retained ACK never implies physical removal. */
   public boolean hasExactAccountMember() {
     var acknowledgement =
@@ -511,6 +642,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public CanonicalGameplayIssuerBindingLocalReleaseOperation prepareIssuerRelease() {
     return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
         .prepareOrResume(transitionId);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalReleaseOperation prepareIssuerRelease(String seed) {
+    return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
+        .prepareOrResume(otherOperation(seed).request().transitionId());
   }
 
   public CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.Readback projectIssuerRelease(
@@ -550,6 +686,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     return completed;
   }
 
+  /** Records a controlled Account terminal input through the actual Game Session abort owner. */
+  public CanonicalGameplayAdmissionAbortSource recordOriginalAccountAbort() {
+    var source = repository.readFirstNewAdmissionAbortSource(transitionId);
+    return repository.recordFirstNewAccountAbort(
+        source,
+        UUID.nameUUIDFromBytes("original-controller-cleanup".getBytes(StandardCharsets.UTF_8)));
+  }
+
   public UUID prepareOtherControllerNew(String seed) {
     CanonicalGameplayBindingIdentity other;
     do {
@@ -585,6 +729,231 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                     null));
     otherOperations.put(seed, operation);
     return operation.operationId();
+  }
+
+  /** Uses the actual NEW SQL owner to prepare a member in a caller-selected pinned partition. */
+  public UUID prepareOtherControllerNewInPartition(String seed, BigInteger partitionId) {
+    Objects.requireNonNull(seed, "seed");
+    Objects.requireNonNull(partitionId, "partitionId");
+    if (partitionId.signum() < 0
+        || partitionId.compareTo(identity.issuerIndexPartitionCount()) >= 0) {
+      throw new IllegalArgumentException("partitionId must be within the installed issuer layout");
+    }
+    CanonicalGameplayBindingIdentity other;
+    do {
+      other =
+          new CanonicalGameplayBindingIdentity(
+              identity.accountId(),
+              identity.tenantId(),
+              identity.playableStateNamespaceId(),
+              UUID.randomUUID(),
+              identity.playableStateScope(),
+              identity.gameInstanceId(),
+              identity.runtimeGameInstanceId(),
+              UUID.randomUUID().toString(),
+              identity.regionId(),
+              identity.regionEpoch(),
+              identity.issuerId(),
+              identity.issuerAuthGeneration(),
+              identity.issuerIndexLayoutVersion(),
+              identity.issuerIndexPartitionCount(),
+              identity.issuerIndexPartitionCapacity());
+    } while (!other
+        .bindingRef()
+        .partitionId(identity.issuerIndexPartitionCount())
+        .equals(partitionId));
+    var operation =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
+            .beginOrResumeOrdinaryNew(
+                new CanonicalGameplayIssuerBindingLocalOperation.Request(
+                    UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
+                    UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)),
+                    other,
+                    null,
+                    null));
+    otherOperations.put(seed, operation);
+    return operation.operationId();
+  }
+
+  /** Replays the exact retained request for a previously prepared controller operation. */
+  public UUID retryOtherControllerNew(String seed) {
+    var operation = otherOperation(seed);
+    var retried =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
+            .beginOrResumeOrdinaryNew(operation.request());
+    otherOperations.put(seed, retried);
+    return retried.operationId();
+  }
+
+  /** Uses the actual SQL preparation and physical Redis owner for another same-partition NEW. */
+  public CanonicalGameplayIssuerBindingLocalRedisOwner.Readback projectOtherControllerNew(
+      String seed) {
+    var operation = otherOperation(seed);
+    return new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+        .projectAndRead(operation);
+  }
+
+  /** Advances the real account-wide control through a later acquisition intent. */
+  public void beginAccountAcquisitionIntent(String seed) {
+    new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
+        .beginFenceIntent(
+            identity.accountId(),
+            UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)));
+  }
+
+  /** Independently snapshots the actual issuer partition for no-write assertions. */
+  public byte[] issuerPartitionFieldSetBytes() {
+    Map<String, byte[]> fields = new LinkedHashMap<>();
+    try (var connection =
+        issuerRedisClient.connect(io.lettuce.core.codec.ByteArrayCodec.INSTANCE)) {
+      connection
+          .sync()
+          .hgetall(issuerPartitionKey())
+          .forEach((field, value) -> fields.put(new String(field, StandardCharsets.UTF_8), value));
+    }
+    return CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(fields);
+  }
+
+  /** Reads both exact physical indexes for another real issuer member. */
+  public boolean hasExactOtherControllerMember(String seed) {
+    var operation = otherOperation(seed);
+    byte[] key = issuerPartitionKey();
+    byte[] expected = operation.exactMemberValueBytes();
+    byte[] capacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                operation.reservation().reservationId())
+            .getBytes(StandardCharsets.US_ASCII);
+    byte[] bindingField = operation.memberValue().owner().bindingRef().bytes();
+    try (var connection =
+        issuerRedisClient.connect(io.lettuce.core.codec.ByteArrayCodec.INSTANCE)) {
+      return Arrays.equals(connection.sync().hget(key, capacityField), expected)
+          && Arrays.equals(connection.sync().hget(key, bindingField), expected);
+    }
+  }
+
+  /** Publishes a controlled Account lease through the actual SQL and Redis provisional owners. */
+  public void publishOtherControllerNew(String seed) {
+    var operation = otherOperation(seed);
+    var transitionId = operation.request().transitionId();
+    var evidence = repository.readProvisionalCasEvidence(transitionId);
+    var lease =
+        otherLeases.computeIfAbsent(
+            seed,
+            ignored ->
+                controlledLeaseEvidence(
+                    operation.request().candidate(),
+                    evidence.transition().bindingGeneration(),
+                    target));
+    repository.markProvisional(
+        evidence,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            operation.request().candidate(),
+            evidence.transition().bindingGeneration(),
+            null,
+            target));
+    new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+        .projectAndRead(operation);
+  }
+
+  /** Records a controlled Account abort through the actual Game Session SQL abort owner. */
+  public CanonicalGameplayAdmissionAbortSource recordOtherAccountAbort(String seed) {
+    var operation = otherOperation(seed);
+    var source = repository.readFirstNewAdmissionAbortSource(operation.request().transitionId());
+    return repository.recordFirstNewAccountAbort(
+        source, UUID.nameUUIDFromBytes((seed + "-cleanup").getBytes(StandardCharsets.UTF_8)));
+  }
+
+  CanonicalGameplayIssuerBindingLocalOperation otherOperation(String seed) {
+    var operation = otherOperations.get(seed);
+    if (operation == null) {
+      throw new IllegalArgumentException("Other NEW operation was not prepared");
+    }
+    return operation;
+  }
+
+  CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
+      prepareOtherAddMutation(String seed) {
+    return localProjectionRepository.prepareAddMutationWork(otherOperation(seed));
+  }
+
+  CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
+      readPreparedPartitionWork(CanonicalGameplayIssuerBindingLocalOperation operation) {
+    return localProjectionRepository.readPreparedPartitionWork(operation);
+  }
+
+  CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
+      readCurrentOriginalPartitionWork() {
+    return localProjectionRepository.readPreparedPartitionWork(localOperation);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalRetirementOperation prepareIssuerRetirement(
+      UUID transitionId) {
+    return new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource)
+        .prepareOrResume(transitionId);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalRetirementRedisOwner.Readback retireIssuerCapacity(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return new CanonicalGameplayIssuerBindingLocalRetirementRedisOwner(
+            issuerRedisClient,
+            retirementCatalog(),
+            localProjectionRepository,
+            new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource),
+            issuerSource)
+        .retireAndRead(operation);
+  }
+
+  /** Public test bridge for the otherwise package-private retirement readback outcome. */
+  public long retireIssuerCapacityOutcome(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return retireIssuerCapacity(operation).scriptOutcome();
+  }
+
+  /** Public test bridge for the otherwise package-private retirement operation status. */
+  public boolean isIssuerRetirementComplete(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return operation.status()
+        == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED;
+  }
+
+  /** Adds the retirement script only for callers that exercise the new owner. */
+  RedisScriptCatalog retirementCatalog() {
+    return RedisScriptCatalog.fromContributions(
+        List.of(
+            new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution()));
+  }
+
+  public byte[] issuerPartitionKey() {
+    return CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  public byte[] issuerPartitionKey(String seed) {
+    return CanonicalGameplayIssuerRedisKeys.forMember(otherOperation(seed).memberValue())
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
+  public BigInteger originalPartitionId() {
+    return localOperation.reservation().partitionId();
+  }
+
+  public int originalBaselineReservationCount() {
+    return localOperation.baselinePartitionProof().physicalReservationCount();
+  }
+
+  public int originalBaselineCountedCapacity() {
+    return localOperation.baselinePartitionProof().physicalCountedCapacityCount();
+  }
+
+  public int originalBaselineBindingCount() {
+    return localOperation.baselinePartitionProof().physicalBindingCount();
   }
 
   public BigInteger preparedLocalCountedReservations() {
@@ -744,16 +1113,6 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     }
   }
 
-  public CanonicalGameplayIssuerBindingLocalRedisOwner.Readback projectOtherControllerNew(
-      String seed) {
-    var operation = otherOperations.get(seed);
-    if (operation == null)
-      throw new IllegalArgumentException("Other NEW operation was not prepared");
-    return new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-        .projectAndRead(operation);
-  }
-
   /** Attempts a newer candidate; the retained unresolved original must fence preparation. */
   public BigInteger prepareNewerCandidate() {
     var newer =
@@ -831,6 +1190,146 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   public byte[] originalMemberValueBytes() {
     return localOperation.exactMemberValueBytes();
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target) {
+    long now = System.currentTimeMillis();
+    String nowSeconds = Long.toString(now / 1000L);
+    Map<String, Object> carrier = new LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
+    carrier.put("targetNamespace", target.targetNamespace());
+    carrier.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
+    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("leaseId", UUID.randomUUID().toString());
+    carrier.put("leaseFence", "1");
+    Map<String, Object> scope = new LinkedHashMap<>();
+    scope.put("accountId", candidate.accountId().toString());
+    scope.put("tenantId", candidate.tenantId().toString());
+    scope.put("realmId", target.realmId().toString());
+    scope.put("worldSlug", target.worldSlug());
+    scope.put("realmSlug", target.realmSlug());
+    scope.put("playableStateNamespaceId", target.playableStateNamespaceId().toString());
+    scope.put("playableStateScope", target.playableStateScope());
+    scope.put("gameInstanceId", target.canonicalGameInstanceId().toString());
+    scope.put("characterId", candidate.characterId().toString());
+    scope.put("sessionId", candidate.sessionId());
+    scope.put("bindingGeneration", bindingGeneration.toString());
+    scope.put("catalogRevision", Long.toString(target.catalogRevision()));
+    scope.put("pointerVersion", Long.toString(target.pointerVersion()));
+    scope.put("regionId", candidate.regionId().toString());
+    scope.put("regionEpoch", candidate.regionEpoch().toString());
+    carrier.put("bindingScope", scope);
+    carrier.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration", candidate.issuerAuthGeneration().toString(),
+            "accountAuthorityGeneration", "1",
+            "tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "privateRealmGrantVersions", List.of()));
+    carrier.put("issuanceFence", "1");
+    carrier.put(
+        "membershipBaseline",
+        Map.of(
+            "membershipLifecycleState", "ACTIVE",
+            "membershipVersion", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", "1"));
+    String prefix = "account:auth-authority:v1:";
+    List<Map<String, Object>> checkpoints = new java.util.ArrayList<>();
+    for (String stream :
+        List.of(
+            "account/" + candidate.accountId(),
+            "issuer/" + candidate.issuerId(),
+            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
+            "tenant/" + candidate.tenantId())) {
+      checkpoints.add(
+          Map.of(
+              "outboxStreamKey",
+              prefix + stream,
+              "outboxSequence",
+              stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0"));
+    }
+    carrier.put("outboxCheckpoints", checkpoints);
+    carrier.put(
+        "tokenIdentityEvidence",
+        Map.ofEntries(
+            Map.entry("accountId", candidate.accountId().toString()),
+            Map.entry("operationId", UUID.randomUUID().toString()),
+            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
+            Map.entry("tokenJti", UUID.randomUUID().toString()),
+            Map.entry("tokenSHA256", "a".repeat(64)),
+            Map.entry("tokenProfile", "game-session-account-delegation"),
+            Map.entry("tokenGeneration", "1"),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("tokenIdentityFence", "1"),
+            Map.entry("issuedAt", nowSeconds),
+            Map.entry("notBefore", nowSeconds),
+            Map.entry("expiresAt", Long.toString(now / 1000L + 60L))));
+    carrier.put("evaluatedAt", Long.toString(now));
+    carrier.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+  }
+
+  private void seedQualifiedBootstrapMembers(int count) {
+    var inventoryRepository = new CanonicalGameplayBindingInventoryRepository(dsl);
+    for (int index = 0; index < count; index++) {
+      seedQualifiedBootstrapMember(inventoryRepository);
+    }
+  }
+
+  private void seedQualifiedBootstrapMember(
+      CanonicalGameplayBindingInventoryRepository inventoryRepository) {
+    var candidate =
+        new CanonicalGameplayBindingIdentity(
+            UUID.randomUUID(),
+            identity.tenantId(),
+            identity.playableStateNamespaceId(),
+            UUID.randomUUID(),
+            identity.playableStateScope(),
+            identity.gameInstanceId(),
+            identity.runtimeGameInstanceId(),
+            UUID.randomUUID().toString(),
+            identity.regionId(),
+            identity.regionEpoch(),
+            identity.issuerId(),
+            identity.issuerAuthGeneration(),
+            identity.issuerIndexLayoutVersion(),
+            identity.issuerIndexPartitionCount(),
+            identity.issuerIndexPartitionCapacity());
+    var reservation =
+        new CanonicalIssuerReservationFenceEvidence(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            BigInteger.ONE,
+            BigInteger.TWO,
+            BigInteger.ONE);
+    UUID transitionId = UUID.randomUUID();
+    inventoryRepository.prepare(
+        new CanonicalGameplayBindingTransitionRequest(
+            transitionId, UUID.randomUUID(), candidate, reservation, null, null));
+    var prepared = inventoryRepository.readProvisionalCasEvidence(transitionId);
+    var lease =
+        controlledLeaseEvidence(candidate, prepared.transition().bindingGeneration(), target);
+    inventoryRepository.markProvisional(
+        prepared,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            candidate,
+            prepared.transition().bindingGeneration(),
+            null,
+            target));
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint

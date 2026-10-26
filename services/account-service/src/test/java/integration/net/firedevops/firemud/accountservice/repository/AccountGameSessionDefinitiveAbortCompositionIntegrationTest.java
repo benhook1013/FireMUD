@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamesession.repository.CanonicalGameplayAdmissionA
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayAdmissionAbortManualFactory;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBindingLocalReleaseOperation;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -286,16 +287,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(aborted.reservation().lifecycle())
           .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
 
-      var pending = session.gs.prepareIssuerRelease();
-      assertThat(pending.originalOperationId()).isEqualTo(originalOperationId);
-      assertThat(pending.exactOriginalMemberValueBytes()).containsExactly(originalMemberBytes);
-      assertThat(pending.sourceInventoryRevision())
-          .isGreaterThan(aborted.transition().inventoryRevision());
-      assertThat(session.gs.source().transition().inventoryRevision())
-          .isEqualTo(pending.sourceInventoryRevision());
-
       UUID secondOperationId = session.gs.prepareOtherControllerNew("second-controller");
       assertThat(secondOperationId).isNotEqualTo(originalOperationId);
+      var secondReadback = session.gs.projectOtherControllerNew("second-controller");
+      assertThat(secondReadback.operationId()).isEqualTo(secondOperationId);
+      assertThat(secondReadback.scriptOutcome()).isEqualTo(1L);
       var clockAfterOtherWriter =
           session
               .gs
@@ -304,13 +300,19 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                   "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
               .get("inventory_revision", java.math.BigDecimal.class)
               .toBigIntegerExact();
-      assertThat(clockAfterOtherWriter).isGreaterThan(pending.sourceInventoryRevision());
-      assertThat(session.gs.source().transition().inventoryRevision())
-          .isEqualTo(pending.sourceInventoryRevision());
       assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.TWO);
       assertThatThrownBy(() -> session.gs.prepareOtherControllerNew("full-before-release"))
           .isInstanceOf(RuntimeException.class)
           .hasMessageContaining("capacity");
+
+      var pending = session.gs.prepareIssuerRelease();
+      assertThat(pending.originalOperationId()).isEqualTo(originalOperationId);
+      assertThat(pending.exactOriginalMemberValueBytes()).containsExactly(originalMemberBytes);
+      assertThat(pending.sourceInventoryRevision())
+          .isGreaterThan(aborted.transition().inventoryRevision());
+      assertThat(pending.sourceInventoryRevision()).isGreaterThan(clockAfterOtherWriter);
+      assertThat(session.gs.source().transition().inventoryRevision())
+          .isEqualTo(pending.sourceInventoryRevision());
 
       String preparedImage = session.image();
       assertThatThrownBy(
@@ -417,7 +419,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                   "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
               .get("inventory_revision", java.math.BigDecimal.class)
               .toBigIntegerExact();
-      assertThat(clockBeforeCompletion).isEqualTo(clockAfterOtherWriter);
+      assertThat(clockBeforeCompletion).isEqualTo(pending.sourceInventoryRevision());
       var afterPhysicalReadback = session.gs.source();
       assertThat(afterPhysicalReadback.reservation().lifecycle())
           .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
@@ -635,6 +637,162 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     }
   }
 
+  @Test
+  void actualAcknowledgedAbortCleanupSurvivesLaterAccountIntentAndRetiresExactIssuerMember()
+      throws Exception {
+    try (var session = open(MigrationVersion.fromVersion("1038"))) {
+      var acknowledgement = session.gs.repairAccountMember();
+      assertThat(acknowledgement.transitionId()).isEqualTo(session.gs.transitionId());
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
+      var originalAck = session.gs.memberAcknowledgementImage();
+      var originalPhase = session.gs.accountObligationPhaseImage();
+
+      var abort = session.abort();
+      assertThat(abort.state()).isEqualTo(CanonicalGameplayAdmissionAbortOutcome.State.ABORTED);
+      assertThat(session.gs.source().isAccountAborted()).isTrue();
+      assertThat(session.gs.source().candidate().accountIndexState())
+          .isEqualTo(CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED);
+
+      String newerMemberSeed = "later-account-newer-issuer-member";
+      session.gs.prepareOtherControllerNew(newerMemberSeed);
+      assertThat(session.gs.projectOtherControllerNew(newerMemberSeed).scriptOutcome())
+          .isEqualTo(1L);
+      session.gs.publishOtherControllerNew(newerMemberSeed);
+      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
+
+      String staleTargetAddSeed = "later-account-stale-target-add";
+      session.gs.prepareOtherControllerNew(staleTargetAddSeed);
+      byte[] fieldsBeforeStaleAdd = session.gs.issuerPartitionFieldSetBytes();
+      session.gs.beginAccountAcquisitionIntent("later-account-acquisition");
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT state FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      session.gs.candidate().accountId())
+                  .get(0, String.class))
+          .isEqualTo("ACQUISITION_INTENT");
+
+      assertThatThrownBy(() -> session.gs.projectOtherControllerNew(staleTargetAddSeed))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(fieldsBeforeStaleAdd);
+      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
+
+      var retainedRowsBeforeUpgrade = session.gs.retainedFirstNewAbortRowsImage();
+      var migrationHistoryBeforeUpgrade = session.gs.migrationHistoryImage();
+      assertThat(migrationHistoryBeforeUpgrade)
+          .anyMatch(row -> row.contains("V1000__create_saga_schema.sql"))
+          .anyMatch(row -> row.contains("V1001__saga_instance_table.sql"))
+          .anyMatch(row -> row.contains("V1002__saga_step_table.sql"));
+      var issuerFieldsBeforeUpgrade = session.gs.issuerPartitionFieldSetBytes();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT state FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      session.gs.candidate().accountId())
+                  .get(0, String.class))
+          .isEqualTo("ACQUISITION_INTENT");
+      assertThat(
+              session.gs.upgradeWithDefaultGameSessionMigrations(
+                  MigrationVersion.fromVersion("1038.1")))
+          .isEqualTo(1);
+      var migrationHistoryAfterUpgrade = session.gs.migrationHistoryImage();
+      assertThat(migrationHistoryAfterUpgrade).hasSize(migrationHistoryBeforeUpgrade.size() + 1);
+      for (int index = 0; index < migrationHistoryBeforeUpgrade.size(); index++) {
+        assertThat(migrationHistoryAfterUpgrade.get(index))
+            .isEqualTo(migrationHistoryBeforeUpgrade.get(index));
+      }
+      assertThat(migrationHistoryAfterUpgrade.get(migrationHistoryAfterUpgrade.size() - 1))
+          .contains("1038.1", "V1038.1__retained_first_new_abort_cleanup_account_control.sql");
+      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(retainedRowsBeforeUpgrade);
+      assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
+      assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
+      assertThat(session.gs.issuerPartitionFieldSetBytes())
+          .containsExactly(issuerFieldsBeforeUpgrade);
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
+      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
+
+      var pendingRelease = session.gs.prepareIssuerRelease();
+      var releaseReadback = session.gs.projectIssuerRelease(pendingRelease);
+      var released = session.gs.completeIssuerRelease(pendingRelease, releaseReadback);
+      assertThat(released.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
+
+      var releaseRetry = session.gs.prepareIssuerRelease();
+      var releaseRetryReadback = session.gs.projectIssuerRelease(releaseRetry);
+      assertThat(releaseRetryReadback.scriptOutcome()).isEqualTo(2L);
+      assertThat(
+              session
+                  .gs
+                  .completeIssuerRelease(releaseRetry, releaseRetryReadback)
+                  .completionInventoryRevision())
+          .isEqualTo(released.completionInventoryRevision());
+
+      var pendingRetirement = session.gs.prepareIssuerRetirement(session.gs.transitionId());
+      assertThat(session.gs.retireIssuerCapacityOutcome(pendingRetirement)).isEqualTo(1L);
+      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
+      byte[] fieldsBeforeRetirementRetry = session.gs.issuerPartitionFieldSetBytes();
+      var retirementRetry = session.gs.prepareIssuerRetirement(session.gs.transitionId());
+      assertThat(session.gs.isIssuerRetirementComplete(retirementRetry)).isTrue();
+      assertThat(session.gs.retireIssuerCapacityOutcome(retirementRetry)).isEqualTo(2L);
+      assertThat(session.gs.issuerPartitionFieldSetBytes())
+          .containsExactly(fieldsBeforeRetirementRetry);
+      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
+      assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
+      assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
+    }
+  }
+
+  /**
+   * Controlled GS repository input exercises the initial deferred SQL guard, not Account's
+   * terminal-state operation.
+   */
+  @Test
+  void initialAbortDeferredGuardStillRejectsControlAdvanceBeforeCommit() throws Exception {
+    try (var session = open(true)) {
+      session.gs.repairAccountMember();
+      var originalRows = session.gs.retainedFirstNewAbortRowsImage();
+      var originalFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(session.gs::recordOriginalAccountAbortThenAdvanceControlBeforeCommit)
+          .isInstanceOf(RuntimeException.class)
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
+          .hasMessageContaining("First-NEW Account abort requires its exact retained candidate");
+      assertThat(session.gs.source().isAccountAborted()).isFalse();
+      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(originalRows);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(originalFields);
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition"
+                          + " WHERE transition_id = ?",
+                      session.gs.transitionId())
+                  .get(0, String.class))
+          .isEqualTo("PROVISIONAL");
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT state FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      session.gs.candidate().accountId())
+                  .get(0, String.class))
+          .isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+    }
+  }
+
   private Session open() throws Exception {
     accountFixtures.temporaryDirectory = temporaryDirectory;
     return new Session(false);
@@ -643,6 +801,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   private Session open(boolean prepareMemberRepair) throws Exception {
     accountFixtures.temporaryDirectory = temporaryDirectory;
     return new Session(prepareMemberRepair);
+  }
+
+  private Session open(MigrationVersion migrationTarget) throws Exception {
+    accountFixtures.temporaryDirectory = temporaryDirectory;
+    return new Session(true, migrationTarget);
   }
 
   private final class Session implements AutoCloseable {
@@ -661,6 +824,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     private AccountGameplayAdmissionLeaseEvidence lease;
 
     private Session(boolean prepareMemberRepair) throws Exception {
+      this(prepareMemberRepair, null);
+    }
+
+    private Session(boolean prepareMemberRepair, MigrationVersion migrationTarget)
+        throws Exception {
       try {
         accountFixture = accountFixtures.newFixture(redis.client());
         var issuance = accountFixture.committedCandidate.identity();
@@ -689,10 +857,14 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 candidate.issuerAuthGeneration(),
                 candidate.issuerIndexLayoutVersion(),
                 candidate.issuerIndexPartitionCount(),
-                java.math.BigInteger.valueOf(2));
+                java.math.BigInteger.valueOf(prepareMemberRepair ? 3 : 2));
         gs =
             new CanonicalGameplayAdmissionAbortCompositionFixture(
-                accountFixture.dataSource, capacityCandidate, redis.issuerOwnerClient());
+                accountFixture.dataSource,
+                capacityCandidate,
+                redis.issuerOwnerClient(),
+                0,
+                migrationTarget);
         if (prepareMemberRepair) gs.prepareMemberRepairRedis();
         pkiDirectory = Files.createTempDirectory(temporaryDirectory, "actual-abort-mtls-");
         pki =

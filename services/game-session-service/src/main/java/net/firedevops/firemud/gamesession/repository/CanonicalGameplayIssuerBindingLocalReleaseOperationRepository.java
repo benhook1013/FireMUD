@@ -52,7 +52,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   CanonicalGameplayIssuerBindingLocalReleaseOperation prepareOrResume(UUID transitionId) {
     Objects.requireNonNull(transitionId, "transitionId");
     requireNoAmbientTransaction();
-    var sourceBefore = inventoryRepository.readFirstNewAdmissionAbortSource(transitionId);
+    var sourceBefore =
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId);
     requireAbortedSource(sourceBefore);
     var issuerStateBefore = readCurrentIssuerState();
     var original = localOperationRepository.readOriginalForIssuerRelease(sourceBefore);
@@ -64,14 +65,14 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               var source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, true);
               requireSameAbortSource(sourceBefore, source);
               Record existing =
                   transaction.fetchOne(
                       "SELECT * FROM " + RELEASE + " WHERE transition_id = ? FOR UPDATE",
                       transitionId);
-              if (existing != null) return readOperation(existing, source, original);
+              if (existing != null) return readOperation(transaction, existing, source, original);
               if (source.reservation().lifecycle()
                       != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
                   || !sameOperationSource(original, source)) {
@@ -88,7 +89,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   transaction, source, priorRevision, sourceRevision, currentRevision);
               source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, false);
               var counters =
                   CanonicalGameplayIssuerBindingLocalOperationRepository.allocateLocalCounters(
@@ -122,12 +123,77 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   transaction.fetchOne(
                       "SELECT * FROM " + RELEASE + " WHERE operation_id = ? FOR UPDATE", releaseId);
               if (saved == null) throw conflict("Issuer release operation was not retained");
-              return readOperation(saved, source, original);
+              byte[] mutationIntent =
+                  CanonicalGameplayIssuerPartitionMutationRepository.encodeIntendedChange(
+                      CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
+                      releaseId,
+                      original.reservation().partitionId(),
+                      original.operationId().toString().getBytes(StandardCharsets.US_ASCII),
+                      source
+                          .reservation()
+                          .reservationId()
+                          .toString()
+                          .getBytes(StandardCharsets.US_ASCII),
+                      source.transition().bindingRef().bytes(),
+                      originalBytes,
+                      releasedBytes,
+                      sourceRevision.toString().getBytes(StandardCharsets.US_ASCII));
+              CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
+                  transaction,
+                  CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
+                  releaseId,
+                  original.reservation().partitionId(),
+                  mutationIntent);
+              return readOperation(transaction, saved, source, original);
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     requireSameAbortIdentity(
-        sourceBefore, inventoryRepository.readFirstNewAdmissionAbortSource(transitionId));
+        sourceBefore,
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId));
     return operation;
+  }
+
+  /** Reads only an existing, committed release receipt for a physical-retirement caller. */
+  CanonicalGameplayIssuerBindingLocalReleaseOperation readCommittedRelease(UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    requireNoAmbientTransaction();
+    CanonicalGameplayAdmissionAbortSource sourceBefore =
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId);
+    requireAbortedSource(sourceBefore);
+    var issuerStateBefore = readCurrentIssuerState();
+    CanonicalGameplayIssuerBindingLocalOperation original =
+        localOperationRepository.readOriginalForIssuerRelease(sourceBefore);
+    CanonicalGameplayIssuerBindingLocalReleaseOperation committed =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              CanonicalGameplayAdmissionAbortSource source =
+                  CanonicalGameplayBindingInventoryRepository
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
+                          transaction, transitionId, false);
+              requireSameAbortSource(sourceBefore, source);
+              Record existing =
+                  transaction.fetchOne(
+                      "SELECT * FROM " + RELEASE + " WHERE transition_id = ?", transitionId);
+              if (existing == null) {
+                throw conflict(
+                    "Physical retirement requires an existing committed release receipt");
+              }
+              CanonicalGameplayIssuerBindingLocalReleaseOperation operation =
+                  readOperation(transaction, existing, source, original);
+              if (operation.status()
+                  != CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
+                throw conflict(
+                    "Physical retirement requires a committed original RELEASED receipt");
+              }
+              return operation;
+            });
+    requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
+    requireSameAbortSource(
+        committed.abortSource(),
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId));
+    return committed;
   }
 
   /** Completes only the exact private physical-owner readback and returns its durable receipt. */
@@ -152,7 +218,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
               UUID transitionId = expected.abortSource().transition().transitionId();
               var source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, true);
               requireExactReleaseSource(expected, source);
               Record releaseRow =
@@ -160,11 +226,14 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                       "SELECT * FROM " + RELEASE + " WHERE operation_id = ? FOR UPDATE",
                       expected.operationId());
               if (releaseRow == null) throw conflict("SQL issuer release operation disappeared");
-              var current = readOperation(releaseRow, source, expected.originalOperation());
+              var current =
+                  readOperation(transaction, releaseRow, source, expected.originalOperation());
               requireSameOperation(expected, current);
               if (current.status()
                   == CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
                 verifyReadbackMatchesOperation(current, readbackBytes, readbackDigest);
+                CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                    transaction, current.physicalMutation(), readbackBytes);
                 return current;
               }
               if (source.reservation().lifecycle()
@@ -177,6 +246,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                     "Inventory clock regressed behind the durable issuer release preparation");
               }
               verifyReadbackMatchesOperation(current, readbackBytes, readbackDigest);
+              CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                  transaction, current.physicalMutation(), readbackBytes);
               BigInteger completionRevision = currentRevision.add(BigInteger.ONE);
               requireCounterLimit(completionRevision, "completionInventoryRevision");
               requireOne(
@@ -307,7 +378,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   "Issuer release lost the current inventory-clock compare-and-set");
               var completedSource =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, false);
               Record completedRow =
                   transaction.fetchOne(
@@ -315,11 +386,12 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                       expected.operationId());
               if (completedRow == null)
                 throw conflict("Released issuer operation disappeared after completion");
-              return readOperation(completedRow, completedSource, expected.originalOperation());
+              return readOperation(
+                  transaction, completedRow, completedSource, expected.originalOperation());
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     CanonicalGameplayAdmissionAbortSource sourceAfter =
-        inventoryRepository.readFirstNewAdmissionAbortSource(
+        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(
             completed.abortSource().transition().transitionId());
     // The decision is reparsed on each read and deliberately has no object-identity equality.
     // Compare the complete durable value source and its exact original lease/target instead.
@@ -328,6 +400,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   }
 
   private CanonicalGameplayIssuerBindingLocalReleaseOperation readOperation(
+      DSLContext transaction,
       Record row,
       CanonicalGameplayAdmissionAbortSource source,
       CanonicalGameplayIssuerBindingLocalOperation original) {
@@ -392,6 +465,27 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
     byte[] physicalReadback = optionalBytes(row, "physical_readback_field_set_bytes");
     String physicalDigest = row.get("physical_readback_field_set_digest", String.class);
     BigInteger completionRevision = nullablePositive(row, "completion_inventory_revision");
+    CanonicalGameplayIssuerPartitionMutation physicalMutation =
+        CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+            transaction,
+            CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
+            operationId,
+            original.reservation().partitionId());
+    byte[] expectedMutationIntent =
+        CanonicalGameplayIssuerPartitionMutationRepository.encodeIntendedChange(
+            CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
+            operationId,
+            original.reservation().partitionId(),
+            original.operationId().toString().getBytes(StandardCharsets.US_ASCII),
+            source.reservation().reservationId().toString().getBytes(StandardCharsets.US_ASCII),
+            source.transition().bindingRef().bytes(),
+            bytes(row, "original_member_value_bytes"),
+            bytes(row, "released_member_value_bytes"),
+            sourceRevision.toString().getBytes(StandardCharsets.US_ASCII));
+    if (!Arrays.equals(expectedMutationIntent, physicalMutation.exactIntendedChangeBytes())) {
+      throw conflict(
+          "Stored release revision intent differs from its exact original release tuple");
+    }
     if ((status == CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.PENDING_PHYSICAL_PROOF
             && (source.reservation().lifecycle()
                     != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
@@ -418,6 +512,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
           bytes(row, "released_member_value_bytes"),
           physicalReadback,
           physicalDigest,
+          physicalMutation,
           status);
     } catch (RuntimeException malformed) {
       throw conflict("Stored SQL issuer release operation is malformed");
@@ -880,7 +975,19 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
         || !Arrays.equals(
             expected.exactOriginalMemberValueBytes(), current.exactOriginalMemberValueBytes())
         || !Arrays.equals(
-            expected.exactReleasedMemberValueBytes(), current.exactReleasedMemberValueBytes())) {
+            expected.exactReleasedMemberValueBytes(), current.exactReleasedMemberValueBytes())
+        || !expected.physicalMutation().mutationId().equals(current.physicalMutation().mutationId())
+        || !expected
+            .physicalMutation()
+            .expectedRevision()
+            .equals(current.physicalMutation().expectedRevision())
+        || !expected
+            .physicalMutation()
+            .successorRevision()
+            .equals(current.physicalMutation().successorRevision())
+        || !Arrays.equals(
+            expected.physicalMutation().exactIntendedChangeBytes(),
+            current.physicalMutation().exactIntendedChangeBytes())) {
       throw conflict("SQL issuer release operation changed across its physical proof boundary");
     }
   }

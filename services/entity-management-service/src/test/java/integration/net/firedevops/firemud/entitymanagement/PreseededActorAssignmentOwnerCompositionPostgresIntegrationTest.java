@@ -71,6 +71,8 @@ import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentOutcom
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerReadRequest;
 import net.firedevops.firemud.gamesession.v1.GetPreseededActorAssignmentOwnerReadResponse;
@@ -420,10 +422,102 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
             .containsExactlyElementsOf(persistedRows);
         assertNoMutation(assignedBaseline, assignment);
 
+        var runtimeSelector =
+            ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+                .setSchemaVersion(1)
+                .setAssignmentUuid(receiptReadRequest.getAssignmentUuid())
+                .setCanonicalAccountUuid(receiptReadRequest.getCanonicalAccountUuid())
+                .setCharacterUuid(receiptReadRequest.getCharacterUuid())
+                .setIntentDigest(receiptReadRequest.getIntentDigest())
+                .setExpectedTarget(receiptReadRequest.getExpectedTarget())
+                .build();
+        // Controlled owner sources and test PKI authorize only this passive local composition.
+        // Actual persisted projection comes from the production assignment writer, never fixture
+        // SQL.
+        var runtimeRead = callRuntimeRead(entityServer, "game-session-client", runtimeSelector);
+        assertThat(runtimeRead.getRuntimeEntityId()).isPositive();
+        assertThat(runtimeRead.getProjectionGeneration()).isEqualTo(1);
+        assertThat(runtimeRead.getProjectionFence()).isEqualTo(1);
+        assertThat(runtimeRead.getExpectedTarget())
+            .isEqualTo(receiptReadRequest.getExpectedTarget());
+        assertThat(runtimeRead.getCharacterUuid()).isEqualTo(characterUuid.toString());
+        assertThat(runtimeRead.getAssignmentUuid())
+            .isEqualTo(assignment.assignmentUuid().toString());
+        assertThat(runtimeRead.getIntentDigest()).isEqualTo(receipt.intentDigest());
+        assertThat(runtimeRead.getPublishedOwnerProofDigest())
+            .isEqualTo(receipt.publishedOwnerProofDigest());
+        assertThat(runtimeReadEntryCount.get()).isEqualTo(1);
+        assertThat(runtimeReadEnteredOutsideTransaction.get()).isTrue();
+        for (String wrongPeer :
+            List.of("world-client", "account-client", "foreign-game-session-client")) {
+          assertThatThrownBy(() -> callRuntimeRead(entityServer, wrongPeer, runtimeSelector))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+        }
+        assertThat(runtimeReadEntryCount.get()).isEqualTo(1);
+        var changedRuntimeSelector =
+            runtimeSelector.toBuilder().setCharacterUuid(UUID.randomUUID().toString()).build();
+        assertThatThrownBy(
+                () -> callRuntimeRead(entityServer, "game-session-client", changedRuntimeSelector))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+        // A replacement target cannot borrow the original assignment's projection.
+        var changedRuntimeTarget =
+            runtimeSelector.toBuilder()
+                .setExpectedTarget(
+                    runtimeSelector.getExpectedTarget().toBuilder()
+                        .setGameInstanceId("replacement-instance"))
+                .build();
+        assertThatThrownBy(
+                () -> callRuntimeRead(entityServer, "game-session-client", changedRuntimeTarget))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+        var foreignRuntimeTarget =
+            runtimeSelector.toBuilder()
+                .setExpectedTarget(
+                    runtimeSelector.getExpectedTarget().toBuilder()
+                        .setPlayableStateNamespaceUuid(UUID.randomUUID().toString()))
+                .build();
+        assertThatThrownBy(
+                () -> callRuntimeRead(entityServer, "game-session-client", foreignRuntimeTarget))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+        var wrongAssignment =
+            runtimeSelector.toBuilder().setAssignmentUuid(UUID.randomUUID().toString()).build();
+        assertThatThrownBy(
+                () -> callRuntimeRead(entityServer, "game-session-client", wrongAssignment))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+        assertThat(
+                callRuntimeRead(entityServer, "game-session-client", runtimeSelector).toByteArray())
+            .containsExactly(runtimeRead.toByteArray());
+        assertThat(callReceiptRead(entityServer, "world-client", receiptReadRequest).toByteArray())
+            .containsExactly(persistedRead.toByteArray());
+        assertThat(assignmentAndActorRows(assignment, characterUuid))
+            .containsExactlyElementsOf(persistedRows);
+
         byte[] terminalResponse = assigned.toByteArray();
         AssignPreseededActorResponse replay =
             call(entityServer, "game-session-client", wireRequest);
         assertThat(replay.toByteArray()).containsExactly(terminalResponse);
+        assertThat(
+                callRuntimeRead(entityServer, "game-session-client", runtimeSelector).toByteArray())
+            .containsExactly(runtimeRead.toByteArray());
         assertThat(assignmentAndActorRows(assignment, characterUuid))
             .containsExactlyElementsOf(persistedRows);
         assertThat(characterRepository.readPreseededActorAssignmentReceipt(receiptRequest))
@@ -486,12 +580,25 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
                   throw new IllegalStateException(
                       "Assignment receipt read was entered inside a caller-owned SQL transaction");
                 }
+              } else if (invocation
+                  .getMethod()
+                  .getName()
+                  .equals("readPreseededActorRuntimeReference")) {
+                runtimeReadEntryCount.incrementAndGet();
+                runtimeReadEnteredOutsideTransaction.set(
+                    !TransactionSynchronizationManager.isActualTransactionActive());
+                if (!runtimeReadEnteredOutsideTransaction.get()) {
+                  throw new IllegalStateException(
+                      "Runtime read entered inside caller SQL transaction");
+                }
               }
               return invocation.proceed();
             });
     return (CharacterRepository) proxy.getProxy();
   }
 
+  private final AtomicInteger runtimeReadEntryCount = new AtomicInteger();
+  private final AtomicBoolean runtimeReadEnteredOutsideTransaction = new AtomicBoolean();
   private final AtomicInteger writerEntryCount = new AtomicInteger();
   private final AtomicBoolean writerEnteredOutsideTransaction = new AtomicBoolean();
   private final AtomicInteger receiptReadEntryCount = new AtomicInteger();
@@ -588,6 +695,23 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
           .newBlockingStub(channel)
           .withDeadlineAfter(15, TimeUnit.SECONDS)
           .assignPreseededActor(request);
+    } finally {
+      channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  private static ReadPreseededActorRuntimeReferenceResponse callRuntimeRead(
+      Server server, String callerAlias, ReadPreseededActorRuntimeReferenceRequest request)
+      throws Exception {
+    CommonGrpcClientProperties callerTls =
+        TLS.pki().clientProperties(TLS_DIRECTORY, TLS.pki().identity(callerAlias));
+    ManagedChannel channel =
+        new GrpcChannelFactory()
+            .buildChannel("127.0.0.1:" + server.getPort(), 6565, callerTls, false);
+    try {
+      return CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(channel)
+          .withDeadlineAfter(15, TimeUnit.SECONDS)
+          .readPreseededActorRuntimeReference(request);
     } finally {
       channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
     }

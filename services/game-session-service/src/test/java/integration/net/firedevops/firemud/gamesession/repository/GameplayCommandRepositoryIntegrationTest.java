@@ -48,6 +48,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class GameplayCommandRepositoryIntegrationTest {
+  private static final String HUMAN_RUNTIME_COMPLETION_TABLE =
+      "game_session_canonical_human_runtime_completion";
+  private static final String HUMAN_RUNTIME_COMPLETION_TRUNCATE_GUARD =
+      "game_session_canonical_human_runtime_completion_no_truncate";
+
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
@@ -85,9 +90,26 @@ class GameplayCommandRepositoryIntegrationTest {
 
   @BeforeEach
   void cleanTable() {
-    dsl.execute(
-        "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer, tick_batch, tick_effect "
-            + "RESTART IDENTITY CASCADE");
+    String originalGuardState = humanRuntimeCompletionTruncateGuardState();
+    assertThat(originalGuardState).isIn("O", "A");
+
+    transactionTemplate.executeWithoutResult(
+        status -> {
+          dsl.execute(
+              "ALTER TABLE "
+                  + HUMAN_RUNTIME_COMPLETION_TABLE
+                  + " DISABLE TRIGGER "
+                  + HUMAN_RUNTIME_COMPLETION_TRUNCATE_GUARD);
+          assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo("D");
+          dsl.execute(
+              "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer, tick_batch, tick_effect, "
+                  + HUMAN_RUNTIME_COMPLETION_TABLE
+                  + " RESTART IDENTITY CASCADE");
+          restoreHumanRuntimeCompletionTruncateGuard(originalGuardState);
+          assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo(originalGuardState);
+        });
+
+    assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo(originalGuardState);
   }
 
   @Test
@@ -144,6 +166,42 @@ class GameplayCommandRepositoryIntegrationTest {
 
     assertThat(dsl.fetchCount(TICK_BATCH)).isEqualTo(1);
     assertThat(dsl.fetchCount(TICK_EFFECT)).isEqualTo(1);
+
+    assertThatThrownBy(() -> dsl.execute("TRUNCATE TABLE " + HUMAN_RUNTIME_COMPLETION_TABLE))
+        .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
+    assertThat(humanRuntimeCompletionTruncateGuardState()).isIn("O", "A");
+  }
+
+  private String humanRuntimeCompletionTruncateGuardState() {
+    List<String> states =
+        dsl
+            .fetch(
+                "SELECT tgenabled::text FROM pg_trigger "
+                    + "WHERE tgrelid = CAST(? AS regclass) AND tgname = CAST(? AS name) "
+                    + "AND NOT tgisinternal",
+                HUMAN_RUNTIME_COMPLETION_TABLE,
+                HUMAN_RUNTIME_COMPLETION_TRUNCATE_GUARD)
+            .stream()
+            .map(record -> record.get(0, String.class))
+            .toList();
+    assertThat(states).hasSize(1);
+    return states.getFirst();
+  }
+
+  private void restoreHumanRuntimeCompletionTruncateGuard(String state) {
+    String enableMode =
+        switch (state) {
+          case "O" -> "ENABLE";
+          case "A" -> "ENABLE ALWAYS";
+          default -> throw new IllegalArgumentException("Unsupported enabled trigger state");
+        };
+    dsl.execute(
+        "ALTER TABLE "
+            + HUMAN_RUNTIME_COMPLETION_TABLE
+            + " "
+            + enableMode
+            + " TRIGGER "
+            + HUMAN_RUNTIME_COMPLETION_TRUNCATE_GUARD);
   }
 
   @Test

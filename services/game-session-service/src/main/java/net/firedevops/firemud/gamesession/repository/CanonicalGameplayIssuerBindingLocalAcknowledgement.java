@@ -348,7 +348,7 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgement {
       if (fieldCount < 1 || reservationCount < 1 || bindingCount < 1 || countedCapacity < 1) {
         throw new IllegalArgumentException("Physical issuer readback counts must be positive");
       }
-      if (fieldCount != 1 + reservationCount + bindingCount || bindingCount > reservationCount) {
+      if (fieldCount != 2 + reservationCount + bindingCount || bindingCount > reservationCount) {
         throw new IllegalArgumentException("Physical issuer field counts are inconsistent");
       }
       requireMatches(bindingValueBytes, bindingValueDigest, "physical binding value");

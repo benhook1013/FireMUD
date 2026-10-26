@@ -33,10 +33,13 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationLifecycleConsequence;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
@@ -92,15 +95,121 @@ class CanonicalInitialPlayerLocationClientTest {
     var applied = appliedResponse(request);
     when(stub.placeInitialPlayer(request)).thenReturn(applied);
     when(stub.readInitialPlayerLocation(request)).thenReturn(applied);
+    var region = regionResponse(request);
+    when(stub.readInitialPlayerLocationRegion(request)).thenReturn(region);
     var client = clientWithStub(stub);
 
     assertThat(client.placeInitialPlayer(request)).isEqualTo(applied);
     assertThat(client.readInitialPlayerLocation(request)).isEqualTo(applied);
-    verify(stub, times(2)).withDeadlineAfter(20L, TimeUnit.SECONDS);
+    assertThat(client.readInitialPlayerLocationRegion(request)).isEqualTo(region);
+    verify(stub, times(3)).withDeadlineAfter(20L, TimeUnit.SECONDS);
+    verify(stub).withMaxInboundMessageSize(8 * 1024);
+    verify(stub).withMaxOutboundMessageSize(16 * 1024);
 
     var conflict = conflictResponse(request);
     when(stub.placeInitialPlayer(request)).thenReturn(conflict);
     assertThat(client.placeInitialPlayer(request)).isEqualTo(conflict);
+  }
+
+  @Test
+  void rejectsRegionResultWithChangedPlacementTargetOrLifecycleFence() throws Exception {
+    var request = request();
+    var stub = mockStub();
+    var client = clientWithStub(stub);
+
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(
+            regionResponse(request).toBuilder()
+                .setExpectedTarget(
+                    request.getExpectedTarget().toBuilder().setRealmSlug("other-realm"))
+                .build());
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("echo of the selected target");
+
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(
+            regionResponse(request).toBuilder()
+                .setLifecycle(
+                    regionResponse(request).getLifecycle().toBuilder().setLifecycleEpoch(13L))
+                .build());
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("incomplete or stale");
+  }
+
+  @Test
+  void rejectsRegionResultAttributedToAnotherWorkloadNamespace() throws Exception {
+    var request = request();
+    var stub = mockStub();
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(regionResponse(request, "other-workload-namespace"));
+    var client = clientWithStub(stub);
+
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("canonical placement target");
+  }
+
+  @Test
+  void rejectsLifecycleReadRequestNotBoundToThePlacementOperation() throws Exception {
+    var request = request();
+    var stub = mockStub();
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(
+            regionResponse(
+                request,
+                NAMESPACE,
+                java.util.UUID.fromString("99999999-9999-4999-8999-999999999999")));
+    var client = clientWithStub(stub);
+
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("canonical placement target");
+  }
+
+  @Test
+  void rejectsRegionResultWithSubstitutedActorRoomKeyOrMalformedPlacementDigest() throws Exception {
+    var request = request();
+    var stub = mockStub();
+    var client = clientWithStub(stub);
+
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(
+            regionResponse(request).toBuilder()
+                .setPlacementResult(
+                    appliedResponse(request).toBuilder()
+                        .setCharacterUuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                .build());
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("operation, scope, or assignment");
+
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(
+            regionResponse(request).toBuilder()
+                .setPlacementResult(
+                    appliedResponse(request).toBuilder().setResultDigest("bad-digest"))
+                .build());
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("result_digest is not prefixed");
+
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(
+            regionResponse(request).toBuilder()
+                .setPlacementResult(
+                    appliedResponse(request).toBuilder().setRequestDigest("bad-digest"))
+                .build());
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("request_digest is not prefixed");
+
+    when(stub.readInitialPlayerLocationRegion(request))
+        .thenReturn(regionResponse(request).toBuilder().setObservedRuntimeRoomKey(9183L).build());
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("changed the retained initial runtime room");
   }
 
   @Test
@@ -429,6 +538,8 @@ class CanonicalInitialPlayerLocationClientTest {
             CanonicalInitialPlayerLocationServiceGrpc
                 .CanonicalInitialPlayerLocationServiceBlockingStub.class);
     when(stub.withDeadlineAfter(20L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.withMaxInboundMessageSize(8 * 1024)).thenReturn(stub);
+    when(stub.withMaxOutboundMessageSize(16 * 1024)).thenReturn(stub);
     return stub;
   }
 
@@ -503,5 +614,66 @@ class CanonicalInitialPlayerLocationClientTest {
                 .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_CONFLICT)
         .setConflictCode("CHARACTER_ALREADY_PLACED")
         .build();
+  }
+
+  private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
+      CanonicalInitialPlayerLocationRequest request) {
+    return regionResponse(request, NAMESPACE, lifecycleReadRequestId(request));
+  }
+
+  private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
+      CanonicalInitialPlayerLocationRequest request, String lifecycleTargetNamespace) {
+    return regionResponse(request, lifecycleTargetNamespace, lifecycleReadRequestId(request));
+  }
+
+  private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
+      CanonicalInitialPlayerLocationRequest request,
+      String lifecycleTargetNamespace,
+      java.util.UUID lifecycleReadRequestId) {
+    var target = request.getExpectedTarget();
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            lifecycleReadRequestId,
+            lifecycleTargetNamespace,
+            java.util.UUID.fromString(target.getCanonicalTenantUuid()),
+            target.getWorldSlug(),
+            java.util.UUID.fromString(target.getGameInstanceId()),
+            java.util.UUID.fromString(target.getPlayableStateNamespaceUuid()),
+            "SHARED",
+            true,
+            "control-plane-request-12",
+            java.util.UUID.fromString(target.getCanonicalVersionUuid()),
+            "sha256:" + "1".repeat(64),
+            "sha256:" + "2".repeat(64),
+            "sha256:" + "3".repeat(64));
+    var lifecycle =
+        CanonicalInitialPlayerLocationLifecycleConsequence.newBuilder()
+            .setCanonicalRequestBytes(
+                com.google.protobuf.ByteString.copyFrom(lifecycleRequest.canonicalBytes()))
+            .setLifecycleStatus("ACTIVE")
+            .setLifecycleEpoch(request.getActiveLifecycleEpoch())
+            .setRowVersion(4L)
+            .setCaptureUuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+            .setGraphSha256("4".repeat(64))
+            .setPreparationInputDigest("sha256:" + "5".repeat(64))
+            .build();
+    return CanonicalInitialPlayerLocationRegionResponse.newBuilder()
+        .setSchemaVersion(1)
+        .setPlacementResult(appliedResponse(request))
+        .setExpectedTarget(target)
+        .setCanonicalRegionInstanceUuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+        .setOperationalRegionUuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+        .setPrivateWorldInstanceKey(6L)
+        .setObservedRuntimeRoomKey(9182L)
+        .setLifecycle(lifecycle)
+        .build();
+  }
+
+  private static java.util.UUID lifecycleReadRequestId(
+      CanonicalInitialPlayerLocationRequest request) {
+    return java.util.UUID.nameUUIDFromBytes(
+        ("firemud-world-initial-location-lifecycle-read/v1/" + request.getPlacementOperationUuid())
+            .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
   }
 }

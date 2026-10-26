@@ -107,9 +107,23 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
     Objects.requireNonNull(operation, "SQL-issued local issuer operation is required");
     try {
       requireNoAmbientTransaction();
-      var work = projectionRepository.readPreparedPartitionWork(operation);
+      var work = projectionRepository.prepareAddMutationWork(operation);
       requireFreshCurrentState(work);
       if (!work.targetEntry().operationId().equals(operation.operationId())) {
+        throw unavailable();
+      }
+      CanonicalGameplayIssuerPartitionMutation mutation = work.physicalMutation();
+      if (mutation == null) throw unavailable();
+      if (mutation.status() == CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED) {
+        if (work.pendingMutationId() != null) throw unavailable();
+        byte[] currentReadback =
+            readExactPhysicalState(exactPartitionKey(work), work, work.currentRevision());
+        requireFreshCurrentState(work);
+        projectionRepository.requireStillCurrent(work);
+        return new Readback(operation, 3L, currentReadback, work.sqlCurrentnessDigest());
+      }
+      if (!mutation.mutationId().equals(work.pendingMutationId())
+          || !mutation.expectedRevision().equals(work.currentRevision())) {
         throw unavailable();
       }
       RedisScriptDescriptor descriptor = requireDescriptor();
@@ -121,14 +135,16 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
         throw new IllegalStateException(
             "Issuer binding-local projection returned script outcome " + result);
       }
-      byte[] readbackBytes = readExactPhysicalState(key, work);
+      byte[] readbackBytes = readExactPhysicalState(key, work, mutation.successorRevision());
       requireFreshCurrentState(work);
       projectionRepository.requireStillCurrent(work);
-      return new Readback(operation, result, readbackBytes, work.sqlCurrentnessDigest());
+      projectionRepository.completePhysicalMutation(mutation, readbackBytes);
+      var completedWork = projectionRepository.readPreparedPartitionWork(operation);
+      return new Readback(operation, result, readbackBytes, completedWork.sqlCurrentnessDigest());
     } catch (RuntimeException failure) {
       if (failure instanceof IllegalStateException state
           && state.getMessage() != null
-          && state.getMessage().contains("issuer binding-local projection is unavailable")) {
+          && state.getMessage().startsWith("Issuer binding-local projection is unavailable")) {
         throw state;
       }
       throw unavailable(failure);
@@ -154,7 +170,8 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
 
   private byte[] readExactPhysicalState(
       byte[] key,
-      CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work) {
+      CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work,
+      UUID expectedPhysicalRevision) {
     requireNoAmbientTransaction();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
@@ -165,9 +182,7 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
         throw unavailable();
       }
       Long length = await(commands.hlen(key));
-      int maxFields =
-          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_HASH_FIELDS
-              + 2 * CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_MEMBER_OPERATIONS;
+      int maxFields = CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_LOCAL_HASH_FIELDS;
       if (length == null || length < 1 || length > maxFields) throw unavailable();
       Map<byte[], byte[]> raw = await(commands.hgetall(key));
       if (raw == null || raw.size() != length) throw unavailable();
@@ -187,7 +202,17 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
 
       Map<String, byte[]> baseline = work.baselineFields();
       Map<String, byte[]> allowed = work.allowedFields();
-      if (actual.size() > allowed.size()) throw unavailable();
+      byte[] physicalRevision =
+          actual.get(
+              Base64.getEncoder()
+                  .encodeToString(
+                      CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD.getBytes(
+                          StandardCharsets.US_ASCII)));
+      if (!Arrays.equals(
+          physicalRevision,
+          expectedPhysicalRevision.toString().getBytes(StandardCharsets.US_ASCII))) {
+        throw unavailable();
+      }
       for (Map.Entry<String, byte[]> field : baseline.entrySet()) {
         byte[] redisValue =
             actual.get(
@@ -197,8 +222,29 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       }
       for (Map.Entry<String, byte[]> field : actual.entrySet()) {
         String decodedField = decodeUtf8(Base64.getDecoder().decode(field.getKey()));
+        if (decodedField.equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD))
+          continue;
         byte[] expected = allowed.get(decodedField);
         if (expected == null || !Arrays.equals(expected, field.getValue())) throw unavailable();
+      }
+
+      for (var entry : work.localEntries()) {
+        if (!entry
+            .memberValue()
+            .reservation()
+            .partitionId()
+            .equals(work.targetOperation().memberValue().reservation().partitionId())) continue;
+        String capacityName =
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                entry.memberValue().reservation().reservationId());
+        byte[] capacityValue = actual.get(b64(capacityName.getBytes(StandardCharsets.US_ASCII)));
+        if (entry.capacityMustBePresent()
+            && !Arrays.equals(capacityValue, entry.exactMemberValueBytes())) throw unavailable();
+        String bindingName =
+            new String(entry.memberValue().owner().bindingRef().bytes(), StandardCharsets.UTF_8);
+        byte[] bindingValue = actual.get(b64(bindingName.getBytes(StandardCharsets.UTF_8)));
+        if (entry.bindingMustBePresent()
+            && !Arrays.equals(bindingValue, entry.exactMemberValueBytes())) throw unavailable();
       }
 
       var target = work.targetEntry();
@@ -238,7 +284,9 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       for (var entry : actual.entrySet()) {
         String field = decodeUtf8(Base64.getDecoder().decode(entry.getKey()));
         byte[] valueBytes = entry.getValue();
-        if (field.startsWith(
+        if (field.equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) {
+          continue;
+        } else if (field.startsWith(
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.RESERVATION_FIELD_PREFIX)) {
           var value = CanonicalGameplayIssuerMemberV2Codec.decode(valueBytes);
           if (value.reservation().lifecycle()
@@ -306,6 +354,10 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
     encoded.forEach(
         (field, value) -> result.put(decodeUtf8(Base64.getDecoder().decode(field)), value.clone()));
     return result;
+  }
+
+  private static String b64(byte[] value) {
+    return Base64.getEncoder().encodeToString(value);
   }
 
   private void requireFreshCurrentState(
@@ -416,6 +468,8 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       arguments.add(entry.exactMemberValueBytes());
       arguments.add(ascii(entry.bindingPresent() ? "1" : "0"));
       arguments.add(ascii(entry.countsTowardCapacity() ? "1" : "0"));
+      arguments.add(ascii(entry.capacityMustBePresent() ? "1" : "0"));
+      arguments.add(ascii(entry.bindingMustBePresent() ? "1" : "0"));
     }
     var target = work.targetEntry();
     arguments.add(ascii(target.operationId().toString()));
@@ -426,6 +480,11 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
     arguments.add(ascii(work.partitionCapacity().toString()));
     arguments.add(ascii(work.aggregateCapacity().toString()));
     arguments.add(ascii(work.aggregateBound().toString()));
+    var mutation = work.physicalMutation();
+    if (mutation == null) throw unavailable();
+    arguments.add(ascii(mutation.expectedRevision().toString()));
+    arguments.add(ascii(mutation.successorRevision().toString()));
+    arguments.add(ascii(mutation.kind().name()));
     return arguments.toArray(byte[][]::new);
   }
 

@@ -281,7 +281,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                 CanonicalGameplayIssuerRedisKeys.forPartition(
                         intent.layoutDescriptor(), BigInteger.ZERO)
                     .getBytes(StandardCharsets.US_ASCII)))
-        .isEqualTo(1L);
+        .isEqualTo(2L);
 
     String afterFirstRegistration = localRegistrationImage(dsl);
     CanonicalGameplayIssuerBindingLocalOperation replay =
@@ -421,7 +421,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                 CanonicalGameplayIssuerRedisKeys.forPartition(
                         intent.layoutDescriptor(), BigInteger.ZERO)
                     .getBytes(StandardCharsets.US_ASCII)))
-        .isEqualTo(1L);
+        .isEqualTo(2L);
   }
 
   private CanonicalGameplayIssuerBootstrapCoverageOwner initialCoverageOwner(

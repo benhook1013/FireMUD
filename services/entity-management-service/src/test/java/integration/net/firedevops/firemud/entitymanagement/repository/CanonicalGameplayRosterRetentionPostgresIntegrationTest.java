@@ -84,7 +84,8 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
             UUID.randomUUID(),
             new CanonicalGameplayRosterSnapshotReference(UUID.randomUUID(), "a".repeat(64)),
             target());
-    transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+    transaction.executeWithoutResult(
+        ignored -> seedHistoricalV1011AssignmentActorAndSnapshotWithoutProjection());
     List<String> retained = retainedRows();
     migrate(dataSource, "latest");
     assertThat(retainedRows()).containsExactlyElementsOf(retained);
@@ -406,7 +407,8 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
               UUID.randomUUID(),
               new CanonicalGameplayRosterSnapshotReference(UUID.randomUUID(), "a".repeat(64)),
               target());
-      transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+      transaction.executeWithoutResult(
+          ignored -> seedHistoricalV1011AssignmentActorAndSnapshotWithoutProjection());
       List<String> retained1011Rows = retainedRows();
       migrate(source, "1014");
       assertThat(retainedRows()).containsExactlyElementsOf(retained1011Rows);
@@ -3195,24 +3197,7 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
   private void seedAssignedActorAndSnapshot() {
     var target = binding.target();
     UUID assignment = UUID.randomUUID();
-    var request =
-        new PreseededActorAssignmentRequest(
-            assignment,
-            binding.canonicalAccountUuid(),
-            new PreseededActorCorePayload(
-                PreseededActorCorePayload.ActorKind.PLAYER, "Retained Actor"),
-            new PreseededActorAssignmentExpectedTarget(
-                target.tenantUuid(),
-                target.realmUuid(),
-                target.worldSlug(),
-                target.realmSlug(),
-                target.gameInstanceUuid().toString(),
-                target.catalogRevision(),
-                target.canonicalVersionUuid(),
-                target.publishedPolicyDigest(),
-                target.playableStateNamespaceId(),
-                target.publishedReleaseBundleRef(),
-                target.playableStateScope()));
+    var request = assignmentRequest(assignment);
     var evidence =
         new PreseededActorAssignmentOwnerEvidence(
             assignment,
@@ -3251,6 +3236,124 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
                     "ACCOUNT_DATABASE_INSERT"),
                 request.mutationIntentDigest())
             .characterUuid();
+    seedSnapshot(actor);
+  }
+
+  /**
+   * Seeds a controlled pre-V1022 retained owner record at its historical schema frontier. This
+   * fixture deliberately has no runtime projection; only fresh assignments at the current schema
+   * use the production assignment path above.
+   */
+  private void seedHistoricalV1011AssignmentActorAndSnapshotWithoutProjection() {
+    var target = binding.target();
+    UUID assignment = UUID.randomUUID();
+    UUID actor = UUID.randomUUID();
+    var request = assignmentRequest(assignment);
+
+    dsl.execute(
+        "INSERT INTO entity_playable_state_namespace_scopes "
+            + "(tenant_uuid, playable_state_namespace_id, playable_state_scope) "
+            + "VALUES (?, ?, ?) ON CONFLICT (tenant_uuid, playable_state_namespace_id) DO NOTHING",
+        target.tenantUuid(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope().name());
+    dsl.execute(
+        "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?) "
+            + "ON CONFLICT (canonical_tenant_uuid) DO NOTHING",
+        target.tenantUuid());
+    long entityTenantRowId =
+        dsl.fetchSingle(
+                "SELECT entity_tenant_row_id FROM entity_tenant_identities "
+                    + "WHERE canonical_tenant_uuid = ?",
+                target.tenantUuid())
+            .get("entity_tenant_row_id", Long.class);
+
+    dsl.execute(
+        "INSERT INTO entity_preseeded_actor_assignment_operations "
+            + "(assignment_uuid, intent_digest, account_uuid, account_uuid_provenance, "
+            + "account_identity_schema_version, account_identity_target_namespace, "
+            + "source_account_row_id, eligibility, eligibility_evaluated_at, "
+            + "membership_authority_generation, eligibility_evidence_digest, "
+            + "account_authority_snapshot_digest, account_purpose, account_currentness, "
+            + "published_owner_proof_digest, published_release_bundle_ref, "
+            + "tenant_uuid, realm_uuid, world_slug, realm_slug, game_instance_id, "
+            + "catalog_revision, published_version_id, published_version_number, "
+            + "canonical_version_uuid, publication_evidence_format, "
+            + "frozen_policy_digest, playable_state_namespace_id, playable_state_scope, "
+            + "entry_policy, actor_kind, display_name, status) "
+            + "VALUES (?, ?, ?, 'ACCOUNT_DATABASE_INSERT', 1, 'dev', 51, 'ELIGIBLE', "
+            + "clock_timestamp(), 4, ?, ?, 'PRESEEDED_ACTOR_STAGING', "
+            + "'CURRENT_AT_REVALIDATION', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, "
+            + "'CANONICAL_UUID', ?, ?, ?, ?, ?, ?, 'PENDING')",
+        assignment,
+        request.mutationIntentDigest(),
+        binding.canonicalAccountUuid(),
+        "1".repeat(64),
+        "2".repeat(64),
+        target.publishedOwnerProofDigest(),
+        target.publishedReleaseBundleRef(),
+        target.tenantUuid(),
+        target.realmUuid(),
+        target.worldSlug(),
+        target.realmSlug(),
+        target.gameInstanceUuid().toString(),
+        target.catalogRevision(),
+        target.canonicalVersionUuid(),
+        target.publishedPolicyDigest(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope().name(),
+        target.entryPolicy().name(),
+        request.corePayload().actorKind().name(),
+        request.corePayload().displayName());
+    dsl.execute(
+        "INSERT INTO characters "
+            + "(account_id, name, tenant_id, playable_state_key, character_uuid, account_uuid, "
+            + "tenant_uuid, playable_state_namespace_id, playable_state_scope, "
+            + "actor_identity_status, actor_identity_quarantine_reason) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OWNER_RESOLVED', NULL)",
+        51L,
+        request.corePayload().displayName(),
+        entityTenantRowId,
+        target.playableStateNamespaceId().toString(),
+        actor,
+        binding.canonicalAccountUuid(),
+        target.tenantUuid(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope().name());
+    assertThat(
+            dsl.execute(
+                "UPDATE entity_preseeded_actor_assignment_operations "
+                    + "SET status = 'ASSIGNED', character_uuid = ?, "
+                    + "completed_at = clock_timestamp() WHERE assignment_uuid = ? "
+                    + "AND status = 'PENDING'",
+                actor,
+                assignment))
+        .isEqualTo(1);
+    seedSnapshot(actor);
+  }
+
+  private PreseededActorAssignmentRequest assignmentRequest(UUID assignment) {
+    var target = binding.target();
+    return new PreseededActorAssignmentRequest(
+        assignment,
+        binding.canonicalAccountUuid(),
+        new PreseededActorCorePayload(PreseededActorCorePayload.ActorKind.PLAYER, "Retained Actor"),
+        new PreseededActorAssignmentExpectedTarget(
+            target.tenantUuid(),
+            target.realmUuid(),
+            target.worldSlug(),
+            target.realmSlug(),
+            target.gameInstanceUuid().toString(),
+            target.catalogRevision(),
+            target.canonicalVersionUuid(),
+            target.publishedPolicyDigest(),
+            target.playableStateNamespaceId(),
+            target.publishedReleaseBundleRef(),
+            target.playableStateScope()));
+  }
+
+  private void seedSnapshot(UUID actor) {
+    var target = binding.target();
     dsl.execute(
         "INSERT INTO entity_canonical_gameplay_roster_snapshots "
             + "(snapshot_uuid, snapshot_digest, canonical_account_uuid, tenant_uuid, realm_uuid, "
@@ -3378,7 +3481,8 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
     migrate(source, "1011");
     dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
-    transaction.executeWithoutResult(ignored -> seedAssignedActorAndSnapshot());
+    transaction.executeWithoutResult(
+        ignored -> seedHistoricalV1011AssignmentActorAndSnapshotWithoutProjection());
     migrate(source, "1017");
     legacyRequests = new java.util.ArrayList<>();
     legacyNonces = new java.util.HashMap<>();

@@ -419,6 +419,12 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
       throw unavailable("Issuer local acknowledgement requires the current provisional binding");
     }
     Map<String, byte[]> fieldSet = decodeReadback(readback.exactReadbackBytes());
+    if (!Arrays.equals(
+        fieldSet.get(
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MUTATION_REVISION_FIELD),
+        work.currentRevision().toString().getBytes(StandardCharsets.US_ASCII))) {
+      throw unavailable("Physical issuer revision differs from the current committed SQL head");
+    }
     String bindingField = new String(member.owner().bindingRef().bytes(), StandardCharsets.UTF_8);
     String capacityField =
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
@@ -443,8 +449,12 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
         if (value.reservation().lifecycle()
             != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) countedCapacity++;
       } else if (!entry
-          .getKey()
-          .equals(CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD)) {
+              .getKey()
+              .equals(CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD)
+          && !entry
+              .getKey()
+              .equals(
+                  CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MUTATION_REVISION_FIELD)) {
         CanonicalGameplayIssuerMemberV2Codec.decode(entry.getValue());
         bindings++;
       }

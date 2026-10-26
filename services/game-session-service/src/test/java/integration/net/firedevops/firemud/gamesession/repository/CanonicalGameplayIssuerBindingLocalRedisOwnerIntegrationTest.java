@@ -2,16 +2,20 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -19,11 +23,14 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -43,6 +50,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -58,8 +66,10 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
-/** Actual PostgreSQL/Redis proof for local ordinary NEW registration after the installed anchor. */
+/** Actual PostgreSQL/Redis proof for local ordinary NEW physical projection and refusals. */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
@@ -68,9 +78,11 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
   private static final String ISSUER = GameSessionAccountDelegationProfile.ISSUER;
   private static final String OWNER_PRINCIPAL = "gamesession_coord_app";
   private static final String ISSUER_KEY_PREFIX = "session:game:index:issuer:";
+  private static final String METADATA_FIELD = "!issuer-partition-bootstrap/v1";
   private static final BigInteger LAYOUT_VERSION = BigInteger.valueOf(3);
   private static final BigInteger PARTITION_COUNT = BigInteger.ONE;
   private static final BigInteger PARTITION_CAPACITY = BigInteger.valueOf(2);
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -125,7 +137,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
   }
 
   @Test
-  void registersOrdinaryNewAgainstInstalledAnchorAndReusesExactPendingOperation() throws Exception {
+  void projectsOrdinaryNewAgainstInstalledAnchorAndReusesExactPendingOperation() throws Exception {
     DSLContext dsl = schema.dsl();
     establishActualLegacyDisposition(dsl);
     var layout = descriptor();
@@ -291,7 +303,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                 CanonicalGameplayIssuerRedisKeys.forPartition(
                         intent.layoutDescriptor(), BigInteger.ZERO)
                     .getBytes(StandardCharsets.US_ASCII)))
-        .isEqualTo(1L);
+        .isEqualTo(2L);
 
     var projectionOwner = projectionOwner(dsl, currentState::get);
     var firstCapacityOnly = projectionOwner.projectAndRead(first);
@@ -314,6 +326,44 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
         .containsEntry(firstCapacityField, first.exactMemberValueBytes());
     assertThat(firstCapacityFields)
         .doesNotContainKey(new String(firstCandidate.bindingRef().bytes(), StandardCharsets.UTF_8));
+
+    AtomicInteger sourceReadCount = new AtomicInteger();
+    var currentStateDisappearsAfterSqlRead =
+        (CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource)
+            () -> sourceReadCount.incrementAndGet() <= 2 ? initialState : null;
+    var unavailableBeforeRedisWrite = projectionOwner(dsl, currentStateDisappearsAfterSqlRead);
+    Map<String, String> beforeUnavailable =
+        hashImage(
+            CanonicalGameplayIssuerRedisKeys.forPartition(
+                    intent.layoutDescriptor(), BigInteger.ZERO)
+                .getBytes(StandardCharsets.US_ASCII));
+    Throwable unavailable = catchThrowable(() -> unavailableBeforeRedisWrite.projectAndRead(first));
+    assertThat(unavailable)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Issuer binding-local projection is unavailable")
+        .hasNoCause();
+    assertThat(sourceReadCount).hasValue(3);
+    assertThat(
+            hashImage(
+                CanonicalGameplayIssuerRedisKeys.forPartition(
+                        intent.layoutDescriptor(), BigInteger.ZERO)
+                    .getBytes(StandardCharsets.US_ASCII)))
+        .isEqualTo(beforeUnavailable);
+
+    byte[] partitionKey =
+        CanonicalGameplayIssuerRedisKeys.forPartition(intent.layoutDescriptor(), BigInteger.ZERO)
+            .getBytes(StandardCharsets.US_ASCII);
+    Map<String, String> beforeMalformedRelease = hashImage(partitionKey);
+    byte[][] malformedReleaseBaseline =
+        malformedReleaseBaselineArguments(partitionKey, firstCapacityField);
+    assertThat(
+            evalOwnerScript(
+                CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.RESOURCE_PATH,
+                partitionKey,
+                malformedReleaseBaseline))
+        .isEqualTo(-2L);
+    assertThat(hashImage(partitionKey)).isEqualTo(beforeMalformedRelease);
+
     assertThat(projectionOwner.projectAndRead(first).scriptOutcome()).isEqualTo(3L);
     assertThat(anchorImage(dsl)).isEqualTo(installedAnchorImage);
     assertThat(proofImage(dsl)).isEqualTo(installedProofImage);
@@ -589,7 +639,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
             second.reservation().reservationId());
     byte[] secondCapacityFieldBytes = secondCapacityField.getBytes(StandardCharsets.US_ASCII);
-    assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
+    assertThat(administratorCommands.hlen(key)).isEqualTo(5L);
     assertThat(firstProjectedFields)
         .containsEntry(secondCapacityField, second.exactMemberValueBytes());
 
@@ -663,7 +713,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThatThrownBy(() -> projectionOwner.projectAndRead(second))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.persist(key)).isTrue();
-    assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
+    assertThat(administratorCommands.hlen(key)).isEqualTo(5L);
 
     var fencedCandidate = identityForAccount("account-fenced", firstCandidate.accountId());
     new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
@@ -679,6 +729,154 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(localRegistrationImage(dsl)).isEqualTo(accountFencedImage);
   }
 
+  @Test
+  void readsProjectedSubsetWhenTwoSamePartitionRegistrationsPrecedePhysicalProjection()
+      throws Exception {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    var layout = descriptor();
+    UUID bootstrapRequestId = UUID.randomUUID();
+    var source = sourceCheckpoint(BigInteger.valueOf(7));
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(bootstrapRequestId, layout, source);
+    migrateRemaining(schema);
+
+    var incarnation = stableIncarnation("subset-readback-anchor");
+    var initialState =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), incarnation);
+    AtomicReference<CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState>
+        currentState = new AtomicReference<>(initialState);
+    initialCoverageOwner(dsl, currentState::get)
+        .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+
+    var runtimeTarget =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            schema.dataSource(), uuid("subset-readback-tenant"));
+    var targetCandidate = identity("subset-readback-target", runtimeTarget);
+    var targetRequest =
+        request(
+            "subset-readback-target-request", "subset-readback-target-transition", targetCandidate);
+    var unprojectedCandidate = identity("subset-readback-unprojected");
+    var unprojectedRequest =
+        request(
+            "subset-readback-unprojected-request",
+            "subset-readback-unprojected-transition",
+            unprojectedCandidate);
+    var operationRepository =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, currentState::get);
+    var target = operationRepository.beginOrResumeOrdinaryNew(targetRequest);
+    var unprojected = operationRepository.beginOrResumeOrdinaryNew(unprojectedRequest);
+    assertThat(target.reservation().partitionId())
+        .isEqualTo(unprojected.reservation().partitionId());
+
+    String targetCapacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+            target.reservation().reservationId());
+    String unprojectedCapacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+            unprojected.reservation().reservationId());
+    byte[] partitionKey =
+        CanonicalGameplayIssuerRedisKeys.forPartition(intent.layoutDescriptor(), BigInteger.ZERO)
+            .getBytes(StandardCharsets.US_ASCII);
+    assertThat(hashImage(partitionKey))
+        .doesNotContainKey(targetCapacityField)
+        .doesNotContainKey(unprojectedCapacityField);
+
+    var projectionOwner = projectionOwner(dsl, currentState::get);
+    var capacityOnly = projectionOwner.projectAndRead(target);
+    assertThat(capacityOnly.scriptOutcome()).isEqualTo(1L);
+    var capacityFields =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+            capacityOnly.exactReadbackBytes());
+    assertThat(capacityFields).containsEntry(targetCapacityField, target.exactMemberValueBytes());
+    assertThat(capacityFields).doesNotContainKey(unprojectedCapacityField);
+    assertThat(capacityFields)
+        .doesNotContainKey(
+            new String(unprojectedCandidate.bindingRef().bytes(), StandardCharsets.UTF_8));
+
+    var provisionalEvidence =
+        new CanonicalGameplayBindingInventoryRepository(dsl)
+            .readProvisionalCasEvidence(targetRequest.transitionId());
+    var targetLease =
+        controlledLeaseEvidence(
+            targetCandidate,
+            provisionalEvidence.transition().bindingGeneration(),
+            runtimeTarget.playableTarget());
+    var targetDecision =
+        new CanonicalGameplayAdmissionDecision(
+            targetRequest.transitionId(),
+            targetLease,
+            targetCandidate,
+            provisionalEvidence.transition().bindingGeneration(),
+            null,
+            runtimeTarget.playableTarget());
+    new CanonicalGameplayBindingInventoryRepository(dsl)
+        .markProvisional(provisionalEvidence, targetDecision);
+
+    var addReadback = projectionOwner.projectAndRead(target);
+    assertThat(addReadback.scriptOutcome()).isEqualTo(2L);
+    var addedFields =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+            addReadback.exactReadbackBytes());
+    assertThat(addedFields)
+        .containsEntry(
+            new String(targetCandidate.bindingRef().bytes(), StandardCharsets.UTF_8),
+            target.exactMemberValueBytes());
+    assertThat(addedFields).containsEntry(targetCapacityField, target.exactMemberValueBytes());
+    assertThat(addedFields).doesNotContainKey(unprojectedCapacityField);
+  }
+
+  @Test
+  void malformedLuaBindingReferenceAndReleaseCountsRefuseWithoutChangingPartition()
+      throws Exception {
+    byte[] key =
+        (ISSUER_KEY_PREFIX + "malformed-input-vectors").getBytes(StandardCharsets.US_ASCII);
+    byte[] markerField = "original-field".getBytes(StandardCharsets.US_ASCII);
+    byte[] markerValue = "original-value".getBytes(StandardCharsets.US_ASCII);
+    administratorCommands.hset(key, markerField, markerValue);
+    Map<String, String> before = hashImage(key);
+
+    byte[] malformedBindingRef = "13:bindingRef/v1".getBytes(StandardCharsets.US_ASCII);
+    byte[] minimalMember =
+        ("{\"reservation\":{\"reservationId\":\"00000000-0000-0000-0000-000000000001\","
+                + "\"lifecycle\":\"RESERVED\"}}")
+            .getBytes(StandardCharsets.UTF_8);
+    List<byte[]> addArguments =
+        new ArrayList<>(
+            List.of(
+                ascii(ISSUER),
+                ascii("0"),
+                ascii("1"),
+                ascii("2"),
+                ascii("1"),
+                malformedBindingRef,
+                minimalMember));
+    while (addArguments.size() < 13) addArguments.add(ascii("unused"));
+    assertThat(
+            evalOwnerScript(
+                CanonicalGameplayIssuerBindingLocalRedisScriptContribution.RESOURCE_PATH,
+                key,
+                addArguments.toArray(byte[][]::new)))
+        .isEqualTo(-2L);
+    assertThat(hashImage(key)).isEqualTo(before);
+
+    for (String malformedCount : List.of("1.5", "0x1", "1e0", "9".repeat(256))) {
+      List<byte[]> releaseArguments =
+          new ArrayList<>(
+              List.of(ascii(ISSUER), ascii("0"), ascii("1"), ascii("2"), ascii(malformedCount)));
+      while (releaseArguments.size() < 16) releaseArguments.add(ascii("unused"));
+      assertThat(
+              evalOwnerScript(
+                  CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.RESOURCE_PATH,
+                  key,
+                  releaseArguments.toArray(byte[][]::new)))
+          .isEqualTo(-2L);
+      assertThat(hashImage(key)).isEqualTo(before);
+    }
+  }
+
   private static ConcurrentProjections concurrentProjection(
       CanonicalGameplayIssuerBindingLocalRedisOwner owner,
       CanonicalGameplayIssuerBindingLocalOperation first,
@@ -688,8 +886,19 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     try {
       var firstCall = callers.submit(() -> owner.projectAndRead(first));
       var secondCall = callers.submit(() -> owner.projectAndRead(second));
-      return new ConcurrentProjections(
-          firstCall.get(30, TimeUnit.SECONDS), secondCall.get(30, TimeUnit.SECONDS));
+      var secondResult = secondCall.get(30, TimeUnit.SECONDS);
+      CanonicalGameplayIssuerBindingLocalRedisOwner.Readback firstResult;
+      try {
+        firstResult = firstCall.get(30, TimeUnit.SECONDS);
+      } catch (java.util.concurrent.ExecutionException failure) {
+        assertThat(failure.getCause())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageStartingWith("Issuer binding-local projection is unavailable");
+        // The same-partition writer may fence a concurrent read-only replay. Retry the original
+        // operation only after that writer has positively completed; never replay an old write.
+        firstResult = owner.projectAndRead(first);
+      }
+      return new ConcurrentProjections(firstResult, secondResult);
     } finally {
       callers.shutdownNow();
     }
@@ -716,6 +925,70 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
             List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution())),
         new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, source),
         source);
+  }
+
+  private byte[][] malformedReleaseBaselineArguments(byte[] key, String malformedCapacityField)
+      throws IOException {
+    Map<String, byte[]> baseline = new TreeMap<>();
+    administratorCommands
+        .hgetall(key)
+        .forEach(
+            (field, value) ->
+                baseline.put(new String(field, StandardCharsets.UTF_8), value.clone()));
+    assertThat(baseline).containsKey(METADATA_FIELD).containsKey(malformedCapacityField);
+
+    ObjectNode malformedMember =
+        (ObjectNode) JSON.readTree(Objects.requireNonNull(baseline.get(malformedCapacityField)));
+    malformedMember.remove("memberOperation");
+    baseline.put(malformedCapacityField, JSON.writeValueAsBytes(malformedMember));
+
+    List<byte[]> arguments = new ArrayList<>();
+    arguments.add(ascii(ISSUER));
+    arguments.add(ascii("0"));
+    arguments.add(ascii(PARTITION_COUNT.toString()));
+    arguments.add(ascii(PARTITION_CAPACITY.toString()));
+    arguments.add(ascii(Integer.toString(baseline.size())));
+    baseline.forEach(
+        (field, value) -> {
+          arguments.add(field.getBytes(StandardCharsets.UTF_8));
+          arguments.add(value);
+        });
+    while (arguments.size() < 16) arguments.add(ascii("unused"));
+    return arguments.toArray(byte[][]::new);
+  }
+
+  private long evalOwnerScript(String resourcePath, byte[] key, byte[][] arguments)
+      throws IOException {
+    byte[] script;
+    try (InputStream input = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
+      if (input == null) throw new IOException("Redis Lua test resource is missing");
+      script = input.readAllBytes();
+    }
+    try (StatefulRedisConnection<byte[], byte[]> connection =
+        ownerClient.connect(ByteArrayCodec.INSTANCE)) {
+      RedisCommands<byte[], byte[]> commands = connection.sync();
+      assertThat(commands.aclWhoami()).isEqualTo(OWNER_PRINCIPAL);
+      String sha = commands.scriptLoad(script);
+      return Objects.requireNonNull(
+          commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments),
+          "Expected integer Redis Lua outcome");
+    }
+  }
+
+  private Map<String, String> hashImage(byte[] key) {
+    Map<String, String> image = new TreeMap<>();
+    administratorCommands
+        .hgetall(key)
+        .forEach(
+            (field, value) ->
+                image.put(
+                    Base64.getEncoder().encodeToString(field),
+                    Base64.getEncoder().encodeToString(value)));
+    return image;
+  }
+
+  private static byte[] ascii(String value) {
+    return value.getBytes(StandardCharsets.US_ASCII);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor

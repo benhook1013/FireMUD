@@ -4,12 +4,13 @@
 local keyPrefix = 'session:game:index:issuer:'
 local metadataField = '!issuer-partition-bootstrap/v1'
 local capacityPrefix = '!issuer-reservation-capacity/v1:'
+local mutationRevisionField = '!issuer-partition-mutation-revision/v1'
 local maxDecimalBytes = 256
 local maxMemberOperations = 256
 local maxBindingRefBytes = 6144
 local maxMemberValueBytes = 65536
 local maxMetadataBytes = 65536
-local maxHashFields = 513
+local maxHashFields = 514
 local maxHashBytes = 16777216
 
 local function uuid(value)
@@ -131,7 +132,7 @@ local function metadataMatchesMember(metadata, member, partitionId)
       and sameIncarnation(member.incarnation, metadata.incarnation)
 end
 
-if #KEYS ~= 1 or #ARGV < 6 then return -2 end
+if #KEYS ~= 1 or #ARGV < 7 then return -2 end
 if type(KEYS[1]) ~= 'string' or #KEYS[1] > 512 or string.sub(KEYS[1], 1, #keyPrefix) ~= keyPrefix then
   return -2
 end
@@ -141,13 +142,14 @@ local partitionId = ARGV[2]
 local partitionCount = ARGV[3]
 local partitionCapacity = ARGV[4]
 local metadataBytes = ARGV[5]
-local memberCountText = ARGV[6]
+local initialPhysicalRevision = ARGV[6]
+local memberCountText = ARGV[7]
 if issuerId ~= 'firemud-account-service' or not nonnegative(partitionId)
     or not positive(partitionCount) or not positive(partitionCapacity)
-    or not nonnegative(memberCountText) then return -2 end
+    or not uuid(initialPhysicalRevision) or not nonnegative(memberCountText) then return -2 end
 local memberCount = tonumber(memberCountText)
 if not memberCount or memberCount > maxMemberOperations
-    or #ARGV ~= 6 + memberCount * 4 then return -2 end
+    or #ARGV ~= 7 + memberCount * 4 then return -2 end
 if #metadataBytes == 0 or #metadataBytes > maxMetadataBytes then return -2 end
 
 local metadataOk, metadata = pcall(cjson.decode, metadataBytes)
@@ -197,6 +199,7 @@ local function putExpected(field, value)
   return totalExpectedBytes <= maxHashBytes and expectedCount <= maxHashFields
 end
 if not putExpected(metadataField, metadataBytes) then return -2 end
+if not putExpected(mutationRevisionField, initialPhysicalRevision) then return -2 end
 
 local seenReservations = {}
 local seenBindings = {}
@@ -205,7 +208,7 @@ local actualCapacityCount = 0
 local actualBindingCount = 0
 local totalArgumentBytes = #metadataBytes
 for index = 0, memberCount - 1 do
-  local offset = 7 + index * 4
+  local offset = 8 + index * 4
   local bindingRef = ARGV[offset]
   local memberBytes = ARGV[offset + 1]
   local capacityField = ARGV[offset + 2]
@@ -273,7 +276,6 @@ end
 if greaterDecimal(tostring(actualCapacityCount), partitionCapacity)
     or tostring(actualCapacityCount) ~= metadata.plannedPartitionCapacityCount
     or actualBindingCount > memberCount then return -2 end
-if memberCount > 0 and metadata.plannedPartitionCapacityCount ~= tostring(actualCapacityCount) then return -2 end
 
 -- Validate TYPE, persistence and every current field before the first mutation.
 local kind = redis.call('TYPE', KEYS[1]).ok
@@ -302,14 +304,16 @@ for index = 1, #current, 2 do
   present[field] = true
 end
 
-if currentLength == expectedCount then return 2 end
-local missing = {}
-for field, value in pairs(expected) do
-  if not present[field] then
-    missing[#missing + 1] = field
-    missing[#missing + 1] = value
+if kind == 'none' then
+  if currentLength ~= 0 or next(present) ~= nil then return -1 end
+  local initial = {}
+  for field, value in pairs(expected) do
+    initial[#initial + 1] = field
+    initial[#initial + 1] = value
   end
+  if #initial == 0 or #initial % 2 ~= 0 then return -1 end
+  redis.call('HSET', KEYS[1], unpack(initial))
+  return 1
 end
-if #missing == 0 or #missing % 2 ~= 0 then return -1 end
-redis.call('HSET', KEYS[1], unpack(missing))
-return 1
+if currentLength ~= expectedCount then return -1 end
+return 2

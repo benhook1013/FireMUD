@@ -412,7 +412,44 @@ Entry format:
   - Observation: The SQL guard message `storage deadline expired` covers either `evaluatedAt >` the database clock or `expiresAt <=` the database clock, so the branch and clock cause are unknown. Retain the failed result; an unchanged future retry cannot recover the original failure-time clock evidence.
   - Expected pattern: Capture the original evidence timestamps, JVM and database wall clocks, and monotonic elapsed time only after a failure, without delaying the original COMMIT or changing its lifetime or guard.
 
+- `2026-10-26`: Inspect default registration separately from a manual owner implementation
+  - Context: A delegated region-lease source implementation added its Redis contribution to the default ServiceLoader list despite an explicit manually composed, unregistered scope. Main detected and removed only that new registration before validation or publication; the existing registered contributions were preserved.
+  - Observation: A passive descriptor class and a factory do not establish that the owner remains unregistered; the ServiceLoader resource can change that boundary independently. No default runtime activation was performed or proved.
+  - Expected pattern: Inspect registration resources against the assigned scope at integration, reject unrequested registration, and make focused fixtures compose their manual descriptor catalog explicitly.
+
+- `2026-10-26`: Expose the current review configuration after a guarded conflict
+  - Context: The published #3310 comparison refresh returned generic `review_conflict` and identity advice without a current configuration revision or operation receipt, despite a verified Gameplay binding. Ordinary worker help did not expose a supported way to obtain the missing guard.
+  - Observation: The worker could not distinguish a stale configuration guard from scoped-access failure. FireController's owner confirmed the missing conflict detail and ordinary configuration read as a product defect and is repairing the supported path; review allocations remain unchanged.
+  - Expected pattern: Retain the exact request and idempotency key, report both the error and the missing recovery guidance to the tool owner, and continue independent work. Do not guess revisions, repeat provider requests or debug the service from a product lane. Record the supported recovery outcome when supplied.
+  - Recovery outcome: The owner confirmed that the rejected request queued no operation and identified revision 9 as stale. The ordinary `review_execution_read` became discoverable, returned revision 15 with execution enabled, and a new source refresh using that observed guard was accepted. This unblocked the worker; deployment of precise conflict diagnostics and discoverable help remained with the tool owner.
+
 - `2026-10-26`: Adding a nullable column can change frozen complete-row JSON without changing retained data
   - Context: In the combined issuer owner, V1035 added a nullable abort identifier and V1036 added a nullable release linkage. Existing `to_jsonb(row)` cohort captures and retained-row assertions then included a new NULL field, so unchanged historical rows appeared to differ from their frozen source bytes. The focused native checks reproduced both cases.
   - Observation: Whole-row JSON implicitly includes the database schema. A forward additive column can therefore break byte identity even when every pre-existing value and applied migration is unchanged. This is distinct from a changed non-null owner identity or receipt.
   - Expected pattern: Preserve original frozen bytes and applied history. Where the owner contract makes the newly added NULL explicitly absence-equivalent, project out only that named field when NULL in current capture and retained-image comparison; keep non-null values and every other field significant. Prove the populated retained upgrade and exact retry, rather than using generic null stripping or rewriting old evidence.
+
+- `2026-10-26`: Read completed CI conclusions instead of inferring success from active-job absence
+  - Context: The #3310 observer reported no failures after Game Session disappeared from its query filtered to unfinished jobs. A later full job-list read exposed the actual failed conclusion; the failure at 22:19:23 NZDT was reported about nine minutes late.
+  - Observation: Absence from an active-job filter proves only that the job is no longer active. Treating it as success delayed repair of two stale raw-abort assertion messages and produced an incorrect status report. This was observer logic, not a FireController defect.
+  - Expected pattern: The single CI observer reads all current-run job conclusions, including completed failures and cancellations, on every cycle and reports an actionable failure immediately. Use a filtered active-job view only to summarize remaining work; never infer success from that view or wait for the aggregate gate to fail.
+
+- `2026-10-27`: Forward owner migrations can break shared disposable fixtures
+  - Context: In #2973, a new retained completion FK exposed an omitted child in the Game Session baseline TRUNCATE list and broke both Game Session and TCP cross-service suites; a reduced World migration probe also omitted tables required by the new tail migration.
+  - Observation: Focused owner proof can pass while shared fixtures fail, and a later Hikari closed-connection or teardown refusal can mask the original PostgreSQL error.
+  - Expected pattern: Keep explicit baseline descendants and exact original trigger-state restoration together, make reduced probes execute the complete current migration tail with its real prerequisite tables, and inspect the first SQL failure in the completed job's JUnit output before attributing failure to Docker availability.
+
+- `2026-10-27`: Manual Entity Flyway fixtures require the existing migration-lock setting
+  - Context: The region composition’s new Entity schema left `CREATE UNIQUE INDEX CONCURRENTLY` waiting on Flyway’s own history transaction.
+  - Observation: An owned JVM thread dump plus `pg_blocking_pids` identified the self-block; cancelling only that matched test-owned backend preserved the failed run.
+  - Expected pattern: Retain Entity’s existing `PostgreSQLConfigurationExtension.setTransactionalLock(false)` pattern for the fixture rather than changing applied migrations or host configuration.
+
+- `2026-10-27`: Failure diagnostics must retain the attempted transaction input
+  - Context: The manual Human-to-region composition rejected a guarded update and rolled its transaction back before the diagnostic reread.
+  - Observation: Reconstructing expected values from the retained `PREPARED` row yielded NULL admission fields and misleading predicate failures instead of the attempted decision.
+  - Expected pattern: Pass the immutable attempted selector to bounded failure-only diagnostics, read actual durable source rows separately, and keep attempted values distinct from committed evidence.
+
+- `2026-10-27`: Historical migration fixtures must not invoke a newly extended fresh writer
+  - Context: #3315 Entity CI failed all 46 roster-retention cases in shared setup. The fixture seeded at V1011 (and a legacy V1017 path) through the current assignment writer before upgrading; that writer now requires the V1022 runtime-projection table.
+  - Observation: the production migration was present and executed in other schema contexts. A controlled historical SQL seed preserves the old assignment receipt, actor and snapshot without manufacturing a runtime projection or moving the test to the latest frontier. Current-schema assignments retain the production writer. Later shutdown connection noise is separate and its cause remains unproven.
+  - Outcome: full Entity R722 executes 584 methods, with 519 passing, 46 failing on a missing placeholder in the new historical INSERT and 19 failing on separate PostgreSQL connection setup. R723 corrects only that placeholder and passes all 65 affected native cases with no skips; the 454 unit methods and other 65 native cases retain their R722 passing attribution. Enabled affected static analysis and formatting pass. The failed full-check aggregate remains recorded; the focused recovery does not relabel it as green.
+  - Expected pattern: retain the exact pre-upgrade schema, source rows and history in migration proof. Use explicitly historical fixture input when current Java requires a later schema; do not add production compatibility branches or backfill authority merely to seed a test.

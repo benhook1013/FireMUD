@@ -21,8 +21,11 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
@@ -207,9 +210,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
       assertThat(administratorCommands.type(key)).isEqualTo("hash");
       assertThat(administratorCommands.pttl(key)).isEqualTo(-1L);
       if (partitionId.equals(fixture.activePartition())) {
-        assertThat(administratorCommands.hlen(key)).isEqualTo(3L);
+        assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
       } else {
-        assertThat(administratorCommands.hlen(key)).isEqualTo(1L);
+        assertThat(administratorCommands.hlen(key)).isEqualTo(2L);
       }
     }
     assertThat(originalReservationImage(fixture.dsl())).isEqualTo(originalReservationImage);
@@ -257,7 +260,7 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
   }
 
   @Test
-  void installedReplayRefusesMissingPartitionWithoutRebuildingOrAllocatingAnotherGeneration() {
+  void freshPhysicalVerificationRefusesMissingPartitionWithoutRebuildingOrAllocatingGeneration() {
     Fixture fixture = fixture(BigInteger.valueOf(4), PARTITION_CAPACITY, 1);
     var current = currentState(fixture, stableIncarnation("missing-installed"));
     CanonicalGameplayIssuerInstalledAnchor installed =
@@ -271,7 +274,8 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     assertThatThrownBy(
             () ->
                 owner(fixture, () -> current)
-                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+                    .verifyInstalledPhysicalCoverage(
+                        fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.type(missingKey)).isEqualTo("none");
     assertThat(
@@ -288,6 +292,94 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                     ISSUER)
                 .get("counter_version", Long.class))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void installedAnchorReadAndRetryUseFrozenPlanAfterOrdinaryNewAdvancesInventoryClock() {
+    Fixture fixture = fixture(PARTITION_COUNT, PARTITION_CAPACITY, 1);
+    var current = currentState(fixture, stableIncarnation("ordinary-new-after-anchor"));
+    CanonicalGameplayIssuerInstalledAnchor installed =
+        owner(fixture, () -> current)
+            .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId());
+
+    var candidate = identity(PARTITION_COUNT, PARTITION_CAPACITY, "post-anchor-ordinary-new");
+    new CanonicalGameplayIssuerBindingLocalOperationRepository(fixture.dsl(), () -> current)
+        .beginOrResumeOrdinaryNew(
+            new CanonicalGameplayIssuerBindingLocalOperation.Request(
+                UUID.nameUUIDFromBytes("post-anchor-new-request".getBytes(StandardCharsets.UTF_8)),
+                UUID.nameUUIDFromBytes(
+                    "post-anchor-new-transition".getBytes(StandardCharsets.UTF_8)),
+                candidate,
+                null,
+                null));
+    BigInteger currentInventoryRevision =
+        fetchRequired(
+                fixture.dsl(),
+                "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                    + " WHERE singleton_id = 1")
+            .get("inventory_revision", BigDecimal.class)
+            .toBigIntegerExact();
+    assertThat(currentInventoryRevision).isGreaterThan(installed.issuerInventorySnapshotRevision());
+    String anchorImageBeforeRead = anchorStorageImage(fixture.dsl());
+    String proofImageBeforeRead = proofStorageImage(fixture.dsl());
+    String counterImageBeforeRead = coverageCounterImage(fixture.dsl());
+    List<Map<String, String>> physicalImageBeforeRead = physicalPartitionImages(fixture);
+
+    CanonicalGameplayIssuerInstalledAnchor retried =
+        owner(fixture, () -> current)
+            .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId());
+
+    assertThat(retried.exactAnchorBytes()).containsExactly(installed.exactAnchorBytes());
+    assertThat(anchorStorageImage(fixture.dsl())).isEqualTo(anchorImageBeforeRead);
+    assertThat(proofStorageImage(fixture.dsl())).isEqualTo(proofImageBeforeRead);
+    assertThat(coverageCounterImage(fixture.dsl())).isEqualTo(counterImageBeforeRead);
+    assertThat(physicalPartitionImages(fixture)).isEqualTo(physicalImageBeforeRead);
+    assertThat(fixtureProofCount(fixture)).isEqualTo(PARTITION_COUNT.longValueExact());
+  }
+
+  @Test
+  void installedOriginalRetryRejectsWrongTupleAndChangedSourceOrIncarnation() {
+    Fixture fixture = fixture(PARTITION_COUNT, PARTITION_CAPACITY, 1);
+    var current = currentState(fixture, stableIncarnation("installed-retry-guards"));
+    owner(fixture, () -> current)
+        .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId());
+    String anchorImage = anchorStorageImage(fixture.dsl());
+    String proofImage = proofStorageImage(fixture.dsl());
+    String counterImage = coverageCounterImage(fixture.dsl());
+    List<Map<String, String>> physicalImage = physicalPartitionImages(fixture);
+
+    assertThatThrownBy(
+            () ->
+                owner(fixture, () -> current)
+                    .completeInitialBootstrap(UUID.randomUUID(), fixture.requestId()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                owner(fixture, () -> current)
+                    .completeInitialBootstrap(fixture.intent().operationId(), UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class);
+
+    var changedSource =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            checkpointShape(BigInteger.valueOf(8)), current.incarnation());
+    assertThatThrownBy(
+            () ->
+                owner(fixture, () -> changedSource)
+                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+        .isInstanceOf(IllegalStateException.class);
+    var changedIncarnation =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            current.accountCheckpoint(), changedIncarnation(current.incarnation()));
+    assertThatThrownBy(
+            () ->
+                owner(fixture, () -> changedIncarnation)
+                    .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(anchorStorageImage(fixture.dsl())).isEqualTo(anchorImage);
+    assertThat(proofStorageImage(fixture.dsl())).isEqualTo(proofImage);
+    assertThat(coverageCounterImage(fixture.dsl())).isEqualTo(counterImage);
+    assertThat(physicalPartitionImages(fixture)).isEqualTo(physicalImage);
   }
 
   @Test
@@ -768,6 +860,35 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                 + " || exact_physical_field_set_digest, '|' ORDER BY partition_id), '') AS image"
                 + " FROM game_session_canonical_issuer_bootstrap_partition_proof")
         .get("image", String.class);
+  }
+
+  private static String coverageCounterImage(DSLContext dsl) {
+    Record counter =
+        fetchRequired(
+            dsl,
+            "SELECT last_issued_coverage_generation, counter_version FROM "
+                + "game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
+            ISSUER);
+    return counter.get("last_issued_coverage_generation", BigDecimal.class).toPlainString()
+        + ":"
+        + counter.get("counter_version", Long.class);
+  }
+
+  private List<Map<String, String>> physicalPartitionImages(Fixture fixture) {
+    List<Map<String, String>> images = new ArrayList<>();
+    for (BigInteger partitionId = BigInteger.ZERO;
+        partitionId.compareTo(fixture.intent().layoutDescriptor().partitionCount()) < 0;
+        partitionId = partitionId.add(BigInteger.ONE)) {
+      Map<byte[], byte[]> raw = administratorCommands.hgetall(key(fixture, partitionId));
+      Map<String, String> image = new LinkedHashMap<>();
+      raw.forEach(
+          (field, value) ->
+              image.put(
+                  Base64.getEncoder().encodeToString(field),
+                  Base64.getEncoder().encodeToString(value)));
+      images.add(Map.copyOf(image));
+    }
+    return List.copyOf(images);
   }
 
   private static long fixtureProofCount(Fixture fixture) {

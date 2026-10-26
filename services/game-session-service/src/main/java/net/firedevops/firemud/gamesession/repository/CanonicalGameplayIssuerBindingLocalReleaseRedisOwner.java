@@ -96,8 +96,27 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     Objects.requireNonNull(operation, "SQL-issued issuer release is required");
     try {
       requireNoAmbientTransaction();
+      if (operation.status()
+          == CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
+        CanonicalGameplayIssuerPartitionMutation mutation = operation.physicalMutation();
+        if (mutation.status() != CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED
+            || !Arrays.equals(
+                mutation.exactReadbackFieldSetBytes(),
+                operation.exactPhysicalReadbackFieldSetBytes())) {
+          throw unavailable("Committed issuer release lacks its original physical mutation proof");
+        }
+        return new Readback(
+            operation.operationId(), 2L, operation.exactPhysicalReadbackFieldSetBytes());
+      }
       var original = operation.originalOperation();
       var work = projectionRepository.readPreparedPartitionWork(original);
+      CanonicalGameplayIssuerPartitionMutation mutation = operation.physicalMutation();
+      if (mutation.status()
+              != CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF
+          || !mutation.mutationId().equals(work.pendingMutationId())
+          || !mutation.expectedRevision().equals(work.currentRevision())) {
+        throw unavailable("Original release no longer owns its prepared partition revision");
+      }
       requireFreshCurrentState(work);
       RedisScriptDescriptor descriptor = requireDescriptor();
       byte[] script = scriptSource(descriptor);
@@ -153,9 +172,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
         throw unavailable("Issuer partition type or TTL is not canonical");
       }
       Long count = await(commands.hlen(key));
-      int maxFields =
-          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_HASH_FIELDS
-              + 2 * CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_MEMBER_OPERATIONS;
+      int maxFields = CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_LOCAL_HASH_FIELDS;
       if (count == null || count < 1 || count > maxFields)
         throw unavailable("Issuer partition field count is invalid");
       Map<byte[], byte[]> raw = await(commands.hgetall(key));
@@ -177,8 +194,20 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       }
       Map<String, byte[]> baseline = work.baselineFields();
       Map<String, byte[]> allowed = work.allowedFields();
-      if (actual.size() > allowed.size())
-        throw unavailable("Issuer partition contains an unknown field");
+      byte[] physicalRevision =
+          actual.get(
+              b64(
+                  CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD.getBytes(
+                      StandardCharsets.US_ASCII)));
+      if (!Arrays.equals(
+          physicalRevision,
+          operation
+              .physicalMutation()
+              .successorRevision()
+              .toString()
+              .getBytes(StandardCharsets.US_ASCII))) {
+        throw unavailable("Issuer release readback lacks its exact successor revision");
+      }
       for (Map.Entry<String, byte[]> field : baseline.entrySet()) {
         byte[] value = actual.get(b64(field.getKey().getBytes(StandardCharsets.UTF_8)));
         if (value == null || !Arrays.equals(value, field.getValue())) {
@@ -198,10 +227,37 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       }
       for (Map.Entry<String, byte[]> field : actual.entrySet()) {
         String decoded = decodeUtf8(Base64.getDecoder().decode(field.getKey()));
+        if (decoded.equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) {
+          continue;
+        }
         if (decoded.equals(capacityField)) continue;
         byte[] expected = allowed.get(decoded);
         if (expected == null || !Arrays.equals(expected, field.getValue())) {
           throw unavailable("Issuer partition contains an unregistered or changed field");
+        }
+      }
+      for (var entry : work.localEntries()) {
+        if (!entry
+                .memberValue()
+                .reservation()
+                .partitionId()
+                .equals(operation.releasedMemberValue().reservation().partitionId())
+            || entry.registeredOperationId().equals(operation.originalOperationId())) continue;
+        String localCapacityField =
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                entry.memberValue().reservation().reservationId());
+        byte[] localCapacity =
+            actual.get(b64(localCapacityField.getBytes(StandardCharsets.US_ASCII)));
+        if (entry.capacityMustBePresent()
+            && !Arrays.equals(localCapacity, entry.exactMemberValueBytes())) {
+          throw unavailable("A committed local capacity field is missing or changed");
+        }
+        String localBindingField =
+            new String(entry.memberValue().owner().bindingRef().bytes(), StandardCharsets.UTF_8);
+        byte[] localBinding = actual.get(b64(localBindingField.getBytes(StandardCharsets.UTF_8)));
+        if (entry.bindingMustBePresent()
+            && !Arrays.equals(localBinding, entry.exactMemberValueBytes())) {
+          throw unavailable("A committed local binding field is missing or changed");
         }
       }
       int physicalCapacity = 0;
@@ -209,7 +265,9 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       int physicalBindings = 0;
       for (Map.Entry<String, byte[]> field : actual.entrySet()) {
         String decoded = decodeUtf8(Base64.getDecoder().decode(field.getKey()));
-        if (decoded.startsWith(
+        if (decoded.equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) {
+          continue;
+        } else if (decoded.startsWith(
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.RESERVATION_FIELD_PREFIX)) {
           var value = CanonicalGameplayIssuerMemberV2Codec.decode(field.getValue());
           physicalReservations++;
@@ -301,6 +359,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       args.add(entry.exactMemberValueBytes());
       args.add(ascii(entry.bindingPresent() ? "1" : "0"));
       args.add(ascii(entry.countsTowardCapacity() ? "1" : "0"));
+      args.add(ascii(entry.capacityMustBePresent() ? "1" : "0"));
+      args.add(ascii(entry.bindingMustBePresent() ? "1" : "0"));
     }
     args.add(ascii(operation.originalOperation().operationId().toString()));
     args.add(ascii(operation.operationId().toString()));
@@ -312,6 +372,9 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     args.add(ascii(work.partitionCapacity().toString()));
     args.add(ascii(work.aggregateCapacity().toString()));
     args.add(ascii(work.aggregateBound().toString()));
+    var mutation = operation.physicalMutation();
+    args.add(ascii(mutation.expectedRevision().toString()));
+    args.add(ascii(mutation.successorRevision().toString()));
     return args.toArray(byte[][]::new);
   }
 

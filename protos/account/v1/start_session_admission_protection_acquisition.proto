@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered Game Session-to-Account acquisition of the existing original
+// StartSession admission protection. The request and response contain complete canonical owner
+// values; the transport does not create or infer authority from either byte string.
+service AccountStartSessionAdmissionProtectionService {
+  rpc AcquireStartSessionAdmissionProtection(
+      AcquireStartSessionAdmissionProtectionRequest)
+      returns (AcquireStartSessionAdmissionProtectionResponse);
+}
+
+message AcquireStartSessionAdmissionProtectionRequest {
+  // Repeated closed fields make duplicate occurrences observable and rejectable.
+  repeated int32 schema_version = 1;
+  // Exact complete canonical AccountStartSessionAdmissionProtectionRequest bytes (768 KiB max).
+  repeated bytes request_canonical_bytes = 2;
+}
+
+message AcquireStartSessionAdmissionProtectionResponse {
+  repeated int32 schema_version = 1;
+  // Exact complete canonical AccountStartSessionAdmissionProtectionEvidence bytes (8 MiB max).
+  repeated bytes evidence_canonical_bytes = 2;
+}

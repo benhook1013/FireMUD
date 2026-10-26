@@ -505,7 +505,7 @@ class PreseededActorAssignmentIntegrationTest {
         .extracting(AppliedMigration::version)
         .containsExactly(
             "1006", "1007", "1008", "1009", "1010", "1011", "1012", "1014", "1015", "1016", "1017",
-            "1018", "1019", "1020", "1021");
+            "1018", "1019", "1020", "1021", "1022");
     assertThat(successorHistory)
         .extracting(AppliedMigration::script)
         .containsExactly(
@@ -523,7 +523,8 @@ class PreseededActorAssignmentIntegrationTest {
             "V1018__canonical_roster_staged_retirement.sql",
             "V1019__canonical_roster_snapshot_retirement_seals.sql",
             "V1020__canonical_roster_created_retirement_recognition.sql",
-            "V1021__character_create_binary_safe_immutability.sql");
+            "V1021__character_create_binary_safe_immutability.sql",
+            "V1022__preseeded_runtime_actor_projection.sql");
     assertThat(successorHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
 
     try (Connection connection = connectToSchema(schema)) {
@@ -593,6 +594,47 @@ class PreseededActorAssignmentIntegrationTest {
         }
       }
     }
+  }
+
+  @Test
+  void firstAssignmentCreatesTheFreshEntityTenantMappingAndItsOwnerRows() {
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_tenant_identities "
+                    + "WHERE canonical_tenant_uuid = ?",
+                Integer.class,
+                tenantUuid))
+        .isZero();
+
+    PreseededActorAssignmentResult assigned =
+        assign(
+            assignmentUuid,
+            accountUuid,
+            4L,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "Assigned Actor");
+
+    assertThat(assigned.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_preseeded_actor_assignment_operations operation "
+                    + "JOIN entity_tenant_identities tenant "
+                    + "ON tenant.canonical_tenant_uuid = operation.tenant_uuid "
+                    + "WHERE operation.assignment_uuid = ? AND operation.tenant_uuid = ?",
+                Integer.class,
+                assignmentUuid,
+                tenantUuid))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM characters actor "
+                    + "JOIN entity_tenant_identities tenant "
+                    + "ON tenant.entity_tenant_row_id = actor.tenant_id "
+                    + "WHERE actor.character_uuid = ? AND tenant.canonical_tenant_uuid = ?",
+                Integer.class,
+                assigned.characterUuid(),
+                tenantUuid))
+        .isEqualTo(1);
   }
 
   @Test
@@ -1508,6 +1550,230 @@ class PreseededActorAssignmentIntegrationTest {
                 namespaceUuid,
                 secondAccountUuid))
         .isEqualTo(1);
+  }
+
+  @Test
+  void runtimeProjectionUpgradeRetainsAssignedReceiptWithoutHistoricalBackfill() throws Exception {
+    var scope = PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    var assigned = assign(assignmentUuid, accountUuid, 4L, scope, "Assigned Actor");
+    var request = assignmentRequest(evidence(assignmentUuid, accountUuid, 4L, scope));
+    var selector =
+        new PreseededActorAssignmentReceiptRequest(
+            assignmentUuid,
+            accountUuid,
+            assigned.characterUuid(),
+            assigned.intentDigest(),
+            request.expectedTarget());
+    var originalReceipt =
+        characterRepository.readPreseededActorAssignmentReceipt(selector).orElseThrow();
+    String sourceSchema = jdbcTemplate.queryForObject("SELECT current_schema()", String.class);
+    assertThat(sourceSchema).matches("[a-zA-Z_][a-zA-Z0-9_]*");
+    String schema = "rp_" + UUID.randomUUID().toString().replace("-", "");
+    migrationFlyway(schema).target(MigrationVersion.fromVersion("1021")).load().migrate();
+    // Retained-state fixture: copy actual owner-produced rows into the prior schema. This is
+    // historical migration input, never projection allocation or new-target authority.
+    try (Connection connection = connectToSchema(schema)) {
+      connection.setAutoCommit(false);
+      var retained = DSL.using(connection, SQLDialect.POSTGRES);
+      for (var table :
+          List.of(
+              Map.entry("entity_tenant_identities", "canonical_tenant_uuid"),
+              Map.entry("entity_playable_state_namespace_scopes", "tenant_uuid"),
+              Map.entry("characters", "tenant_uuid"),
+              Map.entry("entity_preseeded_actor_assignment_operations", "tenant_uuid"))) {
+        retained.execute(
+            "INSERT INTO "
+                + table.getKey()
+                + " SELECT * FROM \""
+                + sourceSchema
+                + "\"."
+                + table.getKey()
+                + " WHERE "
+                + table.getValue()
+                + " = ?",
+            tenantUuid);
+      }
+      connection.commit();
+    }
+    String retainedAssignment;
+    try (Connection connection = connectToSchema(schema)) {
+      retainedAssignment =
+          DSL.using(connection, SQLDialect.POSTGRES)
+              .fetchSingle(
+                  "SELECT to_jsonb(a)::text AS image FROM entity_preseeded_actor_assignment_operations a WHERE assignment_uuid = ?",
+                  assignmentUuid)
+              .get("image", String.class);
+      var repository = new CharacterRepository(DSL.using(connection, SQLDialect.POSTGRES));
+      assertThat(repository.readPreseededActorAssignmentReceipt(selector))
+          .contains(originalReceipt);
+    }
+    var originalHistory = appliedMigrationHistory(schema);
+    migrationFlyway(schema).load().migrate();
+    assertThat(appliedMigrationHistory(schema).subList(0, originalHistory.size()))
+        .containsExactlyElementsOf(originalHistory);
+    try (Connection connection = connectToSchema(schema)) {
+      var dsl = DSL.using(connection, SQLDialect.POSTGRES);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT to_jsonb(a)::text AS image FROM entity_preseeded_actor_assignment_operations a WHERE assignment_uuid = ?",
+                      assignmentUuid)
+                  .get("image", String.class))
+          .isEqualTo(retainedAssignment);
+      var restarted = new CharacterRepository(dsl);
+      assertThat(restarted.readPreseededActorAssignmentReceipt(selector)).contains(originalReceipt);
+      assertThat(restarted.readPreseededActorRuntimeReference(selector)).isEmpty();
+      assertThat(restarted.readPreseededActorRuntimeReference(selector)).isEmpty();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS count FROM entity_preseeded_actor_runtime_projections")
+                  .get("count", Long.class))
+          .isZero();
+    }
+  }
+
+  @Test
+  void runtimeProjectionSurvivesLostReplyRepositoryRestartAndRejectsChangedSelectors()
+      throws Exception {
+    // Controlled owner evidence exercises real PostgreSQL storage; this is not production
+    // authority.
+    var scope = PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    var target = evidence(assignmentUuid, accountUuid, 4L, scope);
+    var request = assignmentRequest(target);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_preseeded_actor_runtime_projections WHERE tenant_uuid = ?",
+                Integer.class,
+                tenantUuid))
+        .isZero();
+    var assigned = assign(assignmentUuid, accountUuid, 4L, scope, "Assigned Actor");
+    var selector =
+        new PreseededActorAssignmentReceiptRequest(
+            assignmentUuid,
+            accountUuid,
+            assigned.characterUuid(),
+            assigned.intentDigest(),
+            request.expectedTarget());
+    var originalReceipt =
+        characterRepository.readPreseededActorAssignmentReceipt(selector).orElseThrow();
+    var original = characterRepository.readPreseededActorRuntimeReference(selector).orElseThrow();
+    assertThat(original.runtimeEntityId().value()).isPositive();
+    assertThat(original.projectionGeneration()).isEqualTo(1);
+    assertThat(original.projectionFence()).isEqualTo(1);
+    assertThat(original.assignmentReceipt()).isEqualTo(originalReceipt);
+    // Lost assignment reply is recovered through exact replay without another allocation.
+    assertThat(assign(assignmentUuid, accountUuid, 4L, scope, "Assigned Actor"))
+        .isEqualTo(assigned);
+    try (Connection connection =
+        DriverManager.getConnection(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+      connection.setSchema(jdbcTemplate.queryForObject("SELECT current_schema()", String.class));
+      var restarted = new CharacterRepository(DSL.using(connection, SQLDialect.POSTGRES));
+      assertThat(restarted.readPreseededActorRuntimeReference(selector)).contains(original);
+    }
+    assertThat(
+            characterRepository.readPreseededActorRuntimeReference(
+                new PreseededActorAssignmentReceiptRequest(
+                    UUID.randomUUID(),
+                    accountUuid,
+                    assigned.characterUuid(),
+                    assigned.intentDigest(),
+                    request.expectedTarget())))
+        .isEmpty();
+    var t = request.expectedTarget();
+    var replacement =
+        new PreseededActorAssignmentExpectedTarget(
+            t.canonicalTenantUuid(),
+            t.realmUuid(),
+            t.worldSlug(),
+            t.realmSlug(),
+            "replacement-instance",
+            t.catalogRevision(),
+            t.canonicalVersionUuid(),
+            t.frozenPolicyDigest(),
+            t.playableStateNamespaceId(),
+            t.publishedReleaseBundleRef(),
+            t.playableStateScope());
+    assertThat(
+            characterRepository.readPreseededActorRuntimeReference(
+                new PreseededActorAssignmentReceiptRequest(
+                    assignmentUuid,
+                    accountUuid,
+                    assigned.characterUuid(),
+                    assigned.intentDigest(),
+                    replacement)))
+        .isEmpty();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_preseeded_actor_runtime_projections WHERE tenant_uuid = ?",
+                Integer.class,
+                tenantUuid))
+        .isEqualTo(1);
+    assertThat(characterRepository.readPreseededActorAssignmentReceipt(selector))
+        .contains(originalReceipt);
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "UPDATE entity_preseeded_actor_runtime_projections SET projection_fence = projection_fence + 1 WHERE assignment_uuid = ?",
+                    assignmentUuid))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "DELETE FROM entity_preseeded_actor_runtime_projections WHERE assignment_uuid = ?",
+                    assignmentUuid))
+        .isInstanceOf(DataAccessException.class);
+    // Stale durable character authority must invalidate the retained runtime projection read.
+    jdbcTemplate.update(
+        "UPDATE characters SET actor_identity_status = 'QUARANTINED', "
+            + "actor_identity_quarantine_reason = 'runtime projection negative fixture' WHERE character_uuid = ?",
+        assigned.characterUuid());
+    assertThat(characterRepository.readPreseededActorRuntimeReference(selector)).isEmpty();
+  }
+
+  @Test
+  void concurrentFreshAssignmentAllocationsAreUniqueAndDuplicateOperationsAllocateOnce()
+      throws Exception {
+    var scope = PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    CountDownLatch ready = new CountDownLatch(4);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(4);
+    try {
+      List<Future<PreseededActorAssignmentResult>> futures = new ArrayList<>();
+      // Two identical operations race, alongside two independent accounts in the same runtime.
+      for (int index = 0; index < 4; index++) {
+        UUID operation = index < 2 ? assignmentUuid : UUID.randomUUID();
+        UUID account = index < 2 ? accountUuid : UUID.randomUUID();
+        futures.add(
+            executor.submit(
+                () -> {
+                  ready.countDown();
+                  if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Runtime projection race did not start");
+                  }
+                  return assign(operation, account, 4L, scope, "Assigned Actor");
+                }));
+      }
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      var first = futures.get(0).get(20, TimeUnit.SECONDS);
+      assertThat(futures.get(1).get(20, TimeUnit.SECONDS)).isEqualTo(first);
+      for (int index = 2; index < 4; index++) {
+        assertThat(futures.get(index).get(20, TimeUnit.SECONDS).outcome())
+            .isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
+      }
+      var ids =
+          jdbcTemplate.queryForList(
+              "SELECT runtime_entity_id FROM entity_preseeded_actor_runtime_projections WHERE tenant_uuid = ?",
+              Long.class,
+              tenantUuid);
+      assertThat(ids)
+          .hasSize(3)
+          .doesNotHaveDuplicates()
+          .allSatisfy(id -> assertThat(id).isPositive());
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test

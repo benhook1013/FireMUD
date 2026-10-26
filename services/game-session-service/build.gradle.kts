@@ -162,7 +162,7 @@ val gameSessionMigrationDriverDist =
         }
     }
 
-// Cross-service proof exports owner classes and the exact member-repair script/descriptor.
+// Cross-service proof exports owner classes and the exact companion Redis resources they consume.
 // Application configuration, service registration and Flyway resources remain excluded.
 val gameSessionClassesProofJar by tasks.registering(Jar::class) {
     archiveClassifier.set("classes-proof")
@@ -176,6 +176,7 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("integration/net/firedevops/firemud/gamesession/repository/CanonicalHumanPublicationOwnerTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingRuntimeTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayAdmissionAbortCompositionFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerCompositionFixture*.class")
     }
     from("src/main/resources") {
         include("redis/lua/game-session-issuer-bootstrap-partition-build.lua")
@@ -184,6 +185,20 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/game-session-issuer-binding-local-add.json")
         include("redis/lua/game-session-issuer-binding-local-release.lua")
         include("redis/scripts/game-session-issuer-binding-local-release.json")
+        include("redis/lua/game-session-issuer-binding-local-retirement.lua")
+        include("redis/scripts/game-session-issuer-binding-local-retirement.json")
+    }
+    from("src/main/resources") {
+        include("redis/lua/game-session-region-lease-acquire.lua")
+        include("redis/scripts/game-session-region-lease-acquire.json")
+        include("redis/lua/game-session-region-lease-renew.lua")
+        include("redis/scripts/game-session-region-lease-renew.json")
+        include("redis/lua/game-session-region-lease-read.lua")
+        include("redis/scripts/game-session-region-lease-read.json")
+        include("redis/lua/game-session-region-timeline-initialize.lua")
+        include("redis/scripts/game-session-region-timeline-initialize.json")
+        include("redis/lua/game-session-region-session-binding-bridge.lua")
+        include("redis/scripts/game-session-region-session-binding-bridge.json")
     }
 }
 

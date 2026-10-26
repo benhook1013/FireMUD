@@ -39,7 +39,9 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentR
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorRuntimeReference;
 import net.firedevops.firemud.entitymanagement.service.RunOwnedPreseededAssignmentAuthority;
+import net.firedevops.firemud.entitymanagement.service.RuntimeEntityId;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
@@ -48,6 +50,8 @@ import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentOutcom
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -514,6 +518,118 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
 
     assertNoPartialResponse(response, Status.Code.INTERNAL);
     assertThat(response.errorDescription).isEqualTo("Preseeded actor assignment failed");
+  }
+
+  @Test
+  void runtimeReferenceRequiresDistinctVerifiedPurposeBeforeDecoding() {
+    var receiptService = mock(PreseededActorAssignmentReceiptService.class);
+    var handler =
+        new CanonicalPreseededActorAssignmentGrpcService(
+            NAMESPACE, mock(PreseededActorAssignmentService.class), receiptService);
+    var observer = new RuntimeObserver();
+    handler.readPreseededActorRuntimeReference(
+        ReadPreseededActorRuntimeReferenceRequest.getDefaultInstance(), observer);
+    assertThat(observer.errorCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(observer.terminalCount).isEqualTo(1);
+    assertThat(observer.value).isNull();
+    verifyNoInteractions(receiptService);
+  }
+
+  @Test
+  void runtimeReferenceReturnsExactTypedProjectionOrOneBoundedFailure() {
+    var receiptService = mock(PreseededActorAssignmentReceiptService.class);
+    var handler =
+        new CanonicalPreseededActorAssignmentGrpcService(
+            NAMESPACE, mock(PreseededActorAssignmentService.class), receiptService);
+    var wire =
+        ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(ASSIGNMENT_UUID.toString())
+            .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+            .setCharacterUuid(CHARACTER_UUID.toString())
+            .setIntentDigest(receiptRequest().intentDigest())
+            .setExpectedTarget(request().getExpectedTarget())
+            .build();
+    var selector = PreseededActorAssignmentGrpcCodec.fromRuntimeReferenceRequest(wire);
+    when(receiptService.readRuntimeReference(selector))
+        .thenReturn(
+            Optional.of(
+                new PreseededActorRuntimeReference(new RuntimeEntityId(71), 1, 1, receipt())));
+    var success = invokeRuntimeRead(handler, wire);
+    assertThat(success.value.getRuntimeEntityId()).isEqualTo(71);
+    assertThat(success.value.getExpectedTarget()).isEqualTo(wire.getExpectedTarget());
+    assertThat(success.value.getAssignmentUuid()).isEqualTo(wire.getAssignmentUuid());
+    assertThat(success.terminalCount).isEqualTo(1);
+    assertThat(success.errorCode).isNull();
+    when(receiptService.readRuntimeReference(selector)).thenReturn(Optional.empty());
+    var missing = invokeRuntimeRead(handler, wire);
+    assertThat(missing.errorCode).isEqualTo(Status.Code.NOT_FOUND);
+    assertThat(missing.value).isNull();
+    assertThat(missing.terminalCount).isEqualTo(1);
+    var malformed = invokeRuntimeRead(handler, wire.toBuilder().setSchemaVersion(2).build());
+    assertThat(malformed.errorCode).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(malformed.terminalCount).isEqualTo(1);
+    assertThatThrownBy(
+            () ->
+                PreseededActorAssignmentGrpcCodec.fromRuntimeReferenceRequest(
+                    wire.toBuilder()
+                        .setUnknownFields(
+                            com.google.protobuf.UnknownFieldSet.newBuilder()
+                                .addField(
+                                    99,
+                                    com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                        .addVarint(1)
+                                        .build())
+                                .build())
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static RuntimeObserver invokeRuntimeRead(
+      CanonicalPreseededActorAssignmentGrpcService handler,
+      ReadPreseededActorRuntimeReferenceRequest request) {
+    var observer = new RuntimeObserver();
+    ServerCall<Object, Object> call = mock(ServerCall.class);
+    MethodDescriptor<Object, Object> descriptor = mock(MethodDescriptor.class);
+    when(descriptor.getFullMethodName())
+        .thenReturn(
+            CanonicalPreseededActorAssignmentPeerInterceptor.RUNTIME_REFERENCE_READ_METHOD_NAME);
+    when(call.getMethodDescriptor()).thenReturn(descriptor);
+    Attributes peerAttributes =
+        Attributes.newBuilder().set(Grpc.TRANSPORT_ATTR_SSL_SESSION, peerSession()).build();
+    when(call.getAttributes()).thenReturn(peerAttributes);
+    new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE)
+        .interceptCall(
+            call,
+            new Metadata(),
+            (ignoredCall, ignoredHeaders) -> {
+              handler.readPreseededActorRuntimeReference(request, observer);
+              return new ServerCall.Listener<>() {};
+            });
+    return observer;
+  }
+
+  private static final class RuntimeObserver
+      implements StreamObserver<ReadPreseededActorRuntimeReferenceResponse> {
+    private ReadPreseededActorRuntimeReferenceResponse value;
+    private Status.Code errorCode;
+    private int terminalCount;
+
+    @Override
+    public void onNext(ReadPreseededActorRuntimeReferenceResponse next) {
+      value = next;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+      terminalCount++;
+    }
+
+    @Override
+    public void onCompleted() {
+      terminalCount++;
+    }
   }
 
   private static CapturingObserver invoke(

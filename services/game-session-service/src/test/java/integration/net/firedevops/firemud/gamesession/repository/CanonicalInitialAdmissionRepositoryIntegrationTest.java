@@ -1054,8 +1054,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             exception ->
                 assertPostgresConstraintFailure(
                     exception,
-                    "chk_gs_initial_admission_terminal_requires_protection",
-                    "New canonical initial-admission terminal requires complete retained Account protection evidence"));
+                    "chk_gs_initial_admission_account_protection_evidence_complete",
+                    "Fresh and terminal canonical initial admission requires complete retained Account protection evidence"));
     // The enabled v44 row trigger runs before declarative CHECK evaluation. INSERTs must begin
     // PENDING; terminal UPDATEs reject each incomplete evidence shape with exact attribution.
     for (String missing :
@@ -1111,8 +1111,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
               exception ->
                   assertPostgresConstraintFailure(
                       exception,
-                      "chk_gs_initial_admission_terminal_requires_protection",
-                      "New canonical initial-admission terminal requires complete retained Account protection evidence"));
+                      "chk_gs_initial_admission_account_protection_evidence_complete",
+                      "Fresh and terminal canonical initial admission requires complete retained Account protection evidence"));
     }
     assertThat(attemptProjection(fixture, request)).isEqualTo(pendingBefore);
     assertThat(
@@ -1209,6 +1209,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         migration(predecessor, null).migrate();
         migration(predecessor, null).validate();
         assertV1013RetentionLaunchForeignKey(predecessor);
+        assertV1040CompletionForeignKeyTriggers(predecessor);
         assertThat(
                 predecessor
                     .dsl
@@ -2429,6 +2430,30 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             });
   }
 
+  private static void assertV1040CompletionForeignKeyTriggers(Fixture fixture) {
+    var triggers =
+        fixture.dsl.fetch(
+            "SELECT trigger.tgenabled, trigger.tgisinternal "
+                + "FROM pg_trigger trigger JOIN pg_constraint fk "
+                + "ON fk.oid = trigger.tgconstraint "
+                + "JOIN pg_class child ON child.oid = fk.conrelid "
+                + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
+                + "WHERE fk.conname IN ("
+                + "'fk_gs_canonical_human_runtime_completion_intent', "
+                + "'fk_gs_canonical_human_runtime_completion_attempt', "
+                + "'fk_gs_canonical_human_runtime_completion_launch') "
+                + "AND trigger.tgrelid = fk.confrelid "
+                + "AND child.relname = 'game_session_canonical_human_runtime_completion' "
+                + "AND child_namespace.nspname = current_schema()");
+    assertThat(triggers).hasSize(6);
+    assertThat(triggers)
+        .allSatisfy(
+            trigger -> {
+              assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
+              assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
+            });
+  }
+
   private static String otherGuardProjection(Fixture fixture) {
     return fixture
         .dsl
@@ -2450,7 +2475,18 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "AND retention_child.relname = 'gs_original_start_session_authored_actor_core_retention' "
                 + "AND retention_namespace.nspname = current_schema() "
                 + "AND launch_parent.relname = 'game_session_canonical_instance_launch' "
-                + "AND launch_namespace.nspname = current_schema())) guard")
+                + "AND launch_namespace.nspname = current_schema()) "
+                + "AND NOT EXISTS (SELECT 1 FROM pg_constraint completion_fk "
+                + "JOIN pg_class completion_child ON completion_child.oid = completion_fk.conrelid "
+                + "JOIN pg_namespace completion_namespace "
+                + "ON completion_namespace.oid = completion_child.relnamespace "
+                + "WHERE completion_fk.oid = trigger.tgconstraint "
+                + "AND completion_fk.conname IN ("
+                + "'fk_gs_canonical_human_runtime_completion_intent', "
+                + "'fk_gs_canonical_human_runtime_completion_attempt', "
+                + "'fk_gs_canonical_human_runtime_completion_launch') "
+                + "AND completion_child.relname = 'game_session_canonical_human_runtime_completion' "
+                + "AND completion_namespace.nspname = current_schema())) guard")
         .get(0, String.class);
   }
 

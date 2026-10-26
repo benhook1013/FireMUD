@@ -14,6 +14,9 @@ service CanonicalPreseededActorAssignmentService {
       returns (AssignPreseededActorResponse);
   rpc ReadPreseededActorAssignmentReceipt(ReadPreseededActorAssignmentReceiptRequest)
       returns (ReadPreseededActorAssignmentReceiptResponse);
+  // Exact same-namespace Game Session purpose; never allocates a missing projection.
+  rpc ReadPreseededActorRuntimeReference(ReadPreseededActorRuntimeReferenceRequest)
+      returns (ReadPreseededActorRuntimeReferenceResponse);
 }
 
 // The stable assignment intent. All target values are caller preconditions and are independently
@@ -93,4 +96,30 @@ message ReadPreseededActorAssignmentReceiptResponse {
 enum PreseededActorAssignmentReceiptStatus {
   PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_UNSPECIFIED = 0;
   PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED = 1;
+}
+
+// Selector for the original assignment and complete target, distinct from World receipt access.
+message ReadPreseededActorRuntimeReferenceRequest {
+  uint32 schema_version = 1;
+  string assignment_uuid = 2;
+  string canonical_account_uuid = 3;
+  string character_uuid = 4;
+  string intent_digest = 5;
+  PreseededActorAssignmentExpectedTarget expected_target = 6;
+}
+
+// Entity-owned numeric identity is scoped by the retained target's tenant and game instance.
+// Receipt provenance is immutable; this projection alone grants no placement or admission.
+message ReadPreseededActorRuntimeReferenceResponse {
+  uint32 schema_version = 1;
+  int64 runtime_entity_id = 2;
+  int64 projection_generation = 3;
+  int64 projection_fence = 4;
+  string assignment_uuid = 5;
+  string canonical_account_uuid = 6;
+  string character_uuid = 7;
+  string intent_digest = 8;
+  PreseededActorAssignmentExpectedTarget expected_target = 9;
+  string published_owner_proof_digest = 10;
+  PreseededActorAssignmentCorePayload core_payload = 11;
 }

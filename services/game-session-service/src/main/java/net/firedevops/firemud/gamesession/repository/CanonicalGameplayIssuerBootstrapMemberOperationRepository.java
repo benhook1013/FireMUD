@@ -93,6 +93,9 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
               || partitionId.compareTo(intent.layoutDescriptor().partitionCount()) >= 0) {
             throw conflict("Requested partition is outside the exact prepared bootstrap layout");
           }
+          UUID initialPhysicalRevision =
+              CanonicalGameplayIssuerPartitionMutationRepository.ensureInitialRevisionInTransaction(
+                  transaction, bootstrapOperationId, partitionId);
           requireCurrentAccountCheckpoint(currentAccountCheckpoint, intent.sourceCheckpoint());
           CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation = stableIncarnation.value();
           List<CanonicalGameplayIssuerBootstrapMemberOperation> operations = new ArrayList<>();
@@ -105,7 +108,7 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
                     transaction, prepared, currentAccountCheckpoint, incarnation));
           }
           return new CanonicalGameplayIssuerBootstrapPartitionWork(
-              plan, partitionId, operations, incarnation);
+              plan, partitionId, initialPhysicalRevision, operations, incarnation);
         });
   }
 
@@ -689,7 +692,8 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw conflict("Issuer bootstrap member operation owner cannot join an ambient transaction");
     }
   }

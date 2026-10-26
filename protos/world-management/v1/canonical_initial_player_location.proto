@@ -13,6 +13,8 @@ service CanonicalInitialPlayerLocationService {
       returns (CanonicalInitialPlayerLocationResponse);
   rpc ReadInitialPlayerLocation(CanonicalInitialPlayerLocationRequest)
       returns (CanonicalInitialPlayerLocationResponse);
+  rpc ReadInitialPlayerLocationRegion(CanonicalInitialPlayerLocationRequest)
+      returns (CanonicalInitialPlayerLocationRegionResponse);
 }
 
 // Closed selectors for one immutable Entity assignment, one World initial-admission hold, and
@@ -62,4 +64,30 @@ message CanonicalInitialPlayerLocationRoom {
   string canonical_tenant_uuid = 1;
   string canonical_version_uuid = 2;
   string room_template_uuid = 3;
+}
+
+// Fresh, read-only initial-location consequence. This remains distinct from the immutable
+// placement result above and does not establish current occupancy beyond confirming that the
+// actor is still in its original initial room.
+message CanonicalInitialPlayerLocationRegionResponse {
+  uint32 schema_version = 1;
+  CanonicalInitialPlayerLocationResponse placement_result = 2;
+  entity_management.v1.PreseededActorAssignmentExpectedTarget expected_target = 3;
+  string canonical_region_instance_uuid = 4;
+  string operational_region_uuid = 5;
+  int64 private_world_instance_key = 6;
+  int64 observed_runtime_room_key = 7;
+  CanonicalInitialPlayerLocationLifecycleConsequence lifecycle = 8;
+}
+
+// Bounded closed subset of the current lifecycle read. It omits the graph, launch binding, and
+// region assignment map; consumers can re-read the authenticated owner and compare exact values.
+message CanonicalInitialPlayerLocationLifecycleConsequence {
+  bytes canonical_request_bytes = 1;
+  string lifecycle_status = 2;
+  int64 lifecycle_epoch = 3;
+  int64 row_version = 4;
+  string capture_uuid = 5;
+  string graph_sha256 = 6;
+  string preparation_input_digest = 7;
 }

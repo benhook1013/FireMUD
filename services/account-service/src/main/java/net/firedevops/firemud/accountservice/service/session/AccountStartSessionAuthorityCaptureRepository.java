@@ -131,6 +131,28 @@ public final class AccountStartSessionAuthorityCaptureRepository {
         current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, false);
   }
 
+  /**
+   * Locks and reads the original capture for the authenticated same-namespace Game Session
+   * admission receiver. The original Logging identity remains retained issuance evidence.
+   */
+  AccountStartSessionAuthorityCapture lockReadExactCurrentFromGameSessionAdmission(
+      AccountControlUiActorService.Current current,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      String loggingWorkloadUri,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      String gameSessionWorkloadUri) {
+    requireOwnerTransaction();
+    Objects.requireNonNull(current, "current committed ControlUI actor is required");
+    Objects.requireNonNull(tuple, "exact typed StartSession tuple is required");
+    if (!canonicalReceivingWorkload(
+        gameSessionWorkloadUri, tuple.action().scope().targetNamespace(), "game-session-service")) {
+      throw unavailable();
+    }
+    return lockReadExactCurrent(
+        current, tuple, loggingWorkloadUri, reservationOwnerId, reservationClaimFence, false);
+  }
+
   private AccountStartSessionAuthorityCapture lockReadExactCurrent(
       AccountControlUiActorService.Current current,
       StartSessionPreAuthorizationReservationTuple tuple,

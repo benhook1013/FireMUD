@@ -46,6 +46,7 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
           new RedisScriptDescriptor.ArgumentSpec("partitionCount"),
           new RedisScriptDescriptor.ArgumentSpec("partitionCapacity"),
           new RedisScriptDescriptor.ArgumentSpec("exactBootstrapMetadata"),
+          new RedisScriptDescriptor.ArgumentSpec("initialPhysicalMutationRevision"),
           new RedisScriptDescriptor.ArgumentSpec("memberOperationCount"),
           new RedisScriptDescriptor.ArgumentSpec(
               "repeatedBindingRefMemberCapacityFieldBindingPresence"));
@@ -224,6 +225,14 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
                   .Lifecycle.RELEASED) {
             capacityCount++;
           }
+        } else if (field.equals(
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MUTATION_REVISION_FIELD)) {
+          byte[] revision =
+              actual.get(
+                  Base64.getEncoder().encodeToString(field.getBytes(StandardCharsets.UTF_8)));
+          if (!Arrays.equals(revision, entry.getValue())) {
+            throw unavailable();
+          }
         } else if (!field.equals(
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD)) {
           CanonicalGameplayIssuerMemberV2Codec.decode(
@@ -318,14 +327,15 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
       CanonicalGameplayIssuerBootstrapPartitionWork work,
       CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.PhysicalFieldSet physical) {
     var intent = work.buildPlan().bootstrapIntent();
-    byte[][] arguments = new byte[6 + work.memberOperations().size() * 4][];
+    byte[][] arguments = new byte[7 + work.memberOperations().size() * 4][];
     arguments[0] = ascii(intent.issuerId());
     arguments[1] = ascii(work.partitionId().toString());
     arguments[2] = ascii(intent.layoutDescriptor().partitionCount().toString());
     arguments[3] = ascii(intent.layoutDescriptor().partitionCapacity().toString());
     arguments[4] = physical.metadataBytes();
-    arguments[5] = ascii(Integer.toString(work.memberOperations().size()));
-    int position = 6;
+    arguments[5] = ascii(work.initialPhysicalRevision().toString());
+    arguments[6] = ascii(Integer.toString(work.memberOperations().size()));
+    int position = 7;
     for (CanonicalGameplayIssuerBootstrapMemberOperation operation : work.memberOperations()) {
       CanonicalGameplayIssuerMemberV2Value value = operation.expectedMemberValue();
       arguments[position++] = value.owner().bindingRef().bytes();
@@ -381,7 +391,10 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw unavailable();
+    }
   }
 
   private static String digest(String algorithm, byte[] bytes) {
@@ -444,7 +457,7 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
       this.physicalBindingCount = observed.bindingCount();
       this.physicalCountedCapacityCount = observed.countedReservationCount();
       this.plannedAggregateCapacityCount = Objects.requireNonNull(plannedAggregateCapacityCount);
-      if (observed.fieldCount() != 1 + physicalReservationCount + physicalBindingCount
+      if (observed.fieldCount() != 2 + physicalReservationCount + physicalBindingCount
           || BigInteger.valueOf(observed.countedReservationCount())
                   .compareTo(
                       work.buildPlan().bootstrapIntent().layoutDescriptor().partitionCapacity())
