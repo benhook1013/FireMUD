@@ -14,7 +14,8 @@ import tools.jackson.databind.json.JsonMapper;
 public final class CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution
     implements RedisScriptContribution {
   public static final String SCRIPT_ID = "game-session.issuer-binding-local-release.v1";
-  public static final String RESOURCE_PATH = "redis/lua/game-session-issuer-binding-local-release.lua";
+  public static final String RESOURCE_PATH =
+      "redis/lua/game-session-issuer-binding-local-release.lua";
   private static final String DESCRIPTOR_PATH =
       "/redis/scripts/game-session-issuer-binding-local-release.json";
   private static final JsonMapper JSON =
@@ -46,6 +47,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribu
   }
 
   private static IllegalStateException unavailable() {
-    return new IllegalStateException("Issuer binding-local release Redis descriptor is unavailable");
+    return new IllegalStateException(
+        "Issuer binding-local release Redis descriptor is unavailable");
   }
 }

@@ -2321,7 +2321,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private static final String ACCOUNT_PASSWORD = UUID.randomUUID().toString().replace("-", "");
     private static final String PRIMARY_ALIAS = "account-gameplay-admission-primary";
     private static final String ISSUER_OWNER = "gamesession_coord_app";
-    private static final String ISSUER_OWNER_PASSWORD = UUID.randomUUID().toString().replace("-", "");
+    private static final String ISSUER_OWNER_PASSWORD =
+        UUID.randomUUID().toString().replace("-", "");
 
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> primary =

@@ -8,12 +8,13 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBindingLocalOperation.Request;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -123,13 +124,12 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               Record operationRow =
                   transaction.fetchOne(
-                      "SELECT * FROM "
-                          + OPERATION
-                          + " WHERE issuer_id = ? AND transition_id = ?",
+                      "SELECT * FROM " + OPERATION + " WHERE issuer_id = ? AND transition_id = ?",
                       ISSUER,
                       abortSource.transition().transitionId());
               if (operationRow == null) {
-                throw conflict("Account-aborted first-NEW source has no original local issuer operation");
+                throw conflict(
+                    "Account-aborted first-NEW source has no original local issuer operation");
               }
               CanonicalGameplayIssuerInstalledAnchor anchor =
                   CanonicalGameplayIssuerBootstrapCoverageRepository
@@ -180,8 +180,10 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
                       readPositive(operationRow, "operation_fence"),
                       readPositive(operationRow, "local_member_generation"));
               if (!expected.equals(original)
-                  || !Arrays.equals(exactOriginal, CanonicalGameplayIssuerMemberV2Codec.encode(expected))) {
-                throw conflict("Original issuer member differs from its exact aborted source or anchor");
+                  || !Arrays.equals(
+                      exactOriginal, CanonicalGameplayIssuerMemberV2Codec.encode(expected))) {
+                throw conflict(
+                    "Original issuer member differs from its exact aborted source or anchor");
               }
               try {
                 return new CanonicalGameplayIssuerBindingLocalOperation(
@@ -209,7 +211,8 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
             currentIssuerStateSource.readFreshCurrentState(),
             "current issuer state source returned null after original-operation read");
     if (!sameCurrentIssuerState(currentState, after)) {
-      throw conflict("Issuer source or incarnation moved while reloading the original local operation");
+      throw conflict(
+          "Issuer source or incarnation moved while reloading the original local operation");
     }
     return operation;
   }
@@ -944,7 +947,7 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
     }
   }
 
-  private static boolean sameCurrentIssuerState(
+  static boolean sameCurrentIssuerState(
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState left,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState right) {
     var leftCheckpoint = left.accountCheckpoint();

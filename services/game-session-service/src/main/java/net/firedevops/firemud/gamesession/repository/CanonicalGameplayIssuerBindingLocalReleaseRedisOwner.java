@@ -21,6 +21,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -47,8 +48,10 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
           new RedisScriptDescriptor.ArgumentSpec("partitionCount"),
           new RedisScriptDescriptor.ArgumentSpec("partitionCapacity"),
           new RedisScriptDescriptor.ArgumentSpec("baselineFieldCountAndExactFieldValuePairs"),
-          new RedisScriptDescriptor.ArgumentSpec("registeredLocalOperationCountAndExactOperationTupleAndCurrentPhase"),
-          new RedisScriptDescriptor.ArgumentSpec("originalAndReleasedMemberOperationAndCapacityProof"));
+          new RedisScriptDescriptor.ArgumentSpec(
+              "registeredLocalOperationCountAndExactOperationTupleAndCurrentPhase"),
+          new RedisScriptDescriptor.ArgumentSpec(
+              "originalAndReleasedMemberOperationAndCapacityProof"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> EXPECTED_OUTCOMES =
       List.of(
           new RedisScriptDescriptor.OutcomeSpec(
@@ -113,7 +116,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
           && state.getMessage().contains("Issuer binding-local release is unavailable")) {
         throw state;
       }
-      throw unavailable("Physical issuer release did not obtain exact source and readback proof", failure);
+      throw unavailable(
+          "Physical issuer release did not obtain exact source and readback proof", failure);
     }
   }
 
@@ -124,8 +128,10 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
       requirePrincipal(await(commands.aclWhoami()));
       String sha = await(commands.scriptLoad(script));
-      if (!digest("SHA-1", script).equals(sha)) throw unavailable("Redis loaded a different script");
-      Long reply = await(commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments));
+      if (!digest("SHA-1", script).equals(sha))
+        throw unavailable("Redis loaded a different script");
+      Long reply =
+          await(commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments));
       if (reply == null) throw unavailable("Redis returned no release result");
       return reply;
     } catch (RuntimeException failure) {
@@ -150,9 +156,11 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       int maxFields =
           CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_HASH_FIELDS
               + 2 * CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_MEMBER_OPERATIONS;
-      if (count == null || count < 1 || count > maxFields) throw unavailable("Issuer partition field count is invalid");
+      if (count == null || count < 1 || count > maxFields)
+        throw unavailable("Issuer partition field count is invalid");
       Map<byte[], byte[]> raw = await(commands.hgetall(key));
-      if (raw == null || raw.size() != count) throw unavailable("Issuer partition readback is incomplete");
+      if (raw == null || raw.size() != count)
+        throw unavailable("Issuer partition readback is incomplete");
       Map<String, byte[]> actual = new HashMap<>();
       long bytes = 0;
       for (Map.Entry<byte[], byte[]> field : raw.entrySet()) {
@@ -169,7 +177,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       }
       Map<String, byte[]> baseline = work.baselineFields();
       Map<String, byte[]> allowed = work.allowedFields();
-      if (actual.size() > allowed.size()) throw unavailable("Issuer partition contains an unknown field");
+      if (actual.size() > allowed.size())
+        throw unavailable("Issuer partition contains an unknown field");
       for (Map.Entry<String, byte[]> field : baseline.entrySet()) {
         byte[] value = actual.get(b64(field.getKey().getBytes(StandardCharsets.UTF_8)));
         if (value == null || !Arrays.equals(value, field.getValue())) {
@@ -183,7 +192,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       String bindingField = new String(target.owner().bindingRef().bytes(), StandardCharsets.UTF_8);
       byte[] targetCapacity = actual.get(b64(capacityField.getBytes(StandardCharsets.US_ASCII)));
       byte[] targetBinding = actual.get(b64(bindingField.getBytes(StandardCharsets.UTF_8)));
-      if (!Arrays.equals(targetCapacity, operation.exactReleasedMemberValueBytes()) || targetBinding != null) {
+      if (!Arrays.equals(targetCapacity, operation.exactReleasedMemberValueBytes())
+          || targetBinding != null) {
         throw unavailable("Exact RELEASED capacity field or binding-field removal is absent");
       }
       for (Map.Entry<String, byte[]> field : actual.entrySet()) {
@@ -203,25 +213,42 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.RESERVATION_FIELD_PREFIX)) {
           var value = CanonicalGameplayIssuerMemberV2Codec.decode(field.getValue());
           physicalReservations++;
-          if (value.reservation().lifecycle() != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) {
+          if (value.reservation().lifecycle()
+              != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) {
             physicalCapacity++;
           }
-        } else if (!decoded.equals(CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD)) {
+        } else if (!decoded.equals(
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD)) {
           CanonicalGameplayIssuerMemberV2Codec.decode(field.getValue());
           physicalBindings++;
         }
       }
       int baselineReservations = work.baselineProof().physicalReservationCount();
       int baselineBindings = work.baselineProof().physicalBindingCount();
-      int registeredReservations = Math.toIntExact(work.localEntries().stream()
-          .filter(entry -> entry.memberValue().reservation().partitionId()
-              .equals(operation.releasedMemberValue().reservation().partitionId()))
-          .count());
-      int registeredBindings = Math.toIntExact(work.localEntries().stream()
-          .filter(entry -> entry.memberValue().reservation().partitionId()
-              .equals(operation.releasedMemberValue().reservation().partitionId())
-              && entry.bindingPresent())
-          .count());
+      int registeredReservations =
+          Math.toIntExact(
+              work.localEntries().stream()
+                  .filter(
+                      entry ->
+                          entry
+                              .memberValue()
+                              .reservation()
+                              .partitionId()
+                              .equals(operation.releasedMemberValue().reservation().partitionId()))
+                  .count());
+      int registeredBindings =
+          Math.toIntExact(
+              work.localEntries().stream()
+                  .filter(
+                      entry ->
+                          entry
+                                  .memberValue()
+                                  .reservation()
+                                  .partitionId()
+                                  .equals(
+                                      operation.releasedMemberValue().reservation().partitionId())
+                              && entry.bindingPresent())
+                  .count());
       if (BigInteger.valueOf(physicalCapacity).compareTo(work.anchor().partitionCapacity()) > 0
           || BigInteger.valueOf(physicalCapacity).compareTo(work.partitionCapacity()) > 0
           || physicalReservations < baselineReservations + 1
@@ -231,7 +258,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
           || work.aggregateCapacity().compareTo(work.aggregateBound()) > 0) {
         throw unavailable("Issuer release readback violates physical or SQL capacity bounds");
       }
-      return CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(decodePhysicalMap(actual));
+      return CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(
+          decodePhysicalMap(actual));
     } catch (RuntimeException failure) {
       throw unavailable("Independent issuer release readback was not exact", failure);
     }
@@ -247,8 +275,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     args.add(ascii(anchor.partitionCount().toString()));
     args.add(ascii(anchor.partitionCapacity().toString()));
     Map<String, byte[]> baseline = work.baselineFields();
-    List<Map.Entry<String, byte[]>> sortedBaseline = baseline.entrySet().stream()
-        .sorted(Map.Entry.comparingByKey()).toList();
+    List<Map.Entry<String, byte[]>> sortedBaseline =
+        baseline.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList();
     args.add(ascii(Integer.toString(sortedBaseline.size())));
     for (Map.Entry<String, byte[]> field : sortedBaseline) {
       args.add(field.getKey().getBytes(StandardCharsets.UTF_8));
@@ -256,8 +284,13 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     }
     List<CanonicalGameplayIssuerBindingLocalProjectionRepository.LocalEntry> entries =
         work.localEntries().stream()
-            .filter(entry -> entry.memberValue().reservation().partitionId()
-                .equals(operation.releasedMemberValue().reservation().partitionId()))
+            .filter(
+                entry ->
+                    entry
+                        .memberValue()
+                        .reservation()
+                        .partitionId()
+                        .equals(operation.releasedMemberValue().reservation().partitionId()))
             .sorted(java.util.Comparator.comparing(entry -> entry.operationId().toString()))
             .toList();
     args.add(ascii(Integer.toString(entries.size())));
@@ -285,7 +318,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
   private static byte[] exactPartitionKey(
       CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work) {
     String key = CanonicalGameplayIssuerRedisKeys.forMember(work.targetOperation().memberValue());
-    if (!key.startsWith(KEY_PREFIX) || key.length() > 512) throw unavailable("Issuer key is not canonical");
+    if (!key.startsWith(KEY_PREFIX) || key.length() > 512)
+      throw unavailable("Issuer key is not canonical");
     return key.getBytes(StandardCharsets.US_ASCII);
   }
 
@@ -313,12 +347,16 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
   private RedisScriptDescriptor requireDescriptor() {
     RedisScriptDescriptor descriptor;
     try {
-      descriptor = catalog.require(CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.SCRIPT_ID);
+      descriptor =
+          catalog.require(
+              CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.SCRIPT_ID);
     } catch (RuntimeException missing) {
       throw unavailable("Manual issuer release descriptor is not installed", missing);
     }
-    if (!CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.SCRIPT_ID.equals(descriptor.scriptId())
-        || !CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.RESOURCE_PATH.equals(descriptor.resourcePath())
+    if (!CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.SCRIPT_ID.equals(
+            descriptor.scriptId())
+        || !CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.RESOURCE_PATH.equals(
+            descriptor.resourcePath())
         || !"game-session-service".equals(descriptor.owner())
         || !PRINCIPAL.equals(descriptor.principal())
         || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
@@ -328,8 +366,11 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
         || !EXPECTED_OUTCOMES.equals(descriptor.outcomes())
         || descriptor.resetSensitivity() != RedisScriptDescriptor.ResetSensitivity.CLUSTER
         || descriptor.lossClass() != RedisScriptDescriptor.LossClass.EMPTY_REDIS_COLD_START_OR_RESET
-        || descriptor.compatibilityLevel() != RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET
-        || !descriptor.supportedCoexistence().equals(List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v2")))
+        || descriptor.compatibilityLevel()
+            != RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET
+        || !descriptor
+            .supportedCoexistence()
+            .equals(List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v2")))
         || descriptor.legacyPayloadShape() != null) {
       throw unavailable("Manual issuer release descriptor differs from its exact owner contract");
     }
@@ -337,11 +378,14 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
   }
 
   private static byte[] scriptSource(RedisScriptDescriptor descriptor) {
-    try (InputStream input = CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.class
-        .getClassLoader().getResourceAsStream(descriptor.resourcePath())) {
+    try (InputStream input =
+        CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath())) {
       if (input == null) throw unavailable("Issuer release Lua resource is missing");
       byte[] bytes = input.readNBytes(MAX_SCRIPT_BYTES + 1);
-      if (bytes.length == 0 || bytes.length > MAX_SCRIPT_BYTES
+      if (bytes.length == 0
+          || bytes.length > MAX_SCRIPT_BYTES
           || !descriptor.sha256().equals(digest("SHA-256", bytes))) {
         throw unavailable("Issuer release Lua differs from its exact descriptor digest");
       }
@@ -353,7 +397,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
 
   private static Map<String, byte[]> decodePhysicalMap(Map<String, byte[]> encoded) {
     Map<String, byte[]> result = new HashMap<>();
-    encoded.forEach((field, value) -> result.put(decodeUtf8(Base64.getDecoder().decode(field)), value.clone()));
+    encoded.forEach(
+        (field, value) -> result.put(decodeUtf8(Base64.getDecoder().decode(field)), value.clone()));
     return result;
   }
 
@@ -363,10 +408,12 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
 
   private static String decodeUtf8(byte[] bytes) {
     try {
-      return StandardCharsets.UTF_8.newDecoder()
+      return StandardCharsets.UTF_8
+          .newDecoder()
           .onMalformedInput(CodingErrorAction.REPORT)
           .onUnmappableCharacter(CodingErrorAction.REPORT)
-          .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+          .decode(java.nio.ByteBuffer.wrap(bytes))
+          .toString();
     } catch (CharacterCodingException malformed) {
       throw unavailable("Issuer hash field is not valid UTF-8", malformed);
     }
@@ -378,12 +425,14 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
 
   private static RedisAsyncCommands<byte[], byte[]> requireCommands(
       StatefulRedisConnection<byte[], byte[]> connection) {
-    if (connection == null || !connection.isOpen()) throw unavailable("Redis connection is unavailable");
+    if (connection == null || !connection.isOpen())
+      throw unavailable("Redis connection is unavailable");
     return connection.async();
   }
 
   private static void requirePrincipal(String principal) {
-    if (!PRINCIPAL.equals(principal)) throw unavailable("Redis principal is not the exact coordination owner");
+    if (!PRINCIPAL.equals(principal))
+      throw unavailable("Redis principal is not the exact coordination owner");
   }
 
   private static <T> T await(RedisFuture<T> future) {
@@ -418,10 +467,13 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
   }
 
   private static IllegalStateException unavailable(String message, Throwable cause) {
-    return new IllegalStateException("Issuer binding-local release is unavailable: " + message, cause);
+    return new IllegalStateException(
+        "Issuer binding-local release is unavailable: " + message, cause);
   }
 
-  /** Exact private physical readback; SQL completion must consume this value in a new transaction. */
+  /**
+   * Exact private physical readback; SQL completion must consume this value in a new transaction.
+   */
   public static final class Readback {
     private final UUID operationId;
     private final long scriptOutcome;

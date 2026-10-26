@@ -126,6 +126,8 @@ ALTER TABLE game_session_canonical_binding_issuer_index_obligation
 CREATE INDEX ix_gs_issuer_binding_local_release_status
     ON game_session_canonical_issuer_binding_local_release_operation (issuer_id, status, partition_id);
 
+-- PostgreSQL trigger bodies remain enforced by Flyway; jOOQ OSS cannot parse this procedural DDL.
+-- [jooq ignore start]
 CREATE FUNCTION require_first_new_issuer_release_source()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -238,6 +240,160 @@ BEGIN
             RAISE EXCEPTION 'First-NEW reservation release requires its exact completed physical issuer proof'
                 USING ERRCODE = '23514',
                       CONSTRAINT = 'gs_first_new_issuer_release_reservation_source';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- Extend the retained V1035 guard with this exact same proof-backed edge. Its original
+-- tuple, pending-state and deletion protections continue to apply to every other update.
+CREATE OR REPLACE FUNCTION require_first_new_abort_reservation_release()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.lifecycle = 'RELEASE_PENDING' AND NEW.lifecycle = 'RELEASED' THEN
+        IF (to_jsonb(NEW) - 'lifecycle' - 'inventory_revision')
+              IS DISTINCT FROM (to_jsonb(OLD) - 'lifecycle' - 'inventory_revision')
+           OR NOT EXISTS (
+               SELECT 1
+                 FROM game_session_canonical_binding_transition transition
+                 JOIN game_session_canonical_gameplay_binding_inventory candidate
+                   ON candidate.binding_ref = transition.candidate_binding_ref
+                 JOIN game_session_canonical_binding_issuer_index_obligation issuer_obligation
+                   ON issuer_obligation.transition_id = transition.transition_id
+                  AND issuer_obligation.binding_ref = transition.candidate_binding_ref
+                 JOIN game_session_canonical_issuer_binding_local_release_operation release
+                   ON release.operation_id = issuer_obligation.local_release_operation_id
+                WHERE transition.transition_id = NEW.transition_id
+                  AND transition.status = 'ABORTED'
+                  AND transition.admission_orphan_cleanup_id = release.orphan_cleanup_id
+                  AND transition.inventory_revision = OLD.inventory_revision
+                  AND candidate.lifecycle = 'TERMINAL_UNRESOLVED'
+                  AND candidate.inventory_revision = OLD.inventory_revision
+                  AND candidate.binding_ref = OLD.binding_ref
+                  AND candidate.binding_generation = OLD.binding_generation
+                  AND candidate.issuer_reservation_id = OLD.reservation_id
+                  AND issuer_obligation.status = 'RELEASED'
+                  AND issuer_obligation.inventory_revision = NEW.inventory_revision
+                  AND issuer_obligation.local_release_operation_id = release.operation_id
+                  AND release.status = 'RELEASED'
+                  AND release.transition_id = NEW.transition_id
+                  AND release.reservation_id = NEW.reservation_id
+                  AND release.binding_ref = NEW.binding_ref
+                  AND release.binding_generation = NEW.binding_generation
+                  AND release.source_inventory_revision = OLD.inventory_revision
+                  AND release.completion_inventory_revision = NEW.inventory_revision
+                  AND NEW.inventory_revision > OLD.inventory_revision
+                  AND release.physical_readback_field_set_bytes IS NOT NULL
+                  AND release.physical_readback_field_set_digest ~ '^sha256:[0-9a-f]{64}$'
+           ) THEN
+            RAISE EXCEPTION 'First-NEW reservation release requires its exact completed physical issuer proof'
+                USING ERRCODE = '23514',
+                      CONSTRAINT = 'gs_first_new_issuer_release_reservation_source';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.lifecycle = 'RELEASE_PENDING' AND EXISTS (
+        SELECT 1 FROM game_session_canonical_binding_transition transition
+         WHERE transition.transition_id = OLD.transition_id
+           AND transition.issuer_reservation_id = OLD.reservation_id
+           AND transition.status = 'ABORTED'
+           AND transition.admission_orphan_cleanup_id IS NOT NULL
+    ) THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'Retained first-NEW abort reservation requires qualified release proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_reservation_retained';
+        END IF;
+        IF (to_jsonb(NEW) - 'inventory_revision') IS DISTINCT FROM (to_jsonb(OLD) - 'inventory_revision')
+           OR NEW.inventory_revision < OLD.inventory_revision THEN
+            RAISE EXCEPTION 'Retained first-NEW abort reservation is immutable without qualified release proof'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_first_new_abort_reservation_retained';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
+    IF OLD.lifecycle = 'RESERVED' AND NEW.lifecycle = 'RELEASE_PENDING' THEN
+        IF NEW.inventory_revision <= OLD.inventory_revision
+           OR ROW(
+                NEW.reservation_id, NEW.binding_ref, NEW.account_id, NEW.tenant_id,
+                NEW.game_instance_id, NEW.runtime_game_instance_id, NEW.session_id,
+                NEW.binding_generation, NEW.transition_id, NEW.issuer_id,
+                NEW.issuer_auth_generation, NEW.playable_state_namespace_id,
+                NEW.character_id, NEW.playable_state_scope, NEW.region_id, NEW.region_epoch,
+                NEW.partition_id, NEW.issuer_index_layout_version,
+                NEW.issuer_index_partition_count, NEW.issuer_index_partition_capacity,
+                NEW.reservation_fence, NEW.issuer_coverage_operation_id,
+                NEW.issuer_coverage_operation_fence, NEW.coverage_fence,
+                NEW.inventory_snapshot_revision, NEW.created_at
+            ) IS DISTINCT FROM ROW(
+                OLD.reservation_id, OLD.binding_ref, OLD.account_id, OLD.tenant_id,
+                OLD.game_instance_id, OLD.runtime_game_instance_id, OLD.session_id,
+                OLD.binding_generation, OLD.transition_id, OLD.issuer_id,
+                OLD.issuer_auth_generation, OLD.playable_state_namespace_id,
+                OLD.character_id, OLD.playable_state_scope, OLD.region_id, OLD.region_epoch,
+                OLD.partition_id, OLD.issuer_index_layout_version,
+                OLD.issuer_index_partition_count, OLD.issuer_index_partition_capacity,
+                OLD.reservation_fence, OLD.issuer_coverage_operation_id,
+                OLD.issuer_coverage_operation_fence, OLD.coverage_fence,
+                OLD.inventory_snapshot_revision, OLD.created_at
+            ) THEN
+            RAISE EXCEPTION 'First-NEW abort reservation transition changed its retained owner tuple'
+                USING ERRCODE = '23514',
+                      CONSTRAINT = 'gs_first_new_abort_reservation_immutable';
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+              FROM game_session_canonical_binding_transition transition
+              JOIN game_session_canonical_gameplay_binding_inventory candidate
+                ON candidate.binding_ref = transition.candidate_binding_ref
+             WHERE transition.transition_id = NEW.transition_id
+               AND transition.status = 'ABORTED'
+               AND transition.admission_lease_id IS NOT NULL
+               AND transition.admission_lease_kind = 'NEW_BINDING'
+               AND transition.expected_prior_binding_ref IS NULL
+               AND transition.expected_prior_binding_generation IS NULL
+               AND transition.admission_orphan_cleanup_id IS NOT NULL
+               AND transition.admission_orphan_cleanup_id <>
+                   '00000000-0000-0000-0000-000000000000'::uuid
+               AND transition.inventory_revision = NEW.inventory_revision
+               AND transition.issuer_reservation_id = NEW.reservation_id
+               AND transition.candidate_binding_ref = NEW.binding_ref
+               AND transition.candidate_binding_generation = NEW.binding_generation
+               AND transition.tenant_id = NEW.tenant_id
+               AND transition.playable_state_namespace_id = NEW.playable_state_namespace_id
+               AND transition.character_id = NEW.character_id
+               AND transition.candidate_account_index_fence = candidate.account_index_fence
+               AND candidate.lifecycle = 'PROVISIONAL'
+               AND candidate.inventory_revision = OLD.inventory_revision
+               AND candidate.transition_id = NEW.transition_id
+               AND candidate.issuer_reservation_id = NEW.reservation_id
+               AND candidate.account_id = NEW.account_id
+               AND candidate.tenant_id = NEW.tenant_id
+               AND candidate.playable_state_namespace_id = NEW.playable_state_namespace_id
+               AND candidate.character_id = NEW.character_id
+               AND candidate.game_instance_id = NEW.game_instance_id
+               AND candidate.runtime_game_instance_id = NEW.runtime_game_instance_id
+               AND candidate.session_id = NEW.session_id
+               AND candidate.region_id = NEW.region_id
+               AND candidate.region_epoch = NEW.region_epoch
+               AND candidate.issuer_id = NEW.issuer_id
+               AND candidate.issuer_auth_generation = NEW.issuer_auth_generation
+               AND candidate.issuer_index_layout_version = NEW.issuer_index_layout_version
+               AND candidate.issuer_index_partition_count = NEW.issuer_index_partition_count
+               AND candidate.issuer_index_partition_capacity = NEW.issuer_index_partition_capacity
+               AND candidate.binding_generation = NEW.binding_generation
+               AND candidate.binding_ref = NEW.binding_ref
+               AND candidate.account_index_fence = transition.candidate_account_index_fence
+        ) THEN
+            RAISE EXCEPTION 'Only an exact retained first-NEW Account abort may release its reservation'
+                USING ERRCODE = '23514',
+                      CONSTRAINT = 'gs_first_new_abort_reservation_source_required';
         END IF;
     END IF;
     RETURN NEW;
@@ -584,3 +740,5 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+
+-- [jooq ignore stop]

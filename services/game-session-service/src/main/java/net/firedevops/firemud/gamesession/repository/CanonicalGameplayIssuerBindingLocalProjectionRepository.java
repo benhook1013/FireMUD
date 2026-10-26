@@ -383,7 +383,13 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     }
     CurrentPhase phase =
         verifyCurrentSourceRows(
-            transaction, row, member, reservationRow, inventoryRow, transitionRow, issuerObligation);
+            transaction,
+            row,
+            member,
+            reservationRow,
+            inventoryRow,
+            transitionRow,
+            issuerObligation);
     requireAccountControlCurrent(transaction, row, member.owner().accountId());
     return new LocalEntry(
         operationId,
@@ -506,7 +512,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
           candidateLifecycle,
           reservationLifecycle,
           issuerStatus,
-          releaseOperationId);
+          null);
       bindingPresent = true;
       counted = true;
     } else if ("ABORTED".equals(transitionStatus)
@@ -514,17 +520,19 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         && "RELEASED".equals(reservationLifecycle)
         && "RELEASED".equals(issuerStatus)
         && releaseOperationId != null) {
-      var release = CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readProjection(
-          transaction,
-          operationRow,
-          member,
-          currentRevision,
-          transitionStatus,
-          candidateLifecycle,
-          reservationLifecycle,
-          issuerStatus,
-          releaseOperationId);
-      if (release == null) throw unavailable("Released issuer reservation lacks its durable exact successor");
+      var release =
+          CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readProjection(
+              transaction,
+              operationRow,
+              member,
+              currentRevision,
+              transitionStatus,
+              candidateLifecycle,
+              reservationLifecycle,
+              issuerStatus,
+              releaseOperationId);
+      if (release == null)
+        throw unavailable("Released issuer reservation lacks its durable exact successor");
       projectedOperationId = release.operationId();
       projectedBytes = release.exactMemberValueBytes();
       projectedMember = release.memberValue();
@@ -959,8 +967,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
           entries.stream().sorted(Comparator.comparing(LocalEntry::operationId)).toList()) {
         update(digest, entry.operationId().toString().getBytes(StandardCharsets.US_ASCII));
         update(
-            digest,
-            entry.registeredOperationId().toString().getBytes(StandardCharsets.US_ASCII));
+            digest, entry.registeredOperationId().toString().getBytes(StandardCharsets.US_ASCII));
         update(digest, entry.exactRegisteredMemberValueBytes());
         update(digest, entry.exactMemberValueBytes());
         update(digest, entry.transitionStatus().getBytes(StandardCharsets.US_ASCII));

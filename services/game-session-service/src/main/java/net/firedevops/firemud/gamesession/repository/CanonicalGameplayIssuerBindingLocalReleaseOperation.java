@@ -45,18 +45,22 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
       String physicalReadbackDigest,
       Status status) {
     this.abortSource = Objects.requireNonNull(abortSource, "Account-aborted source required");
-    this.originalOperation = Objects.requireNonNull(originalOperation, "Original SQL operation required");
+    this.originalOperation =
+        Objects.requireNonNull(originalOperation, "Original SQL operation required");
     this.operationId = requireNonNil(operationId, "operationId");
     this.operationFence = requirePositive(operationFence, "operationFence");
     this.localMemberGeneration = requirePositive(localMemberGeneration, "localMemberGeneration");
-    this.sourceInventoryRevision = requirePositive(sourceInventoryRevision, "sourceInventoryRevision");
+    this.sourceInventoryRevision =
+        requirePositive(sourceInventoryRevision, "sourceInventoryRevision");
     this.completionInventoryRevision =
         completionInventoryRevision == null
             ? null
             : requirePositive(completionInventoryRevision, "completionInventoryRevision");
     this.releasedMemberValue = Objects.requireNonNull(releasedMemberValue, "releasedMemberValue");
-    this.exactOriginalMemberValueBytes = copyBounded(exactOriginalMemberValueBytes, "original bytes");
-    this.exactReleasedMemberValueBytes = copyBounded(exactReleasedMemberValueBytes, "released bytes");
+    this.exactOriginalMemberValueBytes =
+        copyBounded(exactOriginalMemberValueBytes, "original bytes");
+    this.exactReleasedMemberValueBytes =
+        copyBounded(exactReleasedMemberValueBytes, "released bytes");
     this.exactPhysicalReadbackFieldSetBytes =
         exactPhysicalReadbackFieldSetBytes == null
             ? null
@@ -94,25 +98,38 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
 
     if (!abortSource.isAccountAborted()
         || abortSource.transition().status()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED
+            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
+                .Status.ABORTED
         || abortSource.candidate().lifecycle()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED
-        || !abortSource.transition().transitionId().equals(originalOperation.request().transitionId())
+            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                .Lifecycle.TERMINAL_UNRESOLVED
+        || !abortSource
+            .transition()
+            .transitionId()
+            .equals(originalOperation.request().transitionId())
         || !sourceReservation.reservationId().equals(original.reservation().reservationId())
         || !sourceReservation.transitionId().equals(original.reservation().transitionId())
         || !sourceReservation.owner().equals(original.owner())
         || !sourceReservation.bindingGeneration().equals(original.bindingGeneration())
         || !sourceReservation.reservationFence().equals(original.reservation().reservationFence())
-        || !sourceReservation.issuerCoverageOperationId().equals(original.reservation().issuerCoverageOperationId())
-        || !sourceReservation.issuerCoverageOperationFence().equals(original.reservation().issuerCoverageOperationFence())
+        || !sourceReservation
+            .issuerCoverageOperationId()
+            .equals(original.reservation().issuerCoverageOperationId())
+        || !sourceReservation
+            .issuerCoverageOperationFence()
+            .equals(original.reservation().issuerCoverageOperationFence())
         || !sourceReservation.coverageFence().equals(original.reservation().coverageFence())
-        || !sourceReservation.inventorySnapshotRevision().equals(original.reservation().inventorySnapshotRevision())
+        || !sourceReservation
+            .inventorySnapshotRevision()
+            .equals(original.reservation().inventorySnapshotRevision())
         || (status == Status.PENDING_PHYSICAL_PROOF
-            && (sourceReservation.lifecycle() != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
+            && (sourceReservation.lifecycle()
+                    != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
                 || !sourceReservation.inventoryRevision().equals(sourceInventoryRevision)
                 || this.completionInventoryRevision != null))
         || (status == Status.RELEASED
-            && (sourceReservation.lifecycle() != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED
+            && (sourceReservation.lifecycle()
+                    != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED
                 || this.completionInventoryRevision == null
                 || !sourceReservation.inventoryRevision().equals(this.completionInventoryRevision)
                 || this.completionInventoryRevision.compareTo(sourceInventoryRevision) <= 0))
@@ -121,8 +138,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
         || !localMemberGeneration.equals(releasedMemberValue.memberOperation().coverageGeneration())
         || !expectedReleased.equals(releasedMemberValue)
         || !Arrays.equals(
-            this.exactOriginalMemberValueBytes,
-            originalOperation.exactMemberValueBytes())
+            this.exactOriginalMemberValueBytes, originalOperation.exactMemberValueBytes())
         || !Arrays.equals(
             this.exactOriginalMemberValueBytes,
             CanonicalGameplayIssuerMemberV2Codec.encode(original))
@@ -133,12 +149,14 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
         || operationFence.compareTo(originalOperation.operationFence()) <= 0
         || localMemberGeneration.compareTo(originalOperation.localMemberGeneration()) <= 0
         || !operationFence.add(BigInteger.ONE).equals(localMemberGeneration)) {
-      throw new IllegalArgumentException("Release operation differs from its exact Account-aborted source");
+      throw new IllegalArgumentException(
+          "Release operation differs from its exact Account-aborted source");
     }
 
     if (status == Status.PENDING_PHYSICAL_PROOF) {
       if (this.exactPhysicalReadbackFieldSetBytes != null || physicalReadbackDigest != null) {
-        throw new IllegalArgumentException("Pending release cannot contain physical completion proof");
+        throw new IllegalArgumentException(
+            "Pending release cannot contain physical completion proof");
       }
     } else {
       if (this.exactPhysicalReadbackFieldSetBytes == null
@@ -146,8 +164,10 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
           || this.exactPhysicalReadbackFieldSetBytes.length > 17_825_792
           || physicalReadbackDigest == null
           || !physicalReadbackDigest.equals(
-              CanonicalGameplayIssuerMemberV2Codec.sha256(this.exactPhysicalReadbackFieldSetBytes))) {
-        throw new IllegalArgumentException("Released operation lacks its exact physical readback proof");
+              CanonicalGameplayIssuerMemberV2Codec.sha256(
+                  this.exactPhysicalReadbackFieldSetBytes))) {
+        throw new IllegalArgumentException(
+            "Released operation lacks its exact physical readback proof");
       }
       Map<String, byte[]> readback =
           CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
@@ -159,7 +179,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
           new String(releasedMemberValue.owner().bindingRef().bytes(), StandardCharsets.UTF_8);
       if (!Arrays.equals(readback.get(capacityField), this.exactReleasedMemberValueBytes)
           || readback.containsKey(bindingField)) {
-        throw new IllegalArgumentException("Released proof does not contain its exact terminal capacity postimage");
+        throw new IllegalArgumentException(
+            "Released proof does not contain its exact terminal capacity postimage");
       }
     }
   }
@@ -232,7 +253,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
 
   private static UUID requireNonNil(UUID value, String name) {
     Objects.requireNonNull(value, name);
-    if (value.equals(new UUID(0L, 0L))) throw new IllegalArgumentException(name + " must not be nil");
+    if (value.equals(new UUID(0L, 0L)))
+      throw new IllegalArgumentException(name + " must not be nil");
     return value;
   }
 

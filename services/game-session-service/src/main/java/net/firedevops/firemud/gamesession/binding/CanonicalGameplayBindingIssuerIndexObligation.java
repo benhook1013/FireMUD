@@ -20,7 +20,14 @@ public record CanonicalGameplayBindingIssuerIndexObligation(
       UUID reservationId,
       Status status,
       BigInteger inventoryRevision) {
-    this(transitionId, bindingRef, bindingGeneration, reservationId, status, inventoryRevision, null);
+    this(
+        transitionId,
+        bindingRef,
+        bindingGeneration,
+        reservationId,
+        status,
+        inventoryRevision,
+        null);
   }
 
   public CanonicalGameplayBindingIssuerIndexObligation {

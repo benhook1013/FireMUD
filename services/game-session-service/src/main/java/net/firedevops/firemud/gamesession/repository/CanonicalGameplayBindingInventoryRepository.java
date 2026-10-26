@@ -320,7 +320,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
         });
   }
 
-  /** Read-only package seam for the local issuer release owner inside its guarded SQL transaction. */
+  /**
+   * Read-only package seam for the local issuer release owner inside its guarded SQL transaction.
+   */
   static CanonicalGameplayAdmissionAbortSource readFirstNewAdmissionAbortSourceInTransaction(
       DSLContext transaction, UUID transitionId, boolean forUpdate) {
     Objects.requireNonNull(transaction, "transaction");
@@ -1767,16 +1769,18 @@ public final class CanonicalGameplayBindingInventoryRepository {
         throw conflict("Pending issuer release differs from its retained abort source revision");
       }
     } else {
+      Record releasedReservation =
+          transaction.fetchOne(
+              "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
+              transition.issuerReservationId());
       if (releaseOperationId == null
-          || !CanonicalIssuerPartitionReservation.Lifecycle.RELEASED.equals(
-              toReservation(
-                      transaction.fetchOne(
-                          "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
-                          transition.issuerReservationId()))
-                  .lifecycle())) {
+          || releasedReservation == null
+          || toReservation(releasedReservation).lifecycle()
+              != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) {
         throw conflict("Released issuer obligation lacks its exact terminal reservation");
       }
-      requireCompletedIssuerLocalRelease(transaction, transitionId, bindingRef, revision, releaseOperationId);
+      requireCompletedIssuerLocalRelease(
+          transaction, transitionId, bindingRef, revision, releaseOperationId);
     }
   }
 
@@ -1788,7 +1792,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
       UUID releaseOperationId) {
     Record release =
         transaction.fetchOne(
-            "SELECT * FROM " + ISSUER_LOCAL_RELEASE + " WHERE operation_id = ? AND transition_id = ?",
+            "SELECT * FROM "
+                + ISSUER_LOCAL_RELEASE
+                + " WHERE operation_id = ? AND transition_id = ?",
             releaseOperationId,
             transitionId);
     if (release == null
@@ -1825,7 +1831,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !Objects.equals(
             original.get("reservation_id", UUID.class), release.get("reservation_id", UUID.class))
         || !Arrays.equals(original.get("binding_ref", byte[].class), bindingRef)) {
-      throw conflict("Released issuer receipt no longer retains its immutable original V1034 operation");
+      throw conflict(
+          "Released issuer receipt no longer retains its immutable original V1034 operation");
     }
     CanonicalGameplayIssuerMemberV2Value originalValue;
     CanonicalGameplayIssuerMemberV2Value releasedValue;
@@ -1878,7 +1885,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
             releasedValue.reservation().reservationId());
     String memberField = new String(bindingRef, java.nio.charset.StandardCharsets.UTF_8);
-    if (!Arrays.equals(readback.get(capacityField), releasedBytes) || readback.containsKey(memberField)) {
+    if (!Arrays.equals(readback.get(capacityField), releasedBytes)
+        || readback.containsKey(memberField)) {
       throw conflict("Released issuer receipt lacks its exact positive terminal capacity field");
     }
   }
