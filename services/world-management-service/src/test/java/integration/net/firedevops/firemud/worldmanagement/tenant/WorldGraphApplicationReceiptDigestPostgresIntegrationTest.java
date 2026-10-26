@@ -316,10 +316,12 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       DSLContext dsl, String schema) {
     assertThat(triggerMetadata(dsl, schema, "world_instance"))
         .anySatisfy(
-            trigger ->
-                assertThat(trigger)
-                    .contains("aaa_world_canonical_initial_admission_hold_lifecycle")
-                    .contains("world_guard_canonical_initial_admission_hold_lifecycle"));
+            trigger -> {
+              assertThat(trigger)
+                  .contains("aaa_world_canonical_initial_admission_hold_lifecycle")
+                  .contains("world_guard_canonical_initial_admission_hold_lifecycle");
+              assertThat(trigger.split(":", 8)[4]).isIn("O", "A");
+            });
   }
 
   private static void cloneProbeTables(DSLContext dsl, String sourceSchema, String probeSchema) {

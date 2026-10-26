@@ -10,14 +10,18 @@ import static org.mockito.Mockito.when;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.account.v1.AcquireStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.account.v1.AcquireStartSessionAdmissionProtectionResponse;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.ImmutableBindingConflictException;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.OriginalAuthorizationDeniedException;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -104,6 +108,34 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
   }
 
   @Test
+  void mapsImmutableBindingConflictToFailedPrecondition() {
+    assertExpectedOwnerFailureMapsToFailedPrecondition(
+        new ImmutableBindingConflictException("private binding detail"));
+  }
+
+  @Test
+  void mapsOriginalAuthorizationDenialToFailedPrecondition() {
+    assertExpectedOwnerFailureMapsToFailedPrecondition(
+        new OriginalAuthorizationDeniedException("private authorization detail"));
+  }
+
+  @Test
+  void mapsLockNotAvailableSqlStateToUnavailable() {
+    assertSqlFailureMapsTo(
+        new DataAccessException(
+            "private database detail", new SQLException("private SQL detail", "55P03")),
+        Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void mapsUnexpectedSqlStateToInternal() {
+    assertSqlFailureMapsTo(
+        new DataAccessException(
+            "private database detail", new SQLException("private SQL detail", "23505")),
+        Status.Code.INTERNAL);
+  }
+
+  @Test
   void sanitizesUnexpectedOwnerIllegalStateAsInternal() {
     AccountStartSessionAdmissionProtectionRequest request =
         AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE);
@@ -141,6 +173,52 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
         .run(() -> service.acquireStartSessionAdmissionProtection(request, observer));
     assertThat(observer.code()).isEqualTo(expected);
+  }
+
+  private void assertExpectedOwnerFailureMapsToFailedPrecondition(RuntimeException failure) {
+    AccountStartSessionAdmissionProtectionRequest request =
+        AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE);
+    when(owner.acquire(any())).thenThrow(failure);
+    var response = new Capture();
+
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
+        .run(
+            () ->
+                service.acquireStartSessionAdmissionProtection(
+                    AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
+                    response));
+
+    assertThat(response.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(response.errorDescription)
+        .isEqualTo("Account admission-protection acquisition denied or unavailable")
+        .doesNotContain(failure.getMessage());
+    assertThat(response.value).isNull();
+    assertThat(response.completed).isFalse();
+    verify(owner).acquire(any());
+  }
+
+  private void assertSqlFailureMapsTo(RuntimeException failure, Status.Code expected) {
+    AccountStartSessionAdmissionProtectionRequest request =
+        AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE);
+    when(owner.acquire(any())).thenThrow(failure);
+    var response = new Capture();
+
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
+        .run(
+            () ->
+                service.acquireStartSessionAdmissionProtection(
+                    AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
+                    response));
+
+    assertThat(response.code()).isEqualTo(expected);
+    assertThat(response.errorDescription)
+        .isEqualTo("Account admission-protection acquisition denied or unavailable")
+        .doesNotContain("private database detail", "private SQL detail");
+    assertThat(response.value).isNull();
+    assertThat(response.completed).isFalse();
+    verify(owner).acquire(any());
   }
 
   private static GrpcPeerIdentity peer(String namespace, String service) {

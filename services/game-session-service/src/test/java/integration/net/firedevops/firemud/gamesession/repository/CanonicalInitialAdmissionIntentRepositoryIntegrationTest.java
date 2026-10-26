@@ -73,6 +73,11 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   private static final String CONTROL_PLANE_REQUEST_ID = "canonical-intent-launch-1";
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final String SHARED_SAGA_MIGRATION_LOCATION =
+      "filesystem:"
+          + Path.of("../common-saga/src/main/resources/db/migration/saga")
+              .toAbsolutePath()
+              .normalize();
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -807,7 +812,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
             .schemas(schema)
             .defaultSchema(schema)
             .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(MIGRATION_LOCATION, SHARED_SAGA_MIGRATION_LOCATION);
     if (targetVersion != null) {
       configuration.target(targetVersion);
     }
@@ -836,6 +842,10 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
 
     OwnerTarget seedStarting(Duration ownerLease) {
       return seed(false, ownerLease);
+    }
+
+    OwnerTarget seed(Duration ownerLease) {
+      return seed(true, ownerLease);
     }
 
     private OwnerTarget seed(boolean completeRunning) {
@@ -893,14 +903,17 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     }
 
     void migrateLatest() {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      Flyway flyway =
+          Flyway.configure()
+              .dataSource(dataSource)
+              .schemas(schema)
+              .defaultSchema(schema)
+              .table("flyway_schema_history")
+              .placeholders(java.util.Map.of("serviceSchema", schema))
+              .locations(MIGRATION_LOCATION, SHARED_SAGA_MIGRATION_LOCATION)
+              .load();
+      flyway.migrate();
+      flyway.validate();
     }
 
     private UUID createTestOnlyFreshMappingAndLaunch(

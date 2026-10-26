@@ -1503,8 +1503,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
     if (value <= 0) throw new IllegalArgumentException(field + " must be positive");
   }
 
-  private static IllegalStateException denied(String reason) {
-    return new IllegalStateException(reason);
+  private static OriginalAuthorizationDeniedException denied(String reason) {
+    return new OriginalAuthorizationDeniedException(reason);
   }
 
   private record IssuePreparation(
@@ -1752,6 +1752,12 @@ public final class AccountStartSessionOperatorAuthorizationService {
   public static final class NotFoundException extends RuntimeException {
     public NotFoundException() {
       super("No original StartSession operator authorization exists");
+    }
+  }
+
+  public static final class OriginalAuthorizationDeniedException extends IllegalStateException {
+    public OriginalAuthorizationDeniedException(String message) {
+      super(message);
     }
   }
 

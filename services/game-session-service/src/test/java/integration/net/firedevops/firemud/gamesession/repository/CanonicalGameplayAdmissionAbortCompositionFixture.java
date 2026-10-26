@@ -48,6 +48,7 @@ import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBinding
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -62,6 +63,16 @@ import org.testcontainers.containers.GenericContainer;
  * replaces the GS reverse decision read.
  */
 public final class CanonicalGameplayAdmissionAbortCompositionFixture implements AutoCloseable {
+  private static final String SERVICE_MIGRATIONS =
+      "filesystem:"
+          + Path.of("../game-session-service/src/main/resources/db/migration")
+              .toAbsolutePath()
+              .normalize();
+  private static final String SHARED_SAGA_MIGRATIONS =
+      "filesystem:"
+          + Path.of("../common-saga/src/main/resources/db/migration/saga")
+              .toAbsolutePath()
+              .normalize();
   private final DriverManagerDataSource dataSource;
   private final String schema =
       "gs_abort_composition_" + UUID.randomUUID().toString().replace("-", "");
@@ -102,6 +113,16 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       Candidate accountCandidate,
       RedisClient issuerRedisClient,
       int seedBootstrapMemberCount) {
+    this(accountDataSource, accountCandidate, issuerRedisClient, seedBootstrapMemberCount, null);
+  }
+
+  /** Starts from a retained migration frontier when a composition test must upgrade live rows. */
+  public CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget) {
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
@@ -114,18 +135,15 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             .replaceAll("currentSchema=[^&]+", "currentSchema=" + schema));
     dataSource.setUsername(accountDataSource.getUsername());
     dataSource.setPassword(accountDataSource.getPassword());
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:"
-                + Path.of("../game-session-service/src/main/resources/db/migration")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS);
+    if (migrationTarget != null) migration.target(migrationTarget);
+    migration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     var runtime =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
@@ -522,6 +540,86 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .get(0, String.class);
   }
 
+  /** Preserves the retained terminal source and every proof row across a Flyway upgrade. */
+  public String retainedFirstNewAbortRowsImage() {
+    return dsl.fetchSingle(
+            "WITH target AS (SELECT * FROM game_session_canonical_binding_transition"
+                + " WHERE transition_id = ?)"
+                + " SELECT jsonb_build_object("
+                + "'transition', (SELECT to_jsonb(target) FROM target),"
+                + " 'candidate', (SELECT to_jsonb(candidate)"
+                + " FROM game_session_canonical_gameplay_binding_inventory candidate"
+                + " JOIN target ON candidate.binding_ref = target.candidate_binding_ref),"
+                + " 'reservation', (SELECT to_jsonb(reservation)"
+                + " FROM game_session_canonical_issuer_partition_reservation reservation"
+                + " JOIN target ON reservation.reservation_id = target.issuer_reservation_id),"
+                + " 'account_obligations', (SELECT coalesce(jsonb_agg(to_jsonb(obligation)"
+                + " ORDER BY obligation.obligation_ordinal), '[]'::jsonb)"
+                + " FROM game_session_canonical_binding_account_index_obligation obligation"
+                + " JOIN target ON obligation.transition_id = target.transition_id),"
+                + " 'issuer_obligations', (SELECT coalesce(jsonb_agg(to_jsonb(obligation)"
+                + " ORDER BY obligation.binding_ref), '[]'::jsonb)"
+                + " FROM game_session_canonical_binding_issuer_index_obligation obligation"
+                + " JOIN target ON obligation.transition_id = target.transition_id),"
+                + " 'region_obligations', (SELECT coalesce(jsonb_agg(to_jsonb(obligation)"
+                + " ORDER BY obligation.region_id), '[]'::jsonb)"
+                + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                + " JOIN target ON obligation.transition_id = target.transition_id),"
+                + " 'account_member_repairs', (SELECT coalesce(jsonb_agg(to_jsonb(repair)"
+                + " ORDER BY repair.operation_id), '[]'::jsonb)"
+                + " FROM game_session_canonical_account_member_repair_operation repair"
+                + " JOIN target ON repair.transition_id = target.transition_id))::text"
+                + " FROM target",
+            transitionId)
+        .get(0, String.class);
+  }
+
+  /** Captures exact existing Flyway rows so a forward upgrade can prove append-only history. */
+  public List<String> migrationHistoryImage() {
+    return dsl.fetch(
+            "SELECT to_jsonb(history_row)::text AS row_json FROM flyway_schema_history"
+                + " history_row ORDER BY installed_rank")
+        .getValues("row_json", String.class);
+  }
+
+  /** Applies pending Game Session migrations with Flyway's default version ordering. */
+  public int upgradeWithDefaultGameSessionMigrations(MigrationVersion migrationTarget) {
+    Flyway flyway =
+        Flyway.configure()
+            .target(Objects.requireNonNull(migrationTarget, "migrationTarget"))
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS)
+            .load();
+    var result = flyway.migrate();
+    flyway.validate();
+    return result.migrationsExecuted;
+  }
+
+  /**
+   * Exercises the deferred initial-abort SQL guard after the actual GS abort owner has written its
+   * source, then advances Account control before the enclosing transaction commits.
+   */
+  public void recordOriginalAccountAbortThenAdvanceControlBeforeCommit() {
+    var source = repository.readFirstNewAdmissionAbortSource(transitionId);
+    dsl.transaction(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          var transactionRepository = new CanonicalGameplayBindingInventoryRepository(transaction);
+          transactionRepository.recordFirstNewAccountAbort(
+              source,
+              UUID.nameUUIDFromBytes(
+                  "original-controller-stale-control-cleanup".getBytes(StandardCharsets.UTF_8)));
+          new CanonicalGameplayAccountAdmissionBarrierRepository(transaction)
+              .beginFenceIntent(
+                  identity.accountId(),
+                  UUID.nameUUIDFromBytes(
+                      "original-controller-stale-control-intent".getBytes(StandardCharsets.UTF_8)));
+        });
+  }
+
   /** Independent read under the same real GS role; retained ACK never implies physical removal. */
   public boolean hasExactAccountMember() {
     var acknowledgement =
@@ -678,6 +776,44 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .projectAndRead(operation);
   }
 
+  /** Advances the real account-wide control through a later acquisition intent. */
+  public void beginAccountAcquisitionIntent(String seed) {
+    new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
+        .beginFenceIntent(
+            identity.accountId(),
+            UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)));
+  }
+
+  /** Independently snapshots the actual issuer partition for no-write assertions. */
+  public byte[] issuerPartitionFieldSetBytes() {
+    Map<String, byte[]> fields = new LinkedHashMap<>();
+    try (var connection =
+        issuerRedisClient.connect(io.lettuce.core.codec.ByteArrayCodec.INSTANCE)) {
+      connection
+          .sync()
+          .hgetall(issuerPartitionKey())
+          .forEach((field, value) -> fields.put(new String(field, StandardCharsets.UTF_8), value));
+    }
+    return CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(fields);
+  }
+
+  /** Reads both exact physical indexes for another real issuer member. */
+  public boolean hasExactOtherControllerMember(String seed) {
+    var operation = otherOperation(seed);
+    byte[] key = issuerPartitionKey();
+    byte[] expected = operation.exactMemberValueBytes();
+    byte[] capacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                operation.reservation().reservationId())
+            .getBytes(StandardCharsets.US_ASCII);
+    byte[] bindingField = operation.memberValue().owner().bindingRef().bytes();
+    try (var connection =
+        issuerRedisClient.connect(io.lettuce.core.codec.ByteArrayCodec.INSTANCE)) {
+      return Arrays.equals(connection.sync().hget(key, capacityField), expected)
+          && Arrays.equals(connection.sync().hget(key, bindingField), expected);
+    }
+  }
+
   /** Publishes a controlled Account lease through the actual SQL and Redis provisional owners. */
   public void publishOtherControllerNew(String seed) {
     var operation = otherOperation(seed);
@@ -751,6 +887,19 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource),
             issuerSource)
         .retireAndRead(operation);
+  }
+
+  /** Public test bridge for the otherwise package-private retirement readback outcome. */
+  public long retireIssuerCapacityOutcome(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return retireIssuerCapacity(operation).scriptOutcome();
+  }
+
+  /** Public test bridge for the otherwise package-private retirement operation status. */
+  public boolean isIssuerRetirementComplete(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return operation.status()
+        == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED;
   }
 
   /** Adds the retirement script only for callers that exercise the new owner. */

@@ -514,9 +514,15 @@ public class AccountStartSessionAdmissionProtectionRepository {
         });
   }
 
-  private static IllegalStateException conflict() {
-    return new IllegalStateException(
+  private static ImmutableBindingConflictException conflict() {
+    return new ImmutableBindingConflictException(
         "Original StartSession admission protection conflicts with its immutable binding");
+  }
+
+  public static final class ImmutableBindingConflictException extends IllegalStateException {
+    public ImmutableBindingConflictException(String message) {
+      super(message);
+    }
   }
 
   private static IllegalStateException unavailable() {

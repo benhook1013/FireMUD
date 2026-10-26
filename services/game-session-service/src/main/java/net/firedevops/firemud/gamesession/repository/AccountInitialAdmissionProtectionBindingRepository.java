@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import org.jooq.DSLContext;
@@ -32,12 +33,26 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
 
   /**
    * Locks and validates the actual retained intent, launch tuple, and original owner attempt that
-   * one Account protection value names. V1039 requires the protected owner reservation to persist
-   * these complete canonical bytes before returning PENDING.
+   * one Account protection value names. Fresh reservations, commit, and runtime completion also
+   * require the original owner phase and lease to remain current.
    */
   ValidatedSource requireExactSource(
       CanonicalInitialAdmissionRequest admission,
       AccountStartSessionAdmissionProtectionEvidence protection) {
+    return requireExactSource(admission, protection, true);
+  }
+
+  /** Validates the unchanged source binding for abort without requiring current phase or lease. */
+  ValidatedSource requireExactSourceForProtectedAbort(
+      CanonicalInitialAdmissionRequest admission,
+      AccountStartSessionAdmissionProtectionEvidence protection) {
+    return requireExactSource(admission, protection, false);
+  }
+
+  private ValidatedSource requireExactSource(
+      CanonicalInitialAdmissionRequest admission,
+      AccountStartSessionAdmissionProtectionEvidence protection,
+      boolean requireCurrentPendingOwner) {
     Objects.requireNonNull(admission, "admission");
     Objects.requireNonNull(protection, "protection");
     if (!TransactionSynchronizationManager.isActualTransactionActive()
@@ -46,32 +61,8 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
           "Account-protected initial admission requires a writable owner transaction");
     }
 
+    requireProtectionRequestBindsAdmission(admission, protection.request());
     var protectionRequest = protection.request();
-    var hold = protectionRequest.worldAdmissionHoldIdentity();
-    var world = hold.request();
-    CanonicalInitialAdmissionRequest protectedAdmission =
-        new CanonicalInitialAdmissionRequest(
-            world.targetNamespace(),
-            world.canonicalTenantId(),
-            world.worldSlug(),
-            world.realmId(),
-            world.playableStateNamespaceId(),
-            world.playableStateScope(),
-            world.canonicalGameInstanceId(),
-            world.canonicalVersionId(),
-            world.activeLifecycleEpoch(),
-            world.expectedCatalogRevision(),
-            CanonicalInitialAdmissionRequest.OriginKind.valueOf(
-                world.initialAdmissionOrigin().name()),
-            world.expectedPriorPointerVersion(),
-            world.initialAdmissionRequestId(),
-            world.initialAdmissionRequestDigest(),
-            hold.holdId(),
-            hold.holdFence(),
-            hold.holdBindingDigest());
-    if (!admission.equals(protectedAdmission)) {
-      throw unavailable("Account protection names a different canonical admission request");
-    }
 
     Record row =
         dsl.fetchOne(
@@ -85,6 +76,7 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
                 + "o.owner_attempt_id AS retained_attempt, "
                 + "o.owner_mutation_id AS retained_mutation, o.owner_fence AS retained_fence, "
                 + "o.lease_expires_at AS retained_lease, o.phase_state AS original_phase, "
+                + "o.lease_expires_at > clock_timestamp() AS retained_lease_live, "
                 + "o.canonical_tenant_id AS original_tenant, "
                 + "o.control_plane_request_id AS original_request "
                 + "FROM game_session_canonical_initial_admission_intent i "
@@ -123,6 +115,16 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
           "Account protection has no exact retained intent, launch, and original owner join");
     }
 
+    return validateRetainedSource(admission, protection, row, requireCurrentPendingOwner);
+  }
+
+  private ValidatedSource validateRetainedSource(
+      CanonicalInitialAdmissionRequest admission,
+      AccountStartSessionAdmissionProtectionEvidence protection,
+      Record row,
+      boolean requireCurrentPendingOwner) {
+    var protectionRequest = protection.request();
+    var hold = protectionRequest.worldAdmissionHoldIdentity();
     byte[] originalTupleBytes = required(row, "original_tuple", byte[].class);
     StartSessionPostAuthorizationExecutionTuple original =
         StartSessionPostAuthorizationExecutionTuple.decode(originalTupleBytes);
@@ -146,7 +148,8 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
             .equals(required(row, "retained_mutation", UUID.class))
         || protectionRequest.gameSessionOwnerFence() != required(row, "retained_fence", Long.class)
         || !protectionRequest.originalLeaseExpiresAt().equals(retainedLease)
-        || !"OWNER_EXECUTION_PENDING".equals(required(row, "original_phase", String.class))
+        || (requireCurrentPendingOwner
+            && !"OWNER_EXECUTION_PENDING".equals(required(row, "original_phase", String.class)))
         || !admission.canonicalTenantId().equals(required(row, "original_tenant", UUID.class))
         || !original
             .controlPlaneRequestId()
@@ -157,7 +160,8 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
       throw unavailable(
           "Account protection differs from the locked original tuple, projection, owner fence, lease, or World hold");
     }
-    if (!retainedLease.isAfter(Instant.now())) {
+    if (requireCurrentPendingOwner
+        && !Boolean.TRUE.equals(required(row, "retained_lease_live", Boolean.class))) {
       throw unavailable("Account protection original owner lease is no longer live");
     }
     return new ValidatedSource(
@@ -167,6 +171,36 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
         protectionRequest.gameSessionOwnerMutationId(),
         protectionRequest.gameSessionOwnerFence(),
         protection.canonicalBytes());
+  }
+
+  private static void requireProtectionRequestBindsAdmission(
+      CanonicalInitialAdmissionRequest admission,
+      AccountStartSessionAdmissionProtectionRequest protectionRequest) {
+    var hold = protectionRequest.worldAdmissionHoldIdentity();
+    var world = hold.request();
+    CanonicalInitialAdmissionRequest protectedAdmission =
+        new CanonicalInitialAdmissionRequest(
+            world.targetNamespace(),
+            world.canonicalTenantId(),
+            world.worldSlug(),
+            world.realmId(),
+            world.playableStateNamespaceId(),
+            world.playableStateScope(),
+            world.canonicalGameInstanceId(),
+            world.canonicalVersionId(),
+            world.activeLifecycleEpoch(),
+            world.expectedCatalogRevision(),
+            CanonicalInitialAdmissionRequest.OriginKind.valueOf(
+                world.initialAdmissionOrigin().name()),
+            world.expectedPriorPointerVersion(),
+            world.initialAdmissionRequestId(),
+            world.initialAdmissionRequestDigest(),
+            hold.holdId(),
+            hold.holdFence(),
+            hold.holdBindingDigest());
+    if (!admission.equals(protectedAdmission)) {
+      throw unavailable("Account protection names a different canonical admission request");
+    }
   }
 
   /** Locks the full live source and its exact PENDING reservation for Human runtime completion. */
@@ -196,9 +230,99 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
                 + "WHERE target_namespace = ? AND initial_admission_request_id = ? FOR UPDATE",
             namespace,
             initialAdmissionRequestId);
+    if (row == null) {
+      throw unavailable("PENDING admission reservation has no retained Account protection");
+    }
+    requireExactPendingReservationRow(row, protection);
+  }
+
+  /** Reads only the exact retained PENDING protection for a protected abort retry. */
+  public AccountStartSessionAdmissionProtectionEvidence readPendingProtection(
+      CanonicalInitialAdmissionRequest admission,
+      AccountStartSessionAdmissionProtectionRequest expectedProtectionRequest) {
+    Objects.requireNonNull(admission, "admission");
+    Objects.requireNonNull(expectedProtectionRequest, "expectedProtectionRequest");
+    requireProtectionRequestBindsAdmission(admission, expectedProtectionRequest);
+
+    Record row =
+        dsl.fetchOne(
+            "SELECT a.*, i.state AS intent_state, i.terminal_at AS intent_terminal, "
+                + "i.hold_identity_bytes AS intent_hold, "
+                + "i.canonical_hold_request_bytes AS intent_request, "
+                + "i.original_start_session_tuple AS intent_tuple, "
+                + "i.control_plane_request_id AS intent_original_request, "
+                + "l.original_start_session_tuple AS launch_tuple, "
+                + "o.post_authorization_execution_tuple AS original_tuple, "
+                + "o.account_redemption_projection AS original_projection, "
+                + "o.owner_attempt_id AS retained_attempt, "
+                + "o.owner_mutation_id AS retained_mutation, o.owner_fence AS retained_fence, "
+                + "o.lease_expires_at AS retained_lease, o.phase_state AS original_phase, "
+                + "o.canonical_tenant_id AS original_tenant, "
+                + "o.control_plane_request_id AS original_request "
+                + "FROM game_session_canonical_initial_admission_attempt a "
+                + "LEFT JOIN game_session_canonical_initial_admission_intent i "
+                + "ON i.target_namespace = a.target_namespace "
+                + "AND i.initial_admission_request_id = a.initial_admission_request_id "
+                + "AND i.request_digest = a.request_digest "
+                + "AND i.canonical_tenant_id = a.canonical_tenant_id "
+                + "AND i.world_slug = a.world_slug AND i.realm_id = a.realm_id "
+                + "AND i.playable_state_namespace_id = a.playable_state_namespace_id "
+                + "AND i.playable_state_scope = a.playable_state_scope "
+                + "AND i.canonical_game_instance_id = a.canonical_game_instance_id "
+                + "AND i.canonical_version_id = a.canonical_version_id "
+                + "AND i.game_session_tenant_id = a.game_session_tenant_id "
+                + "AND i.game_instance_id = a.game_instance_id "
+                + "AND i.runtime_version_id = a.runtime_version_id "
+                + "AND i.catalog_revision = a.expected_catalog_revision "
+                + "AND i.terminal_at IS NOT DISTINCT FROM a.terminal_at "
+                + "LEFT JOIN game_session_start_session_operator_attempt o "
+                + "ON o.target_namespace = a.target_namespace "
+                + "AND o.owner_attempt_id = a.original_owner_attempt_id "
+                + "LEFT JOIN game_session_canonical_instance_launch l "
+                + "ON l.target_namespace = a.target_namespace "
+                + "AND l.control_plane_request_id = i.control_plane_request_id "
+                + "AND l.canonical_tenant_id = a.canonical_tenant_id "
+                + "AND l.canonical_realm_id = a.realm_id "
+                + "AND l.game_instance_uuid = a.canonical_game_instance_id "
+                + "AND l.game_session_tenant_id = a.game_session_tenant_id "
+                + "AND l.game_instance_id = a.game_instance_id "
+                + "WHERE a.target_namespace = ? AND a.initial_admission_request_id = ?",
+            admission.targetNamespace(),
+            admission.initialAdmissionRequestId());
+    if (row == null) {
+      throw unavailable("Exact PENDING admission protection is unavailable");
+    }
+
+    AccountStartSessionAdmissionProtectionEvidence protection =
+        AccountStartSessionAdmissionProtectionEvidence.decode(
+            required(row, "account_protection_evidence_bytes", byte[].class));
+    if (!Arrays.equals(
+        protection.request().canonicalBytes(), expectedProtectionRequest.canonicalBytes())) {
+      throw unavailable("PENDING admission retains a different original protection request");
+    }
+    if (!admissionFromAttemptRecord(row).equals(admission)) {
+      throw unavailable("PENDING admission row differs from the exact requested operation");
+    }
+    if (!"HOLD_ATTACHED".equals(required(row, "intent_state", String.class))
+        || row.get("intent_terminal", OffsetDateTime.class) != null
+        || row.get("terminal_at", OffsetDateTime.class) != null
+        || row.get("pointer_id") != null
+        || row.get("pointer_version") != null
+        || row.get("audit_event_id") != null
+        || row.get("abort_reason") != null
+        || row.get("commit_proof_digest") != null
+        || row.get("abort_proof_digest") != null) {
+      throw unavailable("Admission is not the exact nonterminal protected PENDING reservation");
+    }
+    validateRetainedSource(admission, protection, row, false);
+    requireExactPendingReservationRow(row, protection);
+    return protection;
+  }
+
+  private static void requireExactPendingReservationRow(
+      Record row, AccountStartSessionAdmissionProtectionEvidence protection) {
     var request = protection.request();
-    if (row == null
-        || !"PENDING".equals(row.get("status", String.class))
+    if (!"PENDING".equals(row.get("status", String.class))
         || !Integer.valueOf(1).equals(row.get("account_protection_evidence_version", Integer.class))
         || !protection.accountProtectionId().equals(row.get("account_protection_id", UUID.class))
         || protection.accountProtectionFence()
@@ -216,6 +340,28 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
       throw unavailable(
           "PENDING admission reservation retains different Account protection identity, fences, or bytes");
     }
+  }
+
+  private static CanonicalInitialAdmissionRequest admissionFromAttemptRecord(Record row) {
+    return new CanonicalInitialAdmissionRequest(
+        required(row, "target_namespace", String.class),
+        required(row, "canonical_tenant_id", UUID.class),
+        required(row, "world_slug", String.class),
+        required(row, "realm_id", UUID.class),
+        required(row, "playable_state_namespace_id", UUID.class),
+        required(row, "playable_state_scope", String.class),
+        required(row, "canonical_game_instance_id", UUID.class),
+        required(row, "canonical_version_id", UUID.class),
+        required(row, "active_lifecycle_epoch", Long.class),
+        required(row, "expected_catalog_revision", Long.class),
+        CanonicalInitialAdmissionRequest.OriginKind.valueOf(
+            required(row, "origin_kind", String.class)),
+        row.get("expected_prior_pointer_version", Long.class),
+        required(row, "initial_admission_request_id", String.class),
+        required(row, "request_digest", String.class),
+        required(row, "hold_id", UUID.class),
+        required(row, "hold_fence", UUID.class),
+        required(row, "hold_binding_digest", String.class));
   }
 
   /**

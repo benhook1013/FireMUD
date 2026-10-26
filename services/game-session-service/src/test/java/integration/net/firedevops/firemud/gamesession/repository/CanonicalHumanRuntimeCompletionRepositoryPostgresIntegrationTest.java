@@ -157,7 +157,9 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
   void worldFailureLeavesProtectedAttemptPendingUntilExactExplicitAbort() throws Exception {
     var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
     try {
-      var prepared = prepareStarting(harness, "protected-coordinator-world-failure", 1161);
+      var prepared =
+          prepareStarting(
+              harness, "protected-coordinator-world-failure", 1161, Duration.ofSeconds(5));
       var accountRequest = prepared.protection().request();
       var acquisitionCalls = new AtomicInteger();
       // Controlled Account receipt; the World verifier below deliberately reports an outage.
@@ -197,8 +199,15 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
           request -> {
             throw new AssertionError("explicit abort must not need World readback");
           };
+      awaitOriginalLeaseExpiration(harness, prepared);
+      var retryAcquisitionCalls = new AtomicInteger();
+      AccountStartSessionAdmissionProtectionAcquisitionClient unavailableAccount =
+          request -> {
+            retryAcquisitionCalls.incrementAndGet();
+            throw new IllegalStateException("controlled Account acquisition outage");
+          };
       var abortCoordinator =
-          coordinator(harness, admissionRepository(harness), accountClient, unusedWorld);
+          coordinator(harness, admissionRepository(harness), unavailableAccount, unusedWorld);
       var aborted =
           abortCoordinator.abort(prepared.request(), accountRequest, "explicit caller abort");
       assertThat(aborted.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
@@ -206,24 +215,28 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       assertThat(attemptStatus(harness, prepared.request())).isEqualTo("ABORTED");
       assertThat(runtime(harness, prepared).get("status", String.class)).isEqualTo("STARTING");
       assertNoAdmissionEffects(harness, prepared.request());
-      assertThat(acquisitionCalls).hasValue(2);
+      assertThat(acquisitionCalls).hasValue(1);
+      assertThat(retryAcquisitionCalls).hasValue(0);
 
       assertThat(
               abortCoordinator.abort(prepared.request(), accountRequest, "explicit caller abort"))
           .isEqualTo(aborted);
-      assertThat(acquisitionCalls).hasValue(2);
+      assertThat(acquisitionCalls).hasValue(1);
+      assertThat(retryAcquisitionCalls).hasValue(0);
       assertThatThrownBy(
               () ->
                   abortCoordinator.abort(
                       prepared.request(), accountRequest, "different abort reason"))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class);
-      assertThat(acquisitionCalls).hasValue(2);
+      assertThat(acquisitionCalls).hasValue(1);
+      assertThat(retryAcquisitionCalls).hasValue(0);
       assertThatThrownBy(() -> abortCoordinator.bind(prepared.request(), accountRequest))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("cannot later commit");
-      assertThat(acquisitionCalls).hasValue(2);
+      assertThat(acquisitionCalls).hasValue(1);
+      assertThat(retryAcquisitionCalls).hasValue(0);
       assertNoAdmissionEffects(harness, prepared.request());
     } finally {
       harness.close();

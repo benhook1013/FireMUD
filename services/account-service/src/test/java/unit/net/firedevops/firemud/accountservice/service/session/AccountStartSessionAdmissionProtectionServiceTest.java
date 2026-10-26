@@ -313,6 +313,34 @@ class AccountStartSessionAdmissionProtectionServiceTest {
                         fixture.protection().accountProtectionFence())));
     verify(h.repository, never()).settleExact(any());
 
+    for (RuntimeException malformed :
+        List.of(
+            new IllegalArgumentException("malformed direct owner read"),
+            new IllegalStateException("malformed decoded owner read"))) {
+      var invalid = new SettlementHarness();
+      when(invalid.repository.findHistoricalExact(
+              fixture.protection().accountProtectionId(),
+              fixture.protection().accountProtectionFence()))
+          .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 89L)));
+      when(invalid.repository.findSettlementExact(
+              fixture.protection().accountProtectionId(),
+              fixture.protection().accountProtectionFence()))
+          .thenReturn(Optional.empty());
+      doThrow(malformed).when(invalid.client).read(any());
+      var failure =
+          statusFailure(
+              () ->
+                  withGameSessionPeer(
+                      () ->
+                          invalid.service.settle(
+                              fixture.protection().accountProtectionId(),
+                              fixture.protection().accountProtectionFence())));
+      assertThat(Status.fromThrowable(failure).getCode())
+          .isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(failure.getCause()).isSameAs(malformed);
+      verify(invalid.repository, never()).settleExact(any());
+    }
+
     for (Status.Code code : Status.Code.values()) {
       var dependency = new SettlementHarness();
       when(dependency.repository.findHistoricalExact(
