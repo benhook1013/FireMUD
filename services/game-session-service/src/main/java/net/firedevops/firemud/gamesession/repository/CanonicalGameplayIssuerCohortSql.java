@@ -41,7 +41,18 @@ final class CanonicalGameplayIssuerCohortSql {
           + " WHERE o.inventory_revision <= ?"
           + " UNION ALL SELECT 'REGION_OBLIGATION' AS source_kind,"
           + " g.transition_id::text AS source_key, g.inventory_revision AS source_revision,"
-          + " to_jsonb(g)::text AS source_row_json"
+          // V1042's untouched bridge extension is absence-equivalent to the old row shape.
+          // Its CHECK makes every extension field NULL until a real bridge operation exists.
+          // Once materialized, capture the entire bridge source, including all readback evidence.
+          + " CASE WHEN to_jsonb(g)->'bridge_operation_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(g) - ARRAY['bridge_operation_id', 'bridge_preimage_state',"
+          + " 'runtime_entity_id', 'entity_projection_generation', 'entity_projection_fence',"
+          + " 'entity_workload_namespace', 'assignment_uuid', 'assignment_intent_digest',"
+          + " 'entity_reference_digest', 'world_source_digest', 'canonical_region_id',"
+          + " 'world_lifecycle_epoch', 'world_lifecycle_row_version', 'world_capture_id',"
+          + " 'world_graph_sha256', 'world_preparation_input_digest', 'executor_fence',"
+          + " 'lease_token_correlation', 'redis_readback_digest', 'acknowledged_at'])::text"
+          + " ELSE to_jsonb(g)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_region_bridge_obligation g"
           + " WHERE g.inventory_revision <= ?"
           + ") captured_cohort ORDER BY source_kind COLLATE \"C\", source_key COLLATE \"C\"";

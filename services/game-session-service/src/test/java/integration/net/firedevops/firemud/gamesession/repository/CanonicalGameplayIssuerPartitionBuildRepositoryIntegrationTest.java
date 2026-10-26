@@ -2241,6 +2241,29 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     return dataSource;
   }
 
+  private static String retainedPreBridgeRegionImage(DSLContext dsl) {
+    // This populated V1030 fixture retains its original columns and physical xmin. A later
+    // nullable schema extension changes to_jsonb's field set without changing those values.
+    String originalFields =
+        "ARRAY['transition_id', 'binding_ref', 'account_id', 'tenant_id', 'game_instance_id',"
+            + " 'runtime_game_instance_id', 'session_id', 'binding_generation', 'region_id',"
+            + " 'region_epoch', 'status', 'inventory_revision']";
+    Long unexpectedMaterializedFields =
+        dsl.fetchSingle(
+                "SELECT count(*) FROM game_session_canonical_binding_region_bridge_obligation g"
+                    + " WHERE jsonb_strip_nulls(to_jsonb(g) - "
+                    + originalFields
+                    + ") <> '{}'::jsonb")
+            .get(0, Long.class);
+    if (unexpectedMaterializedFields == null || unexpectedMaterializedFields != 0L) {
+      throw new IllegalStateException("Historical fixture gained materialized bridge evidence");
+    }
+    return "to_jsonb(retained_row) - ARRAY(SELECT key FROM jsonb_each(to_jsonb(retained_row))"
+        + " WHERE NOT (key = ANY("
+        + originalFields
+        + ")))";
+  }
+
   private static List<String> rowImages(DSLContext dsl, String tableName) {
     String image = "to_jsonb(retained_row)";
     if (tableName.equals("game_session_canonical_binding_transition")) {
@@ -2253,6 +2276,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       image =
           "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
               + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
+      image = retainedPreBridgeRegionImage(dsl);
     }
     return dsl.fetch(
             "SELECT ("
@@ -2275,6 +2300,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       image =
           "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
               + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
+      image = retainedPreBridgeRegionImage(dsl);
     }
     return dsl.fetch(
             "SELECT xmin::text || ':' || ("
