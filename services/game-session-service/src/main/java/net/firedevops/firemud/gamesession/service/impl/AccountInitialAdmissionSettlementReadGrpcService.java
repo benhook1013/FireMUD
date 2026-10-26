@@ -79,7 +79,10 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
               .asRuntimeException());
     } catch (RuntimeException unexpected) {
       observer.onError(
-          Status.INTERNAL.withDescription("Settlement owner read failed").asRuntimeException());
+          Status.INTERNAL
+              .withDescription("Settlement owner read failed")
+              .withCause(unexpected)
+              .asRuntimeException());
     }
   }
 }

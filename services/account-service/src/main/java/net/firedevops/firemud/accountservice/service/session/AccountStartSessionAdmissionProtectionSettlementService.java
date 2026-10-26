@@ -148,7 +148,10 @@ public final class AccountStartSessionAdmissionProtectionSettlementService {
       }
       return evidence;
     } catch (IllegalArgumentException malformed) {
-      throw failedPrecondition("Stored Account admission settlement is inconsistent");
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Stored Account admission settlement is inconsistent")
+          .withCause(malformed)
+          .asRuntimeException();
     }
   }
 
