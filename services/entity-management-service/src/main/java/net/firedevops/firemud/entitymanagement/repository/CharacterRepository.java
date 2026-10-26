@@ -34,6 +34,7 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentR
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult.Outcome;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorRuntimeReference;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -44,6 +45,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -347,6 +349,17 @@ public class CharacterRepository {
           evidence.assignmentUuid(), Outcome.IDEMPOTENCY_CONFLICT, null, intentDigest);
     }
     completeWithActor(evidence.assignmentUuid(), characterUuid);
+    var receipt =
+        readPreseededActorAssignmentReceipt(
+                new PreseededActorAssignmentReceiptRequest(
+                    request.assignmentUuid(),
+                    request.canonicalAccountUuid(),
+                    characterUuid,
+                    intentDigest,
+                    request.expectedTarget()))
+            .orElseThrow(
+                () -> new IllegalStateException("Fresh assignment receipt is unavailable"));
+    new PreseededActorRuntimeProjectionRepository(dsl).allocateFreshAssignment(receipt);
     return new PreseededActorAssignmentResult(
         evidence.assignmentUuid(), Outcome.ASSIGNED, characterUuid, intentDigest);
   }
@@ -476,6 +489,14 @@ public class CharacterRepository {
     if (!sameIntent) {
       throw new IllegalStateException("PRESEEDED_ASSIGNMENT_STORED_INTENT_MISMATCH");
     }
+  }
+
+  /** Exact retained projection read; missing historical projections are never allocated here. */
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+  public Optional<PreseededActorRuntimeReference> readPreseededActorRuntimeReference(
+      PreseededActorAssignmentReceiptRequest request) {
+    return readPreseededActorAssignmentReceipt(request)
+        .flatMap(receipt -> new PreseededActorRuntimeProjectionRepository(dsl).read(receipt));
   }
 
   /** Returns only an exact committed operation whose PLAYER row remains owner-resolved. */

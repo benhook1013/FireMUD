@@ -93,6 +93,45 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
   }
 
   @Test
+  void runtimeReadHasItsOwnExactGameSessionPurposeAndNeverWorldOrAssignmentAuthority() {
+    var interceptor = new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE);
+    var readCall =
+        callFor(
+            CanonicalPreseededActorAssignmentPeerInterceptor.RUNTIME_REFERENCE_READ_METHOD_NAME,
+            peerSession(EXACT_PEER));
+    ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
+    when(next.startCall(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedRuntimeReferencePeer(
+                  NAMESPACE);
+              assertThatThrownBy(
+                      () ->
+                          CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedWorldPeer(
+                              NAMESPACE))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
+              assertThatThrownBy(
+                      () ->
+                          CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedPeer(
+                              NAMESPACE))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
+              return new ServerCall.Listener<>() {};
+            });
+    interceptor.interceptCall(readCall, new Metadata(), next);
+    verify(next).startCall(any(), any());
+    for (String uri :
+        List.of(EXACT_WORLD_PEER, "spiffe://firemud/ns/other/sa/game-session-service")) {
+      var wrongCall =
+          callFor(
+              CanonicalPreseededActorAssignmentPeerInterceptor.RUNTIME_REFERENCE_READ_METHOD_NAME,
+              peerSession(uri));
+      ServerCallHandler<String, String> wrongNext = mock(ServerCallHandler.class);
+      interceptor.interceptCall(wrongCall, new Metadata(), wrongNext);
+      verify(wrongNext, never()).startCall(any(), any());
+    }
+  }
+
+  @Test
   void rejectsAbsentWrongServiceAndCrossNamespaceCertificatesBeforeHandler() {
     var interceptor = new CanonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE);
     for (SSLSession session :

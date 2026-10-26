@@ -10,15 +10,19 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.entitymanagement.security.CanonicalPreseededActorAssignmentPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceipt;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptService;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentService;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorRuntimeReference;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 
 /**
  * Unregistered method-guarded assignment write and immutable receipt read. Assignment delegates
@@ -151,6 +155,63 @@ public final class CanonicalPreseededActorAssignmentGrpcService
       return;
     }
 
+    try {
+      responseObserver.onNext(response);
+    } catch (RuntimeException observerFailure) {
+      responseObserver.onError(observerFailure);
+      return;
+    }
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void readPreseededActorRuntimeReference(
+      ReadPreseededActorRuntimeReferenceRequest request,
+      StreamObserver<ReadPreseededActorRuntimeReferenceResponse> responseObserver) {
+    try {
+      CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedRuntimeReferencePeer(
+          trustedNamespace);
+    } catch (StatusRuntimeException unauthorized) {
+      responseObserver.onError(unauthorized);
+      return;
+    }
+    final PreseededActorAssignmentReceiptRequest selector;
+    try {
+      selector = PreseededActorAssignmentGrpcCodec.fromRuntimeReferenceRequest(request);
+    } catch (IllegalArgumentException malformed) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Runtime reference selector is invalid")
+              .asRuntimeException());
+      return;
+    }
+    final Optional<PreseededActorRuntimeReference> stored;
+    try {
+      stored = Objects.requireNonNull(receiptService.readRuntimeReference(selector));
+    } catch (RuntimeException unavailable) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription("Runtime reference read failed").asRuntimeException());
+      return;
+    }
+    if (stored.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("Exact current runtime projection not found")
+              .asRuntimeException());
+      return;
+    }
+    final ReadPreseededActorRuntimeReferenceResponse response;
+    try {
+      response =
+          PreseededActorAssignmentGrpcCodec.toRuntimeReferenceResponse(
+              selector, stored.orElseThrow());
+    } catch (RuntimeException contradictory) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Runtime projection provenance is contradictory")
+              .asRuntimeException());
+      return;
+    }
     try {
       responseObserver.onNext(response);
     } catch (RuntimeException observerFailure) {

@@ -1,0 +1,22 @@
+{
+  "scriptId": "game-session.region-lease-renew.v1",
+  "resourcePath": "redis/lua/game-session-region-lease-renew.lua",
+  "sha256": "322963204c4d5290fa31354dd71c2d20d3dd9f2185deb4644185427345eee4f4",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [{"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"}],
+  "arguments": [{"name": "schema"}, {"name": "token"}, {"name": "leaseTtlMs"}],
+  "category": "TICK_LOCK",
+  "outcomes": [
+    {"code": "LEASE_RENEWED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "STALE_OR_EXPIRED", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "REGION",
+  "lossClass": "STAGED_EFFECT_OR_RETRY",
+  "tailLossBehavior": "Renewal compares the exact grant, scope, source, owner, and epoch. A missing, expired, or changed lease does not renew and ends the current owner attempt; renewal never advances the durable executor fence.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "none"}],
+  "legacyPayloadShape": null
+}

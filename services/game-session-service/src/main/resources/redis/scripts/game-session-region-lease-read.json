@@ -1,0 +1,22 @@
+{
+  "scriptId": "game-session.region-lease-read.v1",
+  "resourcePath": "redis/lua/game-session-region-lease-read.lua",
+  "sha256": "564267ce5acd15cab89ade66466e5d1b959aaadee432cc20ec097915e138acf0",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [{"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"}],
+  "arguments": [{"name": "schema"}, {"name": "token"}],
+  "category": "TICK_LOCK",
+  "outcomes": [
+    {"code": "LEASE_CURRENT", "category": "SUCCESS", "effect": "NON_MUTATING"},
+    {"code": "STALE_OR_EXPIRED", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "REGION",
+  "lossClass": "STAGED_EFFECT_OR_RETRY",
+  "tailLossBehavior": "Only exact physical readback of the live grant may support later owner checks. Missing or mismatched fields fail closed; lease possession is not a substitute for the durable executor fence or World assignment.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "none"}],
+  "legacyPayloadShape": null
+}
