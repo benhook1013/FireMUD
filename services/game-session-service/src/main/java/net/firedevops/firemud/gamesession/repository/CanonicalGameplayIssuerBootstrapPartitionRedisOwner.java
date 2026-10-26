@@ -391,7 +391,10 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw unavailable();
+    }
   }
 
   private static String digest(String algorithm, byte[] bytes) {

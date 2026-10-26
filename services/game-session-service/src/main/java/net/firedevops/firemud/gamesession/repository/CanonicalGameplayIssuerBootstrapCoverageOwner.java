@@ -256,7 +256,8 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw unavailable(
           "Initial issuer bootstrap completion cannot join an ambient SQL transaction");
     }

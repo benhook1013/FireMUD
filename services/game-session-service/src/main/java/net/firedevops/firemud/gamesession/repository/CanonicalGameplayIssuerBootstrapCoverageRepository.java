@@ -1395,7 +1395,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw conflict("Issuer bootstrap coverage owner cannot join an ambient SQL transaction");
     }
   }
