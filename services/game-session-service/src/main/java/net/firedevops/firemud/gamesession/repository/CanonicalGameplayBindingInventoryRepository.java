@@ -2149,7 +2149,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 + (forUpdate ? " FOR UPDATE" : ""),
             transitionId);
     CanonicalGameplayBindingRegionBridgeObligation regionObligation =
-        regionObligationRow == null ? null : toRegionObligation(regionObligationRow);
+        regionObligationRow == null ? null : toProvisionalRegionObligation(regionObligationRow);
     requireExactProvisionalRows(evidence, accountObligations, issuerObligation, regionObligation);
     if (!accountObligations.isEmpty()
         && accountObligations.getFirst().status()
@@ -4499,6 +4499,32 @@ public final class CanonicalGameplayBindingInventoryRepository {
             row.get("status", String.class)),
         readBigInteger(row, "inventory_revision"),
         row.get("local_release_operation_id", UUID.class));
+  }
+
+  /** Inventory preparation consumes the required obligation's identity, not bridge proof. */
+  private static CanonicalGameplayBindingRegionBridgeObligation toProvisionalRegionObligation(
+      Record row) {
+    var status =
+        CanonicalGameplayBindingRegionBridgeObligation.Status.valueOf(
+            row.get("status", String.class));
+    if (status == CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
+      // An ACK is never represented by the required-only projection: retain every closed
+      // Entity/World/Redis proof check in its actual acknowledgement decoder.
+      return toRegionObligation(row);
+    }
+    return new CanonicalGameplayBindingRegionBridgeObligation(
+        row.get("transition_id", UUID.class),
+        CanonicalGameplayBindingRef.fromExactBytes(row.get("binding_ref", byte[].class)),
+        readBigInteger(row, "binding_generation"),
+        row.get("account_id", UUID.class),
+        row.get("tenant_id", UUID.class),
+        row.get("game_instance_id", UUID.class),
+        row.get("runtime_game_instance_id", Long.class),
+        row.get("session_id", String.class),
+        row.get("region_id", UUID.class),
+        readBigInteger(row, "region_epoch"),
+        status,
+        readBigInteger(row, "inventory_revision"));
   }
 
   private static CanonicalGameplayBindingRegionBridgeObligation toRegionObligation(Record row) {
