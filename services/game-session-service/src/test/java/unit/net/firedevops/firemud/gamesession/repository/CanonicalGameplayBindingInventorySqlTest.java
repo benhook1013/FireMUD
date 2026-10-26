@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
@@ -18,8 +19,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
@@ -37,6 +40,27 @@ class CanonicalGameplayBindingInventorySqlTest {
   private static final BigInteger REGION_EPOCH = new BigInteger("76543210987654321");
 
   @Test
+  void malformedStoredRepairOperationIsTranslatedAtTheDecoderBoundary() throws Exception {
+    Record row = mock(Record.class);
+    UUID tenantId = UUID.randomUUID();
+    CanonicalGameplayBindingRef bindingRef =
+        CanonicalGameplayBindingRef.of(tenantId, UUID.randomUUID(), "session");
+    Mockito.when(row.get("desired_action", String.class)).thenReturn("ADD_OR_RETAIN");
+    Mockito.when(row.get("account_control_state", String.class))
+        .thenReturn("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+    Mockito.when(row.get("binding_ref", byte[].class)).thenReturn(bindingRef.bytes());
+    Mockito.when(row.get("account_id", UUID.class)).thenReturn(UUID.randomUUID());
+    Mockito.when(row.get("tenant_id", UUID.class)).thenReturn(tenantId);
+    Mockito.when(row.get("transition_id", UUID.class)).thenReturn(UUID.randomUUID());
+    Mockito.when(row.get("obligation_ordinal", Integer.class)).thenReturn(0);
+    Mockito.when(row.get("original_action", String.class)).thenReturn("MALFORMED_ACTION");
+
+    assertThrows(
+        CanonicalGameplayBindingInventoryConflictException.class,
+        () -> invoke("toMemberRepairOperation", row));
+  }
+
+  @Test
   void everyInventoryInsertHelperKeepsColumnsValuesAndBindingsAligned() throws Exception {
     DSLContext dsl = mock(DSLContext.class);
     Fixture fixture = fixture();
@@ -44,6 +68,8 @@ class CanonicalGameplayBindingInventorySqlTest {
     Record coverageControl = mock(Record.class);
     Mockito.when(coverageControl.get("state", String.class))
         .thenReturn("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+    Mockito.when(coverageControl.get("last_operation_fence", BigDecimal.class))
+        .thenReturn(BigDecimal.ZERO);
     Mockito.doReturn(coverageControl)
         .when(dsl)
         .fetchOne(Mockito.anyString(), Mockito.any(Object[].class));
@@ -136,12 +162,14 @@ class CanonicalGameplayBindingInventorySqlTest {
     BoundInsert candidate = byTable.get("game_session_canonical_gameplay_binding_inventory").get(0);
     assertEquals(RUNTIME_GAME_INSTANCE_ID, candidate.value("runtime_game_instance_id"));
     assertEquals(new BigDecimal(REGION_EPOCH), candidate.value("region_epoch"));
+    assertEquals(GameSessionAccountDelegationProfile.ISSUER, candidate.value("issuer_id"));
     assertEquals("CANDIDATE_PREPARED", candidate.literal("lifecycle"));
 
     BoundInsert reservation =
         byTable.get("game_session_canonical_issuer_partition_reservation").get(0);
     assertEquals(RUNTIME_GAME_INSTANCE_ID, reservation.value("runtime_game_instance_id"));
     assertEquals(new BigDecimal(REGION_EPOCH), reservation.value("region_epoch"));
+    assertEquals(GameSessionAccountDelegationProfile.ISSUER, reservation.value("issuer_id"));
     assertEquals("RESERVED", reservation.literal("lifecycle"));
 
     BoundInsert regionObligation =
@@ -272,7 +300,7 @@ class CanonicalGameplayBindingInventorySqlTest {
             "f0f46b01-57f6-47e8-a714-9fbcefe49b56",
             UUID.fromString("e375e81b-9c7a-40e5-b361-0f39bd06f4c1"),
             REGION_EPOCH,
-            UUID.fromString("b8c9ff0c-48a3-4388-ae0a-03f4f5a3e721"),
+            GameSessionAccountDelegationProfile.ISSUER,
             BigInteger.valueOf(43),
             BigInteger.valueOf(47),
             BigInteger.valueOf(53),

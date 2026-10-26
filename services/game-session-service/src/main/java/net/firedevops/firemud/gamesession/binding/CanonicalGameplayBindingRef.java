@@ -65,6 +65,13 @@ public final class CanonicalGameplayBindingRef {
     return bytes.clone();
   }
 
+  /** Returns the exact UTF-8 tenant identifier encoded as the first owner segment. */
+  public String tenantId() {
+    Cursor cursor = new Cursor(bytes);
+    cursor.readSegment();
+    return decodeIdentifierSegment(cursor.readSegment(), "tenantId");
+  }
+
   /** Applies the canonical unsigned-big-endian SHA-256 partition function. */
   public int partitionId(int partitionCount) {
     if (partitionCount <= 0) {
@@ -122,6 +129,10 @@ public final class CanonicalGameplayBindingRef {
   }
 
   private static void validateIdentifierSegment(byte[] bytes, String name) {
+    decodeIdentifierSegment(bytes, name);
+  }
+
+  private static String decodeIdentifierSegment(byte[] bytes, String name) {
     try {
       String value =
           StandardCharsets.UTF_8
@@ -133,6 +144,7 @@ public final class CanonicalGameplayBindingRef {
       if (!Arrays.equals(bytes, encodeCanonicalIdentifier(value, name))) {
         throw new IllegalArgumentException(name + " does not retain its exact UTF-8 bytes");
       }
+      return value;
     } catch (CharacterCodingException malformed) {
       throw new IllegalArgumentException(name + " must be valid UTF-8", malformed);
     }

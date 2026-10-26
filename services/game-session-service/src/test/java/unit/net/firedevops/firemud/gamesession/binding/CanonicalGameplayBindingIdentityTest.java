@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 import java.util.UUID;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,8 @@ class CanonicalGameplayBindingIdentityTest {
   private static final UUID GAME_INSTANCE_ID =
       UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID REGION_ID = UUID.fromString("66666666-6666-4666-8666-666666666666");
-  private static final UUID ISSUER_ID = UUID.fromString("77777777-7777-4777-8777-777777777777");
+  private static final String ISSUER_ID = GameSessionAccountDelegationProfile.ISSUER;
+  private static final String ISSUER_ID_UUID = "77777777-7777-4777-8777-777777777777";
 
   @Test
   void acceptsCanonicalNonNilSessionUuid() {
@@ -31,7 +33,19 @@ class CanonicalGameplayBindingIdentityTest {
         .hasMessageContaining("sessionId must use canonical UUID text");
   }
 
+  @Test
+  void rejectsLegacyUuidIssuerWithoutMappingEvenWhenGenerationIsUnchanged() {
+    assertThatThrownBy(() -> identity("88888888-8888-4888-8888-888888888888", ISSUER_ID_UUID))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Unsupported issuer identity")
+        .hasMessageContaining("legacy UUID issuer identities require explicit recovery");
+  }
+
   private static CanonicalGameplayBindingIdentity identity(String sessionId) {
+    return identity(sessionId, ISSUER_ID);
+  }
+
+  private static CanonicalGameplayBindingIdentity identity(String sessionId, String issuerId) {
     return new CanonicalGameplayBindingIdentity(
         ACCOUNT_ID,
         TENANT_ID,
@@ -43,7 +57,7 @@ class CanonicalGameplayBindingIdentityTest {
         sessionId,
         REGION_ID,
         BigInteger.ONE,
-        ISSUER_ID,
+        issuerId,
         BigInteger.ONE,
         BigInteger.ONE,
         BigInteger.ONE,

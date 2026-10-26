@@ -1,0 +1,60 @@
+{
+  "scriptId": "game-session.account-member-repair-add.v1",
+  "resourcePath": "redis/lua/game-session-account-member-repair-add.lua",
+  "sha256": "aae96f084121a4a8eb73e18203c08ab1a34efca2fdcbd36d526bedc091249423",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "accountIndex",
+      "ownedPrefix": "session:game:index:account:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "accountId"},
+    {"name": "tenantId"},
+    {"name": "canonicalBindingRefBytes"},
+    {"name": "bindingGeneration"},
+    {"name": "accountIndexFence"},
+    {"name": "exactAccountIndexMember"},
+    {"name": "transitionId"},
+    {"name": "operationId"},
+    {"name": "operationFence"},
+    {"name": "coverageFence"},
+    {"name": "inventorySnapshotRevision"},
+    {"name": "accountControlEpoch"}
+  ],
+  "category": "SESSION_ACCOUNT_INDEX",
+  "outcomes": [
+    {
+      "code": "MEMBER_ADDED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "MEMBER_ALREADY_PRESENT",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "WRONG_KEY_TYPE_OR_EXPIRY",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "This untagged account key is reset-sensitive and is never rebuilt by a binding-local operation. Region/tenant resets leave it untouched; cluster loss requires the complete account-wide durable inventory, owner-defined coverage, and exact member-set readback before release. A member projection is not authorization or whole-account coverage. Ambiguous or unavailable write/readback leaves the original durable obligation unresolved for exact retry.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}

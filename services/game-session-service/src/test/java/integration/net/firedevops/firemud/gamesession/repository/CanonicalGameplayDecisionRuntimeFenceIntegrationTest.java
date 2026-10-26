@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.Timestamp;
 import java.util.UUID;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -476,7 +477,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
     UUID accountId = UUID.randomUUID();
     UUID characterId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
-    UUID issuerId = UUID.randomUUID();
+    String issuerId = GameSessionAccountDelegationProfile.ISSUER;
     UUID accountIndexFence = UUID.randomUUID();
     UUID issuerReservationId = UUID.randomUUID();
     byte[] candidateRef = UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8);

@@ -140,6 +140,7 @@ public record RedisScriptDescriptor(
     TICK_LOCK,
     TIMER_QUEUE,
     SESSION_CAS,
+    SESSION_ACCOUNT_INDEX,
     SESSION_TO_REGION_BRIDGE,
     MAINTENANCE,
     CACHE,

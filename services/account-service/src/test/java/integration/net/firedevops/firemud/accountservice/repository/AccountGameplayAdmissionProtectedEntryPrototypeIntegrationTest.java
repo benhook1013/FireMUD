@@ -57,9 +57,67 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     POSTGRES.stop();
   }
 
+  @Test
+  void pendingLeaseWindowUsesDatabaseClockAndPreservesLifetime() {
+    var context = context();
+    long databaseTimeBefore =
+        context
+            .dsl()
+            .fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    var evidence = pending(context, 15000);
+    long databaseTimeAfter =
+        context
+            .dsl()
+            .fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    long evaluatedAt = Long.parseLong((String) evidence.carrier().get("evaluatedAt"));
+
+    assertThat(evaluatedAt).isBetween(databaseTimeBefore, databaseTimeAfter);
+    assertThat(Long.parseLong((String) evidence.carrier().get("expiresAt")))
+        .isEqualTo(evaluatedAt + 15000);
+  }
+
   private static final String TENANT = "22222222-2222-4222-8222-222222222222";
   private static final String OTHER = "33333333-3333-4333-8333-333333333333";
   private static final String RECEIPTS = "account_gameplay_admission_original_commit_ack_receipts";
+
+  @Test
+  void currentSourceCommitEntryRefusesStorageOnlyLeaseWithoutCurrentPlayerAuthority() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    var scope = (Map<?, ?>) evidence.carrier().get("bindingScope");
+    var token = (Map<?, ?>) evidence.carrier().get("tokenIdentityEvidence");
+    UUID account = UUID.fromString((String) scope.get("accountId"));
+    var expectedIdentity = org.mockito.Mockito.mock(AccountGameplayDelegationPendingIdentity.class);
+    org.mockito.Mockito.when(expectedIdentity.accountId()).thenReturn(account);
+    org.mockito.Mockito.when(expectedIdentity.tokenJti())
+        .thenReturn(UUID.fromString((String) token.get("tokenJti")));
+    var expectedCandidate =
+        org.mockito.Mockito.mock(
+            AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData.class);
+    org.mockito.Mockito.when(expectedCandidate.identity()).thenReturn(expectedIdentity);
+    org.mockito.Mockito.when(expectedCandidate.authoritySnapshot())
+        .thenReturn(
+            new net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord
+                .AccountAuthoritySnapshot(
+                account, 1L, 1L, 1L, 1L, 1L, 1L, java.util.Optional.empty()));
+    var originalOperation = operation(context, evidence);
+    var originalSources = sourceSnapshot(context);
+
+    // This controlled candidate is correlation only. The real in-transaction source readers
+    // must refuse this storage fixture, which has no current player membership/tenant authority.
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                    .executeWithCurrentSources(
+                        evidence, UUID.randomUUID(), "test", expectedCandidate))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(operation(context, evidence)).isEqualTo(originalOperation);
+    assertThat(sourceSnapshot(context)).isEqualTo(originalSources);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
 
   @Test
   void coldGenuineAcknowledgedFinalizationPersistsExactProofWithoutAuxiliaryWrites() {
@@ -857,8 +915,50 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {
-    return new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
-        .execute(pending(context, lifetime), UUID.randomUUID());
+    var evidence = pending(context, lifetime);
+    long startedAtNanos = System.nanoTime();
+    try {
+      return new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+          .execute(evidence, UUID.randomUUID());
+    } catch (RuntimeException failure) {
+      try {
+        long failedAtNanos = System.nanoTime();
+        long jvmWallClockMs = Instant.now().toEpochMilli();
+        Long databaseWallClockMs = null;
+        Throwable databaseClockFailure = null;
+        try {
+          databaseWallClockMs =
+              context
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint AS database_now_ms")
+                  .get("database_now_ms", Long.class);
+        } catch (Throwable diagnosticFailure) {
+          databaseClockFailure = diagnosticFailure;
+        }
+        String diagnosticMessage =
+            "Original COMMIT failure timing: evaluatedAtMs="
+                + evidence.carrier().get("evaluatedAt")
+                + "; expiresAtMs="
+                + evidence.carrier().get("expiresAt")
+                + "; jvmWallClockMs="
+                + jvmWallClockMs
+                + "; dbWallClockMs="
+                + (databaseWallClockMs == null ? "unavailable" : databaseWallClockMs)
+                + "; monotonicElapsedNanos="
+                + (failedAtNanos - startedAtNanos);
+        IllegalStateException diagnostic = new IllegalStateException(diagnosticMessage);
+        if (databaseClockFailure != null) {
+          diagnostic.addSuppressed(
+              new IllegalStateException(
+                  "Database wall-clock read failed: " + databaseClockFailure.getClass().getName()));
+        }
+        failure.addSuppressed(diagnostic);
+      } catch (Throwable ignoredDiagnosticFailure) {
+        // Timing diagnostics must never replace the original finalization failure.
+      }
+      throw failure;
+    }
   }
 
   private static AccountGameplayAdmissionLeaseEvidence pending(Context context, long lifetime) {
@@ -882,15 +982,20 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                   new AccountRepository(context.dsl(), sources).save(account).getAccountUuid();
               var repository = new AccountGameplayAdmissionLeaseRepository(context.dsl());
               var allocation = repository.allocate(accountId, UUID.randomUUID(), UUID.randomUUID());
-              var evidence = evidence(allocation, lifetime);
+              long databaseNow =
+                  context
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+                      .get(0, Long.class);
+              var evidence = evidence(allocation, lifetime, databaseNow);
               repository.beginPending(evidence);
               return evidence;
             });
   }
 
   private static AccountGameplayAdmissionLeaseEvidence evidence(
-      AccountGameplayAdmissionLeaseRepository.Allocation allocation, long lifetime) {
-    long now = Instant.now().toEpochMilli();
+      AccountGameplayAdmissionLeaseRepository.Allocation allocation, long lifetime, long now) {
     String account = allocation.accountId().toString();
     Map<String, Object> carrier = new LinkedHashMap<>();
     carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);

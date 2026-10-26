@@ -100,12 +100,18 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
         .containsExactlyElementsOf(beforeScheduling);
     assertThat(history().getLast())
         .contains("1021", "V1021__canonical_roster_recovery_attempt_scheduling.sql");
-    var beforeLatest = history();
-    migrate("latest");
-    assertThat(history().subList(0, beforeLatest.size())).containsExactlyElementsOf(beforeLatest);
-    assertThat(history()).hasSize(beforeLatest.size() + 1);
-    assertThat(history().get(history().size() - 1))
+    var beforeBinarySafeGuard = history();
+    migrate("1022");
+    assertThat(history().subList(0, beforeBinarySafeGuard.size()))
+        .containsExactlyElementsOf(beforeBinarySafeGuard);
+    assertThat(history()).hasSize(beforeBinarySafeGuard.size() + 1);
+    assertThat(history().getLast())
         .contains("1022", "V1022__canonical_roster_binary_safe_recovery_guard.sql");
+    var beforeLatest = history();
+    var latest = migrate(dataSource, schema, "latest");
+    latest.validate();
+    assertThat(latest.info().pending()).isEmpty();
+    assertThat(history().subList(0, beforeLatest.size())).containsExactlyElementsOf(beforeLatest);
     transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     repository =
         new CanonicalGameplayRosterReferenceRepository(
@@ -267,15 +273,25 @@ class CanonicalGameplayRosterReferencePostgresIntegrationTest {
           "SELECT row_to_json(s)::text || ':' || s.xmin::text FROM game_session_canonical_roster_selection s ORDER BY operation_uuid";
       var rowsBeforeBinaryGuard = upgradeDsl.fetch(retainedRowsSql).getValues(0, String.class);
       var historyBeforeBinaryGuard = history(upgradeDsl);
-      migrate(upgradeDataSource, upgradeSchema, "latest");
-      assertThat(history(upgradeDsl).subList(0, historyBeforeBinaryGuard.size()))
+      migrate(upgradeDataSource, upgradeSchema, "1022");
+      var historyAtBinaryGuard = history(upgradeDsl);
+      assertThat(historyAtBinaryGuard.subList(0, historyBeforeBinaryGuard.size()))
           .containsExactlyElementsOf(historyBeforeBinaryGuard);
+      assertThat(historyAtBinaryGuard).hasSize(historyBeforeBinaryGuard.size() + 1);
+      assertThat(historyAtBinaryGuard.getLast())
+          .contains("1022", "V1022__canonical_roster_binary_safe_recovery_guard.sql");
       assertThat(upgradeDsl.fetch(retainedRowsSql).getValues(0, String.class))
           .containsExactlyElementsOf(rowsBeforeBinaryGuard);
-      assertThat(history(upgradeDsl).subList(0, historyBeforeScheduling.size()))
+      var latest = migrate(upgradeDataSource, upgradeSchema, "latest");
+      latest.validate();
+      assertThat(latest.info().pending()).isEmpty();
+      var historyAtLatest = history(upgradeDsl);
+      assertThat(historyAtLatest.subList(0, historyAtBinaryGuard.size()))
+          .containsExactlyElementsOf(historyAtBinaryGuard);
+      assertThat(upgradeDsl.fetch(retainedRowsSql).getValues(0, String.class))
+          .containsExactlyElementsOf(rowsBeforeBinaryGuard);
+      assertThat(historyAtLatest.subList(0, historyBeforeScheduling.size()))
           .containsExactlyElementsOf(historyBeforeScheduling);
-      assertThat(history(upgradeDsl).get(history(upgradeDsl).size() - 1))
-          .contains("1022", "V1022__canonical_roster_binary_safe_recovery_guard.sql");
       assertThat(upgradeRow(upgradeDsl, ordinaryTerminal)).isEqualTo(retainedOrdinaryTerminal);
       assertThat(upgradeRow(upgradeDsl, recoveredTerminal)).isEqualTo(retainedRecoveredTerminal);
       assertThat(upgradeRow(upgradeDsl, pendingRecovery)).isEqualTo(retainedPendingRecovery);

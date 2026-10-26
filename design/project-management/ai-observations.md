@@ -396,3 +396,18 @@ Entry format:
   - Context: the shared Gameplay observer inspected paginated GitHub commit-status records for the PR train.
   - Observation: `/statuses` retained superseded pending and failed entries even after the same gate had published success. Treating every historical entry as current briefly misclassified a green candidate; the direct combined `/status` response and latest entry per context established the actual state before any CI mutation or escalation.
   - Expected pattern: use the current combined-status response and latest status per context for readiness; preserve pagination for full check-run coverage, and treat raw status history as history. Verify a reported failure against its exact run and job before retrying or attributing a CI defect.
+
+- `2026-10-26`: Bind PostgreSQL timestamps and binary Redis keys explicitly in fixtures
+  - Context: In Gameplay R517, jOOQ plain SQL bound an `OffsetDateTime` fixture value as `VARCHAR`; PostgreSQL refused the timestamp column before the migration test reached its subject. R518 passed the retained-row upgrade and restart case. In the new CLOSED-barrier fixture, both a direct `byte[]` and an inline single-element `byte[][]` triggered SpotBugs' primitive-array varargs detector for Lettuce `RedisCommands<byte[], byte[]>` key varargs.
+  - Observation: Plain SQL fixture timestamp bindings need an explicit database type, and Lettuce's primitive-array key varargs require an explicitly typed collection conversion. The native test result remains separate from the aggregate's static failure.
+  - Expected pattern: Use `CAST(? AS timestamp with time zone)` at the fixture binding while retaining timestamp and schema constraints. Reuse `List.of(key).toArray(byte[][]::new)` from the [initial-context AOF probe cleanup](../../services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/service/InitialGameplayLoginContextRedisIntegrationTest.java), rather than suppressing the detector.
+
+- `2026-10-26`: Preserve the R526 Redis startup refusal as undiagnosed evidence
+  - Context: The CLOSED-owner test failed while its Redis 8.10 container was starting and waiting on `localhost:54214`; assertions did not run. The exact run-owned container `e00a9761678b8fa9dead11e45604ad263049409c19746034c72b7565d549b669` was absent at inspection, as were all 11 R526 containers.
+  - Observation: The cause is unknown; this does not diagnose a test defect, timeout, or OOM. A passing retry would not diagnose the cause.
+  - Expected pattern: Preserve the failed aggregate and rerun focused normal proof without timeout or host-setting changes.
+
+- `2026-10-26`: Capture original evidence before investigating R533 finalization timing
+  - Context: `staleSerializableGenuineAckCreatorRetriesAndRetainsOneExactWinner` failed in `finalized()` after 1.292 seconds, before the serializable race began.
+  - Observation: The SQL guard message `storage deadline expired` covers either `evaluatedAt >` the database clock or `expiresAt <=` the database clock, so the branch and clock cause are unknown. Retain the failed result; an unchanged future retry cannot recover the original failure-time clock evidence.
+  - Expected pattern: Capture the original evidence timestamps, JVM and database wall clocks, and monotonic elapsed time only after a failure, without delaying the original COMMIT or changing its lifetime or guard.
