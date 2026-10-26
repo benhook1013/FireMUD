@@ -25,7 +25,8 @@ import tools.jackson.databind.json.JsonMapper;
 public final class AccountStartSessionAdmissionProtectionSettlementEvidence {
   public static final String SCHEMA = "account-start-session-admission-protection-settlement/v1";
   public static final int MAX_CANONICAL_BYTES = 24 * 1024 * 1024;
-  private static final int MAX_OWNER_PROOF_BYTES = 66_048;
+  private static final int MAX_OWNER_PROOF_BYTES =
+      AccountInitialAdmissionSettlementReadEvidence.MAX_OWNER_PROOF_BYTES;
   private static final String PROTECTION = "canonicalAccountProtectionEvidenceBytesBase64";
   private static final String TERMINAL = "canonicalGameSessionOwnerProofBytesBase64";
   private static final Set<String> FIELDS = Set.of("schema", PROTECTION, TERMINAL);

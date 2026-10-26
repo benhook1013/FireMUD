@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -329,6 +330,262 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
     }
   }
 
+  // Controlled Account protection input; this proves Game Session storage, not Account composition.
+  @Test
+  void expiredOriginalLeaseAllowsOnlyTheExactProtectedAbortAcrossForwardMigration()
+      throws Exception {
+    var harness =
+        CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres, "1040");
+    try {
+      var target = harness.seed(Duration.ofSeconds(2));
+      Prepared prepared = prepare(target, "protected-writer-expired-abort", 1001);
+      CanonicalInitialAdmissionRepository repository = repository(harness);
+
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status -> repository.reserveProtected(prepared.request(), prepared.protection()));
+
+      Record pending = terminal(harness, prepared.request());
+      String historyBefore =
+          harness
+              .dsl()
+              .fetch(
+                  "SELECT * "
+                      + "FROM flyway_schema_history ORDER BY installed_rank")
+              .formatJSON();
+      Record intentBefore =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_canonical_initial_admission_intent "
+                      + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId());
+      byte[] holdIdentityBefore = intentBefore.get("hold_identity_bytes", byte[].class);
+      Record originalBefore =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_start_session_operator_attempt "
+                      + "WHERE target_namespace = ? AND owner_attempt_id = ?",
+                  prepared.request().targetNamespace(),
+                  prepared.original().ownerAttemptId());
+      Record launchBefore =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_canonical_instance_launch "
+                      + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                  prepared.request().targetNamespace(),
+                  target.launch().association().controlPlaneRequestId());
+      assertThat(
+              harness.dsl().fetch(
+                  "SELECT version FROM flyway_schema_history "
+                      + "WHERE version IN ('1000', '1001', '1002', '1038.1', '1039', '1040') "
+                      + "AND success ORDER BY installed_rank").getValues(0, String.class))
+          .containsExactly("1000", "1001", "1002", "1038.1", "1039", "1040");
+
+      harness.migrateLatest();
+
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch(
+                      "SELECT * "
+                          + "FROM flyway_schema_history WHERE version <> '1040.1' "
+                          + "ORDER BY installed_rank")
+                  .formatJSON())
+          .isEqualTo(historyBefore);
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT version FROM flyway_schema_history "
+                          + "ORDER BY installed_rank DESC LIMIT 1")
+                  .get(0, String.class))
+          .isEqualTo("1040.1");
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(pending.formatJSON());
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT * FROM game_session_canonical_initial_admission_intent "
+                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId())
+                  .formatJSON())
+          .isEqualTo(intentBefore.formatJSON());
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT * FROM game_session_start_session_operator_attempt "
+                          + "WHERE target_namespace = ? AND owner_attempt_id = ?",
+                      prepared.request().targetNamespace(),
+                      prepared.original().ownerAttemptId())
+                  .formatJSON())
+          .isEqualTo(originalBefore.formatJSON());
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT * FROM game_session_canonical_instance_launch "
+                          + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                      prepared.request().targetNamespace(),
+                      target.launch().association().controlPlaneRequestId())
+                  .formatJSON())
+          .isEqualTo(launchBefore.formatJSON());
+
+      awaitOriginalOwnerLeaseExpiration(harness, prepared);
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              repository.commitProtected(
+                                  prepared.request(),
+                                  prepared.protection(),
+                                  prepared.worldProof())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("original owner lease is no longer live");
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(pending.formatJSON());
+
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(),
+                      prepared.protection(),
+                      "controlled denial after original lease expiry"));
+
+      Record aborted = terminal(harness, prepared.request());
+      assertThat(aborted.get("status", String.class)).isEqualTo("ABORTED");
+      assertThat(aborted.get("pointer_id")).isNull();
+      assertThat(aborted.get("pointer_version")).isNull();
+      assertThat(aborted.get("audit_event_id")).isNull();
+      assertThat(aborted.get("commit_proof_digest")).isNull();
+      assertThat(aborted.get("abort_proof_digest", String.class)).startsWith("sha256:");
+      assertThat(aborted.get("intent_state", String.class)).isEqualTo("TERMINAL");
+      for (String column :
+          List.of(
+              "account_protection_evidence_version",
+              "account_protection_id",
+              "account_protection_fence",
+              "original_owner_attempt_id",
+              "original_owner_mutation_id",
+              "original_owner_fence",
+              "account_protection_evidence_bytes",
+              "hold_id",
+              "hold_fence",
+              "hold_binding_digest")) {
+        assertThat(aborted.get(column)).isEqualTo(pending.get(column));
+      }
+      Record intentAfterAbort =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_canonical_initial_admission_intent "
+                      + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId());
+      assertThat(intentAfterAbort.get("hold_identity_bytes", byte[].class))
+          .containsExactly(holdIdentityBefore);
+      assertThat(intentAfterAbort.get("canonical_hold_request_bytes", byte[].class))
+          .containsExactly(intentBefore.get("canonical_hold_request_bytes", byte[].class));
+      assertThat(intentAfterAbort.get("original_start_session_tuple", byte[].class))
+          .containsExactly(intentBefore.get("original_start_session_tuple", byte[].class));
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT * FROM game_session_start_session_operator_attempt "
+                          + "WHERE target_namespace = ? AND owner_attempt_id = ?",
+                      prepared.request().targetNamespace(),
+                      prepared.original().ownerAttemptId())
+                  .formatJSON())
+          .isEqualTo(originalBefore.formatJSON());
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM gameplay_admission_pointer "
+                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId())
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM gameplay_admission_pointer_event "
+                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId())
+                  .get(0, Long.class))
+          .isZero();
+
+      assertThat(
+              repository
+                  .read(
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId())
+                  .orElseThrow()
+                  .provesAbort())
+          .isTrue();
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(),
+                      prepared.protection(),
+                      "controlled denial after original lease expiry"));
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(aborted.formatJSON());
+
+      var changedProtection =
+          protection(target, prepared.hold(), uuid(1005), 1L, prepared.original());
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              repository.abortProtected(
+                                  prepared.request(),
+                                  changedProtection,
+                                  "controlled denial after original lease expiry")))
+          .isInstanceOf(
+              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException
+                  .class)
+          .hasMessageContaining("changed Account protection");
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              repository.commitProtected(
+                                  prepared.request(),
+                                  prepared.protection(),
+                                  prepared.worldProof())))
+          .isInstanceOf(
+              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException
+                  .class)
+          .hasMessageContaining("ABORTED");
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(aborted.formatJSON());
+    } finally {
+      harness.close();
+    }
+  }
+
   @Test
   void concurrentProtectedCommitAndAbortSerializeToOneExactTerminalOutcome() throws Exception {
     proveConcurrentTerminalRace(true, 801);
@@ -563,6 +820,32 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       return null;
     } catch (Throwable failure) {
       return failure;
+    }
+  }
+
+  private static void awaitOriginalOwnerLeaseExpiration(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness, Prepared prepared) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (!Boolean.TRUE.equals(
+        harness
+            .dsl()
+            .fetchSingle(
+                "SELECT lease_expires_at <= clock_timestamp() "
+                    + "FROM game_session_start_session_operator_attempt "
+                    + "WHERE target_namespace = ? AND owner_attempt_id = ?",
+                prepared.request().targetNamespace(),
+                prepared.original().ownerAttemptId())
+            .get(0, Boolean.class))) {
+      if (System.nanoTime() >= deadline) {
+        throw new IllegalStateException("Timed out waiting for the legitimate owner lease");
+      }
+      try {
+        Thread.sleep(10L);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted waiting for the original owner lease", interrupted);
+      }
     }
   }
 

@@ -344,7 +344,7 @@ public class CanonicalInitialAdmissionRepository {
     CanonicalInitialAdmissionLaunchTarget launchTarget = lockLaunchTarget(request, false);
     requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
     requireSameRequest(attempt, request, launchTarget);
-    protectionRepository().requireExactSource(request, accountProtection);
+    protectionRepository().requireExactSourceForProtectedAbort(request, accountProtection);
     protectionRepository()
         .requireExactPendingReservation(
             request.targetNamespace(), request.initialAdmissionRequestId(), accountProtection);
@@ -1283,7 +1283,8 @@ public class CanonicalInitialAdmissionRepository {
                   ::terminalProofDigest);
     } catch (IllegalArgumentException | IllegalStateException invalidProtectedAssociation) {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "Protection-bound terminal association is incomplete or inconsistent");
+          "Protection-bound terminal association is incomplete or inconsistent",
+          invalidProtectedAssociation);
     }
   }
 

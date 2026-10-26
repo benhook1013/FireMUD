@@ -144,6 +144,8 @@ public final class ProtectedCanonicalInitialAdmissionCoordinator {
     AccountStartSessionAdmissionProtectionEvidence protection;
     if (completion.isPresent()) {
       protection = protectionFromCompletion(completion.orElseThrow(), request, accountRequest);
+    } else if (existing.isPresent()) {
+      protection = protectionBindings.readPendingProtection(request, accountRequest);
     } else {
       protection = acquireExactProtection(accountRequest);
       write(() -> admissions.reserveProtectedStartingForRuntimeCompletion(request, protection));

@@ -8,6 +8,7 @@ import java.util.Objects;
 import net.firedevops.firemud.account.v1.AccountStartSessionAdmissionProtectionServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.account.v1.AcquireStartSessionAdmissionProtectionResponse;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.ImmutableBindingConflictException;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import org.jooq.exception.DataAccessException;
@@ -73,10 +74,14 @@ public final class AccountStartSessionAdmissionProtectionGrpcService
       fail(observer, failure.getStatus());
     } catch (AccountStartSessionOperatorAuthorizationService.NotFoundException missing) {
       fail(observer, Status.NOT_FOUND);
+    } catch (ImmutableBindingConflictException
+        | AccountStartSessionOperatorAuthorizationService.OriginalAuthorizationDeniedException
+            expected) {
+      fail(observer, Status.FAILED_PRECONDITION);
     } catch (CannotCreateTransactionException unavailable) {
       fail(observer, Status.UNAVAILABLE);
     } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
-      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+      fail(observer, hasUnavailableSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
     } catch (IllegalArgumentException mismatch) {
       fail(observer, Status.FAILED_PRECONDITION);
     } catch (RuntimeException failure) {
@@ -84,11 +89,13 @@ public final class AccountStartSessionAdmissionProtectionGrpcService
     }
   }
 
-  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+  private static boolean hasUnavailableSqlState(Throwable failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof SQLException exception) {
         String sqlState = exception.getSQLState();
-        if (sqlState != null && sqlState.startsWith("08")) return true;
+        if (sqlState != null && (sqlState.startsWith("08") || sqlState.equals("55P03"))) {
+          return true;
+        }
       }
     }
     return false;
