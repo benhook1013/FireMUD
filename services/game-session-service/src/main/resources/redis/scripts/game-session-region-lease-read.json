@@ -1,12 +1,15 @@
 {
   "scriptId": "game-session.region-lease-read.v1",
   "resourcePath": "redis/lua/game-session-region-lease-read.lua",
-  "sha256": "564267ce5acd15cab89ade66466e5d1b959aaadee432cc20ec097915e138acf0",
+  "sha256": "694631a5d389e6cf75cf108e2f81ee537e1b50e43fa40db8efe4249080c86ef0",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
-  "keys": [{"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"}],
-  "arguments": [{"name": "schema"}, {"name": "token"}],
+  "keys": [
+    {"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionMeta", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [{"name": "schema"}, {"name": "token"}, {"name": "expectedRegionEpoch"}],
   "category": "TICK_LOCK",
   "outcomes": [
     {"code": "LEASE_CURRENT", "category": "SUCCESS", "effect": "NON_MUTATING"},

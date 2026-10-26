@@ -60,6 +60,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
                           CanonicalGameplayRegionRedisKeys.lease(
                               TENANT_ID, GAME_INSTANCE_ID_A, OPERATIONAL_REGION_ID))))
           .isEqualTo("none");
+      seedMeta(redis.admin(), firstSource);
       var firstGrant = owner.acquire(firstSource, 7L, Duration.ofSeconds(10), firstIdentity);
       byte[] firstKey = ascii(firstGrant.key());
       byte[] firstValue = redis.admin().get(firstKey);
@@ -77,8 +78,10 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().get(firstKey)).containsExactly(firstValue);
 
+      var secondGameSource = source(GAME_INSTANCE_ID_B);
+      seedMeta(redis.admin(), secondGameSource);
       var secondGameGrant =
-          owner.acquire(source(GAME_INSTANCE_ID_B), 7L, Duration.ofSeconds(10), firstIdentity);
+          owner.acquire(secondGameSource, 7L, Duration.ofSeconds(10), firstIdentity);
       assertThat(secondGameGrant.key()).isNotEqualTo(firstGrant.key());
       owner.requireCurrent(secondGameGrant);
 
@@ -89,6 +92,37 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
           owner.acquire(firstSource, 7L, Duration.ofSeconds(10), identity("instance-b"));
       assertThat(redis.admin().get(firstKey)).isNotEqualTo(firstValue);
       owner.requireCurrent(successor);
+    }
+  }
+
+  @Test
+  void acceptsTickZeroAndRejectsExpiringTimelineMetadata() {
+    try (RedisFixture redis = RedisFixture.open()) {
+      var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      var source = source(GAME_INSTANCE_ID_A);
+      String metaKey =
+          CanonicalGameplayRegionRedisKeys.meta(
+              source.tenantId(), source.gameInstanceId(), source.regionId());
+      seedMeta(redis.admin(), source);
+      redis.admin().hset(
+          ascii(metaKey),
+          ascii("current_tick_id"),
+          ascii("0"),
+          ascii("current_tick_state"),
+          ascii("STAGED"));
+
+      var grant = owner.acquire(source, 7L, Duration.ofSeconds(10), identity("tick-zero"));
+      owner.requireCurrent(grant);
+      owner.renew(grant, Duration.ofSeconds(10));
+
+      assertThat(redis.admin().pexpire(ascii(metaKey), 60_000L)).isTrue();
+      assertThatThrownBy(() -> owner.requireCurrent(grant))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> owner.renew(grant, Duration.ofSeconds(10)))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(
+              () -> owner.acquire(source, 7L, Duration.ofSeconds(10), identity("after-meta-ttl")))
+          .isInstanceOf(IllegalStateException.class);
     }
   }
 
@@ -147,6 +181,20 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
     return value.getBytes(StandardCharsets.US_ASCII);
   }
 
+  private static void seedMeta(
+      RedisCommands<byte[], byte[]> admin,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source) {
+    admin.hset(
+        ascii(CanonicalGameplayRegionRedisKeys.meta(
+            source.tenantId(), source.gameInstanceId(), source.regionId())),
+        ascii("region_epoch"),
+        ascii("7"),
+        ascii("current_tick_id"),
+        ascii("-1"),
+        ascii("current_tick_state"),
+        ascii("APPLIED"));
+  }
+
   private static final class RedisFixture implements AutoCloseable {
     private final RedisClient administrator;
     private final RedisClient ownerClient;
@@ -180,6 +228,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
               .on()
               .addPassword(PASSWORD)
               .keyPattern("tick-executor-lease:*")
+              .keyPattern("tick:*")
               .addCommand(CommandType.HELLO)
               .addCommand(CommandType.PING)
               .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
@@ -187,6 +236,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
               .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
               .addCommand(CommandType.EVALSHA)
               .addCommand(CommandType.TYPE)
+              .addCommand(CommandType.HGET)
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)

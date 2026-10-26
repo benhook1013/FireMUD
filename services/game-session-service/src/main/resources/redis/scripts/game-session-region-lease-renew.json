@@ -1,12 +1,15 @@
 {
   "scriptId": "game-session.region-lease-renew.v1",
   "resourcePath": "redis/lua/game-session-region-lease-renew.lua",
-  "sha256": "322963204c4d5290fa31354dd71c2d20d3dd9f2185deb4644185427345eee4f4",
+  "sha256": "b3bbab855f90f4431d2f358b92780907f0b7f67cb3bd673b49973f8b16276c19",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
-  "keys": [{"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"}],
-  "arguments": [{"name": "schema"}, {"name": "token"}, {"name": "leaseTtlMs"}],
+  "keys": [
+    {"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionMeta", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [{"name": "schema"}, {"name": "token"}, {"name": "expectedRegionEpoch"}, {"name": "leaseTtlMs"}],
   "category": "TICK_LOCK",
   "outcomes": [
     {"code": "LEASE_RENEWED", "category": "SUCCESS", "effect": "MUTATING"},

@@ -22,8 +22,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -32,7 +32,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** SQL owner for exact per-partition proof retention and one local initial anchor installation. */
 final class CanonicalGameplayIssuerBootstrapCoverageRepository {
   private static final String ISSUER = GameSessionAccountDelegationProfile.ISSUER;
-  private static final String OPERATION = "game_session_canonical_issuer_bootstrap_member_operation";
+  private static final String OPERATION =
+      "game_session_canonical_issuer_bootstrap_member_operation";
   private static final String PROOF = "game_session_canonical_issuer_bootstrap_partition_proof";
   private static final String COUNTER = "game_session_canonical_issuer_bootstrap_coverage_counter";
   private static final String ANCHOR = "game_session_canonical_issuer_installed_anchor";
@@ -67,7 +68,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           requireProofContext(input, currentPlan);
           Record existing =
               transaction.fetchOne(
-                  "SELECT * FROM " + PROOF + " WHERE bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
+                  "SELECT * FROM "
+                      + PROOF
+                      + " WHERE bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
                   currentPlan.bootstrapIntent().operationId(),
                   input.partitionId());
           if (existing != null) {
@@ -76,7 +79,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           }
           int inserted =
               transaction.execute(
-                  "INSERT INTO " + PROOF + " ("
+                  "INSERT INTO "
+                      + PROOF
+                      + " ("
                       + "build_operation_id, bootstrap_operation_id, bootstrap_request_id, issuer_id, "
                       + "build_plan_digest, bootstrap_operation_fence, bootstrap_coverage_fence, "
                       + "issuer_inventory_snapshot_revision, layout_version, partition_count, "
@@ -120,10 +125,13 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           if (inserted != 1) throw conflict("Exact partition proof did not persist");
           Record saved =
               transaction.fetchOne(
-                  "SELECT * FROM " + PROOF + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
+                  "SELECT * FROM "
+                      + PROOF
+                      + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
                   input.bootstrapOperationId(),
                   input.partitionId());
-          if (saved == null) throw conflict("Exact partition proof is unreadable after persistence");
+          if (saved == null)
+            throw conflict("Exact partition proof is unreadable after persistence");
           requireSameProof(saved, input);
         });
   }
@@ -176,7 +184,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           requireProofContext(input, currentPlan);
           Record row =
               transaction.fetchOne(
-                  "SELECT * FROM " + PROOF + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
+                  "SELECT * FROM "
+                      + PROOF
+                      + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
                   input.bootstrapOperationId(),
                   input.partitionId());
           if (row == null) throw conflict("Installed anchor is missing an exact partition proof");
@@ -225,7 +235,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
               createAnchor(plan, currentState, generation, proof);
           int inserted =
               transaction.execute(
-                  "INSERT INTO " + ANCHOR + " ("
+                  "INSERT INTO "
+                      + ANCHOR
+                      + " ("
                       + "issuer_id, bootstrap_operation_id, bootstrap_request_id, build_operation_id, "
                       + "build_plan_digest, control_epoch, issuer_coverage_operation_id, operation_fence, "
                       + "coverage_fence, issuer_inventory_snapshot_revision, layout_version, partition_count, "
@@ -236,10 +248,14 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
                       + "physical_binding_count, aggregate_counted_capacity, partition_proof_root_digest, "
                       + "exact_anchor_bytes, exact_anchor_digest, anchor_state) "
                       + "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INITIAL_INSTALLED' "
-                      + "FROM " + CONTROL + " c WHERE c.issuer_id = ? AND c.state = 'INITIAL_BOOTSTRAP_INTENT' "
+                      + "FROM "
+                      + CONTROL
+                      + " c WHERE c.issuer_id = ? AND c.state = 'INITIAL_BOOTSTRAP_INTENT' "
                       + "AND c.control_epoch = ? AND c.current_operation_id = ? "
                       + "AND c.current_operation_fence = ? AND c.current_coverage_fence = ? "
-                      + "AND NOT EXISTS (SELECT 1 FROM " + ANCHOR + " a WHERE a.issuer_id = c.issuer_id)",
+                      + "AND NOT EXISTS (SELECT 1 FROM "
+                      + ANCHOR
+                      + " a WHERE a.issuer_id = c.issuer_id)",
                   anchor.issuerId(),
                   anchor.bootstrapOperationId(),
                   anchor.bootstrapRequestId(),
@@ -278,8 +294,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
                   intent.coverageFence());
           if (inserted != 1) throw conflict("Exact initial issuer anchor compare-and-set refused");
           Record saved =
-              transaction.fetchOne(
-                  "SELECT * FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
+              transaction.fetchOne("SELECT * FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
           if (saved == null) throw conflict("Installed issuer anchor is unreadable after its CAS");
           CanonicalGameplayIssuerInstalledAnchor result = loadAnchor(saved);
           requireSameAnchor(result, anchor);
@@ -293,7 +308,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       BigInteger generation,
       ProofSummary proof) {
     CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
-    CanonicalGameplayIssuerLayoutBootstrapIntent.LayoutDescriptor layout = intent.layoutDescriptor();
+    CanonicalGameplayIssuerLayoutBootstrapIntent.LayoutDescriptor layout =
+        intent.layoutDescriptor();
     CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint source =
         intent.sourceCheckpoint();
     byte[] incarnationBytes =
@@ -346,10 +362,12 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
             intent.operationId());
     BigInteger partitionCount = intent.layoutDescriptor().partitionCount();
     if (!BigInteger.valueOf(proofRows.size()).equals(partitionCount)) {
-      throw conflict("Initial issuer anchor requires one positive physical proof per finite partition");
+      throw conflict(
+          "Initial issuer anchor requires one positive physical proof per finite partition");
     }
 
-    Map<Long, CanonicalGameplayIssuerPartitionBuildPlan.MemberWork> worksByOrdinal = new HashMap<>();
+    Map<Long, CanonicalGameplayIssuerPartitionBuildPlan.MemberWork> worksByOrdinal =
+        new HashMap<>();
     Map<UUID, byte[]> exactOperationValues = new HashMap<>();
     Map<BigInteger, Integer> expectedReservationsByPartition = new HashMap<>();
     Map<BigInteger, Integer> expectedCapacityByPartition = new HashMap<>();
@@ -365,10 +383,13 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     }
     List<Record> operations =
         transaction.fetch(
-            "SELECT * FROM " + OPERATION + " WHERE bootstrap_operation_id = ? ORDER BY work_ordinal",
+            "SELECT * FROM "
+                + OPERATION
+                + " WHERE bootstrap_operation_id = ? ORDER BY work_ordinal",
             intent.operationId());
     if (operations.size() != plan.memberWorks().size()) {
-      throw conflict("Finite coverage cannot complete while any SQL member operation is unresolved");
+      throw conflict(
+          "Finite coverage cannot complete while any SQL member operation is unresolved");
     }
     for (Record operation : operations) {
       long ordinal = requireNonNegativeLong(operation, "work_ordinal");
@@ -389,7 +410,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       if (exactOperationValues.putIfAbsent(work.reservationId(), bytes) != null) {
         throw conflict("Finite SQL work contains a duplicate reservation identity");
       }
-      if (Boolean.TRUE.equals(operation.get("expected_binding_present", Boolean.class))) expectedBindingCount++;
+      if (Boolean.TRUE.equals(operation.get("expected_binding_present", Boolean.class)))
+        expectedBindingCount++;
     }
 
     BigInteger expectedPartition = BigInteger.ZERO;
@@ -397,22 +419,27 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     BigInteger bindingCount = BigInteger.ZERO;
     BigInteger aggregateCountedCapacity = BigInteger.ZERO;
     BigInteger expectedAggregateCapacity = BigInteger.valueOf(expectedCapacityCount);
-    BigInteger aggregateBound = partitionCount.multiply(intent.layoutDescriptor().partitionCapacity());
+    BigInteger aggregateBound =
+        partitionCount.multiply(intent.layoutDescriptor().partitionCapacity());
     MessageDigest root = sha256Digest();
     for (Record row : proofRows) {
       BigInteger partitionId = readInteger(row, "partition_id");
       if (!partitionId.equals(expectedPartition)) {
-        throw conflict("Initial issuer physical proof set is not the exact contiguous finite range");
+        throw conflict(
+            "Initial issuer physical proof set is not the exact contiguous finite range");
       }
       requireProofMatchesPlan(row, plan, expectedIncarnationBytes, partitionId);
-      int expectedPartitionReservations = expectedReservationsByPartition.getOrDefault(partitionId, 0);
+      int expectedPartitionReservations =
+          expectedReservationsByPartition.getOrDefault(partitionId, 0);
       int expectedPartitionCapacity = expectedCapacityByPartition.getOrDefault(partitionId, 0);
-      Map<String, byte[]> fields = decodeFieldSet(requireBytes(row, "exact_physical_field_set_bytes"));
+      Map<String, byte[]> fields =
+          decodeFieldSet(requireBytes(row, "exact_physical_field_set_bytes"));
       byte[] metadata = fields.get(METADATA_FIELD);
       if (metadata == null || !Arrays.equals(metadata, requireBytes(row, "exact_metadata_bytes"))) {
         throw conflict("Partition proof does not retain its exact common physical metadata");
       }
-      CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.requireExactMetadata(metadata, metadata);
+      CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.requireExactMetadata(
+          metadata, metadata);
       Set<UUID> reservationIds = new HashSet<>();
       int physicalBindings = 0;
       int physicalCapacity = 0;
@@ -457,7 +484,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         } else {
           CanonicalGameplayBindingRef bindingRef;
           try {
-            bindingRef = CanonicalGameplayBindingRef.fromExactBytes(fieldName.getBytes(StandardCharsets.UTF_8));
+            bindingRef =
+                CanonicalGameplayBindingRef.fromExactBytes(
+                    fieldName.getBytes(StandardCharsets.UTF_8));
           } catch (RuntimeException malformed) {
             throw conflict("Physical issuer binding field has invalid canonical identity");
           }
@@ -469,7 +498,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         }
       }
       expectedFieldNames.addAll(
-          reservationIds.stream().map(CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec::reservationField).toList());
+          reservationIds.stream()
+              .map(CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec::reservationField)
+              .toList());
       if (!expectedFieldNames.equals(fields.keySet())
           || physicalReservations != expectedPartitionReservations
           || physicalCapacity != expectedPartitionCapacity
@@ -478,18 +509,24 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           || physicalBindings != readInt(row, "physical_binding_count")
           || physicalCapacity != readInt(row, "physical_counted_capacity_count")
           || fields.size() != readInt(row, "physical_field_count")
-          || !expectedAggregateCapacity.equals(readInteger(row, "planned_aggregate_capacity_count"))) {
+          || !expectedAggregateCapacity.equals(
+              readInteger(row, "planned_aggregate_capacity_count"))) {
         throw conflict("Physical partition proof differs from SQL work or capacity expectations");
       }
-      if (BigInteger.valueOf(physicalCapacity).compareTo(intent.layoutDescriptor().partitionCapacity()) > 0) {
+      if (BigInteger.valueOf(physicalCapacity)
+              .compareTo(intent.layoutDescriptor().partitionCapacity())
+          > 0) {
         throw conflict("Physical issuer partition exceeds its pinned reservation capacity");
       }
       reservationCount = reservationCount.add(BigInteger.valueOf(physicalReservations));
       bindingCount = bindingCount.add(BigInteger.valueOf(physicalBindings));
       aggregateCountedCapacity = aggregateCountedCapacity.add(BigInteger.valueOf(physicalCapacity));
       updateRoot(root, partitionId.toString().getBytes(StandardCharsets.US_ASCII));
-      updateRoot(root, CanonicalGameplayIssuerMemberV2Codec.sha256(
-          requireBytes(row, "exact_physical_field_set_bytes")).getBytes(StandardCharsets.US_ASCII));
+      updateRoot(
+          root,
+          CanonicalGameplayIssuerMemberV2Codec.sha256(
+                  requireBytes(row, "exact_physical_field_set_bytes"))
+              .getBytes(StandardCharsets.US_ASCII));
       expectedPartition = expectedPartition.add(BigInteger.ONE);
     }
     if (!expectedPartition.equals(partitionCount)
@@ -497,7 +534,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !bindingCount.equals(BigInteger.valueOf(expectedBindingCount))
         || !aggregateCountedCapacity.equals(expectedAggregateCapacity)
         || aggregateCountedCapacity.compareTo(aggregateBound) > 0) {
-      throw conflict("Initial issuer proof does not cover complete reservation and aggregate capacity");
+      throw conflict(
+          "Initial issuer proof does not cover complete reservation and aggregate capacity");
     }
     return new ProofSummary(
         proofRows.size(),
@@ -555,7 +593,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !reservation.transitionId().equals(work.transitionId())
         || !reservation.partitionId().equals(work.plannedPartitionId())
         || !reservation.issuerCoverageOperationId().equals(work.originalIssuerCoverageOperationId())
-        || !reservation.issuerCoverageOperationFence().equals(work.originalIssuerCoverageOperationFence())
+        || !reservation
+            .issuerCoverageOperationFence()
+            .equals(work.originalIssuerCoverageOperationFence())
         || !reservation.coverageFence().equals(work.originalCoverageFence())
         || !reservation.inventorySnapshotRevision().equals(work.originalInventorySnapshotRevision())
         || !work.reservationLifecycle().equals(reservation.lifecycle().name())
@@ -565,21 +605,32 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !anchor.coverageFence().equals(intent.coverageFence())
         || !anchor.issuerInventorySnapshotRevision().equals(intent.inventorySnapshotRevision())
         || !value.issuerControlEpoch().equals(intent.controlEpoch())
-        || !Arrays.equals(value.layoutDescriptor().exactDescriptorBytes(), intent.layoutDescriptor().exactDescriptorBytes())
+        || !Arrays.equals(
+            value.layoutDescriptor().exactDescriptorBytes(),
+            intent.layoutDescriptor().exactDescriptorBytes())
         || !Arrays.equals(work.bindingRef(), value.owner().bindingRef().bytes())
-        || !Boolean.valueOf(work.countsTowardCapacity()).equals(row.get("counts_toward_capacity", Boolean.class))
-        || !Boolean.valueOf(isBindingPresent(row)).equals(row.get("expected_binding_present", Boolean.class))
+        || !Boolean.valueOf(work.countsTowardCapacity())
+            .equals(row.get("counts_toward_capacity", Boolean.class))
+        || !Boolean.valueOf(isBindingPresent(row))
+            .equals(row.get("expected_binding_present", Boolean.class))
         || !work.reservationId().equals(requireUuid(row, "reservation_id"))
-        || !work.reservationSourceRowDigest().equals(requireText(row, "reservation_source_row_digest"))
-        || !work.originalIssuerCoverageOperationId().equals(requireUuid(row, "original_issuer_coverage_operation_id"))
-        || !work.originalIssuerCoverageOperationFence().equals(readInteger(row, "original_issuer_coverage_operation_fence"))
+        || !work.reservationSourceRowDigest()
+            .equals(requireText(row, "reservation_source_row_digest"))
+        || !work.originalIssuerCoverageOperationId()
+            .equals(requireUuid(row, "original_issuer_coverage_operation_id"))
+        || !work.originalIssuerCoverageOperationFence()
+            .equals(readInteger(row, "original_issuer_coverage_operation_fence"))
         || !work.originalCoverageFence().equals(readInteger(row, "original_coverage_fence"))
-        || !work.originalInventorySnapshotRevision().equals(readInteger(row, "original_inventory_snapshot_revision"))
+        || !work.originalInventorySnapshotRevision()
+            .equals(readInteger(row, "original_inventory_snapshot_revision"))
         || !intent.operationId().equals(requireUuid(row, "bootstrap_anchor_operation_id"))
         || !intent.operationFence().equals(readInteger(row, "bootstrap_anchor_operation_fence"))
         || !intent.coverageFence().equals(readInteger(row, "bootstrap_anchor_coverage_fence"))
-        || !intent.inventorySnapshotRevision().equals(readInteger(row, "bootstrap_anchor_inventory_snapshot_revision"))) {
-      throw conflict("SQL member operation does not match its exact reservation, anchor, and plan tuple");
+        || !intent
+            .inventorySnapshotRevision()
+            .equals(readInteger(row, "bootstrap_anchor_inventory_snapshot_revision"))) {
+      throw conflict(
+          "SQL member operation does not match its exact reservation, anchor, and plan tuple");
     }
   }
 
@@ -600,19 +651,25 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !plan.planDigest().equals(requireText(row, "build_plan_digest"))
         || !intent.operationFence().equals(readInteger(row, "bootstrap_operation_fence"))
         || !intent.coverageFence().equals(readInteger(row, "bootstrap_coverage_fence"))
-        || !intent.inventorySnapshotRevision().equals(readInteger(row, "issuer_inventory_snapshot_revision"))
+        || !intent
+            .inventorySnapshotRevision()
+            .equals(readInteger(row, "issuer_inventory_snapshot_revision"))
         || !layout.layoutVersion().equals(readInteger(row, "layout_version"))
         || !layout.partitionCount().equals(readInteger(row, "partition_count"))
         || !layout.partitionCapacity().equals(readInteger(row, "partition_capacity"))
         || !layout.mappingIdentity().equals(requireText(row, "mapping_identity"))
-        || !Arrays.equals(layout.exactDescriptorBytes(), requireBytes(row, "layout_descriptor_bytes"))
+        || !Arrays.equals(
+            layout.exactDescriptorBytes(), requireBytes(row, "layout_descriptor_bytes"))
         || !layout.descriptorDigest().equals(requireText(row, "layout_descriptor_digest"))
-        || !Arrays.equals(source.exactCheckpointBytes(), requireBytes(row, "source_checkpoint_bytes"))
+        || !Arrays.equals(
+            source.exactCheckpointBytes(), requireBytes(row, "source_checkpoint_bytes"))
         || !source.checkpointDigest().equals(requireText(row, "source_checkpoint_digest"))
         || !Arrays.equals(expectedEvent, optionalBytes(row, "source_event_bytes"))
-        || !Objects.equals(source.latestIssuerEventDigest(), row.get("source_event_digest", String.class))
+        || !Objects.equals(
+            source.latestIssuerEventDigest(), row.get("source_event_digest", String.class))
         || !Arrays.equals(expectedIncarnationBytes, exactIncarnation)
-        || !CanonicalGameplayIssuerMemberV2Codec.sha256(exactIncarnation).equals(requireText(row, "incarnation_digest"))
+        || !CanonicalGameplayIssuerMemberV2Codec.sha256(exactIncarnation)
+            .equals(requireText(row, "incarnation_digest"))
         || !partitionId.equals(readInteger(row, "partition_id"))
         || !"EXACT_PHYSICAL_READBACK".equals(requireText(row, "proof_state"))) {
       throw conflict("Persisted physical proof differs from the exact current plan tuple");
@@ -671,7 +728,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !Objects.equals(anchor.sourceEventDigest(), source.latestIssuerEventDigest())
         || !Arrays.equals(anchor.incarnationBytes(), currentIncarnation)
         || !sameCheckpoint(current.accountCheckpoint(), source)) {
-      throw conflict("Installed issuer anchor does not match the exact current source and initial layout");
+      throw conflict(
+          "Installed issuer anchor does not match the exact current source and initial layout");
     }
   }
 
@@ -694,7 +752,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
             anchor.issuerId());
     if (counter == null
         || readInteger(counter, "last_issued_coverage_generation")
-            .compareTo(anchor.globalCoverageGeneration())
+                .compareTo(anchor.globalCoverageGeneration())
             < 0) {
       throw conflict("Installed anchor generation is beyond the current global issuer counter");
     }
@@ -711,7 +769,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       CanonicalGameplayIssuerInstalledAnchor expected) {
     if (!Arrays.equals(actual.exactAnchorBytes(), expected.exactAnchorBytes())
         || !actual.exactAnchorDigest().equals(expected.exactAnchorDigest())) {
-      throw conflict("Installed issuer anchor readback differs from its exact owner-issued pointer");
+      throw conflict(
+          "Installed issuer anchor readback differs from its exact owner-issued pointer");
     }
   }
 
@@ -756,7 +815,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
 
   private BigInteger allocateGlobalCoverageGeneration(DSLContext transaction) {
     transaction.execute(
-        "INSERT INTO " + COUNTER + " (issuer_id, last_issued_coverage_generation, counter_version) "
+        "INSERT INTO "
+            + COUNTER
+            + " (issuer_id, last_issued_coverage_generation, counter_version) "
             + "VALUES (?, 0, 0) ON CONFLICT (issuer_id) DO NOTHING",
         ISSUER);
     Record counter =
@@ -766,10 +827,12 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     BigInteger previous = readInteger(counter, "last_issued_coverage_generation");
     long version = requireNonNegativeLong(counter, "counter_version");
     BigInteger next = previous.add(BigInteger.ONE);
-    if (next.toString().length() > 256) throw conflict("Global issuer coverage generation is outside its bound");
+    if (next.toString().length() > 256)
+      throw conflict("Global issuer coverage generation is outside its bound");
     int updated =
         transaction.execute(
-            "UPDATE " + COUNTER
+            "UPDATE "
+                + COUNTER
                 + " SET last_issued_coverage_generation = ?, counter_version = ?, updated_at = CURRENT_TIMESTAMP "
                 + "WHERE issuer_id = ? AND last_issued_coverage_generation = ? AND counter_version = ?",
             next,
@@ -795,8 +858,11 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || readback.physicalPartitionReservationCount() != physical.reservationCount()
         || readback.physicalBindingCount() != physical.bindingCount()
         || readback.physicalCountedCapacityCount() != physical.countedReservationCount()
-        || !readback.plannedAggregateCapacityCount().equals(physical.plannedAggregateCapacityCount())) {
-      throw conflict("Physical Redis readback capability differs from its exact prepared field set");
+        || !readback
+            .plannedAggregateCapacityCount()
+            .equals(physical.plannedAggregateCapacityCount())) {
+      throw conflict(
+          "Physical Redis readback capability differs from its exact prepared field set");
     }
     return new ProofInput(
         plan.buildOperationId(),
@@ -878,28 +944,36 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !expected.planDigest().equals(requireText(row, "build_plan_digest"))
         || !expected.operationFence().equals(readInteger(row, "bootstrap_operation_fence"))
         || !expected.coverageFence().equals(readInteger(row, "bootstrap_coverage_fence"))
-        || !expected.snapshotRevision().equals(readInteger(row, "issuer_inventory_snapshot_revision"))
+        || !expected
+            .snapshotRevision()
+            .equals(readInteger(row, "issuer_inventory_snapshot_revision"))
         || !expected.layoutVersion().equals(readInteger(row, "layout_version"))
         || !expected.partitionCount().equals(readInteger(row, "partition_count"))
         || !expected.partitionCapacity().equals(readInteger(row, "partition_capacity"))
         || !expected.mappingIdentity().equals(requireText(row, "mapping_identity"))
-        || !Arrays.equals(expected.layoutDescriptorBytes(), requireBytes(row, "layout_descriptor_bytes"))
+        || !Arrays.equals(
+            expected.layoutDescriptorBytes(), requireBytes(row, "layout_descriptor_bytes"))
         || !expected.layoutDescriptorDigest().equals(requireText(row, "layout_descriptor_digest"))
-        || !Arrays.equals(expected.sourceCheckpointBytes(), requireBytes(row, "source_checkpoint_bytes"))
+        || !Arrays.equals(
+            expected.sourceCheckpointBytes(), requireBytes(row, "source_checkpoint_bytes"))
         || !expected.sourceCheckpointDigest().equals(requireText(row, "source_checkpoint_digest"))
         || !Arrays.equals(expected.sourceEventBytes(), optionalBytes(row, "source_event_bytes"))
-        || !Objects.equals(expected.sourceEventDigest(), row.get("source_event_digest", String.class))
+        || !Objects.equals(
+            expected.sourceEventDigest(), row.get("source_event_digest", String.class))
         || !Arrays.equals(expected.incarnationBytes(), requireBytes(row, "incarnation_bytes"))
         || !expected.incarnationDigest().equals(requireText(row, "incarnation_digest"))
         || !expected.partitionId().equals(readInteger(row, "partition_id"))
         || !Arrays.equals(expected.metadataBytes(), requireBytes(row, "exact_metadata_bytes"))
-        || !Arrays.equals(expected.fieldSetBytes(), requireBytes(row, "exact_physical_field_set_bytes"))
+        || !Arrays.equals(
+            expected.fieldSetBytes(), requireBytes(row, "exact_physical_field_set_bytes"))
         || !expected.fieldSetDigest().equals(requireText(row, "exact_physical_field_set_digest"))
         || expected.fieldCount() != readInt(row, "physical_field_count")
         || expected.reservationCount() != readInt(row, "physical_reservation_count")
         || expected.bindingCount() != readInt(row, "physical_binding_count")
         || expected.countedCapacityCount() != readInt(row, "physical_counted_capacity_count")
-        || !expected.aggregateCountedCapacity().equals(readInteger(row, "planned_aggregate_capacity_count"))
+        || !expected
+            .aggregateCountedCapacity()
+            .equals(readInteger(row, "planned_aggregate_capacity_count"))
         || !"EXACT_PHYSICAL_READBACK".equals(requireText(row, "proof_state"))) {
       throw conflict("Exact partition proof retry changed its original physical bytes or tuple");
     }
@@ -907,9 +981,11 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
 
   private static byte[] encodeFieldSet(Map<String, byte[]> fields) {
     List<Map.Entry<String, byte[]>> entries = new ArrayList<>(fields.entrySet());
-    entries.sort((left, right) -> compareUnsigned(
-        left.getKey().getBytes(StandardCharsets.UTF_8),
-        right.getKey().getBytes(StandardCharsets.UTF_8)));
+    entries.sort(
+        (left, right) ->
+            compareUnsigned(
+                left.getKey().getBytes(StandardCharsets.UTF_8),
+                right.getKey().getBytes(StandardCharsets.UTF_8)));
     try {
       ByteArrayOutputStream bytes = new ByteArrayOutputStream();
       try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -920,10 +996,12 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           writeBytes(output, entry.getValue());
         }
       }
-      if (bytes.size() > 17 * 1024 * 1024) throw conflict("Physical field proof exceeds its bounded storage limit");
+      if (bytes.size() > 17 * 1024 * 1024)
+        throw conflict("Physical field proof exceeds its bounded storage limit");
       return bytes.toByteArray();
     } catch (IOException impossible) {
-      throw new IllegalStateException("Could not encode exact issuer physical readback", impossible);
+      throw new IllegalStateException(
+          "Could not encode exact issuer physical readback", impossible);
     }
   }
 
@@ -932,22 +1010,30 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       throw conflict("Persisted issuer physical field proof is outside its bound");
     }
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded))) {
-      if (!Arrays.equals(readBytes(input, 256), FIELDSET_MAGIC.getBytes(StandardCharsets.US_ASCII))) {
+      if (!Arrays.equals(
+          readBytes(input, 256), FIELDSET_MAGIC.getBytes(StandardCharsets.US_ASCII))) {
         throw conflict("Persisted issuer physical field proof has an unsupported encoding");
       }
       int count = input.readInt();
-      if (count < 1 || count > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_HASH_FIELDS) {
+      if (count < 1
+          || count > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_HASH_FIELDS) {
         throw conflict("Persisted issuer physical field count is outside its bound");
       }
       Map<String, byte[]> fields = new HashMap<>();
       byte[] previous = null;
       for (int index = 0; index < count; index++) {
-        byte[] rawField = readBytes(input, CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_BINDING_REF_BYTES);
-        if (rawField.length == 0 || (previous != null && compareUnsigned(previous, rawField) >= 0)) {
+        byte[] rawField =
+            readBytes(
+                input,
+                CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_BINDING_REF_BYTES);
+        if (rawField.length == 0
+            || (previous != null && compareUnsigned(previous, rawField) >= 0)) {
           throw conflict("Persisted issuer physical fields are duplicated or noncanonical");
         }
         String field = decodeUtf8(rawField);
-        byte[] value = readBytes(input, CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_VALUE_BYTES);
+        byte[] value =
+            readBytes(
+                input, CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_VALUE_BYTES);
         if (value.length == 0 || fields.putIfAbsent(field, value) != null) {
           throw conflict("Persisted issuer physical field is empty or duplicated");
         }
@@ -967,7 +1053,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
 
   private static byte[] readBytes(DataInputStream input, int maxBytes) throws IOException {
     int length = input.readInt();
-    if (length < 0 || length > maxBytes) throw conflict("Issuer physical proof field exceeds its bound");
+    if (length < 0 || length > maxBytes)
+      throw conflict("Issuer physical proof field exceeds its bound");
     byte[] value = input.readNBytes(length);
     if (value.length != length) throw conflict("Issuer physical proof field is truncated");
     return value;
@@ -975,7 +1062,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
 
   private static String decodeUtf8(byte[] bytes) {
     try {
-      return StandardCharsets.UTF_8.newDecoder()
+      return StandardCharsets.UTF_8
+          .newDecoder()
           .onMalformedInput(CodingErrorAction.REPORT)
           .onUnmappableCharacter(CodingErrorAction.REPORT)
           .decode(java.nio.ByteBuffer.wrap(bytes))
@@ -1113,12 +1201,35 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       fieldSetBytes = fieldSetBytes.clone();
     }
 
-    @Override public byte[] layoutDescriptorBytes() { return layoutDescriptorBytes.clone(); }
-    @Override public byte[] sourceCheckpointBytes() { return sourceCheckpointBytes.clone(); }
-    @Override public byte[] sourceEventBytes() { return sourceEventBytes == null ? null : sourceEventBytes.clone(); }
-    @Override public byte[] incarnationBytes() { return incarnationBytes.clone(); }
-    @Override public byte[] metadataBytes() { return metadataBytes.clone(); }
-    @Override public byte[] fieldSetBytes() { return fieldSetBytes.clone(); }
+    @Override
+    public byte[] layoutDescriptorBytes() {
+      return layoutDescriptorBytes.clone();
+    }
+
+    @Override
+    public byte[] sourceCheckpointBytes() {
+      return sourceCheckpointBytes.clone();
+    }
+
+    @Override
+    public byte[] sourceEventBytes() {
+      return sourceEventBytes == null ? null : sourceEventBytes.clone();
+    }
+
+    @Override
+    public byte[] incarnationBytes() {
+      return incarnationBytes.clone();
+    }
+
+    @Override
+    public byte[] metadataBytes() {
+      return metadataBytes.clone();
+    }
+
+    @Override
+    public byte[] fieldSetBytes() {
+      return fieldSetBytes.clone();
+    }
   }
 
   private record ProofSummary(

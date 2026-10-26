@@ -17,6 +17,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
       DSLContext dsl,
       RedisClient coordinationRedis,
       RedisScriptCatalog scriptCatalog,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       RuntimeIdentity runtimeIdentity,
       Duration leaseTtl,
@@ -24,10 +25,12 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
     Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(coordinationRedis, "coordinationRedis");
     Objects.requireNonNull(scriptCatalog, "scriptCatalog");
+    Objects.requireNonNull(incarnationSource, "incarnationSource");
     return new CanonicalGameplayRegionLeaseOwner(
         new CanonicalGameplayBindingInventoryRepository(dsl),
         new CanonicalGameplayRegionRuntimeStatusRepository(dsl),
         new CanonicalGameplayRegionLeaseRedisOwner(coordinationRedis, scriptCatalog),
+        incarnationSource,
         Objects.requireNonNull(worldRegionResolver, "worldRegionResolver"),
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity"),
         Objects.requireNonNull(leaseTtl, "leaseTtl"),

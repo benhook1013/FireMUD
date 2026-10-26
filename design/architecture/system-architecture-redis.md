@@ -81,6 +81,12 @@ When this hub introduces or sharpens canonical coordination contracts, keep the 
 
 ---
 
+## Canonical Region Key Projection
+
+The physical `tenantRegionTag` projects the complete canonical `{tenantId, gameInstanceId, regionId}` scope defined by [Tick System](./system-architecture-ticks.md#region-authority-and-tick-executor). Version 1 is `r1-<tenantHex32>-<gameInstanceHex32>-<regionHex32>`: each component is the exact lowercase 32-hex-digit spelling of its canonical non-nil UUID with UUID separators removed. The resulting 101-byte value contains no braces or colons; braces belong only to the enclosing Redis key’s hash-tag syntax. Inputs are validated canonical identities, never normalized caller text. Reusing a region UUID in two game instances produces different tags.
+
+The actual region-status owner derives and retains this projection from its qualified complete region identity and exact-compares it on retry. A caller-supplied tag, tenant-only gameplay tag, content-region row ID or instance-scoped ownership record cannot supply that identity. The projection is a key address, not World assignment, region-epoch, lease or executor-fence authority. All region-scoped lease, metadata and binding keys use this same projection; it does not introduce a separate registry or authorize a timeline reset.
+
 ## Redis Coordination Invariants
 
 FireMUD uses Redis as a **transient, high‑performance coordination layer**, not as a primary source of truth. The following invariants apply to all coordination designs:

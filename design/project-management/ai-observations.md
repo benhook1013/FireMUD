@@ -411,3 +411,14 @@ Entry format:
   - Context: `staleSerializableGenuineAckCreatorRetriesAndRetainsOneExactWinner` failed in `finalized()` after 1.292 seconds, before the serializable race began.
   - Observation: The SQL guard message `storage deadline expired` covers either `evaluatedAt >` the database clock or `expiresAt <=` the database clock, so the branch and clock cause are unknown. Retain the failed result; an unchanged future retry cannot recover the original failure-time clock evidence.
   - Expected pattern: Capture the original evidence timestamps, JVM and database wall clocks, and monotonic elapsed time only after a failure, without delaying the original COMMIT or changing its lifetime or guard.
+
+- `2026-10-26`: Inspect default registration separately from a manual owner implementation
+  - Context: A delegated region-lease source implementation added its Redis contribution to the default ServiceLoader list despite an explicit manually composed, unregistered scope. Main detected and removed only that new registration before validation or publication; the existing registered contributions were preserved.
+  - Observation: A passive descriptor class and a factory do not establish that the owner remains unregistered; the ServiceLoader resource can change that boundary independently. No default runtime activation was performed or proved.
+  - Expected pattern: Inspect registration resources against the assigned scope at integration, reject unrequested registration, and make focused fixtures compose their manual descriptor catalog explicitly.
+
+- `2026-10-26`: Expose the current review configuration after a guarded conflict
+  - Context: The published #3310 comparison refresh returned generic `review_conflict` and identity advice without a current configuration revision or operation receipt, despite a verified Gameplay binding. Ordinary worker help did not expose a supported way to obtain the missing guard.
+  - Observation: The worker could not distinguish a stale configuration guard from scoped-access failure. FireController's owner confirmed the missing conflict detail and ordinary configuration read as a product defect and is repairing the supported path; review allocations remain unchanged.
+  - Expected pattern: Retain the exact request and idempotency key, report both the error and the missing recovery guidance to the tool owner, and continue independent work. Do not guess revisions, repeat provider requests or debug the service from a product lane. Record the supported recovery outcome when supplied.
+  - Recovery outcome: The owner confirmed that the rejected request queued no operation and identified revision 9 as stale. The ordinary `review_execution_read` became discoverable, returned revision 15 with execution enabled, and a new source refresh using that observed guard was accepted. This unblocked the worker; deployment of precise conflict diagnostics and discoverable help remained with the tool owner.

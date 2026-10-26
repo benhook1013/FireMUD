@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.OffsetDateTime;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,6 +11,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
+import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
@@ -34,6 +39,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Game Session-owned durable preparation ledger.
@@ -198,6 +204,552 @@ public final class CanonicalGameplayBindingInventoryRepository {
           transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
           return loadProvisionalCasEvidence(transaction, transitionId, false);
         });
+  }
+
+  void requireSameProvisionalSource(
+      CanonicalGameplayBindingProvisionalCasEvidence expected,
+      CanonicalGameplayBindingProvisionalCasEvidence current) {
+    requireSameProvisionalOperation(
+        Objects.requireNonNull(expected, "expected"), Objects.requireNonNull(current, "current"));
+  }
+
+  /**
+   * Persists the exact selected first-NEW bridge operation and current region fence before Redis
+   * can be changed. A retry reuses its operation identity and refuses changed Entity or World
+   * provenance.
+   */
+  CanonicalGameplayBindingRegionBridgeObligation prepareRegionBridge(
+      CanonicalGameplayBindingProvisionalCasEvidence expectedEvidence,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolvedRegion,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference runtimeReference,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus,
+      CanonicalGameplayRegionLeaseRedisOwner.BindingPreimage preimage) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedEvidence, "expectedEvidence");
+    Objects.requireNonNull(preimage, "preimage");
+    BridgeInputs inputs =
+        requireBridgeInputs(
+            expectedEvidence, worldRequest, resolvedRegion, runtimeReference, ownerStatus);
+    requireExactBridgePreimage(preimage, inputs, expectedEvidence, ownerStatus);
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision = lockInventoryRevision(transaction);
+          CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
+              loadProvisionalCasEvidence(
+                  transaction, expectedEvidence.transition().transitionId(), true);
+          requireSameProvisionalOperation(expectedEvidence, currentEvidence);
+          BridgeInputs currentInputs =
+              requireBridgeInputs(
+                  currentEvidence, worldRequest, resolvedRegion, runtimeReference, ownerStatus);
+          if (!inputs.equals(currentInputs) || currentEvidence.expectedPrior() != null) {
+            throw conflict("Region bridge source changed or is not a first-NEW transition");
+          }
+          requireCurrentRegionOwner(transaction, ownerStatus);
+          Record regionRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
+                  currentEvidence.transition().transitionId());
+          if (regionRow == null) throw conflict("Region bridge obligation is missing");
+          CanonicalGameplayBindingRegionBridgeObligation existing = toRegionObligation(regionRow);
+          if (existing.bridgeOperationId() != null) {
+            if (!matchesPreparedOperation(existing, inputs)) {
+              throw conflict("A retry changed the retained Entity or World bridge source");
+            }
+            boolean sameGrant =
+                Objects.equals(existing.executorFence(), ownerStatus.executorFence())
+                    && Objects.equals(
+                        existing.leaseTokenCorrelation(), ownerStatus.leaseTokenCorrelation());
+            if (sameGrant) return existing;
+            return rewritePreparedBridgeForCurrentGrant(
+                transaction, currentRevision, currentEvidence, regionRow, existing, inputs, ownerStatus);
+          }
+          if (preimage.state() != CanonicalGameplayRegionLeaseRedisOwner.PreimageState.ABSENT) {
+            throw conflict("First region bridge operation requires a proven absent Redis preimage");
+          }
+          UUID operationId = UUID.randomUUID();
+          return writePreparedBridge(
+              transaction,
+              currentRevision,
+              currentEvidence,
+              inputs,
+              ownerStatus,
+              operationId);
+        });
+  }
+
+  /**
+   * Records a binding-local ACK only after the bridge owner's separate Lua readback capability,
+   * current World/Entity sources, and current durable region owner have all been revalidated.
+   */
+  RegionBridgeAcknowledgement acknowledgeRegionBridge(
+      CanonicalGameplayBindingRegionBridgeObligation prepared,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolvedRegion,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference runtimeReference,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus,
+      CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback,
+      Instant acknowledgedAt) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(prepared, "prepared");
+    Objects.requireNonNull(readback, "readback");
+    Objects.requireNonNull(acknowledgedAt, "acknowledgedAt");
+    CanonicalGameplayBindingProvisionalCasEvidence expectedEvidence =
+        readProvisionalCasEvidence(prepared.transitionId());
+    BridgeInputs inputs =
+        requireBridgeInputs(
+            expectedEvidence, worldRequest, resolvedRegion, runtimeReference, ownerStatus);
+    if (!matchesPreparedOperation(prepared, inputs)
+        || !readback.runtimeEntityId().equals(runtimeReference.runtimeEntityId())
+        || !readback.sessionId().equals(expectedEvidence.candidate().identity().sessionId())
+        || !readback.bindingGeneration()
+            .equals(expectedEvidence.candidate().bindingGeneration())
+        || readback.regionEpoch() != ownerStatus.regionEpoch()
+        || !readback.executorFence().equals(ownerStatus.executorFence())
+        || !readback.leaseTokenCorrelation().equals(ownerStatus.leaseTokenCorrelation())) {
+      throw conflict("Exact fenced bridge readback does not match the prepared operation");
+    }
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision = lockInventoryRevision(transaction);
+          CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
+              loadProvisionalCasEvidence(transaction, prepared.transitionId(), true);
+          requireSameProvisionalOperation(expectedEvidence, currentEvidence);
+          BridgeInputs currentInputs =
+              requireBridgeInputs(
+                  currentEvidence, worldRequest, resolvedRegion, runtimeReference, ownerStatus);
+          if (!inputs.equals(currentInputs) || currentEvidence.expectedPrior() != null) {
+            throw conflict("Region bridge sources changed before durable acknowledgement");
+          }
+          requireCurrentRegionOwner(transaction, ownerStatus);
+          Record regionRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
+                  prepared.transitionId());
+          if (regionRow == null) throw conflict("Region bridge obligation is missing");
+          CanonicalGameplayBindingRegionBridgeObligation current = toRegionObligation(regionRow);
+          if (!matchesPreparedOperation(current, inputs)
+              || !current.bridgeOperationId().equals(prepared.bridgeOperationId())
+              || !Objects.equals(current.executorFence(), ownerStatus.executorFence())
+              || !Objects.equals(
+                  current.leaseTokenCorrelation(), ownerStatus.leaseTokenCorrelation())) {
+            throw conflict("Prepared region bridge grant or source changed before acknowledgement");
+          }
+          if (current.status()
+              == CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
+            if (!ownerStatus.executorFence().equals(readback.executorFence())
+                || !current.redisReadbackDigest().equals(readback.digest())) {
+              throw conflict("A completed region acknowledgement has different readback provenance");
+            }
+            return new RegionBridgeAcknowledgement(current);
+          }
+          BigInteger oldRevision = currentEvidence.transition().inventoryRevision();
+          BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+          writeRevisionRows(transaction, currentEvidence, oldRevision, nextRevision);
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + REGION_OBLIGATION
+                      + " SET status = 'ACKNOWLEDGED', redis_readback_digest = ?,"
+                      + " acknowledged_at = ?, inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'REQUIRED'"
+                      + " AND bridge_operation_id = ? AND executor_fence = ?"
+                      + " AND lease_token_correlation = ? AND inventory_revision = ?",
+                  readback.digest(),
+                  OffsetDateTime.ofInstant(acknowledgedAt, ZoneOffset.UTC),
+                  decimal(nextRevision),
+                  prepared.transitionId(),
+                  prepared.bridgeOperationId(),
+                  decimal(ownerStatus.executorFence()),
+                  ownerStatus.leaseTokenCorrelation(),
+                  decimal(oldRevision)),
+              "Region bridge obligation changed before acknowledgement commit");
+          bumpInventoryClock(transaction, currentRevision, nextRevision);
+          Record acknowledgedRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?",
+                  prepared.transitionId());
+          CanonicalGameplayBindingRegionBridgeObligation acknowledged =
+              acknowledgedRow == null ? null : toRegionObligation(acknowledgedRow);
+          if (acknowledged == null
+              || acknowledged.status()
+                  != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
+              || !acknowledged.bridgeOperationId().equals(prepared.bridgeOperationId())
+              || !acknowledged.executorFence().equals(ownerStatus.executorFence())
+              || !acknowledged.leaseTokenCorrelation().equals(ownerStatus.leaseTokenCorrelation())
+              || !acknowledged.redisReadbackDigest().equals(readback.digest())
+              || !acknowledged.acknowledgedAt().equals(acknowledgedAt)
+              || !acknowledged.inventoryRevision().equals(nextRevision)) {
+            throw conflict("Region bridge acknowledgement did not survive exact SQL readback");
+          }
+          return new RegionBridgeAcknowledgement(acknowledged);
+        });
+  }
+
+  private CanonicalGameplayBindingRegionBridgeObligation rewritePreparedBridgeForCurrentGrant(
+      DSLContext transaction,
+      BigInteger currentRevision,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      Record regionRow,
+      CanonicalGameplayBindingRegionBridgeObligation existing,
+      BridgeInputs inputs,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus) {
+    BigInteger oldRevision = evidence.transition().inventoryRevision();
+    BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+    writeRevisionRows(transaction, evidence, oldRevision, nextRevision);
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + REGION_OBLIGATION
+                + " SET status = 'REQUIRED', executor_fence = ?, lease_token_correlation = ?,"
+                + " redis_readback_digest = NULL, acknowledged_at = NULL, inventory_revision = ?"
+                + " WHERE transition_id = ? AND bridge_operation_id = ?"
+                + " AND inventory_revision = ?",
+            decimal(ownerStatus.executorFence()),
+            ownerStatus.leaseTokenCorrelation(),
+            decimal(nextRevision),
+            evidence.transition().transitionId(),
+            existing.bridgeOperationId(),
+            decimal(oldRevision)),
+        "Prepared region bridge changed before current-grant revalidation");
+    bumpInventoryClock(transaction, currentRevision, nextRevision);
+    return toRegionObligation(
+        Objects.requireNonNull(
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + REGION_OBLIGATION
+                    + " WHERE transition_id = ? AND bridge_operation_id = ?",
+                evidence.transition().transitionId(),
+                existing.bridgeOperationId()),
+            "prepared region bridge row must survive current-grant readback"));
+  }
+
+  private CanonicalGameplayBindingRegionBridgeObligation writePreparedBridge(
+      DSLContext transaction,
+      BigInteger currentRevision,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      BridgeInputs inputs,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus,
+      UUID operationId) {
+    BigInteger oldRevision = evidence.transition().inventoryRevision();
+    BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+    writeRevisionRows(transaction, evidence, oldRevision, nextRevision);
+    Object[] args =
+        new Object[] {
+              operationId,
+              inputs.runtimeEntityId().value(),
+              inputs.projectionGeneration(),
+              inputs.projectionFence(),
+              inputs.workloadNamespace(),
+              inputs.assignmentId(),
+              inputs.assignmentIntentDigest(),
+              inputs.entityReferenceDigest(),
+              inputs.worldSourceDigest(),
+              inputs.canonicalRegionId(),
+              inputs.lifecycleEpoch(),
+              inputs.lifecycleRowVersion(),
+              inputs.captureId(),
+              inputs.graphSha256(),
+              inputs.preparationInputDigest(),
+              decimal(ownerStatus.executorFence()),
+              ownerStatus.leaseTokenCorrelation(),
+              decimal(nextRevision),
+              evidence.transition().transitionId(),
+              decimal(oldRevision)
+            };
+    String sql =
+        "UPDATE "
+            + REGION_OBLIGATION
+            + " SET bridge_operation_id = ?, bridge_preimage_state = 'ABSENT',"
+            + " runtime_entity_id = ?,"
+            + " entity_projection_generation = ?, entity_projection_fence = ?,"
+            + " entity_workload_namespace = ?, assignment_uuid = ?,"
+            + " assignment_intent_digest = ?, entity_reference_digest = ?,"
+            + " world_source_digest = ?, canonical_region_id = ?,"
+            + " world_lifecycle_epoch = ?, world_lifecycle_row_version = ?,"
+            + " world_capture_id = ?, world_graph_sha256 = ?,"
+            + " world_preparation_input_digest = ?, executor_fence = ?,"
+            + " lease_token_correlation = ?, inventory_revision = ?"
+            + " WHERE transition_id = ? AND "
+            + "bridge_operation_id IS NULL"
+            + " AND inventory_revision = ?";
+    requireOne(
+        transaction.execute(sql, args),
+        "Region bridge operation compare-and-set lost its exact obligation");
+    bumpInventoryClock(transaction, currentRevision, nextRevision);
+    Record row =
+        transaction.fetchOne(
+            "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?",
+            evidence.transition().transitionId());
+    CanonicalGameplayBindingRegionBridgeObligation result =
+        row == null ? null : toRegionObligation(row);
+    if (result == null || !matchesPreparedOperation(result, inputs)) {
+      throw conflict("Region bridge operation did not survive durable SQL readback");
+    }
+    return result;
+  }
+
+  private static void writeRevisionRows(
+      DSLContext transaction,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      BigInteger oldRevision,
+      BigInteger nextRevision) {
+    UUID transitionId = evidence.transition().transitionId();
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + TRANSITION
+                + " SET inventory_revision = ? WHERE transition_id = ?"
+                + " AND status = 'PROVISIONAL' AND inventory_revision = ?"
+                + " AND candidate_binding_ref = ? AND candidate_binding_generation = ?",
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision),
+            evidence.candidate().bindingRef().bytes(),
+            decimal(evidence.candidate().bindingGeneration())),
+        "Provisional transition changed before region bridge revision");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + INVENTORY
+                + " SET inventory_revision = ? WHERE binding_ref = ? AND transition_id = ?"
+                + " AND lifecycle = 'PROVISIONAL' AND binding_generation = ?"
+                + " AND inventory_revision = ?",
+            decimal(nextRevision),
+            evidence.candidate().bindingRef().bytes(),
+            transitionId,
+            decimal(evidence.candidate().bindingGeneration()),
+            decimal(oldRevision)),
+        "Provisional candidate changed before region bridge revision");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + ACCOUNT_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision)),
+        "Candidate account obligation changed before region bridge revision");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + ISSUER_OBLIGATION
+                + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+            decimal(nextRevision),
+            transitionId,
+            decimal(oldRevision)),
+        "Issuer obligation changed before region bridge revision");
+    requireOne(
+        transaction.execute(
+            "UPDATE "
+                + RESERVATION
+                + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
+                + " AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+            decimal(nextRevision),
+            evidence.candidateReservation().reservationId(),
+            transitionId,
+            decimal(oldRevision)),
+        "Candidate issuer reservation changed before region bridge revision");
+  }
+
+  private static void bumpInventoryClock(
+      DSLContext transaction, BigInteger currentRevision, BigInteger nextRevision) {
+    requireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_binding_inventory_clock"
+                + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = ?",
+            decimal(nextRevision),
+            decimal(currentRevision)),
+        "Inventory revision compare-and-set lost during region bridge operation");
+  }
+
+  private static boolean matchesPreparedOperation(
+      CanonicalGameplayBindingRegionBridgeObligation obligation, BridgeInputs inputs) {
+    return obligation.bridgeOperationId() != null
+        && "ABSENT".equals(obligation.bridgePreimageState())
+        && obligation.runtimeEntityId() == inputs.runtimeEntityId().value()
+        && obligation.entityProjectionGeneration() == inputs.projectionGeneration()
+        && obligation.entityProjectionFence() == inputs.projectionFence()
+        && obligation.entityWorkloadNamespace().equals(inputs.workloadNamespace())
+        && obligation.assignmentId().equals(inputs.assignmentId())
+        && obligation.assignmentIntentDigest().equals(inputs.assignmentIntentDigest())
+        && obligation.entityReferenceDigest().equals(inputs.entityReferenceDigest())
+        && obligation.worldSourceDigest().equals(inputs.worldSourceDigest())
+        && obligation.canonicalRegionId().equals(inputs.canonicalRegionId())
+        && obligation.worldLifecycleEpoch() == inputs.lifecycleEpoch()
+        && obligation.worldLifecycleRowVersion() == inputs.lifecycleRowVersion()
+        && obligation.worldCaptureId().equals(inputs.captureId())
+        && obligation.worldGraphSha256().equals(inputs.graphSha256())
+        && obligation.worldPreparationInputDigest().equals(inputs.preparationInputDigest());
+  }
+
+  private static void requireExactBridgePreimage(
+      CanonicalGameplayRegionLeaseRedisOwner.BindingPreimage preimage,
+      BridgeInputs inputs,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus) {
+    if (!preimage.runtimeEntityId().equals(inputs.runtimeEntityId())
+        || !preimage.sessionId().equals(evidence.candidate().identity().sessionId())
+        || !preimage.bindingGeneration().equals(evidence.candidate().bindingGeneration())
+        || preimage.regionEpoch() != ownerStatus.regionEpoch()
+        || !preimage.executorFence().equals(ownerStatus.executorFence())
+        || !preimage.leaseTokenCorrelation().equals(ownerStatus.leaseTokenCorrelation())) {
+      throw conflict("Region binding preimage proof does not match the current grant and tuple");
+    }
+  }
+
+  private static BridgeInputs requireBridgeInputs(
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolvedRegion,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus) {
+    Objects.requireNonNull(worldRequest, "worldRequest");
+    Objects.requireNonNull(resolvedRegion, "resolvedRegion");
+    Objects.requireNonNull(reference, "runtimeReference");
+    Objects.requireNonNull(ownerStatus, "ownerStatus");
+    if (evidence.transition().status()
+            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        || evidence.candidate().lifecycle()
+            != CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL
+        || evidence.expectedPrior() != null
+        || evidence.transition().expectedPriorBindingRef() != null
+        || evidence.transition().expectedPriorBindingGeneration() != null) {
+      throw conflict("Region bridge applies only to the selected initial PROVISIONAL NEW");
+    }
+    CanonicalGameplayBindingIdentity identity = evidence.candidate().identity();
+    var target = worldRequest.getExpectedTarget();
+    var assignment = resolvedRegion.lifecycleAssignment();
+    if (worldRequest.getSchemaVersion() != 1
+        || !worldRequest.getUnknownFields().asMap().isEmpty()
+        || !reference.target().equals(target)
+        || !reference.assignmentUuid().toString().equals(worldRequest.getAssignmentUuid())
+        || !reference.canonicalAccountUuid().toString().equals(worldRequest.getCanonicalAccountUuid())
+        || !reference.characterUuid().toString().equals(worldRequest.getCharacterUuid())
+        || !reference.intentDigest().equals(worldRequest.getAssignmentIntentDigest())
+        || !identity.accountId().toString().equals(worldRequest.getCanonicalAccountUuid())
+        || !identity.characterId().toString().equals(worldRequest.getCharacterUuid())
+        || !identity.tenantId().toString().equals(target.getCanonicalTenantUuid())
+        || !identity.gameInstanceId().toString().equals(target.getGameInstanceId())
+        || !identity.playableStateNamespaceId()
+            .toString()
+            .equals(target.getPlayableStateNamespaceUuid())
+        || !"SHARED".equals(identity.playableStateScope())
+        || !reference.runtimeEntityId().tenantId().equals(identity.tenantId())
+        || !reference.runtimeEntityId().gameInstanceId().equals(identity.gameInstanceId().toString())
+        || !identity.tenantId().equals(assignment.request().canonicalTenantId())
+        || !identity.gameInstanceId().equals(assignment.request().canonicalGameInstanceId())
+        || !identity.regionId().equals(assignment.operationalRegionId())
+        || !identity.regionId().equals(resolvedRegion.operationalRegionId())
+        || !identity.regionEpoch().equals(BigInteger.valueOf(ownerStatus.regionEpoch()))
+        || !reference.workloadNamespace().equals(assignment.request().targetNamespace())
+        || !identity.tenantId().equals(ownerStatus.tenantId())
+        || !identity.gameInstanceId().equals(ownerStatus.gameInstanceId())
+        || !resolvedRegion.canonicalRegionInstanceId().equals(ownerStatus.canonicalRegionId())
+        || !resolvedRegion.operationalRegionId().equals(ownerStatus.regionId())
+        || !assignment.captureId().equals(ownerStatus.captureId())
+        || !assignment.graphSha256().equals(ownerStatus.graphSha256())
+        || !assignment.preparationInputDigest().equals(ownerStatus.preparationInputDigest())
+        || !assignment.request().equals(ownerStatus.lifecycleRequest())
+        || assignment.lifecycleEpoch() != ownerStatus.lifecycleEpoch()
+        || assignment.lifecycleRowVersion() != ownerStatus.lifecycleRowVersion()
+        || ownerStatus.paused()
+        || !CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+                ownerStatus.tenantId(), ownerStatus.gameInstanceId(), ownerStatus.regionId())
+            .equals(ownerStatus.tenantRegionTag())) {
+      throw conflict("Entity, World, binding, and region owner scopes do not form one exact join");
+    }
+    return new BridgeInputs(
+        reference.runtimeEntityId(),
+        reference.projectionGeneration(),
+        reference.projectionFence(),
+        reference.workloadNamespace(),
+        reference.assignmentUuid(),
+        reference.intentDigest(),
+        CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference),
+        CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(worldRequest, resolvedRegion),
+        resolvedRegion.canonicalRegionInstanceId(),
+        assignment.lifecycleEpoch(),
+        assignment.lifecycleRowVersion(),
+        assignment.captureId(),
+        assignment.graphSha256(),
+        assignment.preparationInputDigest());
+  }
+
+  private static void requireCurrentRegionOwner(
+      DSLContext transaction, CanonicalGameplayRegionRuntimeStatus expected) {
+    Record row =
+        transaction.fetchOne(
+            "SELECT * FROM game_session_region_runtime_status"
+                + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR SHARE",
+            expected.tenantId(),
+            expected.gameInstanceId(),
+            expected.regionId());
+    if (row == null
+        || !Objects.equals(row.get("canonical_region_id", UUID.class), expected.canonicalRegionId())
+        || !Objects.equals(row.get("tenant_region_tag", String.class), expected.tenantRegionTag())
+        || !Objects.equals(row.get("region_epoch", Long.class), expected.regionEpoch())
+        || !Objects.equals(row.get("executor_fence", Long.class), expected.executorFence().longValueExact())
+        || !Objects.equals(
+            row.get("lease_token_correlation", String.class), expected.leaseTokenCorrelation())
+        || !Objects.equals(row.get("owner_service", String.class), expected.ownerService())
+        || !Objects.equals(row.get("owner_instance_id", String.class), expected.ownerInstanceId())
+        || !Objects.equals(row.get("lifecycle_epoch", Long.class), expected.lifecycleEpoch())
+        || !Objects.equals(row.get("lifecycle_row_version", Long.class), expected.lifecycleRowVersion())
+        || !Objects.equals(row.get("capture_id", UUID.class), expected.captureId())
+        || !Arrays.equals(
+            row.get("lifecycle_request_bytes", byte[].class),
+            expected.lifecycleRequest().canonicalBytes())
+        || !Objects.equals(row.get("graph_sha256", String.class), expected.graphSha256())
+        || !Objects.equals(row.get("preparation_input_digest", String.class), expected.preparationInputDigest())
+        || !Boolean.FALSE.equals(row.get("paused", Boolean.class))
+        || !Objects.equals(row.get("last_committed_tick_id", Long.class), expected.lastCommittedTickId())
+        || !Objects.equals(row.get("last_committed_tick_batch_id", String.class), expected.lastCommittedTickBatchId())) {
+      throw conflict("Durable region owner, timeline, or executor fence changed");
+    }
+  }
+
+  private static void requireNoAmbientTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw conflict("Region bridge repository calls require no ambient SQL transaction");
+    }
+  }
+
+  private record BridgeInputs(
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      long projectionGeneration,
+      long projectionFence,
+      String workloadNamespace,
+      UUID assignmentId,
+      String assignmentIntentDigest,
+      String entityReferenceDigest,
+      String worldSourceDigest,
+      UUID canonicalRegionId,
+      long lifecycleEpoch,
+      long lifecycleRowVersion,
+      UUID captureId,
+      String graphSha256,
+      String preparationInputDigest) {}
+
+  /** Inventory-issued result of the exact durable region ACK and its independent SQL readback. */
+  static final class RegionBridgeAcknowledgement {
+    private final CanonicalGameplayBindingRegionBridgeObligation obligation;
+
+    private RegionBridgeAcknowledgement(
+        CanonicalGameplayBindingRegionBridgeObligation obligation) {
+      if (obligation.status()
+          != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
+        throw conflict("Only a persisted region bridge ACK can create its receipt");
+      }
+      this.obligation = obligation;
+    }
+
+    CanonicalGameplayBindingRegionBridgeObligation obligation() {
+      return obligation;
+    }
   }
 
   /**
@@ -1409,8 +1961,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !regionObligation.sessionId().equals(candidate.identity().sessionId())
         || !regionObligation.regionId().equals(candidate.identity().regionId())
         || !regionObligation.regionEpoch().equals(candidate.identity().regionEpoch())
-        || regionObligation.status()
-            != CanonicalGameplayBindingRegionBridgeObligation.Status.REQUIRED
+        || (regionObligation.status()
+                != CanonicalGameplayBindingRegionBridgeObligation.Status.REQUIRED
+            && regionObligation.status()
+                != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED)
+        || (regionObligation.status()
+                == CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
+            && prior != null)
         || !regionObligation.inventoryRevision().equals(transition.inventoryRevision())) {
       throw conflict("Durable issuer or region obligations differ from this exact transition");
     }
@@ -2585,8 +3142,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
         transaction.fetchOne(
             "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
             request.transitionId());
+    String regionStatus =
+        regionObligation == null ? null : regionObligation.get("status", String.class);
     if (regionObligation == null
-        || !"REQUIRED".equals(regionObligation.get("status", String.class))
+        || (!"REQUIRED".equals(regionStatus) && !"ACKNOWLEDGED".equals(regionStatus))
+        || ("ACKNOWLEDGED".equals(regionStatus) && expectedPriorRef != null)
         || !Arrays.equals(
             regionObligation.get("binding_ref", byte[].class),
             request.candidate().bindingRef().bytes())
@@ -3079,7 +3639,27 @@ public final class CanonicalGameplayBindingInventoryRepository {
         readBigInteger(row, "region_epoch"),
         CanonicalGameplayBindingRegionBridgeObligation.Status.valueOf(
             row.get("status", String.class)),
-        readBigInteger(row, "inventory_revision"));
+        readBigInteger(row, "inventory_revision"),
+        row.get("bridge_operation_id", UUID.class),
+        row.get("bridge_preimage_state", String.class),
+        row.get("runtime_entity_id", Long.class),
+        row.get("entity_projection_generation", Long.class),
+        row.get("entity_projection_fence", Long.class),
+        row.get("entity_workload_namespace", String.class),
+        row.get("assignment_uuid", UUID.class),
+        row.get("assignment_intent_digest", String.class),
+        row.get("entity_reference_digest", String.class),
+        row.get("world_source_digest", String.class),
+        row.get("canonical_region_id", UUID.class),
+        row.get("world_lifecycle_epoch", Long.class),
+        row.get("world_lifecycle_row_version", Long.class),
+        row.get("world_capture_id", UUID.class),
+        row.get("world_graph_sha256", String.class),
+        row.get("world_preparation_input_digest", String.class),
+        nullableBigInteger(row, "executor_fence"),
+        row.get("lease_token_correlation", String.class),
+        row.get("redis_readback_digest", String.class),
+        nullableInstant(row, "acknowledged_at"));
   }
 
   private static CanonicalGameplayBindingIdentity toIdentity(Record row) {
@@ -3104,6 +3684,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static BigInteger nullableBigInteger(Record row, String name) {
     BigDecimal value = row.get(name, BigDecimal.class);
     return value == null ? null : value.toBigIntegerExact();
+  }
+
+  private static Instant nullableInstant(Record row, String name) {
+    OffsetDateTime value = row.get(name, OffsetDateTime.class);
+    return value == null ? null : value.toInstant();
   }
 
   private static CanonicalGameplayBindingRef optionalRef(byte[] bytes) {
