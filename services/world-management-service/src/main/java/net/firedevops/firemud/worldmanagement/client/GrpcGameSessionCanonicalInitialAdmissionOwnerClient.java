@@ -28,6 +28,8 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
+  private volatile boolean initialized;
+  private volatile boolean closed;
 
   public GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
       ServiceEndpointsProperties endpoints,
@@ -46,10 +48,18 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
   }
 
   /** Opens its managed channel only when the owning World workflow explicitly starts it. */
-  public void init() throws SSLException, IOException {
-    initOnce(
-        "Canonical Game Session owner client is closed",
-        "Canonical Game Session owner client has no gRPC stub");
+  public synchronized void init() throws SSLException, IOException {
+    if (closed) {
+      throw new IllegalStateException("Canonical Game Session owner client is closed");
+    }
+    if (initialized) {
+      return;
+    }
+    initReloadingClient();
+    if (stub() == null) {
+      throw new IllegalStateException("Canonical Game Session owner client has no gRPC stub");
+    }
+    initialized = true;
   }
 
   /**
@@ -66,8 +76,7 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
     }
 
     var response =
-        requireInitializedStub(
-                "Canonical Game Session owner client is not initialized and available")
+        requireStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .getCanonicalInitialAdmissionOwnerProof(
                 CanonicalInitialAdmissionOwnerGrpcCodec.toRequest(identity));
@@ -99,6 +108,26 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
+  }
+
+  @Override
+  public void close() throws IOException {
+    synchronized (this) {
+      closed = true;
+      initialized = false;
+    }
+    super.close();
+  }
+
+  private CanonicalInitialAdmissionOwnerProofReadServiceGrpc
+          .CanonicalInitialAdmissionOwnerProofReadServiceBlockingStub
+      requireStub() {
+    var currentStub = stub();
+    if (closed || !initialized || currentStub == null) {
+      throw new IllegalStateException(
+          "Canonical Game Session owner client is not initialized and available");
+    }
+    return currentStub;
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(

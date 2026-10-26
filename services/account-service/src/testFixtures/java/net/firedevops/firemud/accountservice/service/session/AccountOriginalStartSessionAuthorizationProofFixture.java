@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
@@ -299,6 +300,22 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         authorizationService,
         new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
         new AccountStartSessionWorldOriginalAttemptEvidenceRepository(accountSources.dsl),
+        gameSessionClient,
+        accountSources.manager,
+        namespace);
+  }
+
+  /** Creates the actual Account admission-protection acquisition owner over this issuer and SQL. */
+  public AccountStartSessionAdmissionProtectionAcquisitionService
+      admissionProtectionAcquisitionService(
+          OriginalStartSessionCurrentAttemptClient gameSessionClient) {
+    Objects.requireNonNull(
+        gameSessionClient, "Game Session current-attempt observation client required");
+    return new AccountStartSessionAdmissionProtectionAcquisitionService(
+        authorizationService,
+        new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
+        new AccountStartSessionWorldOriginalAttemptEvidenceRepository(accountSources.dsl),
+        new AccountStartSessionAdmissionProtectionRepository(accountSources.dsl),
         gameSessionClient,
         accountSources.manager,
         namespace);

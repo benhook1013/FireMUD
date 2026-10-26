@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -76,6 +77,47 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void humanStartingIntentRefusesAnExpiredOriginalOwnerWithoutEffects() throws Exception {
+    Harness harness = harness();
+    try {
+      OwnerTarget target = harness.seedStarting(Duration.ofSeconds(2));
+      var request = holdRequest(target, "intent-expired-original-owner");
+      var lifecycle = target.lifecycleRequest(uuid(409));
+
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (!Boolean.TRUE.equals(
+          harness
+              .dsl
+              .fetchSingle(
+                  "SELECT lease_expires_at <= clock_timestamp() "
+                      + "FROM game_session_start_session_operator_attempt "
+                      + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                  NAMESPACE,
+                  CONTROL_PLANE_REQUEST_ID)
+              .get(0, Boolean.class))) {
+        if (System.nanoTime() >= deadline) {
+          throw new IllegalStateException("Timed out waiting for the legitimate owner lease");
+        }
+        Thread.sleep(10L);
+      }
+
+      assertThatThrownBy(
+              () ->
+                  harness.transactions.execute(
+                      status -> target.intents().reserveHumanStarting(request, lifecycle)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Exact canonical pins are required before STARTING");
+      assertThat(
+              harness.dsl.fetchCount(
+                  DSL.table(DSL.name("game_session_canonical_initial_admission_intent"))))
+          .isZero();
+      assertNoAdmissionMutation(harness.dsl);
+    } finally {
+      harness.close();
+    }
+  }
 
   @Test
   void reservesExactIntentAndAttachesOnlyTheMatchingWorldIdentity() throws java.sql.SQLException {
@@ -252,7 +294,9 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       throws java.sql.SQLException {
     try (var connection =
         DriverManager.getConnection(
-            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+            harness.database().getJdbcUrl(),
+            harness.database().getUsername(),
+            harness.database().getPassword())) {
       connection.setSchema(harness.schema());
       try (var statement =
           connection.prepareStatement(
@@ -495,7 +539,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     }
   }
 
-  private static WorldCanonicalInitialAdmissionHold.Request holdRequest(
+  static WorldCanonicalInitialAdmissionHold.Request holdRequest(
       OwnerTarget target, String requestId) {
     return holdRequest(target, requestId, target.catalog().catalogRevision());
   }
@@ -732,40 +776,73 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     return "sha256:" + letter.repeat(64);
   }
 
-  private static UUID uuid(int value) {
+  static UUID uuid(int value) {
     return UUID.fromString(String.format("%08d-1111-4111-8111-111111111111", value));
   }
 
-  private static Harness harness() {
+  static Harness harness() {
+    return harness(postgres, null);
+  }
+
+  static Harness harness(String targetVersion) {
+    return harness(postgres, targetVersion);
+  }
+
+  static Harness harness(PostgreSQLContainer<?> database) {
+    return harness(database, null);
+  }
+
+  static Harness harness(PostgreSQLContainer<?> database, String targetVersion) {
+    Objects.requireNonNull(database, "database");
     String schema = "gs_canonical_intent_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
+    dataSource.setUrl(database.getJdbcUrl());
+    dataSource.setUsername(database.getUsername());
+    dataSource.setPassword(database.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (targetVersion != null) {
+      configuration.target(targetVersion);
+    }
+    configuration.load().migrate();
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    return new Harness(schema, dataSource, transactionManager, transactions, dsl);
+    return new Harness(database, schema, dataSource, transactionManager, transactions, dsl);
   }
 
-  private record Harness(
+  record Harness(
+      PostgreSQLContainer<?> database,
       String schema,
       DriverManagerDataSource dataSource,
       DataSourceTransactionManager transactionManager,
       TransactionTemplate transactions,
       DSLContext dsl) {
     OwnerTarget seed() {
+      return seed(true);
+    }
+
+    OwnerTarget seedStarting() {
+      return seed(false);
+    }
+
+    OwnerTarget seedStarting(Duration ownerLease) {
+      return seed(false, ownerLease);
+    }
+
+    private OwnerTarget seed(boolean completeRunning) {
+      return seed(completeRunning, Duration.ofMinutes(5));
+    }
+
+    private OwnerTarget seed(boolean completeRunning, Duration ownerLease) {
       var sourceRepository = new GameSessionAuthoredWorldSourceRepository(dsl);
       var catalogRepository = new GameSessionCanonicalRealmCatalogRepository(dsl);
       var preparationRepository =
@@ -804,7 +881,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       CompleteLaunchBindingEvidence binding =
           preparationService.readCompleteBinding(preparedLaunch);
       UUID allocatedInstanceUuid =
-          createTestOnlyFreshMappingAndRunningLaunch(source, binding, launchRepository);
+          createTestOnlyFreshMappingAndLaunch(
+              source, binding, launchRepository, completeRunning, ownerLease);
       CanonicalInitialAdmissionLaunchTarget launch =
           launchRepository
               .readForInitialAdmission(NAMESPACE, TENANT, catalog.realmId(), allocatedInstanceUuid)
@@ -814,10 +892,23 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       return new OwnerTarget(this, catalog, launch, intentRepository);
     }
 
-    private UUID createTestOnlyFreshMappingAndRunningLaunch(
+    void migrateLatest() {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+    }
+
+    private UUID createTestOnlyFreshMappingAndLaunch(
         IntakeReceipt source,
         CompleteLaunchBindingEvidence binding,
-        CanonicalGameInstanceLaunchAssociationRepository launchRepository) {
+        CanonicalGameInstanceLaunchAssociationRepository launchRepository,
+        boolean completeRunning,
+        Duration ownerLease) {
       var tuple =
           CanonicalHumanPublicationOwnerTestFixtures.tuple(
               NAMESPACE,
@@ -826,7 +917,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
               binding.descriptor().gameTemplateId(),
               binding.descriptor().controlPlaneRequestId());
       CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
-          dsl, transactions, tuple, source.source(), publishedPolicy(source), binding);
+          dsl, transactions, tuple, source.source(), publishedPolicy(source), binding, ownerLease);
       return Objects.requireNonNull(
           transactions.execute(
               status -> {
@@ -847,10 +938,12 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
                             tuple.controlPlaneRequestId(),
                             tuple.mutationDigest(),
                             tuple);
-                dsl.execute(
-                    "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-                    association.legacyGameSessionTenantId(),
-                    starting.gameInstanceId());
+                if (completeRunning) {
+                  dsl.execute(
+                      "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+                      association.legacyGameSessionTenantId(),
+                      starting.gameInstanceId());
+                }
                 return starting.gameInstanceUuid();
               }),
           "Actual owner-allocated canonical instance UUID");
@@ -859,7 +952,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     void close() {
       try (var connection =
               DriverManager.getConnection(
-                  postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                  database.getJdbcUrl(), database.getUsername(), database.getPassword());
           var statement = connection.createStatement()) {
         statement.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
       } catch (Exception failure) {
@@ -868,7 +961,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     }
   }
 
-  private record OwnerTarget(
+  record OwnerTarget(
       Harness harness,
       CanonicalRealmCatalogSnapshot catalog,
       CanonicalInitialAdmissionLaunchTarget launch,

@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Unregistered Account-purpose read; the existing World-purpose owner read is unchanged.
+// Only the exact same-namespace Account workload without end-user context may call it.
+service AccountInitialAdmissionSettlementReadService {
+  rpc GetAccountInitialAdmissionSettlement(GetAccountInitialAdmissionSettlementRequest)
+      returns (GetAccountInitialAdmissionSettlementResponse);
+}
+
+// Repeated fields retain duplicate-field evidence for closed receiver-side validation.
+// Game Session independently joins the complete protection to its retained original operation.
+message GetAccountInitialAdmissionSettlementRequest {
+  repeated int32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated string read_request_id = 3;
+  repeated bytes account_protection_evidence = 4;
+}
+
+// A response requires authoritative immutable terminal/pointer/audit readback, not caller echoes.
+// The purpose-specific wire bound is 12 MiB; global server limits are unchanged.
+message GetAccountInitialAdmissionSettlementResponse {
+  repeated string read_request_id = 1;
+  repeated bytes account_protection_evidence = 2;
+  repeated bytes canonical_game_session_owner_proof = 3;
+}
