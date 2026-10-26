@@ -75,6 +75,77 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   /**
+   * Prepares and registers one ordinary NEW candidate while the exact installed initial issuer
+   * anchor remains current. The inventory clock and issuer control are locked before the request
+   * factory resolves or allocates owner identities; Account remains the next lock.
+   */
+  CanonicalGameplayBindingTransitionSnapshot prepareAfterInstalledIssuerAnchor(
+      InstalledAnchorPreparationRequestFactory requestFactory,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentIssuerState,
+      InstalledAnchorPreparationRecorder registrationRecorder) {
+    Objects.requireNonNull(requestFactory, "requestFactory");
+    Objects.requireNonNull(currentIssuerState, "currentIssuerState");
+    Objects.requireNonNull(registrationRecorder, "registrationRecorder");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger revision = lockInventoryRevision(transaction);
+          CanonicalGameplayIssuerInstalledAnchor actualAnchor =
+              CanonicalGameplayIssuerBootstrapCoverageRepository
+                  .readInstalledAnchorForBindingPreparationInTransaction(
+                      transaction, currentIssuerState);
+          InstalledAnchorPreparationContext context =
+              new InstalledAnchorPreparationContext(revision, actualAnchor, currentIssuerState);
+          CanonicalGameplayBindingTransitionRequest request =
+              Objects.requireNonNull(
+                  requestFactory.create(transaction, actualAnchor, currentIssuerState),
+                  "installed-anchor request factory returned null");
+          validateRequest(request);
+          if (request.expectedPriorBindingRef() != null
+              || request.expectedPriorBindingGeneration() != null) {
+            throw conflict("Installed-anchor local issuer operation accepts only ordinary NEW");
+          }
+          requireCandidateMatchesInstalledAnchor(request.candidate(), actualAnchor);
+          return prepareInTransaction(transaction, request, context, registrationRecorder);
+        });
+  }
+
+  @FunctionalInterface
+  interface InstalledAnchorPreparationRequestFactory {
+    /**
+     * Resolves an exact retry or allocates new owner identities inside the serialized SQL
+     * transaction.
+     */
+    CanonicalGameplayBindingTransitionRequest create(
+        DSLContext transaction,
+        CanonicalGameplayIssuerInstalledAnchor actualAnchor,
+        CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentIssuerState);
+  }
+
+  @FunctionalInterface
+  interface InstalledAnchorPreparationRecorder {
+    /** Called in the same transaction after candidate preparation or exact retry qualification. */
+    void record(
+        DSLContext transaction,
+        CanonicalGameplayBindingTransitionRequest request,
+        CanonicalGameplayIssuerInstalledAnchor actualAnchor,
+        CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentIssuerState,
+        CanonicalGameplayBindingTransitionSnapshot prepared,
+        boolean exactRetry);
+  }
+
+  private record InstalledAnchorPreparationContext(
+      BigInteger inventoryRevision,
+      CanonicalGameplayIssuerInstalledAnchor anchor,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentIssuerState) {
+    private InstalledAnchorPreparationContext {
+      Objects.requireNonNull(inventoryRevision, "inventoryRevision");
+      Objects.requireNonNull(anchor, "anchor");
+      Objects.requireNonNull(currentIssuerState, "currentIssuerState");
+    }
+  }
+
+  /**
    * Reads the complete typed inventory and all retained repair obligations from one DB snapshot.
    */
   CanonicalGameplayBindingInventorySnapshot readSnapshot() {
@@ -1496,9 +1567,31 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   private static CanonicalGameplayBindingTransitionSnapshot prepareInTransaction(
       DSLContext transaction, CanonicalGameplayBindingTransitionRequest request) {
-    BigInteger revision = lockInventoryRevision(transaction);
-    boolean pendingIssuerLayoutBootstrapIntent =
-        validatePendingIssuerLayoutBootstrapIntent(transaction, request.candidate().issuerId());
+    return prepareInTransaction(transaction, request, null, null);
+  }
+
+  private static CanonicalGameplayBindingTransitionSnapshot prepareInTransaction(
+      DSLContext transaction,
+      CanonicalGameplayBindingTransitionRequest request,
+      InstalledAnchorPreparationContext installedAnchorContext,
+      InstalledAnchorPreparationRecorder registrationRecorder) {
+    BigInteger revision;
+    CanonicalGameplayIssuerInstalledAnchor actualAnchor;
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentIssuerState;
+    boolean pendingIssuerLayoutBootstrapIntent;
+    if (installedAnchorContext == null) {
+      revision = lockInventoryRevision(transaction);
+      actualAnchor = null;
+      currentIssuerState = null;
+      pendingIssuerLayoutBootstrapIntent =
+          validatePendingIssuerLayoutBootstrapIntent(transaction, request.candidate().issuerId());
+    } else {
+      revision = installedAnchorContext.inventoryRevision();
+      actualAnchor = installedAnchorContext.anchor();
+      currentIssuerState = installedAnchorContext.currentIssuerState();
+      requireCandidateMatchesInstalledAnchor(request.candidate(), actualAnchor);
+      pendingIssuerLayoutBootstrapIntent = false;
+    }
     CanonicalGameplayAccountCoverageEvidence accountCoverageEvidence =
         lockAccountCoverageEvidence(transaction, request.candidate().accountId());
     boolean initialBinding = request.expectedPriorBindingRef() == null;
@@ -1511,6 +1604,15 @@ public final class CanonicalGameplayBindingInventoryRepository {
           requireExactRetry(transaction, request, existing);
       if (!retry.accountCoverageEvidence().equals(accountCoverageEvidence)) {
         throw conflict("Same transition retry carries stale account-wide coverage evidence");
+      }
+      if (registrationRecorder != null) {
+        registrationRecorder.record(
+            transaction,
+            request,
+            Objects.requireNonNull(actualAnchor),
+            currentIssuerState,
+            retry,
+            true);
       }
       return retry;
     }
@@ -1546,6 +1648,10 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Record unresolved = findUnresolvedController(transaction, candidate);
     if (unresolved != null) {
       throw conflict("An unresolved candidate or repair obligation already fences this controller");
+    }
+
+    if (actualAnchor != null) {
+      requireIssuerCapacityAvailable(transaction, request.candidate(), actualAnchor);
     }
 
     ensureGenerationRow(transaction, candidate);
@@ -1612,7 +1718,72 @@ public final class CanonicalGameplayBindingInventoryRepository {
             decimal(nextRevision),
             decimal(revision));
     requireOne(revisionUpdated, "durable inventory revision compare-and-set lost its locked row");
+    if (registrationRecorder != null) {
+      registrationRecorder.record(
+          transaction,
+          request,
+          Objects.requireNonNull(actualAnchor),
+          currentIssuerState,
+          prepared,
+          false);
+    }
     return prepared;
+  }
+
+  private static void requireCandidateMatchesInstalledAnchor(
+      CanonicalGameplayBindingIdentity candidate, CanonicalGameplayIssuerInstalledAnchor anchor) {
+    if (!candidate.issuerId().equals(anchor.issuerId())
+        || !candidate.issuerAuthGeneration().equals(anchor.issuerAuthGeneration())
+        || !candidate.issuerIndexLayoutVersion().equals(anchor.layoutVersion())
+        || !candidate.issuerIndexPartitionCount().equals(anchor.partitionCount())
+        || !candidate.issuerIndexPartitionCapacity().equals(anchor.partitionCapacity())) {
+      throw conflict(
+          "Candidate issuer, Account source, or layout differs from the installed anchor");
+    }
+  }
+
+  /**
+   * Counts the current V29 owner rows under the inventory-clock lock. The initial immutable anchor
+   * is a baseline; every post-baseline candidate is represented by this same inventory, never by a
+   * parallel local-operation inventory.
+   */
+  private static void requireIssuerCapacityAvailable(
+      DSLContext transaction,
+      CanonicalGameplayBindingIdentity candidate,
+      CanonicalGameplayIssuerInstalledAnchor anchor) {
+    BigInteger candidatePartition = candidate.bindingRef().partitionId(anchor.partitionCount());
+    BigInteger aggregate = BigInteger.ZERO;
+    BigInteger partition = BigInteger.ZERO;
+    List<Record> reservations =
+        transaction.fetch(
+            "SELECT issuer_index_layout_version, issuer_index_partition_count,"
+                + " issuer_index_partition_capacity, partition_id, lifecycle FROM "
+                + RESERVATION
+                + " WHERE issuer_id = ? AND lifecycle <> 'RELEASED' ORDER BY reservation_id FOR UPDATE",
+            candidate.issuerId());
+    for (Record reservation : reservations) {
+      BigInteger layoutVersion = readBigInteger(reservation, "issuer_index_layout_version");
+      BigInteger partitionCount = readBigInteger(reservation, "issuer_index_partition_count");
+      BigInteger partitionCapacity = readBigInteger(reservation, "issuer_index_partition_capacity");
+      BigInteger partitionId = readBigInteger(reservation, "partition_id");
+      if (!layoutVersion.equals(anchor.layoutVersion())
+          || !partitionCount.equals(anchor.partitionCount())
+          || !partitionCapacity.equals(anchor.partitionCapacity())
+          || partitionId.signum() < 0
+          || partitionId.compareTo(anchor.partitionCount()) >= 0) {
+        throw conflict(
+            "Current issuer inventory contains a reservation outside the installed layout");
+      }
+      aggregate = aggregate.add(BigInteger.ONE);
+      if (partitionId.equals(candidatePartition)) partition = partition.add(BigInteger.ONE);
+    }
+    BigInteger nextPartition = partition.add(BigInteger.ONE);
+    BigInteger nextAggregate = aggregate.add(BigInteger.ONE);
+    BigInteger aggregateBound = anchor.partitionCount().multiply(anchor.partitionCapacity());
+    if (nextPartition.compareTo(anchor.partitionCapacity()) > 0
+        || nextAggregate.compareTo(aggregateBound) > 0) {
+      throw conflict("Installed issuer partition or aggregate reservation capacity is full");
+    }
   }
 
   private static boolean validatePendingIssuerLayoutBootstrapIntent(

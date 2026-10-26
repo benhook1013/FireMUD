@@ -39,6 +39,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
@@ -131,12 +132,11 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     assertThat(first.physicalBindingCount()).isEqualTo(1L);
     CanonicalGameplayIssuerBootstrapPartitionWork originalWork =
         partitionWork(
-            fixture,
-            fixture.activePartition(),
-            trustedIncarnation(current.incarnation()));
+            fixture, fixture.activePartition(), trustedIncarnation(current.incarnation()));
     var physicalValue = originalWork.memberOperations().getFirst().expectedMemberValue();
     var originalReservationRow =
-        fixture.dsl().fetchOne(
+        fetchRequired(
+            fixture.dsl(),
             "SELECT issuer_coverage_operation_id, issuer_coverage_operation_fence, coverage_fence,"
                 + " inventory_snapshot_revision, inventory_revision"
                 + " FROM game_session_canonical_issuer_partition_reservation WHERE reservation_id = ?",
@@ -145,41 +145,59 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         .isEqualTo(originalReservationRow.get("issuer_coverage_operation_id", UUID.class))
         .isNotEqualTo(physicalValue.anchor().issuerCoverageOperationId());
     assertThat(physicalValue.reservation().issuerCoverageOperationFence())
-        .isEqualTo(originalReservationRow.get("issuer_coverage_operation_fence", BigDecimal.class).toBigIntegerExact());
+        .isEqualTo(
+            originalReservationRow
+                .get("issuer_coverage_operation_fence", BigDecimal.class)
+                .toBigIntegerExact());
     assertThat(physicalValue.reservation().coverageFence())
-        .isEqualTo(originalReservationRow.get("coverage_fence", BigDecimal.class).toBigIntegerExact());
+        .isEqualTo(
+            originalReservationRow.get("coverage_fence", BigDecimal.class).toBigIntegerExact());
     assertThat(physicalValue.reservation().inventorySnapshotRevision())
-        .isEqualTo(originalReservationRow.get("inventory_snapshot_revision", BigDecimal.class).toBigIntegerExact());
+        .isEqualTo(
+            originalReservationRow
+                .get("inventory_snapshot_revision", BigDecimal.class)
+                .toBigIntegerExact());
     assertThat(physicalValue.reservation().inventoryRevision())
-        .isEqualTo(originalReservationRow.get("inventory_revision", BigDecimal.class).toBigIntegerExact());
+        .isEqualTo(
+            originalReservationRow.get("inventory_revision", BigDecimal.class).toBigIntegerExact());
     assertThat(physicalValue.anchor().issuerCoverageOperationId())
         .isEqualTo(first.issuerCoverageOperationId());
     assertThat(physicalValue.anchor().operationFence()).isEqualTo(first.operationFence());
     assertThat(physicalValue.anchor().coverageFence()).isEqualTo(first.coverageFence());
     assertThat(physicalValue.anchor().issuerInventorySnapshotRevision())
         .isEqualTo(first.issuerInventorySnapshotRevision());
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT count(*) AS proof_count FROM game_session_canonical_issuer_bootstrap_partition_proof")
-        .get("proof_count", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) AS proof_count FROM game_session_canonical_issuer_bootstrap_partition_proof")
+                .get("proof_count", Long.class))
         .isEqualTo(PARTITION_COUNT.longValueExact());
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT count(*) AS anchor_count FROM game_session_canonical_issuer_installed_anchor")
-        .get("anchor_count", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) AS anchor_count FROM game_session_canonical_issuer_installed_anchor")
+                .get("anchor_count", Long.class))
         .isEqualTo(1L);
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT count(*) AS pending_count FROM game_session_canonical_issuer_bootstrap_member_operation"
-                + " WHERE member_status = 'PENDING_PHYSICAL_PROOF'")
-        .get("pending_count", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) AS pending_count FROM game_session_canonical_issuer_bootstrap_member_operation"
+                        + " WHERE member_status = 'PENDING_PHYSICAL_PROOF'")
+                .get("pending_count", Long.class))
         .isEqualTo((long) fixture.plan().memberWorks().size());
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT last_issued_coverage_generation FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
-            ISSUER)
-        .get("last_issued_coverage_generation", BigDecimal.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT last_issued_coverage_generation FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
+                    ISSUER)
+                .get("last_issued_coverage_generation", BigDecimal.class))
         .isEqualTo(new BigDecimal(first.globalCoverageGeneration()));
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT state FROM game_session_canonical_issuer_layout_bootstrap_control WHERE issuer_id = ?",
-            ISSUER)
-        .get("state", String.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT state FROM game_session_canonical_issuer_layout_bootstrap_control WHERE issuer_id = ?",
+                    ISSUER)
+                .get("state", String.class))
         .isEqualTo("INITIAL_BOOTSTRAP_INTENT");
 
     for (BigInteger partitionId = BigInteger.ZERO;
@@ -199,14 +217,17 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     byte[] exactAnchorBeforeCounterAdvance = first.exactAnchorBytes();
     String anchorStorageBeforeCounterAdvance = anchorStorageImage(fixture.dsl());
     String proofStorageBeforeCounterAdvance = proofStorageImage(fixture.dsl());
-    BigInteger laterCoverageGeneration = first.globalCoverageGeneration().add(BigInteger.valueOf(4));
-    fixture.dsl().execute(
-        "UPDATE game_session_canonical_issuer_bootstrap_coverage_counter"
-            + " SET last_issued_coverage_generation = ?, counter_version = 2"
-            + " WHERE issuer_id = ? AND last_issued_coverage_generation = ? AND counter_version = 1",
-        laterCoverageGeneration,
-        ISSUER,
-        first.globalCoverageGeneration());
+    BigInteger laterCoverageGeneration =
+        first.globalCoverageGeneration().add(BigInteger.valueOf(4));
+    fixture
+        .dsl()
+        .execute(
+            "UPDATE game_session_canonical_issuer_bootstrap_coverage_counter"
+                + " SET last_issued_coverage_generation = ?, counter_version = 2"
+                + " WHERE issuer_id = ? AND last_issued_coverage_generation = ? AND counter_version = 1",
+            laterCoverageGeneration,
+            ISSUER,
+            first.globalCoverageGeneration());
     assertThat(originalReservationImage(fixture.dsl())).isEqualTo(originalReservationImage);
     assertThat(anchorStorageImage(fixture.dsl())).isEqualTo(anchorStorageBeforeCounterAdvance);
     assertThat(proofStorageImage(fixture.dsl())).isEqualTo(proofStorageBeforeCounterAdvance);
@@ -218,15 +239,19 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     assertThat(replay.exactAnchorBytes()).containsExactly(first.exactAnchorBytes());
     assertThat(replay.exactAnchorBytes()).containsExactly(exactAnchorBeforeCounterAdvance);
     assertThat(replay.globalCoverageGeneration()).isEqualTo(first.globalCoverageGeneration());
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT counter_version FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
-            ISSUER)
-        .get("counter_version", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT counter_version FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
+                    ISSUER)
+                .get("counter_version", Long.class))
         .isEqualTo(2L);
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT last_issued_coverage_generation FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
-            ISSUER)
-        .get("last_issued_coverage_generation", BigDecimal.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT last_issued_coverage_generation FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
+                    ISSUER)
+                .get("last_issued_coverage_generation", BigDecimal.class))
         .isEqualTo(new BigDecimal(laterCoverageGeneration));
     assertThat(originalReservationImage(fixture.dsl())).isEqualTo(originalReservationImage);
   }
@@ -239,7 +264,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         owner(fixture, () -> current)
             .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId());
     byte[] missingKey = key(fixture, fixture.activePartition());
-    administratorCommands.del(missingKey);
+    byte[][] missingKeyArguments = new byte[1][];
+    missingKeyArguments[0] = missingKey;
+    administratorCommands.del(missingKeyArguments);
 
     assertThatThrownBy(
             () ->
@@ -247,15 +274,19 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                     .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.type(missingKey)).isEqualTo("none");
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT global_coverage_generation FROM game_session_canonical_issuer_installed_anchor WHERE issuer_id = ?",
-            ISSUER)
-        .get("global_coverage_generation", BigDecimal.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT global_coverage_generation FROM game_session_canonical_issuer_installed_anchor WHERE issuer_id = ?",
+                    ISSUER)
+                .get("global_coverage_generation", BigDecimal.class))
         .isEqualTo(new BigDecimal(installed.globalCoverageGeneration()));
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT counter_version FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
-            ISSUER)
-        .get("counter_version", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT counter_version FROM game_session_canonical_issuer_bootstrap_coverage_counter WHERE issuer_id = ?",
+                    ISSUER)
+                .get("counter_version", Long.class))
         .isEqualTo(1L);
   }
 
@@ -265,13 +296,14 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     var sourceIncarnation = stableIncarnation("source-movement");
     var changedCheckpoint = checkpointShape(BigInteger.valueOf(8));
     AtomicInteger sourceCalls = new AtomicInteger();
-    var changedAfterReadback =
-        () ->
-            new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
-                sourceCalls.incrementAndGet() == 5
-                    ? changedCheckpoint
-                    : sourceFixture.intent().sourceCheckpoint(),
-                sourceIncarnation);
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+        changedAfterReadback =
+            () ->
+                new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+                    sourceCalls.incrementAndGet() == 5
+                        ? changedCheckpoint
+                        : sourceFixture.intent().sourceCheckpoint(),
+                    sourceIncarnation);
     assertThatThrownBy(
             () ->
                 owner(sourceFixture, changedAfterReadback)
@@ -285,11 +317,14 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     var initialIncarnation = stableIncarnation("incarnation-movement");
     var changedIncarnation = changedIncarnation(initialIncarnation);
     AtomicInteger incarnationCalls = new AtomicInteger();
-    var changedIncarnationAfterReadback =
-        () ->
-            new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
-                incarnationFixture.intent().sourceCheckpoint(),
-                incarnationCalls.incrementAndGet() == 5 ? changedIncarnation : initialIncarnation);
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+        changedIncarnationAfterReadback =
+            () ->
+                new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+                    incarnationFixture.intent().sourceCheckpoint(),
+                    incarnationCalls.incrementAndGet() == 5
+                        ? changedIncarnation
+                        : initialIncarnation);
     assertThatThrownBy(
             () ->
                 owner(incarnationFixture, changedIncarnationAfterReadback)
@@ -337,15 +372,18 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("blockers");
     assertNoInstalledCoverage(fixture);
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT count(*) AS proof_count FROM game_session_canonical_issuer_bootstrap_partition_proof")
-        .get("proof_count", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) AS proof_count FROM game_session_canonical_issuer_bootstrap_partition_proof")
+                .get("proof_count", Long.class))
         .isZero();
     assertThat(administratorCommands.type(key(fixture, BigInteger.ZERO))).isEqualTo("none");
   }
 
   private void assertPhysicalTupleConflict(boolean wrongNewAnchor) {
     Fixture fixture = fixture(BigInteger.ONE, PARTITION_CAPACITY, 1);
+    administratorCommands.del(new byte[][] {key(fixture, BigInteger.ZERO)});
     var incarnation = stableIncarnation(wrongNewAnchor ? "wrong-anchor" : "wrong-original");
     CanonicalGameplayIssuerBootstrapPartitionWork work =
         partitionWork(fixture, BigInteger.ZERO, trustedIncarnation(incarnation));
@@ -381,14 +419,12 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                 expected.incarnation());
     byte[] changedBytes = CanonicalGameplayIssuerMemberV2Codec.encode(changed);
     byte[] key = key(fixture, BigInteger.ZERO);
+    administratorCommands.hset(key, expected.owner().bindingRef().bytes(), changedBytes);
     administratorCommands.hset(
         key,
-        expected.owner().bindingRef().bytes(),
-        changedBytes);
-    administratorCommands.hset(
-        key,
-        ascii(CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
-            expected.reservation().reservationId())),
+        ascii(
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                expected.reservation().reservationId())),
         changedBytes);
 
     assertThatThrownBy(
@@ -444,7 +480,8 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
   private CanonicalGameplayIssuerBootstrapPartitionWork partitionWork(
       Fixture fixture,
       BigInteger partitionId,
-      CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation incarnation) {
+      CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation
+          incarnation) {
     return new CanonicalGameplayIssuerBootstrapMemberOperationRepository(fixture.dsl())
         .preparePartitionWork(
             fixture.intent().operationId(),
@@ -515,15 +552,10 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         CanonicalGameplayIssuerMemberV2Codec.sha256(event));
   }
 
-  private static CanonicalGameplayIssuerMemberV2Value.Incarnation
-      stableIncarnation(String seed) {
+  private static CanonicalGameplayIssuerMemberV2Value.Incarnation stableIncarnation(String seed) {
     String digest = digest(seed.getBytes(StandardCharsets.UTF_8));
     return new CanonicalGameplayIssuerMemberV2Value.Incarnation(
-        "controlled-attestor-" + seed,
-        digest,
-        deploymentEvidence(seed, digest),
-        digest,
-        digest);
+        "controlled-attestor-" + seed, digest, deploymentEvidence(seed, digest), digest, digest);
   }
 
   private static CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation
@@ -606,13 +638,14 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
           identity(partitions, capacity, "coverage-active-" + seed + "-" + candidate);
       if (identity.bindingRef().partitionId(partitions).equals(partitionId)) return identity;
     }
-    throw new IllegalStateException("Could not create a second reservation in the target partition");
+    throw new IllegalStateException(
+        "Could not create a second reservation in the target partition");
   }
 
-  private static void seedActiveSource(
-      DSLContext dsl, CanonicalGameplayBindingIdentity identity) {
+  private static void seedActiveSource(DSLContext dsl, CanonicalGameplayBindingIdentity identity) {
     byte[] bindingRef = identity.bindingRef().bytes();
-    BigInteger partitionId = identity.bindingRef().partitionId(identity.issuerIndexPartitionCount());
+    BigInteger partitionId =
+        identity.bindingRef().partitionId(identity.issuerIndexPartitionCount());
     UUID accountIndexFence = UUID.randomUUID();
     UUID reservationId = UUID.randomUUID();
     UUID transitionId = UUID.randomUUID();
@@ -709,14 +742,16 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
   }
 
   private static String originalReservationImage(DSLContext dsl) {
-    return dsl.fetchOne(
+    return fetchRequired(
+            dsl,
             "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY reservation_id), '[]'::jsonb)::text AS image "
                 + "FROM game_session_canonical_issuer_partition_reservation r")
         .get("image", String.class);
   }
 
   private static String anchorStorageImage(DSLContext dsl) {
-    return dsl.fetchOne(
+    return fetchRequired(
+            dsl,
             "SELECT encode(exact_anchor_bytes, 'base64') || ':' || exact_anchor_digest || ':'"
                 + " || global_coverage_generation::text AS image"
                 + " FROM game_session_canonical_issuer_installed_anchor WHERE issuer_id = ?",
@@ -725,7 +760,8 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
   }
 
   private static String proofStorageImage(DSLContext dsl) {
-    return dsl.fetchOne(
+    return fetchRequired(
+            dsl,
             "SELECT coalesce(string_agg(partition_id::text || ':'"
                 + " || encode(exact_metadata_bytes, 'base64') || ':'"
                 + " || encode(exact_physical_field_set_bytes, 'base64') || ':'"
@@ -735,21 +771,31 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
   }
 
   private static long fixtureProofCount(Fixture fixture) {
-    return fixture.dsl()
-        .fetchOne(
+    return fetchRequired(
+            fixture.dsl(),
             "SELECT count(*) AS proof_count FROM game_session_canonical_issuer_bootstrap_partition_proof")
         .get("proof_count", Long.class);
   }
 
   private static void assertNoInstalledCoverage(Fixture fixture) {
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT count(*) AS anchor_count FROM game_session_canonical_issuer_installed_anchor")
-        .get("anchor_count", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) AS anchor_count FROM game_session_canonical_issuer_installed_anchor")
+                .get("anchor_count", Long.class))
         .isZero();
-    assertThat(fixture.dsl().fetchOne(
-            "SELECT count(*) AS counter_count FROM game_session_canonical_issuer_bootstrap_coverage_counter")
-        .get("counter_count", Long.class))
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) AS counter_count FROM game_session_canonical_issuer_bootstrap_coverage_counter")
+                .get("counter_count", Long.class))
         .isZero();
+  }
+
+  private static Record fetchRequired(DSLContext dsl, String sql, Object... bindings) {
+    Record record = dsl.fetchOne(sql, bindings);
+    if (record == null) throw new IllegalStateException("Required focused query returned no row");
+    return record;
   }
 
   private static byte[] key(Fixture fixture, BigInteger partitionId) {
@@ -777,13 +823,23 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
             "controlled-redis-volume-uid");
     var fencedCohort =
         new CanonicalGameplayLegacyMigrationOwner.FencedCohort() {
-          @Override public UUID cohortId() { return cohortId; }
-          @Override public UUID legacyWriterFence() { return writerFence; }
-          @Override public CanonicalGameplayLegacyMigrationStorageIdentity storageIdentity() {
+          @Override
+          public UUID cohortId() {
+            return cohortId;
+          }
+
+          @Override
+          public UUID legacyWriterFence() {
+            return writerFence;
+          }
+
+          @Override
+          public CanonicalGameplayLegacyMigrationStorageIdentity storageIdentity() {
             return storageIdentity;
           }
-          @Override public void requireStillFenced(
-              CanonicalGameplayLegacyMigrationStorageIdentity expected) {
+
+          @Override
+          public void requireStillFenced(CanonicalGameplayLegacyMigrationStorageIdentity expected) {
             if (!storageIdentity.equals(expected)) {
               throw new IllegalStateException("Controlled test storage identity changed");
             }
@@ -804,17 +860,22 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
                         Family.DURABLE_EFFECT),
                     List.of()),
             new CanonicalGameplayLegacyMigrationOwner.NamespaceIndexOwner() {
-              @Override public void rebuildExact(
+              @Override
+              public void rebuildExact(
                   CanonicalGameplayLegacyMigrationOwner.FencedCohort ignored,
                   CanonicalGameplayLegacyMigrationSourceSnapshot source,
-                  net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot
+                  net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventorySnapshot
                       canonical) {
                 assertThat(canonical.bindings()).isEmpty();
                 assertThat(canonical.reservations()).isEmpty();
               }
-              @Override public CanonicalGameplayLegacyMigrationReadback readBackExact(
+
+              @Override
+              public CanonicalGameplayLegacyMigrationReadback readBackExact(
                   CanonicalGameplayLegacyMigrationOwner.FencedCohort ignored,
-                  net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot
+                  net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventorySnapshot
                       canonical) {
                 assertThat(canonical.bindings()).isEmpty();
                 return new CanonicalGameplayLegacyMigrationReadback(
@@ -865,7 +926,8 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
       DSL.using(connection, SQLDialect.POSTGRES)
           .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     } catch (SQLException failure) {
-      throw new IllegalStateException("Could not drop the owned issuer coverage test schema", failure);
+      throw new IllegalStateException(
+          "Could not drop the owned issuer coverage test schema", failure);
     }
   }
 
@@ -904,7 +966,9 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
       CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint
           currentAccountCheckpoint,
       CanonicalGameplayIssuerPartitionBuildPlan plan) {
-    DSLContext dsl() { return schema.dsl(); }
+    DSLContext dsl() {
+      return schema.dsl();
+    }
   }
 
   private record TestSchema(String schema, DriverManagerDataSource dataSource, DSLContext dsl) {}
