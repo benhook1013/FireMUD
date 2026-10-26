@@ -1,0 +1,35 @@
+{
+  "scriptId": "game-session.issuer-binding-local-retirement.v1",
+  "resourcePath": "redis/lua/game-session-issuer-binding-local-retirement.lua",
+  "sha256": "b8d9362de8af6b274ca3bc38d4d700d537d056389c73b2bc86378844ab898a76",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "issuerPartition",
+      "ownedPrefix": "session:game:index:issuer:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "issuerIdPartitionLayoutAndExactBaselineFields"},
+    {"name": "currentUnretiredLocalOperationCountAndExactFields"},
+    {"name": "originalReleaseReceiptAndOpaquePhysicalRevisionCompareAndAdvance"}
+  ],
+  "category": "SESSION_ISSUER_INDEX",
+  "outcomes": [
+    {"code": "TERMINAL_CAPACITY_RETIRED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "ORIGINAL_RETIREMENT_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDSET_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_OR_STALE_REVISION_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "tailLossBehavior": "This passive manual one-key owner removes only the exact terminal capacity field named by the original committed RELEASED receipt at its actual SQL completion revision R. A SQL-persisted partition-local expected/successor revision fences every physical writer. A stale prepared ADD or release is rejected before mutation even after retirement. The owner requires the complete current unretired SQL projection, exact installed baseline, current source and incarnation, exact RELEASED bytes from P, and a current opaque revision. It independently reads back exact target absence and the successor revision before SQL records retirement. Immutable release and bootstrap history remain retained; retirement does not change Account or region obligations, grant coverage, open a barrier, or authorize admission. Unknown outcomes retain the same original pending retirement for exact readback recovery.",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "v2"}
+  ],
+  "legacyPayloadShape": null
+}

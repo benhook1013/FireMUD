@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Read-only output of the local SQL owner for one exact partition in a prepared initial bootstrap.
@@ -13,12 +14,14 @@ import java.util.Objects;
 final class CanonicalGameplayIssuerBootstrapPartitionWork {
   private final CanonicalGameplayIssuerPartitionBuildPlan buildPlan;
   private final BigInteger partitionId;
+  private final UUID initialPhysicalRevision;
   private final List<CanonicalGameplayIssuerBootstrapMemberOperation> memberOperations;
   private final CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation;
 
   CanonicalGameplayIssuerBootstrapPartitionWork(
       CanonicalGameplayIssuerPartitionBuildPlan buildPlan,
       BigInteger partitionId,
+      UUID initialPhysicalRevision,
       List<CanonicalGameplayIssuerBootstrapMemberOperation> memberOperations,
       CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation) {
     this.buildPlan = Objects.requireNonNull(buildPlan, "buildPlan");
@@ -26,6 +29,11 @@ final class CanonicalGameplayIssuerBootstrapPartitionWork {
       throw new IllegalArgumentException("Partition work requires the exact PREPARED build plan");
     }
     this.partitionId = Objects.requireNonNull(partitionId, "partitionId");
+    this.initialPhysicalRevision =
+        Objects.requireNonNull(initialPhysicalRevision, "initialPhysicalRevision");
+    if (initialPhysicalRevision.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("initialPhysicalRevision must not be nil");
+    }
     if (partitionId.signum() < 0
         || partitionId.compareTo(buildPlan.bootstrapIntent().layoutDescriptor().partitionCount())
             >= 0) {
@@ -86,6 +94,10 @@ final class CanonicalGameplayIssuerBootstrapPartitionWork {
 
   BigInteger partitionId() {
     return partitionId;
+  }
+
+  UUID initialPhysicalRevision() {
+    return initialPhysicalRevision;
   }
 
   List<CanonicalGameplayIssuerBootstrapMemberOperation> memberOperations() {

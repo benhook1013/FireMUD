@@ -28,6 +28,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
   private final byte[] exactReleasedMemberValueBytes;
   private final byte[] exactPhysicalReadbackFieldSetBytes;
   private final String physicalReadbackDigest;
+  private final CanonicalGameplayIssuerPartitionMutation physicalMutation;
   private final Status status;
 
   CanonicalGameplayIssuerBindingLocalReleaseOperation(
@@ -43,6 +44,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
       byte[] exactReleasedMemberValueBytes,
       byte[] exactPhysicalReadbackFieldSetBytes,
       String physicalReadbackDigest,
+      CanonicalGameplayIssuerPartitionMutation physicalMutation,
       Status status) {
     this.abortSource = Objects.requireNonNull(abortSource, "Account-aborted source required");
     this.originalOperation =
@@ -66,6 +68,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
             ? null
             : exactPhysicalReadbackFieldSetBytes.clone();
     this.physicalReadbackDigest = physicalReadbackDigest;
+    this.physicalMutation = Objects.requireNonNull(physicalMutation, "physicalMutation");
     this.status = Objects.requireNonNull(status, "status");
 
     CanonicalGameplayIssuerMemberV2Value original = originalOperation.memberValue();
@@ -153,6 +156,19 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
           "Release operation differs from its exact Account-aborted source");
     }
 
+    if (physicalMutation.kind() != CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE
+        || !physicalMutation.ownerOperationId().equals(operationId)
+        || !physicalMutation.partitionId().equals(sourceReservation.partitionId())
+        || (status == Status.PENDING_PHYSICAL_PROOF
+            && physicalMutation.status()
+                != CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF)
+        || (status == Status.RELEASED
+            && physicalMutation.status()
+                != CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED)) {
+      throw new IllegalArgumentException(
+          "Release operation differs from its physical revision receipt");
+    }
+
     if (status == Status.PENDING_PHYSICAL_PROOF) {
       if (this.exactPhysicalReadbackFieldSetBytes != null || physicalReadbackDigest != null) {
         throw new IllegalArgumentException(
@@ -178,7 +194,10 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
       String bindingField =
           new String(releasedMemberValue.owner().bindingRef().bytes(), StandardCharsets.UTF_8);
       if (!Arrays.equals(readback.get(capacityField), this.exactReleasedMemberValueBytes)
-          || readback.containsKey(bindingField)) {
+          || readback.containsKey(bindingField)
+          || !Arrays.equals(
+              physicalMutation.exactReadbackFieldSetBytes(),
+              this.exactPhysicalReadbackFieldSetBytes)) {
         throw new IllegalArgumentException(
             "Released proof does not contain its exact terminal capacity postimage");
       }
@@ -237,6 +256,10 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
 
   public String physicalReadbackDigest() {
     return physicalReadbackDigest;
+  }
+
+  CanonicalGameplayIssuerPartitionMutation physicalMutation() {
+    return physicalMutation;
   }
 
   public Status status() {

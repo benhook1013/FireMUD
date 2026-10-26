@@ -286,16 +286,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(aborted.reservation().lifecycle())
           .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
 
-      var pending = session.gs.prepareIssuerRelease();
-      assertThat(pending.originalOperationId()).isEqualTo(originalOperationId);
-      assertThat(pending.exactOriginalMemberValueBytes()).containsExactly(originalMemberBytes);
-      assertThat(pending.sourceInventoryRevision())
-          .isGreaterThan(aborted.transition().inventoryRevision());
-      assertThat(session.gs.source().transition().inventoryRevision())
-          .isEqualTo(pending.sourceInventoryRevision());
-
       UUID secondOperationId = session.gs.prepareOtherControllerNew("second-controller");
       assertThat(secondOperationId).isNotEqualTo(originalOperationId);
+      var secondReadback = session.gs.projectOtherControllerNew("second-controller");
+      assertThat(secondReadback.operationId()).isEqualTo(secondOperationId);
+      assertThat(secondReadback.scriptOutcome()).isEqualTo(1L);
       var clockAfterOtherWriter =
           session
               .gs
@@ -304,13 +299,19 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                   "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
               .get("inventory_revision", java.math.BigDecimal.class)
               .toBigIntegerExact();
-      assertThat(clockAfterOtherWriter).isGreaterThan(pending.sourceInventoryRevision());
-      assertThat(session.gs.source().transition().inventoryRevision())
-          .isEqualTo(pending.sourceInventoryRevision());
       assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.TWO);
       assertThatThrownBy(() -> session.gs.prepareOtherControllerNew("full-before-release"))
           .isInstanceOf(RuntimeException.class)
           .hasMessageContaining("capacity");
+
+      var pending = session.gs.prepareIssuerRelease();
+      assertThat(pending.originalOperationId()).isEqualTo(originalOperationId);
+      assertThat(pending.exactOriginalMemberValueBytes()).containsExactly(originalMemberBytes);
+      assertThat(pending.sourceInventoryRevision())
+          .isGreaterThan(aborted.transition().inventoryRevision());
+      assertThat(pending.sourceInventoryRevision()).isGreaterThan(clockAfterOtherWriter);
+      assertThat(session.gs.source().transition().inventoryRevision())
+          .isEqualTo(pending.sourceInventoryRevision());
 
       String preparedImage = session.image();
       assertThatThrownBy(
@@ -417,7 +418,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                   "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
               .get("inventory_revision", java.math.BigDecimal.class)
               .toBigIntegerExact();
-      assertThat(clockBeforeCompletion).isEqualTo(clockAfterOtherWriter);
+      assertThat(clockBeforeCompletion).isEqualTo(pending.sourceInventoryRevision());
       var afterPhysicalReadback = session.gs.source();
       assertThat(afterPhysicalReadback.reservation().lifecycle())
           .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
