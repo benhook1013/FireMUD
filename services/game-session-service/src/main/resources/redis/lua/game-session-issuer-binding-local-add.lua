@@ -309,13 +309,15 @@ for index = 1, operationCount do
   position = position + 6
   if not uuid(operationId) or not uuid(reservationId)
       or (bindingPresent ~= '0' and bindingPresent ~= '1')
-      or countsCapacity ~= '1'
+      or (countsCapacity ~= '0' and countsCapacity ~= '1')
       or type(memberBytes) ~= 'string' or #memberBytes == 0 or #memberBytes > maxMemberValueBytes
       or seenOperationIds[operationId] or seenReservationIds[reservationId]
       or seenBindings[bindingRef] then return -2 end
   local decodedOk, member = pcall(cjson.decode, memberBytes)
   if not decodedOk or not validMember(member, memberBytes, issuerId, partitionId, metadata, bindingRef, operationId, reservationId) then return -2 end
-  if member.reservation.lifecycle == 'RELEASED' then return -2 end
+  if (countsCapacity == '1' and member.reservation.lifecycle == 'RELEASED')
+      or (countsCapacity == '0'
+          and (member.reservation.lifecycle ~= 'RELEASED' or bindingPresent ~= '0')) then return -2 end
   seenOperationIds[operationId] = true
   seenReservationIds[reservationId] = true
   seenBindings[bindingRef] = true
@@ -325,7 +327,7 @@ for index = 1, operationCount do
     memberBytes = memberBytes,
     bindingPresent = bindingPresent
   }
-  localCapacity = localCapacity + 1
+  if countsCapacity == '1' then localCapacity = localCapacity + 1 end
   local capacityField = capacityPrefix .. reservationId
   if not putAllowed(capacityField, memberBytes) then return -2 end
   if bindingPresent == '1' then

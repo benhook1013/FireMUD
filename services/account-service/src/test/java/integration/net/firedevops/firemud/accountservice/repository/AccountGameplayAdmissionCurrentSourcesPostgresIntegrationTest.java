@@ -2320,6 +2320,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private static final int REDIS_PORT = 6379;
     private static final String ACCOUNT_PASSWORD = UUID.randomUUID().toString().replace("-", "");
     private static final String PRIMARY_ALIAS = "account-gameplay-admission-primary";
+    private static final String ISSUER_OWNER = "gamesession_coord_app";
+    private static final String ISSUER_OWNER_PASSWORD = UUID.randomUUID().toString().replace("-", "");
 
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> primary =
@@ -2356,6 +2358,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 Integer.toString(REDIS_PORT));
 
     private RedisClient bootstrapClient;
+    private RedisClient issuerOwnerClient;
     private LettuceAccountCoordinationPinnedConnectionProvider accountProvider;
     private AccountGameplayDelegationRedisClient accountClient;
 
@@ -2381,8 +2384,17 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       try (var connection = bootstrapClient.connect(ByteArrayCodec.INSTANCE)) {
         RedisCommands<byte[], byte[]> commands = connection.sync();
         configureAccountUser(commands);
+        configureIssuerOwner(commands);
         awaitLocalAndReplicaAof(commands);
       }
+
+      RedisURI issuerUri =
+          RedisURI.Builder.redis("127.0.0.1", primaryPort)
+              .withAuthentication(ISSUER_OWNER, ISSUER_OWNER_PASSWORD)
+              .build();
+      issuerUri.setTimeout(Duration.ofSeconds(5));
+      issuerOwnerClient = RedisClient.create(issuerUri);
+      issuerOwnerClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
 
       RedisURI accountUri =
           RedisURI.Builder.redis("127.0.0.1", primaryPort)
@@ -2404,6 +2416,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     AccountGameplayDelegationRedisClient client() {
       return Objects.requireNonNull(accountClient, "Owned Account Redis client is unavailable");
+    }
+
+    RedisClient issuerOwnerClient() {
+      return Objects.requireNonNull(issuerOwnerClient, "Owned issuer Redis client is unavailable");
     }
 
     private static RedisClient redisClient(String host, int port, String password) {
@@ -2447,6 +2463,29 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               .add("SETUSER")
               .add(AccountGameplayDelegationRedisClient.REQUIRED_ACL_IDENTITY)
               .add("+waitaof"));
+    }
+
+    private static void configureIssuerOwner(RedisCommands<byte[], byte[]> commands) {
+      commands.aclSetuser(
+          ISSUER_OWNER,
+          new AclSetuserArgs()
+              .reset()
+              .on()
+              .addPassword(ISSUER_OWNER_PASSWORD)
+              .keyPattern("session:game:index:issuer:*")
+              .addCommand(CommandType.HELLO)
+              .addCommand(CommandType.PING)
+              .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+              .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+              .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+              .addCommand(CommandType.EVALSHA)
+              .addCommand(CommandType.TYPE)
+              .addCommand(CommandType.PTTL)
+              .addCommand(CommandType.HGET)
+              .addCommand(CommandType.HLEN)
+              .addCommand(CommandType.HGETALL)
+              .addCommand(CommandType.HSET)
+              .addCommand(CommandType.HDEL));
     }
 
     private static void awaitLocalAndReplicaAof(RedisCommands<byte[], byte[]> commands)
@@ -2494,6 +2533,14 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       if (bootstrapClient != null) {
         try {
           bootstrapClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+        } catch (RuntimeException failure) {
+          if (cleanupFailure == null) cleanupFailure = failure;
+          else cleanupFailure.addSuppressed(failure);
+        }
+      }
+      if (issuerOwnerClient != null) {
+        try {
+          issuerOwnerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
         } catch (RuntimeException failure) {
           if (cleanupFailure == null) cleanupFailure = failure;
           else cleanupFailure.addSuppressed(failure);

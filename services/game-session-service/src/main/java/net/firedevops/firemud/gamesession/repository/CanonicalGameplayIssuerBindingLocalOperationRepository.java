@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCovera
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import org.jooq.DSLContext;
@@ -94,6 +95,123 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
           "Issuer source or incarnation moved during SQL registration; the pending local operation remains durable");
     }
     return result.get();
+  }
+
+  /** Reloads the immutable original registration only from the actual retained Account abort. */
+  CanonicalGameplayIssuerBindingLocalOperation readOriginalForIssuerRelease(
+      CanonicalGameplayAdmissionAbortSource abortSource) {
+    Objects.requireNonNull(abortSource, "Actual Account-aborted source required");
+    requireNoAmbientTransaction();
+    if (!abortSource.isAccountAborted()
+        || (abortSource.reservation().lifecycle()
+                != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
+            && abortSource.reservation().lifecycle()
+                != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED)) {
+      throw conflict("Issuer release requires the actual retained first-NEW Account abort source");
+    }
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState =
+        Objects.requireNonNull(
+            currentIssuerStateSource.readFreshCurrentState(),
+            "current issuer state source returned null");
+    CanonicalGameplayIssuerBindingLocalOperation operation =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+              // This reader invokes the installed-anchor source loader, whose snapshot contract
+              // starts with the global inventory clock. Keep the same clock-before-source order
+              // used by ordinary registration, abort retry, and release completion.
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+              Record operationRow =
+                  transaction.fetchOne(
+                      "SELECT * FROM "
+                          + OPERATION
+                          + " WHERE issuer_id = ? AND transition_id = ?",
+                      ISSUER,
+                      abortSource.transition().transitionId());
+              if (operationRow == null) {
+                throw conflict("Account-aborted first-NEW source has no original local issuer operation");
+              }
+              CanonicalGameplayIssuerInstalledAnchor anchor =
+                  CanonicalGameplayIssuerBootstrapCoverageRepository
+                      .readInstalledAnchorForBindingPreparationInTransaction(
+                          transaction, currentState);
+              byte[] exactOriginal = requireBytes(operationRow, "member_value_bytes");
+              CanonicalGameplayIssuerMemberV2Value original;
+              try {
+                original = CanonicalGameplayIssuerMemberV2Codec.decode(exactOriginal);
+              } catch (RuntimeException malformed) {
+                throw conflict("Original local issuer operation is not canonical schema v2");
+              }
+              CanonicalIssuerPartitionReservation reservation = original.reservation();
+              var proof =
+                  CanonicalGameplayIssuerBootstrapCoverageRepository
+                      .readInstalledAnchorPartitionProof(
+                          transaction, anchor, reservation.partitionId());
+              AccountControlSnapshot accountControl =
+                  readAndRequireAccountControl(
+                      transaction,
+                      abortSource.candidate().identity().accountId(),
+                      abortSource.transition().accountCoverageEvidence());
+              Request request =
+                  new Request(
+                      requireUuid(operationRow, "request_id"),
+                      abortSource.transition().transitionId(),
+                      abortSource.candidate().identity(),
+                      null,
+                      null);
+              requireSameStoredOperation(
+                  operationRow,
+                  request,
+                  abortSource.transition(),
+                  reservation,
+                  anchor,
+                  proof,
+                  currentState,
+                  accountControl,
+                  true);
+              CanonicalGameplayIssuerMemberV2Value expected =
+                  createMemberValue(
+                      request.candidate(),
+                      abortSource.transition().bindingGeneration(),
+                      reservation,
+                      anchor,
+                      currentState.incarnation(),
+                      requireUuid(operationRow, "operation_id"),
+                      readPositive(operationRow, "operation_fence"),
+                      readPositive(operationRow, "local_member_generation"));
+              if (!expected.equals(original)
+                  || !Arrays.equals(exactOriginal, CanonicalGameplayIssuerMemberV2Codec.encode(expected))) {
+                throw conflict("Original issuer member differs from its exact aborted source or anchor");
+              }
+              try {
+                return new CanonicalGameplayIssuerBindingLocalOperation(
+                    request,
+                    requireUuid(operationRow, "candidate_account_index_fence"),
+                    abortSource.transition(),
+                    readPositive(operationRow, "local_inventory_snapshot_revision"),
+                    reservation,
+                    anchor,
+                    proof,
+                    expected,
+                    requireUuid(operationRow, "operation_id"),
+                    readPositive(operationRow, "operation_fence"),
+                    readPositive(operationRow, "local_member_generation"),
+                    exactOriginal,
+                    requireText(operationRow, "member_value_digest"),
+                    CanonicalGameplayIssuerBindingLocalOperation.Status.valueOf(
+                        requireText(operationRow, "member_status")));
+              } catch (RuntimeException malformed) {
+                throw conflict("Original local issuer operation metadata is malformed");
+              }
+            });
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState after =
+        Objects.requireNonNull(
+            currentIssuerStateSource.readFreshCurrentState(),
+            "current issuer state source returned null after original-operation read");
+    if (!sameCurrentIssuerState(currentState, after)) {
+      throw conflict("Issuer source or incarnation moved while reloading the original local operation");
+    }
+    return operation;
   }
 
   private CanonicalGameplayBindingTransitionRequest resolveTransitionRequestInTransaction(
@@ -253,7 +371,7 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
       AccountControlSnapshot accountControl,
       Record row) {
     requireSameStoredOperation(
-        row, request, prepared, reservation, anchor, proof, currentState, accountControl);
+        row, request, prepared, reservation, anchor, proof, currentState, accountControl, false);
     UUID operationId = requireUuid(row, "operation_id");
     BigInteger operationFence = readPositive(row, "operation_fence");
     BigInteger localMemberGeneration = readPositive(row, "local_member_generation");
@@ -601,7 +719,7 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
         values);
   }
 
-  private static IssuedCounters allocateLocalCounters(
+  static IssuedCounters allocateLocalCounters(
       DSLContext transaction,
       CanonicalGameplayIssuerInstalledAnchor anchor,
       CanonicalIssuerPartitionReservation reservation) {
@@ -689,7 +807,8 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
       CanonicalGameplayIssuerInstalledAnchor anchor,
       CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof proof,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState,
-      AccountControlSnapshot account) {
+      AccountControlSnapshot account,
+      boolean allowHistoricalPreparedRevision) {
     CanonicalGameplayIssuerMemberV2Value storedMemberValue;
     try {
       storedMemberValue =
@@ -766,8 +885,9 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
             AccountControlSnapshot.fromOperation(row, request.candidate().accountId()))
         || !readPositive(row, "local_inventory_snapshot_revision")
             .equals(storedMemberValue.reservation().inventoryRevision())
-        || !readPositive(row, "local_inventory_snapshot_revision")
-            .equals(prepared.inventoryRevision())
+        || (!allowHistoricalPreparedRevision
+            && !readPositive(row, "local_inventory_snapshot_revision")
+                .equals(prepared.inventoryRevision()))
         || !"ABSENT".equals(requireText(row, "expected_old_member_state"))
         || !"ABSENT".equals(requireText(row, "expected_old_capacity_state"))
         || !"PENDING_PHYSICAL_PROOF".equals(requireText(row, "member_status"))
@@ -959,7 +1079,7 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
     return new IllegalStateException(message);
   }
 
-  private record IssuedCounters(BigInteger operationFence, BigInteger localMemberGeneration) {}
+  record IssuedCounters(BigInteger operationFence, BigInteger localMemberGeneration) {}
 
   private record AccountControlSnapshot(
       String state,

@@ -108,6 +108,9 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       requireNoAmbientTransaction();
       var work = projectionRepository.readPreparedPartitionWork(operation);
       requireFreshCurrentState(work);
+      if (!work.targetEntry().operationId().equals(operation.operationId())) {
+        throw unavailable();
+      }
       RedisScriptDescriptor descriptor = requireDescriptor();
       byte[] script = scriptSource(descriptor);
       byte[] key = exactPartitionKey(work);
@@ -517,6 +520,10 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
 
     public CanonicalGameplayIssuerBindingLocalOperation operation() {
       return operation;
+    }
+
+    public UUID operationId() {
+      return operation.operationId();
     }
 
     public long scriptOutcome() {
