@@ -115,6 +115,29 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
     }
   }
 
+  /**
+   * Reads and verifies the exact current physical field set for an installed-anchor retry or
+   * reader. This method never creates, repairs, or rebuilds a missing partition.
+   */
+  public Readback readExistingAndRead(CanonicalGameplayIssuerBootstrapPartitionWork work) {
+    Objects.requireNonNull(work, "Prepared issuer partition work is required");
+    try {
+      requireNoAmbientTransaction();
+      var physical = CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.expectedFields(work);
+      requireFreshCurrentState(work);
+      PhysicalReadback observed = readExactPhysicalState(exactPartitionKey(work), physical);
+      requireFreshCurrentState(work);
+      return new Readback(work, observed, physical.plannedAggregateCapacityCount());
+    } catch (RuntimeException failure) {
+      if (failure instanceof IllegalStateException state
+          && state.getMessage() != null
+          && state.getMessage().contains("partition projection is unavailable")) {
+        throw state;
+      }
+      throw unavailable(failure);
+    }
+  }
+
   private long writeOneKey(byte[] script, byte[] key, byte[][] arguments) {
     requireNoAmbientTransaction();
     try (StatefulRedisConnection<byte[], byte[]> connection =
