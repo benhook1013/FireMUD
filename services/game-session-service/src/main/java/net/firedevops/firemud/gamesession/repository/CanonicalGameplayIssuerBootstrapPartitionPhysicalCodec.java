@@ -25,7 +25,9 @@ import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 
-/** Narrow canonical metadata and exact field-set codec for one initial-bootstrap issuer partition. */
+/**
+ * Narrow canonical metadata and exact field-set codec for one initial-bootstrap issuer partition.
+ */
 final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
   static final String METADATA_FIELD = "!issuer-partition-bootstrap/v1";
   static final String RESERVATION_FIELD_PREFIX = "!issuer-reservation-capacity/v1:";
@@ -84,13 +86,15 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       if (valueBytes.length == 0 || valueBytes.length > MAX_VALUE_BYTES) {
         throw invalid("Exact SQL-issued v2 member exceeds its resource limit");
       }
-      CanonicalGameplayIssuerMemberV2Value decoded = CanonicalGameplayIssuerMemberV2Codec.decode(valueBytes);
+      CanonicalGameplayIssuerMemberV2Value decoded =
+          CanonicalGameplayIssuerMemberV2Codec.decode(valueBytes);
       if (!decoded.equals(value)
           || !Arrays.equals(valueBytes, CanonicalGameplayIssuerMemberV2Codec.encode(decoded))) {
         throw invalid("SQL-issued v2 member bytes do not round-trip exactly");
       }
       UUID reservationId = value.reservation().reservationId();
-      if (!reservations.add(reservationId)) throw invalid("Duplicate partition reservation identity");
+      if (!reservations.add(reservationId))
+        throw invalid("Duplicate partition reservation identity");
 
       byte[] bindingRefBytes = value.owner().bindingRef().bytes();
       if (bindingRefBytes.length == 0 || bindingRefBytes.length > MAX_BINDING_REF_BYTES) {
@@ -120,7 +124,8 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       throw invalid("Issuer bootstrap partition field set exceeds its bounded resource limits");
     }
     if (BigInteger.valueOf(partitionCapacityCount)
-        .compareTo(intent.layoutDescriptor().partitionCapacity()) > 0) {
+            .compareTo(intent.layoutDescriptor().partitionCapacity())
+        > 0) {
       throw invalid("Prepared issuer partition exceeds its exact finite capacity");
     }
     long aggregateCapacity =
@@ -128,7 +133,10 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
             .filter(CanonicalGameplayIssuerPartitionBuildPlan.MemberWork::countsTowardCapacity)
             .count();
     BigInteger aggregateBound =
-        intent.layoutDescriptor().partitionCount().multiply(intent.layoutDescriptor().partitionCapacity());
+        intent
+            .layoutDescriptor()
+            .partitionCount()
+            .multiply(intent.layoutDescriptor().partitionCapacity());
     if (BigInteger.valueOf(aggregateCapacity).compareTo(aggregateBound) > 0) {
       throw invalid("Prepared issuer aggregate capacity exceeds its exact finite layout bound");
     }
@@ -155,7 +163,8 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
     }
     try {
       JsonNode decoded = JSON.readTree(strictUtf8(encoded));
-      if (!(decoded instanceof ObjectNode root)) throw invalid("Bootstrap metadata must be an object");
+      if (!(decoded instanceof ObjectNode root))
+        throw invalid("Bootstrap metadata must be an object");
       requireExactFields(
           root,
           Set.of(
@@ -214,7 +223,9 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       CanonicalGameplayBindingRef reference =
           CanonicalGameplayBindingRef.fromExactBytes(member.bindingRef());
       if (member.workOrdinal() != index
-          || !member.plannedPartitionId().equals(reference.partitionId(intent.layoutDescriptor().partitionCount()))
+          || !member
+              .plannedPartitionId()
+              .equals(reference.partitionId(intent.layoutDescriptor().partitionCount()))
           || !reservationIds.add(member.reservationId())
           || !memberOperationIds.add(member.memberOperationId())) {
         throw invalid("Prepared issuer plan has a duplicate or mis-mapped cohort member");
@@ -245,20 +256,35 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
           || !reservation.lifecycle().name().equals(planned.reservationLifecycle())
           || !reservation.partitionId().equals(planned.plannedPartitionId())
           || !reservation.partitionId().equals(planned.originalPartitionId())
-          || !reservation.issuerCoverageOperationId().equals(planned.originalIssuerCoverageOperationId())
-          || !reservation.issuerCoverageOperationFence().equals(planned.originalIssuerCoverageOperationFence())
+          || !reservation
+              .issuerCoverageOperationId()
+              .equals(planned.originalIssuerCoverageOperationId())
+          || !reservation
+              .issuerCoverageOperationFence()
+              .equals(planned.originalIssuerCoverageOperationFence())
           || !reservation.coverageFence().equals(planned.originalCoverageFence())
-          || !reservation.inventorySnapshotRevision().equals(planned.originalInventorySnapshotRevision())
+          || !reservation
+              .inventorySnapshotRevision()
+              .equals(planned.originalInventorySnapshotRevision())
           || !value.owner().issuerIndexLayoutVersion().equals(planned.originalLayoutVersion())
           || !value.owner().issuerIndexPartitionCount().equals(planned.originalPartitionCount())
-          || !value.owner().issuerIndexPartitionCapacity().equals(planned.originalPartitionCapacity())
+          || !value
+              .owner()
+              .issuerIndexPartitionCapacity()
+              .equals(planned.originalPartitionCapacity())
           || !Arrays.equals(memberRef.bytes(), planned.bindingRef())
           || !value.incarnation().equals(work.incarnation())
           || !value.anchor().issuerCoverageOperationId().equals(intent.operationId())
           || !value.anchor().operationFence().equals(intent.operationFence())
           || !value.anchor().coverageFence().equals(intent.coverageFence())
-          || !value.anchor().issuerInventorySnapshotRevision().equals(intent.inventorySnapshotRevision())
-          || !value.layoutDescriptor().descriptorDigest().equals(intent.layoutDescriptor().descriptorDigest())
+          || !value
+              .anchor()
+              .issuerInventorySnapshotRevision()
+              .equals(intent.inventorySnapshotRevision())
+          || !value
+              .layoutDescriptor()
+              .descriptorDigest()
+              .equals(intent.layoutDescriptor().descriptorDigest())
           || !sameLayout(value.layoutDescriptor(), intent.layoutDescriptor())
           || !sameCheckpoint(value.sourceCheckpoint(), intent.sourceCheckpoint())
           || !value.issuerControlEpoch().equals(intent.controlEpoch())
@@ -267,9 +293,9 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
           || !issuedGenerations.add(operation.localMemberGeneration())
           || operation.countsTowardCapacity()
               != (value.reservation().lifecycle()
-                  != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation.Lifecycle.RELEASED)
-          || operation.expectedBindingPresent()
-              != (planned.bindingSourceRowOrdinal() != null)) {
+                  != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation
+                      .Lifecycle.RELEASED)
+          || operation.expectedBindingPresent() != (planned.bindingSourceRowOrdinal() != null)) {
         throw invalid("SQL-issued member differs from the complete frozen preparation tuple");
       }
     }
@@ -319,7 +345,8 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       bootstrap.put("controlEpoch", intent.controlEpoch().toString());
       bootstrap.put("operationFence", intent.operationFence().toString());
       bootstrap.put("coverageFence", intent.coverageFence().toString());
-      bootstrap.put("issuerInventorySnapshotRevision", intent.inventorySnapshotRevision().toString());
+      bootstrap.put(
+          "issuerInventorySnapshotRevision", intent.inventorySnapshotRevision().toString());
       bootstrap.put("cohortDigest", intent.cohortDigest());
       ObjectNode build = root.putObject("build");
       build.put("operationId", work.buildPlan().buildOperationId().toString());
@@ -329,7 +356,8 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       layoutObject.put("partitionCount", layout.partitionCount().toString());
       layoutObject.put("partitionCapacity", layout.partitionCapacity().toString());
       layoutObject.put("mappingIdentity", layout.mappingIdentity());
-      layoutObject.put("descriptorBytes", Base64.getEncoder().encodeToString(layout.exactDescriptorBytes()));
+      layoutObject.put(
+          "descriptorBytes", Base64.getEncoder().encodeToString(layout.exactDescriptorBytes()));
       layoutObject.put("descriptorDigest", layout.descriptorDigest());
       ObjectNode anchor = root.putObject("anchor");
       anchor.put("issuerCoverageOperationId", intent.operationId().toString());
@@ -337,7 +365,9 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       anchor.put("coverageFence", intent.coverageFence().toString());
       anchor.put("issuerInventorySnapshotRevision", intent.inventorySnapshotRevision().toString());
       anchor.put("issuerAuthGeneration", source.issuerAuthGeneration().toString());
-      anchor.put("sourceCheckpointBytes", Base64.getEncoder().encodeToString(source.exactCheckpointBytes()));
+      anchor.put(
+          "sourceCheckpointBytes",
+          Base64.getEncoder().encodeToString(source.exactCheckpointBytes()));
       anchor.put("sourceCheckpointDigest", source.checkpointDigest());
       putNullableBase64(anchor, "sourceEventBytes", source.latestIssuerEventBytes());
       putNullableText(anchor, "sourceEventDigest", source.latestIssuerEventDigest());
@@ -359,13 +389,15 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
       deploymentObject.put("storageGeneration", deployment.storageGeneration());
       deploymentObject.put("aofGeneration", deployment.aofGeneration());
       incarnationObject.put("coordOpsRoAclDigest", incarnation.coordOpsRoAclDigest());
-      incarnationObject.put("coordRedisConfigObservedDigest", incarnation.coordRedisConfigObservedDigest());
+      incarnationObject.put(
+          "coordRedisConfigObservedDigest", incarnation.coordRedisConfigObservedDigest());
       root.put("plannedAggregateCapacityCount", plannedAggregateCapacityCount.toString());
-      root.put("plannedPartitionReservationCount", Integer.toString(work.memberOperations().size()));
+      root.put(
+          "plannedPartitionReservationCount", Integer.toString(work.memberOperations().size()));
       root.put("plannedPartitionCapacityCount", Long.toString(plannedPartitionCapacityCount));
-      byte[] encoded =
-          Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(root));
-      if (encoded.length > MAX_METADATA_BYTES) throw invalid("Bootstrap metadata exceeds its resource limit");
+      byte[] encoded = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(root));
+      if (encoded.length > MAX_METADATA_BYTES)
+        throw invalid("Bootstrap metadata exceeds its resource limit");
       return encoded;
     } catch (IOException failure) {
       throw new IllegalArgumentException("Could not encode canonical bootstrap metadata", failure);
@@ -383,7 +415,9 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
   }
 
   private static void putUnique(Map<String, byte[]> fields, String field, byte[] value) {
-    if (field == null || field.isEmpty() || field.getBytes(StandardCharsets.UTF_8).length > MAX_BINDING_REF_BYTES
+    if (field == null
+        || field.isEmpty()
+        || field.getBytes(StandardCharsets.UTF_8).length > MAX_BINDING_REF_BYTES
         || fields.putIfAbsent(field, value.clone()) != null) {
       throw invalid("Issuer bootstrap field identity is reserved, oversized, or duplicated");
     }
@@ -398,7 +432,8 @@ final class CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec {
           .decode(ByteBuffer.wrap(bytes))
           .toString();
     } catch (CharacterCodingException malformed) {
-      throw new IllegalArgumentException("Issuer bootstrap field is not canonical UTF-8", malformed);
+      throw new IllegalArgumentException(
+          "Issuer bootstrap field is not canonical UTF-8", malformed);
     }
   }
 

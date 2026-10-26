@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import io.lettuce.core.RedisFuture;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
@@ -38,9 +38,7 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   private static final List<RedisScriptDescriptor.KeySpec> EXPECTED_KEYS =
       List.of(
           new RedisScriptDescriptor.KeySpec(
-              "issuerPartition",
-              KEY_PREFIX,
-              RedisScriptDescriptor.HashTagDeclaration.REQUIRED));
+              "issuerPartition", KEY_PREFIX, RedisScriptDescriptor.HashTagDeclaration.REQUIRED));
   private static final List<RedisScriptDescriptor.ArgumentSpec> EXPECTED_ARGUMENTS =
       List.of(
           new RedisScriptDescriptor.ArgumentSpec("issuerId"),
@@ -49,7 +47,8 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
           new RedisScriptDescriptor.ArgumentSpec("partitionCapacity"),
           new RedisScriptDescriptor.ArgumentSpec("exactBootstrapMetadata"),
           new RedisScriptDescriptor.ArgumentSpec("memberOperationCount"),
-          new RedisScriptDescriptor.ArgumentSpec("repeatedBindingRefMemberCapacityFieldBindingPresence"));
+          new RedisScriptDescriptor.ArgumentSpec(
+              "repeatedBindingRefMemberCapacityFieldBindingPresence"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> EXPECTED_OUTCOMES =
       List.of(
           new RedisScriptDescriptor.OutcomeSpec(
@@ -73,7 +72,9 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   private final RedisScriptCatalog catalog;
   private final CurrentIssuerStateSource currentStateSource;
 
-  /** The Redis client, manual owner contribution catalog, and protected local source are explicit. */
+  /**
+   * The Redis client, manual owner contribution catalog, and protected local source are explicit.
+   */
   public CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
       RedisClient redisClient,
       RedisScriptCatalog catalog,
@@ -114,8 +115,7 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
     }
   }
 
-  private long writeOneKey(
-      byte[] script, byte[] key, byte[][] arguments) {
+  private long writeOneKey(byte[] script, byte[] key, byte[][] arguments) {
     requireNoAmbientTransaction();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
@@ -125,11 +125,7 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
       Long reply =
           await(
-              commands.evalsha(
-                  loadedSha,
-                  ScriptOutputType.INTEGER,
-                  new byte[][] {key},
-                  arguments));
+              commands.evalsha(loadedSha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments));
       if (reply == null) throw unavailable();
       return reply;
     } catch (RuntimeException failure) {
@@ -138,7 +134,8 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   }
 
   private PhysicalReadback readExactPhysicalState(
-      byte[] key, CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.PhysicalFieldSet expected) {
+      byte[] key,
+      CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.PhysicalFieldSet expected) {
     requireNoAmbientTransaction();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
@@ -162,7 +159,8 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
         byte[] field = Objects.requireNonNull(entry.getKey(), "Redis field");
         byte[] value = Objects.requireNonNull(entry.getValue(), "Redis value");
         totalBytes += (long) field.length + value.length;
-        if (totalBytes > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_TOTAL_HASH_BYTES) {
+        if (totalBytes
+            > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_TOTAL_HASH_BYTES) {
           throw unavailable();
         }
         String encodedField = Base64.getEncoder().encodeToString(field);
@@ -175,11 +173,12 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
         byte[] observed = actual.get(Base64.getEncoder().encodeToString(redisField));
         if (!Arrays.equals(entry.getValue(), observed)) throw unavailable();
       }
-      byte[] metadata = actual.get(
-          Base64.getEncoder()
-              .encodeToString(
-                  CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD
-                      .getBytes(StandardCharsets.US_ASCII)));
+      byte[] metadata =
+          actual.get(
+              Base64.getEncoder()
+                  .encodeToString(
+                      CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD
+                          .getBytes(StandardCharsets.US_ASCII)));
       CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.requireExactMetadata(
           metadata, expected.metadataBytes());
 
@@ -190,19 +189,23 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
         if (field.startsWith(
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.RESERVATION_FIELD_PREFIX)) {
           CanonicalGameplayIssuerMemberV2Value decoded =
-              CanonicalGameplayIssuerMemberV2Codec.decode(actual.get(
-                  Base64.getEncoder().encodeToString(field.getBytes(StandardCharsets.US_ASCII))));
+              CanonicalGameplayIssuerMemberV2Codec.decode(
+                  actual.get(
+                      Base64.getEncoder()
+                          .encodeToString(field.getBytes(StandardCharsets.US_ASCII))));
           if (!decoded.equals(CanonicalGameplayIssuerMemberV2Codec.decode(entry.getValue()))) {
             throw unavailable();
           }
           if (decoded.reservation().lifecycle()
-              != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) {
+              != net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation
+                  .Lifecycle.RELEASED) {
             capacityCount++;
           }
         } else if (!field.equals(
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD)) {
-          CanonicalGameplayIssuerMemberV2Codec.decode(actual.get(
-              Base64.getEncoder().encodeToString(field.getBytes(StandardCharsets.UTF_8))));
+          CanonicalGameplayIssuerMemberV2Codec.decode(
+              actual.get(
+                  Base64.getEncoder().encodeToString(field.getBytes(StandardCharsets.UTF_8))));
           bindingCount++;
         }
       }
@@ -232,11 +235,12 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   private RedisScriptDescriptor requireDescriptor() {
     try {
       RedisScriptDescriptor descriptor =
-          catalog.require(CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution.SCRIPT_ID);
-      if (!CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution.SCRIPT_ID
-              .equals(descriptor.scriptId())
-          || !CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution.RESOURCE_PATH
-              .equals(descriptor.resourcePath())
+          catalog.require(
+              CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution.SCRIPT_ID);
+      if (!CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution.SCRIPT_ID.equals(
+              descriptor.scriptId())
+          || !CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution.RESOURCE_PATH.equals(
+              descriptor.resourcePath())
           || !"game-session-service".equals(descriptor.owner())
           || !PRINCIPAL.equals(descriptor.principal())
           || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
@@ -373,13 +377,17 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
     return new IllegalStateException("Issuer bootstrap partition projection is unavailable", cause);
   }
 
-  /** Fresh, trusted local read collaborator. No default implementation derives authority from work. */
+  /**
+   * Fresh, trusted local read collaborator. No default implementation derives authority from work.
+   */
   @FunctionalInterface
   public interface CurrentIssuerStateSource {
     CurrentIssuerState readFreshCurrentState();
   }
 
-  /** One current exact Account checkpoint and stable incarnation observation from the collaborator. */
+  /**
+   * One current exact Account checkpoint and stable incarnation observation from the collaborator.
+   */
   public record CurrentIssuerState(
       CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint accountCheckpoint,
       CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation) {
@@ -391,7 +399,10 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
 
   private record PhysicalReadback(int fieldCount, int countedReservationCount, int bindingCount) {}
 
-  /** Exact physical partition readback; it carries no global aggregate, acknowledgement, or OPEN authority. */
+  /**
+   * Exact physical partition readback; it carries no global aggregate, acknowledgement, or OPEN
+   * authority.
+   */
   public static final class Readback {
     private final CanonicalGameplayIssuerBootstrapPartitionWork work;
     private final int physicalFieldCount;
@@ -412,8 +423,8 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
       this.plannedAggregateCapacityCount = Objects.requireNonNull(plannedAggregateCapacityCount);
       if (observed.fieldCount() != 1 + physicalReservationCount + physicalBindingCount
           || BigInteger.valueOf(observed.countedReservationCount())
-              .compareTo(
-                  work.buildPlan().bootstrapIntent().layoutDescriptor().partitionCapacity())
+                  .compareTo(
+                      work.buildPlan().bootstrapIntent().layoutDescriptor().partitionCapacity())
               > 0) {
         throw unavailable();
       }
