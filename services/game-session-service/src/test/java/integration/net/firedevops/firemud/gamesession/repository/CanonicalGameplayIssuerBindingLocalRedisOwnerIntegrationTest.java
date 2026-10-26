@@ -297,6 +297,13 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     var firstCapacityOnly = projectionOwner.projectAndRead(first);
     assertThat(firstCapacityOnly.operation()).isSameAs(first);
     assertThat(firstCapacityOnly.scriptOutcome()).isEqualTo(1L);
+    var acknowledgementRepository =
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, currentState::get);
+    assertThatThrownBy(() -> acknowledgementRepository.acknowledge(firstCapacityOnly))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("nonterminal binding");
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement")).isZero();
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_ack_gen_counter")).isZero();
     var firstCapacityFields =
         CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
             firstCapacityOnly.exactReadbackBytes());
@@ -452,6 +459,115 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(firstProjectedFields)
         .containsEntry(firstCapacityField, first.exactMemberValueBytes());
     assertThat(projectionOwner.projectAndRead(first).scriptOutcome()).isEqualTo(3L);
+
+    var issuerAcknowledgement = acknowledgementRepository.acknowledge(firstWithBinding);
+    assertThat(issuerAcknowledgement.evidence().operationId()).isEqualTo(first.operationId());
+    assertThat(issuerAcknowledgement.evidence().issuerBindingLocalAcknowledgementGeneration())
+        .isEqualTo(BigInteger.ONE);
+    assertThat(issuerAcknowledgement.evidence().anchor().globalCoverageGeneration())
+        .isEqualTo(initialGlobalCoverageGeneration);
+    assertThat(issuerAcknowledgement.evidence().reservation().reservationId())
+        .isEqualTo(first.reservation().reservationId());
+    assertThat(issuerAcknowledgement.evidence().reservation().issuerCoverageOperationFence())
+        .isEqualTo(first.reservation().issuerCoverageOperationFence());
+    assertThat(issuerAcknowledgement.evidence().anchor().operationFence())
+        .isEqualTo(first.anchor().operationFence());
+    assertThat(issuerAcknowledgement.evidence().memberOperation().generation())
+        .isEqualTo(first.localMemberGeneration());
+    assertThat(issuerAcknowledgement.evidence().physicalReadback().bindingValueBytes())
+        .containsExactly(first.exactMemberValueBytes());
+    assertThat(issuerAcknowledgement.evidence().physicalReadback().capacityValueBytes())
+        .containsExactly(first.exactMemberValueBytes());
+    assertThat(issuerAcknowledgement.evidence().physicalReadback().countedCapacity()).isEqualTo(2);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT member_status FROM"
+                            + " game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+                        first.operationId()),
+                    "Expected immutable local issuer operation")
+                .get("member_status", String.class))
+        .isEqualTo("PENDING_PHYSICAL_PROOF");
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement"))
+        .isEqualTo(1L);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT last_issued_binding_local_acknowledgement_generation FROM"
+                            + " game_session_canonical_issuer_binding_local_ack_gen_counter"
+                            + " WHERE issuer_id = ?",
+                        ISSUER),
+                    "Expected owner-issued local ACK generation counter")
+                .get("last_issued_binding_local_acknowledgement_generation", BigDecimal.class))
+        .isEqualTo(BigDecimal.ONE);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_issuer_binding_local_ack_gen_counter"
+                        + " SET last_issued_binding_local_acknowledgement_generation = 3,"
+                        + " counter_version = counter_version + 1 WHERE issuer_id = ?",
+                    ISSUER))
+        .hasMessageContaining("must advance its own domain by one");
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT last_issued_binding_local_acknowledgement_generation FROM"
+                            + " game_session_canonical_issuer_binding_local_ack_gen_counter"
+                            + " WHERE issuer_id = ?",
+                        ISSUER),
+                    "Expected counter to refuse a skipped generation")
+                .get("last_issued_binding_local_acknowledgement_generation", BigDecimal.class))
+        .isEqualTo(BigDecimal.ONE);
+    var restartedAcknowledgementRepository =
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, currentState::get);
+    var retriedAcknowledgement =
+        restartedAcknowledgementRepository.acknowledge(
+            projectionOwner(dsl, currentState::get).projectAndRead(first));
+    assertThat(retriedAcknowledgement.exactBytes())
+        .containsExactly(issuerAcknowledgement.exactBytes());
+    assertThat(retriedAcknowledgement.digest()).isEqualTo(issuerAcknowledgement.digest());
+    assertThat(retriedAcknowledgement.evidence().issuerBindingLocalAcknowledgementGeneration())
+        .isEqualTo(issuerAcknowledgement.evidence().issuerBindingLocalAcknowledgementGeneration());
+    assertThat(restartedAcknowledgementRepository.readHistorical(first.operationId()).exactBytes())
+        .containsExactly(issuerAcknowledgement.exactBytes());
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement"))
+        .isEqualTo(1L);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT last_issued_binding_local_acknowledgement_generation FROM"
+                            + " game_session_canonical_issuer_binding_local_ack_gen_counter"
+                            + " WHERE issuer_id = ?",
+                        ISSUER),
+                    "Expected replay to retain the owner-issued ACK generation")
+                .get("last_issued_binding_local_acknowledgement_generation", BigDecimal.class))
+        .isEqualTo(BigDecimal.ONE);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_issuer_binding_local_acknowledgement"
+                        + " SET acknowledgement_bytes = ? WHERE operation_id = ?",
+                    issuerAcknowledgement.exactBytes(),
+                    first.operationId()))
+        .hasMessageContaining("issuer binding-local acknowledgements are immutable");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "DELETE FROM game_session_canonical_issuer_binding_local_acknowledgement"
+                        + " WHERE operation_id = ?",
+                    first.operationId()))
+        .hasMessageContaining("issuer binding-local acknowledgements are immutable");
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement"))
+        .isEqualTo(1L);
+    currentState.set(
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            checkpointShape(BigInteger.valueOf(8)), incarnation));
+    assertThatThrownBy(() -> restartedAcknowledgementRepository.acknowledge(firstWithBinding))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("differs from the installed anchor");
+    assertThat(restartedAcknowledgementRepository.readHistorical(first.operationId()).exactBytes())
+        .containsExactly(issuerAcknowledgement.exactBytes());
+    currentState.set(initialState);
 
     String beforeCapacityRefusal = localRegistrationImage(dsl);
     assertThatThrownBy(

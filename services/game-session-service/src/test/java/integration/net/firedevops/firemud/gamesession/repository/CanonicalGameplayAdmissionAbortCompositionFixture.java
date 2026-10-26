@@ -81,6 +81,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       initialIssuerState;
   private final CanonicalGameplayIssuerBindingLocalOperation localOperation;
   private final CanonicalGameplayIssuerBindingLocalProjectionRepository localProjectionRepository;
+  private byte[] issuerAcknowledgementBytes;
   private final RedisClient issuerRedisClient;
   private final RedisScriptCatalog issuerCatalog;
   private final Map<String, CanonicalGameplayIssuerBindingLocalOperation> otherOperations =
@@ -406,9 +407,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         repository.readProvisionalCasEvidence(transitionId),
         new CanonicalGameplayAdmissionDecision(
             transitionId, lease, identity, generation, null, target));
-    new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-        .projectAndRead(localOperation);
+    var physicalReadback =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+                issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+            .projectAndRead(localOperation);
+    issuerAcknowledgementBytes =
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
+            .acknowledge(physicalReadback)
+            .exactBytes();
   }
 
   /**
@@ -528,8 +534,20 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public CanonicalGameplayIssuerBindingLocalReleaseOperation completeIssuerRelease(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation,
       CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.Readback readback) {
-    return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
-        .completeWithReadback(operation, readback);
+    var completed =
+        new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
+            .completeWithReadback(operation, readback);
+    var historicalAcknowledgement =
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
+            .readHistorical(localOperation.operationId());
+    if (issuerAcknowledgementBytes == null
+        || historicalAcknowledgement == null
+        || !java.util.Arrays.equals(
+            issuerAcknowledgementBytes, historicalAcknowledgement.exactBytes())) {
+      throw new IllegalStateException(
+          "Issuer release did not retain the exact original binding-local acknowledgement");
+    }
+    return completed;
   }
 
   public UUID prepareOtherControllerNew(String seed) {

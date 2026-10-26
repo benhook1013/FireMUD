@@ -124,7 +124,7 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       byte[] readbackBytes = readExactPhysicalState(key, work);
       requireFreshCurrentState(work);
       projectionRepository.requireStillCurrent(work);
-      return new Readback(operation, result, readbackBytes);
+      return new Readback(operation, result, readbackBytes, work.sqlCurrentnessDigest());
     } catch (RuntimeException failure) {
       if (failure instanceof IllegalStateException state
           && state.getMessage() != null
@@ -508,15 +508,22 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
     private final CanonicalGameplayIssuerBindingLocalOperation operation;
     private final long scriptOutcome;
     private final byte[] exactReadbackBytes;
+    private final byte[] sqlCurrentnessDigest;
 
     private Readback(
         CanonicalGameplayIssuerBindingLocalOperation operation,
         long scriptOutcome,
-        byte[] exactReadbackBytes) {
+        byte[] exactReadbackBytes,
+        byte[] sqlCurrentnessDigest) {
       this.operation = Objects.requireNonNull(operation, "operation");
       this.scriptOutcome = scriptOutcome;
       this.exactReadbackBytes =
           Objects.requireNonNull(exactReadbackBytes, "exactReadbackBytes").clone();
+      this.sqlCurrentnessDigest =
+          Objects.requireNonNull(sqlCurrentnessDigest, "sqlCurrentnessDigest").clone();
+      if (this.sqlCurrentnessDigest.length != 32) {
+        throw new IllegalArgumentException("SQL issuer currentness digest must be SHA-256");
+      }
     }
 
     public CanonicalGameplayIssuerBindingLocalOperation operation() {
@@ -533,6 +540,10 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
 
     public byte[] exactReadbackBytes() {
       return exactReadbackBytes.clone();
+    }
+
+    byte[] sqlCurrentnessDigest() {
+      return sqlCurrentnessDigest.clone();
     }
   }
 }
