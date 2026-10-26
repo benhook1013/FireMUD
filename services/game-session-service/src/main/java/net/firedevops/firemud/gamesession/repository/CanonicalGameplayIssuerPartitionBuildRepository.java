@@ -733,6 +733,40 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
                     .CONFLICTING_RESERVATION_LINK));
       } else {
         bindingOrdinalByReservation.put(entry.getKey(), binding.rowOrdinal());
+        CanonicalGameplayBindingInventoryEntry.Lifecycle bindingLifecycle =
+            CanonicalGameplayBindingInventoryEntry.Lifecycle.valueOf(binding.lifecycle());
+        CanonicalIssuerPartitionReservation.Lifecycle reservationLifecycle =
+            CanonicalIssuerPartitionReservation.Lifecycle.valueOf(reservation.lifecycle());
+        boolean issuableLifecyclePair =
+            switch (bindingLifecycle) {
+              case CANDIDATE_PREPARED, PROVISIONAL ->
+                  reservationLifecycle == CanonicalIssuerPartitionReservation.Lifecycle.RESERVED;
+              case ACTIVE ->
+                  reservationLifecycle == CanonicalIssuerPartitionReservation.Lifecycle.BOUND
+                      || reservationLifecycle
+                          == CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING;
+              case TERMINAL ->
+                  reservationLifecycle == CanonicalIssuerPartitionReservation.Lifecycle.RELEASED;
+              case TERMINAL_UNRESOLVED -> false;
+            };
+        if (!issuableLifecyclePair) {
+          blockers.add(
+              new PlanBlocker(
+                  binding.rowOrdinal(),
+                  CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode.UNREPRESENTABLE_BINDING));
+        }
+      }
+    }
+
+    for (ReservationSource reservation : reservations.values()) {
+      if (!bindings.containsKey(reservation.reservationId())
+          && !reservation.lifecycle().equals("RESERVED")
+          && !reservation.lifecycle().equals("RELEASED")) {
+        blockers.add(
+            new PlanBlocker(
+                reservation.rowOrdinal(),
+                CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                    .CONFLICTING_RESERVATION_LINK));
       }
     }
 

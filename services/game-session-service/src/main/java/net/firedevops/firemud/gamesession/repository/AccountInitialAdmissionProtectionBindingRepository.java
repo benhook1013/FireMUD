@@ -411,6 +411,10 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
     };
     boolean legacy = Arrays.stream(protectionColumns).allMatch(name -> row.get(name) == null);
     if (legacy) return Optional.empty();
+    String status = required(row, "status", String.class);
+    if (!"COMMITTED".equals(status) && !"ABORTED".equals(status)) {
+      throw unavailable("Protected admission has no immutable terminal result");
+    }
     var protection =
         AccountStartSessionAdmissionProtectionEvidence.decode(
             required(row, "account_protection_evidence_bytes", byte[].class));
@@ -494,10 +498,6 @@ public final class AccountInitialAdmissionProtectionBindingRepository {
             hold.holdBindingDigest());
     if (!actual.equals(expected))
       throw unavailable("Stored admission operation differs from its retained World hold");
-    String status = required(row, "status", String.class);
-    if (!"COMMITTED".equals(status) && !"ABORTED".equals(status)) {
-      throw unavailable("Protected admission has no immutable terminal result");
-    }
     Instant terminal = required(row, "terminal_at", OffsetDateTime.class).toInstant();
     String digest =
         terminalDigest(

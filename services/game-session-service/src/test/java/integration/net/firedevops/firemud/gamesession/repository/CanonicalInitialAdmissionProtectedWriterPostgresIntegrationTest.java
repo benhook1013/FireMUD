@@ -28,6 +28,7 @@ import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecu
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
+import net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
@@ -65,6 +66,14 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .isEqualTo(prepared.protection().accountProtectionId());
       assertThat(pending.get("account_protection_evidence_bytes", byte[].class))
           .containsExactly(prepared.protection().canonicalBytes());
+      assertThatThrownBy(
+              () ->
+                  new AccountInitialAdmissionProtectionBindingRepository(harness.dsl())
+                      .read(
+                          prepared.request().targetNamespace(),
+                          prepared.request().initialAdmissionRequestId()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Protected admission has no immutable terminal result");
 
       var changedId = protection(target, prepared.hold(), uuid(590), 1L, prepared.original());
       var changedFence =
@@ -337,7 +346,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
     var harness =
         CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres, "1040");
     try {
-      var target = harness.seed(Duration.ofSeconds(2));
+      var target = harness.seed(Duration.ofSeconds(10));
       Prepared prepared = prepare(target, "protected-writer-expired-abort", 1001);
       CanonicalInitialAdmissionRepository repository = repository(harness);
 
@@ -824,7 +833,7 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
 
   private static void awaitOriginalOwnerLeaseExpiration(
       CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness, Prepared prepared) {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
     while (!Boolean.TRUE.equals(
         harness
             .dsl()

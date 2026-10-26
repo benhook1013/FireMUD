@@ -112,7 +112,7 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
           WorldPreparationStorageFailureStatus.from(storageFailure),
           "Canonical World hold storage operation failed");
     } catch (RuntimeException failure) {
-      fail(responseObserver, Status.INTERNAL, "Canonical World hold acquisition failed");
+      fail(responseObserver, Status.INTERNAL, "Canonical World hold acquisition failed", failure);
     }
   }
 
@@ -186,7 +186,7 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
           WorldPreparationStorageFailureStatus.from(storageFailure),
           "Canonical World hold storage operation failed");
     } catch (RuntimeException failure) {
-      fail(responseObserver, Status.INTERNAL, "Canonical World hold identity read failed");
+      fail(responseObserver, Status.INTERNAL, "Canonical World hold identity read failed", failure);
     }
   }
 
@@ -265,7 +265,7 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
           WorldPreparationStorageFailureStatus.from(storageFailure),
           "Canonical World hold storage operation failed");
     } catch (RuntimeException failure) {
-      fail(responseObserver, Status.INTERNAL, "Canonical World hold state read failed");
+      fail(responseObserver, Status.INTERNAL, "Canonical World hold state read failed", failure);
     }
   }
 
@@ -368,6 +368,12 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
 
   private static void fail(StreamObserver<?> responseObserver, Status status, String description) {
     responseObserver.onError(status.withDescription(description).asRuntimeException());
+  }
+
+  private static void fail(
+      StreamObserver<?> responseObserver, Status status, String description, Throwable cause) {
+    responseObserver.onError(
+        status.withDescription(description).withCause(cause).asRuntimeException());
   }
 
   private static void fail(
