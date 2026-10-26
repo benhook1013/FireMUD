@@ -53,10 +53,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         readCompletedRetirement(transitionId);
     if (completed != null) return completed;
     CanonicalGameplayIssuerBindingLocalReleaseOperation release =
-        releaseRepository.prepareOrResume(transitionId);
-    if (release.status() != CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
-      throw conflict("Physical retirement requires a committed original RELEASED receipt");
-    }
+        releaseRepository.readCommittedRelease(transitionId);
     var before = readCurrentIssuerState();
     requireSourceMatchesRelease(release.abortSource(), release);
     CanonicalGameplayIssuerBindingLocalRetirementOperation prepared =
@@ -66,7 +63,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               CanonicalGameplayAdmissionAbortSource currentSource =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, transitionId, true);
               requireSameReleaseSource(release.abortSource(), currentSource, release);
               requireExactCommittedReleaseRow(transaction, release);
@@ -107,7 +104,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     requireSameCurrentIssuerState(
         before, readCurrentIssuerState(), prepared.release().originalOperation().anchor());
     CanonicalGameplayIssuerBindingLocalReleaseOperation after =
-        releaseRepository.prepareOrResume(transitionId);
+        releaseRepository.readCommittedRelease(transitionId);
     requireSameReleaseOperation(release, after);
     return prepared;
   }
@@ -424,7 +421,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               CanonicalGameplayIssuerBindingLocalReleaseOperation release = expected.release();
               CanonicalGameplayAdmissionAbortSource source =
                   CanonicalGameplayBindingInventoryRepository
-                      .readFirstNewAdmissionAbortSourceInTransaction(
+                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
                           transaction, release.abortSource().transition().transitionId(), true);
               requireSameReleaseSource(release.abortSource(), source, release);
               requireExactCommittedReleaseRow(transaction, release);

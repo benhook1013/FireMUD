@@ -614,6 +614,105 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
   }
 
   @Test
+  void readsProjectedSubsetWhenTwoSamePartitionRegistrationsPrecedePhysicalProjection()
+      throws Exception {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    var layout = descriptor();
+    UUID bootstrapRequestId = UUID.randomUUID();
+    var source = sourceCheckpoint(BigInteger.valueOf(7));
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(bootstrapRequestId, layout, source);
+    migrateRemaining(schema);
+
+    var incarnation = stableIncarnation("subset-readback-anchor");
+    var initialState =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), incarnation);
+    AtomicReference<CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState>
+        currentState = new AtomicReference<>(initialState);
+    initialCoverageOwner(dsl, currentState::get)
+        .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+
+    var runtimeTarget =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            schema.dataSource(), uuid("subset-readback-tenant"));
+    var targetCandidate = identity("subset-readback-target", runtimeTarget);
+    var targetRequest =
+        request(
+            "subset-readback-target-request", "subset-readback-target-transition", targetCandidate);
+    var unprojectedCandidate = identity("subset-readback-unprojected");
+    var unprojectedRequest =
+        request(
+            "subset-readback-unprojected-request",
+            "subset-readback-unprojected-transition",
+            unprojectedCandidate);
+    var operationRepository =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, currentState::get);
+    var target = operationRepository.beginOrResumeOrdinaryNew(targetRequest);
+    var unprojected = operationRepository.beginOrResumeOrdinaryNew(unprojectedRequest);
+    assertThat(target.reservation().partitionId())
+        .isEqualTo(unprojected.reservation().partitionId());
+
+    String targetCapacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+            target.reservation().reservationId());
+    String unprojectedCapacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+            unprojected.reservation().reservationId());
+    byte[] partitionKey =
+        CanonicalGameplayIssuerRedisKeys.forPartition(intent.layoutDescriptor(), BigInteger.ZERO)
+            .getBytes(StandardCharsets.US_ASCII);
+    assertThat(hashImage(partitionKey))
+        .doesNotContainKey(targetCapacityField)
+        .doesNotContainKey(unprojectedCapacityField);
+
+    var projectionOwner = projectionOwner(dsl, currentState::get);
+    var capacityOnly = projectionOwner.projectAndRead(target);
+    assertThat(capacityOnly.scriptOutcome()).isEqualTo(1L);
+    var capacityFields =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+            capacityOnly.exactReadbackBytes());
+    assertThat(capacityFields).containsEntry(targetCapacityField, target.exactMemberValueBytes());
+    assertThat(capacityFields).doesNotContainKey(unprojectedCapacityField);
+    assertThat(capacityFields)
+        .doesNotContainKey(
+            new String(unprojectedCandidate.bindingRef().bytes(), StandardCharsets.UTF_8));
+
+    var provisionalEvidence =
+        new CanonicalGameplayBindingInventoryRepository(dsl)
+            .readProvisionalCasEvidence(targetRequest.transitionId());
+    var targetLease =
+        controlledLeaseEvidence(
+            targetCandidate,
+            provisionalEvidence.transition().bindingGeneration(),
+            runtimeTarget.playableTarget());
+    var targetDecision =
+        new CanonicalGameplayAdmissionDecision(
+            targetRequest.transitionId(),
+            targetLease,
+            targetCandidate,
+            provisionalEvidence.transition().bindingGeneration(),
+            null,
+            runtimeTarget.playableTarget());
+    new CanonicalGameplayBindingInventoryRepository(dsl)
+        .markProvisional(provisionalEvidence, targetDecision);
+
+    var addReadback = projectionOwner.projectAndRead(target);
+    assertThat(addReadback.scriptOutcome()).isEqualTo(2L);
+    var addedFields =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+            addReadback.exactReadbackBytes());
+    assertThat(addedFields)
+        .containsEntry(
+            new String(targetCandidate.bindingRef().bytes(), StandardCharsets.UTF_8),
+            target.exactMemberValueBytes());
+    assertThat(addedFields).containsEntry(targetCapacityField, target.exactMemberValueBytes());
+    assertThat(addedFields).doesNotContainKey(unprojectedCapacityField);
+  }
+
+  @Test
   void malformedLuaBindingReferenceAndReleaseCountsRefuseWithoutChangingPartition()
       throws Exception {
     byte[] key =

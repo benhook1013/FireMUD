@@ -39,7 +39,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       "game_session_canonical_binding_region_bridge_obligation";
   private static final String ISSUER_LOCAL_RELEASE =
       "game_session_canonical_issuer_binding_local_release_operation";
-  private static final String ACCOUNT_CONTROL = "game_session_canonical_account_coverage_control";
   private static final String INVENTORY_CLOCK = "game_session_canonical_binding_inventory_clock";
   private static final int MAX_LOCAL_OPERATIONS_PER_PARTITION =
       CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_MEMBER_OPERATIONS;
@@ -63,16 +62,18 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
    */
   PreparedPartitionWork readPreparedPartitionWork(
       CanonicalGameplayIssuerBindingLocalOperation target) {
-    return readPreparedPartitionWork(target, false);
+    return readPreparedPartitionWork(target, false, false);
   }
 
   PreparedPartitionWork prepareAddMutationWork(
       CanonicalGameplayIssuerBindingLocalOperation target) {
-    return readPreparedPartitionWork(target, true);
+    return readPreparedPartitionWork(target, true, true);
   }
 
   private PreparedPartitionWork readPreparedPartitionWork(
-      CanonicalGameplayIssuerBindingLocalOperation target, boolean prepareAddMutation) {
+      CanonicalGameplayIssuerBindingLocalOperation target,
+      boolean prepareAddMutation,
+      boolean requireCurrentTargetAccountControl) {
     Objects.requireNonNull(target, "target");
     requireNoAmbientTransaction();
     var before = readCurrentIssuerState();
@@ -86,7 +87,12 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
                   CanonicalGameplayIssuerBootstrapCoverageRepository
                       .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
               requireSameAnchor(target.anchor(), anchor);
-              return prepareInTransaction(transaction, target, anchor, prepareAddMutation);
+              return prepareInTransaction(
+                  transaction,
+                  target,
+                  anchor,
+                  prepareAddMutation,
+                  requireCurrentTargetAccountControl);
             });
     var after = readCurrentIssuerState();
     requireSameCurrentIssuerState(before, after);
@@ -97,7 +103,9 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
   /** Re-reads the durable set and all currentness inputs after the Redis round trip. */
   void requireStillCurrent(PreparedPartitionWork expected) {
     Objects.requireNonNull(expected, "expected");
-    PreparedPartitionWork current = readPreparedPartitionWork(expected.targetOperation());
+    PreparedPartitionWork current =
+        readPreparedPartitionWork(
+            expected.targetOperation(), false, expected.requiresCurrentTargetAccountControl());
     if (!Arrays.equals(expected.sqlCurrentnessDigest(), current.sqlCurrentnessDigest())) {
       throw unavailable(
           "The registered issuer member set or current SQL phase changed during projection");
@@ -120,7 +128,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       DSLContext transaction,
       CanonicalGameplayIssuerBindingLocalOperation target,
       CanonicalGameplayIssuerInstalledAnchor anchor,
-      boolean prepareAddMutation) {
+      boolean prepareAddMutation,
+      boolean requireCurrentTargetAccountControl) {
     BigInteger targetPartition = target.reservation().partitionId();
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead mutationHead =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
@@ -168,7 +177,14 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     BigInteger localPartitionCapacity = BigInteger.ZERO;
     boolean foundTarget = false;
     for (Record row : operationRows) {
-      LocalEntry entry = readLocalEntry(transaction, row, anchor, target);
+      LocalEntry entry =
+          readLocalEntry(
+              transaction,
+              row,
+              anchor,
+              target,
+              requireCurrentTargetAccountControl
+                  && uuid(row, "operation_id").equals(target.operationId()));
       if (!localOperationIds.add(entry.operationId())
           || (!entry.registeredOperationId().equals(entry.operationId())
               && !localOperationIds.add(entry.registeredOperationId()))
@@ -339,14 +355,16 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         mutationHead.currentRevision(),
         mutationHead.pendingMutationId(),
         physicalMutation,
-        currentnessDigest);
+        currentnessDigest,
+        requireCurrentTargetAccountControl);
   }
 
   private LocalEntry readLocalEntry(
       DSLContext transaction,
       Record row,
       CanonicalGameplayIssuerInstalledAnchor anchor,
-      CanonicalGameplayIssuerBindingLocalOperation target) {
+      CanonicalGameplayIssuerBindingLocalOperation target,
+      boolean requireCurrentAccountControl) {
     if (!ISSUER.equals(text(row, "issuer_id"))
         || !"PENDING_PHYSICAL_PROOF".equals(text(row, "member_status"))
         || !Objects.equals(row.get("member_schema_version", Short.class), (short) 2)
@@ -481,7 +499,14 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
             inventoryRow,
             transitionRow,
             issuerObligation);
-    requireAccountControlCurrent(transaction, row, member.owner().accountId());
+    CanonicalGameplayIssuerBindingLocalOperationRepository
+        .requireCapturedAccountControlMatchesTransition(
+            row, transitionRow, member.owner().accountId());
+    if (requireCurrentAccountControl) {
+      CanonicalGameplayIssuerBindingLocalOperationRepository
+          .requireCurrentAccountControlMatchesCaptured(
+              transaction, row, member.owner().accountId());
+    }
     CanonicalGameplayIssuerPartitionMutation capacityMutation =
         CanonicalGameplayIssuerPartitionMutationRepository.readOptionalInTransaction(
             transaction,
@@ -700,41 +725,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         || !nonnegative(row, partitionField).equals(partitionId)) {
       throw unavailable(
           "The actual issuer reservation or candidate owner differs from the full v2 owner tuple");
-    }
-  }
-
-  private static void requireAccountControlCurrent(
-      DSLContext transaction, Record operation, UUID accountId) {
-    Record account =
-        transaction.fetchOne(
-            "SELECT * FROM " + ACCOUNT_CONTROL + " WHERE account_id = ? FOR UPDATE", accountId);
-    if (account == null
-        || !Objects.equals(text(account, "state"), text(operation, "account_control_state"))
-        || !number(account, "last_operation_fence")
-            .equals(number(operation, "account_control_epoch"))
-        || !Objects.equals(
-            account.get("current_operation_id", UUID.class),
-            operation.get("account_current_operation_id", UUID.class))
-        || !Objects.equals(
-            account.get("current_operation_fence", BigDecimal.class),
-            operation.get("account_current_operation_fence", BigDecimal.class))
-        || !Objects.equals(
-            account.get("account_admission_fence", UUID.class),
-            operation.get("account_admission_fence", UUID.class))
-        || !Objects.equals(
-            account.get("historical_account_admission_fence", UUID.class),
-            operation.get("account_historical_admission_fence", UUID.class))
-        || !Objects.equals(
-            account.get("coverage_fence", UUID.class),
-            operation.get("account_coverage_fence", UUID.class))
-        || !Objects.equals(
-            account.get("inventory_snapshot_revision", BigDecimal.class),
-            operation.get("account_inventory_snapshot_revision", BigDecimal.class))
-        || !Objects.equals(
-            account.get("coverage_generation", BigDecimal.class),
-            operation.get("account_coverage_generation", BigDecimal.class))) {
-      throw unavailable(
-          "The original Account coverage control changed after local issuer registration");
     }
   }
 
@@ -1360,6 +1350,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     private final UUID pendingMutationId;
     private final CanonicalGameplayIssuerPartitionMutation physicalMutation;
     private final byte[] sqlCurrentnessDigest;
+    private final boolean requiresCurrentTargetAccountControl;
 
     private PreparedPartitionWork(
         CanonicalGameplayIssuerInstalledAnchor anchor,
@@ -1376,7 +1367,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         UUID currentRevision,
         UUID pendingMutationId,
         CanonicalGameplayIssuerPartitionMutation physicalMutation,
-        byte[] sqlCurrentnessDigest) {
+        byte[] sqlCurrentnessDigest,
+        boolean requiresCurrentTargetAccountControl) {
       this.anchor = anchor;
       this.targetOperation = targetOperation;
       this.baselineProof = baselineProof;
@@ -1391,6 +1383,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       this.pendingMutationId = pendingMutationId;
       this.physicalMutation = physicalMutation;
       this.sqlCurrentnessDigest = sqlCurrentnessDigest.clone();
+      this.requiresCurrentTargetAccountControl = requiresCurrentTargetAccountControl;
     }
 
     CanonicalGameplayIssuerInstalledAnchor anchor() {
@@ -1399,6 +1392,10 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
 
     CanonicalGameplayIssuerBindingLocalOperation targetOperation() {
       return targetOperation;
+    }
+
+    boolean requiresCurrentTargetAccountControl() {
+      return requiresCurrentTargetAccountControl;
     }
 
     CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof

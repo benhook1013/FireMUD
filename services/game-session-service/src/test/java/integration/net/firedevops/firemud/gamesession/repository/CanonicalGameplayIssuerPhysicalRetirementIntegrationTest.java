@@ -23,10 +23,13 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
@@ -119,18 +122,143 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       fixture.publishOriginalWithControlledAccountLease();
       var originalAbort = fixture.recordOriginalAccountAbort();
       assertThat(originalAbort.isAccountAborted()).isTrue();
+
+      byte[] beforePrematureRetirement = physicalFieldSet(partitionKey);
+      String historyBeforePrematureRetirement = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      String headBeforePrematureRetirement =
+          partitionHeadImage(fixture.dsl(), fixture.originalPartitionId());
+      String inventoryClockBeforePrematureRetirement =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT to_jsonb(clock)::text FROM"
+                      + " game_session_canonical_binding_inventory_clock clock"
+                      + " WHERE singleton_id = 1")
+              .get(0, String.class);
+      long releasesBeforePrematureRetirement =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT count(*) FROM"
+                      + " game_session_canonical_issuer_binding_local_release_operation")
+              .get(0, Long.class);
+      long mutationsBeforePrematureRetirement = partitionMutationCount(fixture.dsl());
+      assertThatThrownBy(() -> fixture.prepareIssuerRetirement(fixture.transitionId()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforePrematureRetirement);
+      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID))
+          .isEqualTo(historyBeforePrematureRetirement);
+      assertThat(partitionHeadImage(fixture.dsl(), fixture.originalPartitionId()))
+          .isEqualTo(headBeforePrematureRetirement);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT to_jsonb(clock)::text FROM"
+                          + " game_session_canonical_binding_inventory_clock clock"
+                          + " WHERE singleton_id = 1")
+                  .get(0, String.class))
+          .isEqualTo(inventoryClockBeforePrematureRetirement);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM"
+                          + " game_session_canonical_issuer_binding_local_release_operation")
+                  .get(0, Long.class))
+          .isEqualTo(releasesBeforePrematureRetirement);
+      assertThat(partitionMutationCount(fixture.dsl()))
+          .isEqualTo(mutationsBeforePrematureRetirement);
+      assertThat(retirementCount(fixture.dsl())).isZero();
+
       var originalRelease = completeReleaseAfterLostReply(fixture, null);
 
       String newerSeed = lifetimeSeed(2);
       UUID newerOperationId = fixture.prepareOtherControllerNew(newerSeed);
+      String neverProjectedSeed = "same-partition-never-projected";
+      UUID neverProjectedOperationId = fixture.prepareOtherControllerNew(neverProjectedSeed);
+      var neverProjectedOperation = fixture.otherOperation(neverProjectedSeed);
+      var newerOperation = fixture.otherOperation(newerSeed);
+      assertThat(neverProjectedOperationId).isEqualTo(neverProjectedOperation.operationId());
+      assertThat(neverProjectedOperation.reservation().partitionId())
+          .isEqualTo(newerOperation.reservation().partitionId());
+      String newerCapacityField =
+          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+              newerOperation.reservation().reservationId());
+      String neverProjectedCapacityField =
+          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+              neverProjectedOperation.reservation().reservationId());
+      assertThat(decodeFields(physicalFieldSet(partitionKey)))
+          .doesNotContainKey(newerCapacityField)
+          .doesNotContainKey(neverProjectedCapacityField);
       var pendingAdd = fixture.prepareOtherAddMutation(newerSeed);
+      byte[] currentRevisionFieldValue =
+          pendingAdd
+              .physicalMutation()
+              .expectedRevision()
+              .toString()
+              .getBytes(StandardCharsets.US_ASCII);
+      Map<String, byte[]> staleReadbackFields =
+          new HashMap<>(decodeFields(physicalFieldSet(partitionKey)));
+      assertThat(
+              staleReadbackFields.get(
+                  CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD))
+          .containsExactly(currentRevisionFieldValue);
+      byte[] staleReadback =
+          CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(staleReadbackFields);
+      String mutationCustodyBeforeStaleReadback =
+          pendingMutationCustodyImage(
+              fixture.dsl(),
+              pendingAdd.physicalMutation(),
+              "game_session_canonical_issuer_binding_local_operation",
+              "operation_id",
+              pendingAdd.physicalMutation().ownerOperationId());
+      byte[] partitionBeforeStaleReadback = physicalFieldSet(partitionKey);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .transactionResult(
+                          configuration ->
+                              CanonicalGameplayIssuerPartitionMutationRepository
+                                  .completeInTransaction(
+                                      org.jooq.impl.DSL.using(configuration),
+                                      pendingAdd.physicalMutation(),
+                                      staleReadback)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("exact current physical mutation revision");
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(partitionBeforeStaleReadback);
+      assertThat(
+              pendingMutationCustodyImage(
+                  fixture.dsl(),
+                  pendingAdd.physicalMutation(),
+                  "game_session_canonical_issuer_binding_local_operation",
+                  "operation_id",
+                  pendingAdd.physicalMutation().ownerOperationId()))
+          .isEqualTo(mutationCustodyBeforeStaleReadback);
+
       LuaInvocation staleAddInvocation = addInvocation(fixture, pendingAdd);
       var addReadback = fixture.projectOtherControllerNew(newerSeed);
       assertThat(addReadback.scriptOutcome()).isEqualTo(1L);
+      var addFields = decodeFields(addReadback.exactReadbackBytes());
+      assertThat(addFields)
+          .containsEntry(newerCapacityField, newerOperation.exactMemberValueBytes());
+      assertThat(addFields)
+          .doesNotContainKey(
+              new String(
+                  newerOperation.memberValue().owner().bindingRef().bytes(),
+                  StandardCharsets.UTF_8));
+      assertThat(addFields).doesNotContainKey(neverProjectedCapacityField);
+      assertThat(addFields)
+          .doesNotContainKey(
+              new String(
+                  neverProjectedOperation.memberValue().owner().bindingRef().bytes(),
+                  StandardCharsets.UTF_8));
       assertThat(fixture.retryOtherControllerNew(newerSeed)).isEqualTo(newerOperationId);
       byte[] afterAdd = physicalFieldSet(partitionKey);
       assertThat(fixture.projectOtherControllerNew(newerSeed).scriptOutcome()).isEqualTo(3L);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(afterAdd);
+      assertOuterBootstrapRetryIsReadOnly(fixture, partitionKey);
 
       fixture.publishOtherControllerNew(newerSeed);
       assertThat(fixture.recordOtherAccountAbort(newerSeed).isAccountAborted()).isTrue();
@@ -140,6 +268,9 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       var newerRelease = fixture.completeIssuerRelease(pendingRelease, releaseReadback);
       assertThat(newerRelease.status())
           .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      assertOuterBootstrapRetryIsReadOnly(fixture, partitionKey);
+      assertThat(decodeFields(physicalFieldSet(partitionKey)))
+          .doesNotContainKey(neverProjectedCapacityField);
       byte[] beforeReleaseRetry = physicalFieldSet(partitionKey);
       var completedReleaseRetry = fixture.prepareIssuerRelease(newerSeed);
       var releaseRetryReadback = fixture.projectIssuerRelease(completedReleaseRetry);
@@ -212,9 +343,6 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID))
           .isEqualTo(historyBeforeOriginalRetirement);
       assertThat(capacityFieldCount(afterUncommittedRetirement)).isEqualTo(1L);
-      String newerCapacityField =
-          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
-              newerRelease.releasedMemberValue().reservation().reservationId());
       assertThat(decodeFields(afterUncommittedRetirement))
           .containsEntry(newerCapacityField, newerRelease.exactReleasedMemberValueBytes());
 
@@ -227,6 +355,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       assertThat(completedOldestRetryProof.exactAbsenceReadbackFieldSetBytes())
           .isEqualTo(beforeCompletedRetirementRetry);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeCompletedRetirementRetry);
+      assertOuterBootstrapRetryIsReadOnly(fixture, partitionKey);
 
       assertStaleLuaRejectedWithoutWrites(staleAddInvocation, partitionKey);
       assertStaleLuaRejectedWithoutWrites(staleReleaseInvocation, partitionKey);
@@ -239,6 +368,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       assertThat(completedNewerRetirement.scriptOutcome()).isEqualTo(1L);
       assertThat(completedNewerRetirement.exactAbsenceReadbackFieldSetBytes())
           .isEqualTo(afterNewerRetirement);
+      assertThat(decodeFields(afterNewerRetirement)).doesNotContainKey(neverProjectedCapacityField);
       assertRetirementFieldDelta(
           beforeNewerRetirement, afterNewerRetirement, pendingNewerRetirement);
       byte[] beforeNewerRetirementRetry = physicalFieldSet(partitionKey);
@@ -279,7 +409,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
         assertThat(decodeFields(afterCycleRetirement).size()).isEqualTo(baselineFieldCount + 2);
       }
 
-      assertThat(localOperationCount(fixture.dsl())).isEqualTo(256L);
+      assertThat(localOperationCount(fixture.dsl())).isEqualTo(257L);
       assertThat(releaseCount(fixture.dsl(), "RELEASED")).isEqualTo(256L);
       assertThat(releaseProofCount(fixture.dsl())).isEqualTo(256L);
       assertThat(retirementCount(fixture.dsl())).isEqualTo(256L);
@@ -337,7 +467,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
           .isEqualTo(beforeFinalRetirementRetry);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeFinalRetirementRetry);
 
-      assertThat(localOperationCount(fixture.dsl())).isEqualTo(257L);
+      assertThat(localOperationCount(fixture.dsl())).isEqualTo(258L);
       assertThat(releaseCount(fixture.dsl(), "RELEASED")).isEqualTo(257L);
       assertThat(releaseProofCount(fixture.dsl())).isEqualTo(257L);
       assertThat(retirementCount(fixture.dsl())).isEqualTo(257L);
@@ -346,6 +476,156 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       assertThat(decodeFields(afterFinalRetirement).size()).isEqualTo(baselineFieldCount + 2);
       assertThat(durableHistoryImage(fixture.dsl(), finalTransitionId))
           .isEqualTo(historyBefore257thRelease);
+    }
+  }
+
+  @Test
+  void unrelatedAccountNewAndOriginalIssuerCleanupSurviveAccountControlAdvance() {
+    try (var fixture = newFixture(BigInteger.valueOf(11), BigInteger.ONE, 0)) {
+      byte[] partitionKey = fixture.issuerPartitionKey();
+      fixture.publishOriginalWithControlledAccountLease();
+      var abort = fixture.recordOriginalAccountAbort();
+      assertThat(abort.isAccountAborted()).isTrue();
+
+      String staleAccountASeed = "account-a-stale-add-after-control-advance";
+      fixture.prepareOtherControllerNew(staleAccountASeed);
+      CanonicalGameplayIssuerMemberV2Value originalMember =
+          CanonicalGameplayIssuerMemberV2Codec.decode(fixture.originalMemberValueBytes());
+      CanonicalGameplayBindingIdentity accountA = originalMember.owner();
+
+      var intent =
+          new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl())
+              .beginFenceIntent(accountA.accountId(), uuid("account-a-control-advance"));
+      assertThat(intent).isNotNull();
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT state FROM game_session_canonical_account_coverage_control"
+                          + " WHERE account_id = ?",
+                      accountA.accountId())
+                  .get(0, String.class))
+          .isEqualTo("ACQUISITION_INTENT");
+
+      byte[] beforeStaleAdd = physicalFieldSet(partitionKey);
+      long mutationsBeforeStaleAdd = partitionMutationCount(fixture.dsl());
+      assertThatThrownBy(() -> fixture.projectOtherControllerNew(staleAccountASeed))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeStaleAdd);
+      assertThat(partitionMutationCount(fixture.dsl())).isEqualTo(mutationsBeforeStaleAdd);
+
+      CanonicalGameplayBindingIdentity accountB =
+          otherAccountInPartition(accountA, fixture.originalPartitionId());
+      var currentIssuerState =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+              originalMember.sourceCheckpoint(), originalMember.incarnation());
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+          issuerStateSource = () -> currentIssuerState;
+      var accountBOperation =
+          new CanonicalGameplayIssuerBindingLocalOperationRepository(
+                  fixture.dsl(), issuerStateSource)
+              .beginOrResumeOrdinaryNew(
+                  new CanonicalGameplayIssuerBindingLocalOperation.Request(
+                      UUID.randomUUID(), UUID.randomUUID(), accountB, null, null));
+      var localProjection =
+          new CanonicalGameplayIssuerBindingLocalProjectionRepository(
+              fixture.dsl(), issuerStateSource);
+      var accountBOwner =
+          new CanonicalGameplayIssuerBindingLocalRedisOwner(
+              issuerOwner,
+              RedisScriptCatalog.fromContributions(
+                  List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution())),
+              localProjection,
+              issuerStateSource);
+      var accountBAdd = accountBOwner.projectAndRead(accountBOperation);
+      assertThat(accountBAdd.scriptOutcome()).isEqualTo(1L);
+
+      String accountBCapacityField =
+          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+              accountBOperation.reservation().reservationId());
+      String accountBBindingField =
+          new String(
+              accountBOperation.memberValue().owner().bindingRef().bytes(), StandardCharsets.UTF_8);
+      var accountBFields = decodeFields(physicalFieldSet(partitionKey));
+      assertThat(accountBFields)
+          .containsEntry(accountBCapacityField, accountBOperation.exactMemberValueBytes())
+          .doesNotContainKey(accountBBindingField);
+      assertThat(localOperationCount(fixture.dsl())).isEqualTo(3L);
+
+      var pendingRelease = fixture.prepareIssuerRelease();
+      var releaseReadback = fixture.projectIssuerRelease(pendingRelease);
+      var release = fixture.completeIssuerRelease(pendingRelease, releaseReadback);
+      assertThat(release.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      var releaseRetry = fixture.prepareIssuerRelease();
+      assertThat(releaseRetry.operationId()).isEqualTo(release.operationId());
+      assertThat(fixture.projectIssuerRelease(releaseRetry).exactPhysicalFieldSetBytes())
+          .isEqualTo(release.exactPhysicalReadbackFieldSetBytes());
+
+      var pendingRetirement = fixture.prepareIssuerRetirement(fixture.transitionId());
+      byte[] releasedCapacityField =
+          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                  release.releasedMemberValue().reservation().reservationId())
+              .getBytes(StandardCharsets.US_ASCII);
+      byte[] beforeConflictingCapacity = physicalFieldSet(partitionKey);
+      administratorCommands.hset(
+          partitionKey, releasedCapacityField, accountBOperation.exactMemberValueBytes());
+      byte[] changedCapacity = physicalFieldSet(partitionKey);
+      assertThatThrownBy(() -> fixture.retireIssuerCapacity(pendingRetirement))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(changedCapacity);
+      administratorCommands.hset(
+          partitionKey, releasedCapacityField, release.exactReleasedMemberValueBytes());
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeConflictingCapacity);
+
+      var retired = fixture.retireIssuerCapacity(pendingRetirement);
+      assertThat(retired.scriptOutcome()).isEqualTo(1L);
+      var afterRetirement = decodeFields(physicalFieldSet(partitionKey));
+      assertThat(afterRetirement)
+          .containsEntry(accountBCapacityField, accountBOperation.exactMemberValueBytes())
+          .doesNotContainKey(accountBBindingField)
+          .doesNotContainKey(new String(releasedCapacityField, StandardCharsets.US_ASCII));
+      assertThat(capacityFieldCount(physicalFieldSet(partitionKey))).isEqualTo(1L);
+      assertThat(localOperationCount(fixture.dsl())).isEqualTo(3L);
+
+      var retirementRetry = fixture.prepareIssuerRetirement(fixture.transitionId());
+      assertThat(retirementRetry.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED);
+      byte[] beforeRetirementRetry = physicalFieldSet(partitionKey);
+      assertThat(fixture.retireIssuerCapacity(retirementRetry).scriptOutcome()).isEqualTo(2L);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeRetirementRetry);
+    }
+  }
+
+  @Test
+  void addCurrentnessRereadKeepsTheTargetAccountControlFenceWithoutPreparingAnotherMutation() {
+    try (var fixture = newFixture(BigInteger.valueOf(12), BigInteger.ONE, 0)) {
+      String seed = "add-currentness-account-control-reread";
+      fixture.prepareOtherControllerNew(seed);
+      var preparedAdd = fixture.prepareOtherAddMutation(seed);
+      byte[] partitionKey = fixture.issuerPartitionKey();
+      byte[] fieldsBeforeReread = physicalFieldSet(partitionKey);
+      long mutationsBeforeReread = partitionMutationCount(fixture.dsl());
+      CanonicalGameplayIssuerMemberV2Value originalMember =
+          CanonicalGameplayIssuerMemberV2Codec.decode(fixture.originalMemberValueBytes());
+      var currentIssuerState =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+              originalMember.sourceCheckpoint(), originalMember.incarnation());
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+          issuerStateSource = () -> currentIssuerState;
+
+      new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl())
+          .beginFenceIntent(
+              originalMember.owner().accountId(), uuid("add-currentness-account-fence"));
+
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayIssuerBindingLocalProjectionRepository(
+                          fixture.dsl(), issuerStateSource)
+                      .requireStillCurrent(preparedAdd))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(fieldsBeforeReread);
+      assertThat(partitionMutationCount(fixture.dsl())).isEqualTo(mutationsBeforeReread);
     }
   }
 
@@ -644,6 +924,34 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
         partitionCapacity);
   }
 
+  private static CanonicalGameplayBindingIdentity otherAccountInPartition(
+      CanonicalGameplayBindingIdentity template, BigInteger partitionId) {
+    CanonicalGameplayBindingIdentity candidate;
+    do {
+      candidate =
+          new CanonicalGameplayBindingIdentity(
+              UUID.randomUUID(),
+              template.tenantId(),
+              template.playableStateNamespaceId(),
+              UUID.randomUUID(),
+              template.playableStateScope(),
+              template.gameInstanceId(),
+              template.runtimeGameInstanceId(),
+              UUID.randomUUID().toString(),
+              template.regionId(),
+              template.regionEpoch(),
+              template.issuerId(),
+              template.issuerAuthGeneration(),
+              template.issuerIndexLayoutVersion(),
+              template.issuerIndexPartitionCount(),
+              template.issuerIndexPartitionCapacity());
+    } while (!candidate
+        .bindingRef()
+        .partitionId(template.issuerIndexPartitionCount())
+        .equals(partitionId));
+    return candidate;
+  }
+
   private void assertMissingRevisionRefusal(
       CanonicalGameplayAdmissionAbortCompositionFixture fixture,
       byte[] partitionKey,
@@ -728,6 +1036,43 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
                 + " head WHERE head.issuer_id = ? AND head.partition_id = ?",
             GameSessionAccountDelegationProfile.ISSUER,
             partitionId)
+        .get(0, String.class);
+  }
+
+  private void assertOuterBootstrapRetryIsReadOnly(
+      CanonicalGameplayAdmissionAbortCompositionFixture fixture, byte[] partitionKey) {
+    byte[] physicalBefore = physicalFieldSet(partitionKey);
+    String revisionBefore = partitionHeadImage(fixture.dsl(), fixture.originalPartitionId());
+    String anchorAndProofsBefore = anchorAndPartitionProofImage(fixture.dsl());
+    byte[] originalAnchorBytes =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT exact_anchor_bytes FROM"
+                    + " game_session_canonical_issuer_binding_local_operation"
+                    + " WHERE operation_id = ?",
+                fixture.originalOperationId())
+            .get(0, byte[].class);
+
+    var retriedAnchor = fixture.retryOriginalIssuerBootstrap();
+
+    assertThat(retriedAnchor.exactAnchorBytes()).containsExactly(originalAnchorBytes);
+    assertThat(physicalFieldSet(partitionKey)).isEqualTo(physicalBefore);
+    assertThat(partitionHeadImage(fixture.dsl(), fixture.originalPartitionId()))
+        .isEqualTo(revisionBefore);
+    assertThat(anchorAndPartitionProofImage(fixture.dsl())).isEqualTo(anchorAndProofsBefore);
+  }
+
+  private static String anchorAndPartitionProofImage(DSLContext dsl) {
+    return dsl.fetchSingle(
+            "SELECT jsonb_build_object("
+                + "'anchors', COALESCE((SELECT jsonb_agg(to_jsonb(anchor)"
+                + " ORDER BY anchor.issuer_id) FROM"
+                + " game_session_canonical_issuer_installed_anchor anchor), '[]'::jsonb),"
+                + "'partitionProofs', COALESCE((SELECT jsonb_agg(to_jsonb(proof)"
+                + " ORDER BY proof.issuer_id, proof.partition_id) FROM"
+                + " game_session_canonical_issuer_bootstrap_partition_proof proof), '[]'::jsonb)"
+                + ")::text")
         .get(0, String.class);
   }
 
