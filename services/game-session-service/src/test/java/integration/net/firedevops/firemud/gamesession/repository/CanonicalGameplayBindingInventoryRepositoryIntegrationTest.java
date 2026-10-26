@@ -665,6 +665,163 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   @Test
+  void acknowledgedNewMemberRepairStaysRetainedAcrossLaterAccountControlEpoch() {
+    TestSchema testSchema = newTestSchema("gs_member_later_epoch_");
+    RedisMemberFixture redisFixture = null;
+    try {
+      redisFixture = startMemberRepairRedisFixture();
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
+      var repository = fixture.repository();
+      CanonicalGameplayAccountMemberRepairOperation operation =
+          repository.beginAccountMemberRepair(TRANSITION_ID);
+      var redisOwner =
+          new CanonicalGameplayAccountMemberRepairRedisOwner(
+              redisFixture.applicationClient(),
+              RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+      var readback = redisOwner.projectAndRead(operation);
+      var acknowledgement = repository.acknowledgeAccountMemberRepair(operation, readback);
+      var operationTable = "game_session_canonical_account_member_repair_operation";
+      var acknowledgedRow =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT * FROM " + operationTable + " WHERE operation_id = ?",
+                      operation.operationId()),
+              "acknowledged member-repair operation remains persisted");
+      var acknowledgedSnapshot = repository.readSnapshot();
+      assertThat(acknowledgedRow.get("status", String.class)).isEqualTo("ACKNOWLEDGED");
+      assertThat(acknowledgedRow.get("coverage_generation").toString())
+          .isEqualTo(acknowledgement.coverageGeneration().toString());
+
+      // This valid synthetic intent row exercises the durable INTENT control state. It is not an
+      // account-wide owner operation or evidence that a later lifecycle completed successfully.
+      UUID intentId = UUID.randomUUID();
+      UUID plannedAdmissionFence = UUID.randomUUID();
+      String digest = "sha256:" + "0".repeat(64);
+      assertThat(
+              testSchema
+                  .dsl()
+                  .execute(
+                      "INSERT INTO game_session_canonical_account_admission_fence_intent "
+                          + "(operation_id, request_id, account_id, operation_fence, "
+                          + "planned_account_admission_fence, inventory_snapshot_revision, "
+                          + "legacy_cohort_id, legacy_owner_operation_id, legacy_writer_fence, "
+                          + "legacy_source_snapshot_revision, legacy_canonical_inventory_revision, "
+                          + "legacy_namespace_index_readback_revision, legacy_evidence_digest, "
+                          + "intent_state, cohort_row_count, cohort_digest, barrier_target_count, "
+                          + "barrier_target_digest) "
+                          + "VALUES (?, ?, ?, 1, ?, 1, ?, ?, ?, 1, 1, 1, ?, "
+                          + "'ACQUISITION_INTENT', 0, ?, 0, ?)",
+                      intentId,
+                      UUID.randomUUID(),
+                      ACCOUNT_ID,
+                      plannedAdmissionFence,
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      digest,
+                      digest,
+                      digest))
+          .isEqualTo(1);
+      assertThat(
+              testSchema
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_account_coverage_control "
+                          + "SET state = 'ACQUISITION_INTENT', last_operation_fence = 1, "
+                          + "current_operation_id = NULL, current_fence_intent_id = ?, "
+                          + "current_operation_fence = 1, account_admission_fence = ?, "
+                          + "historical_account_admission_fence = NULL, coverage_fence = NULL, "
+                          + "inventory_snapshot_revision = 1, coverage_generation = NULL "
+                          + "WHERE account_id = ? AND state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW' "
+                          + "AND last_operation_fence = 0",
+                      intentId,
+                      plannedAdmissionFence,
+                      ACCOUNT_ID))
+          .isEqualTo(1);
+      assertThatThrownBy(() -> repository.readProvisionalCasEvidence(TRANSITION_ID))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+      assertThatThrownBy(() -> repository.beginAccountMemberRepair(TRANSITION_ID))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+
+      // Model a controlled later return to NO_ACTIVE at a higher fence. This proves the old
+      // binding-local operation cannot be reanchored to the newer epoch; it is not release proof.
+      assertThat(
+              testSchema
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_account_coverage_control "
+                          + "SET state = 'NO_ACTIVE_ACCOUNT_WIDE_FLOW', last_operation_fence = 2, "
+                          + "current_operation_id = NULL, current_fence_intent_id = NULL, "
+                          + "current_operation_fence = NULL, account_admission_fence = NULL, "
+                          + "historical_account_admission_fence = NULL, coverage_fence = NULL, "
+                          + "inventory_snapshot_revision = NULL, coverage_generation = NULL "
+                          + "WHERE account_id = ? AND state = 'ACQUISITION_INTENT' "
+                          + "AND last_operation_fence = 1",
+                      ACCOUNT_ID))
+          .isEqualTo(1);
+      assertThatThrownBy(() -> repository.readProvisionalCasEvidence(TRANSITION_ID))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+      assertThatThrownBy(() -> repository.beginAccountMemberRepair(TRANSITION_ID))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+
+      var retainedOperation =
+          Objects.requireNonNull(
+              testSchema
+                  .dsl()
+                  .fetchOne(
+                      "SELECT * FROM " + operationTable + " WHERE operation_id = ?",
+                      operation.operationId()),
+              "original operation remains retained after account-control advancement");
+      assertThat(retainedOperation).isEqualTo(acknowledgedRow);
+      assertThat(repository.readSnapshot()).isEqualTo(acknowledgedSnapshot);
+      assertThat(retainedOperation.get("operation_id", UUID.class))
+          .isEqualTo(operation.operationId());
+      assertThat(retainedOperation.get("operation_fence").toString())
+          .isEqualTo(operation.operationFence().toString());
+      assertThat(retainedOperation.get("coverage_fence", UUID.class))
+          .isEqualTo(operation.coverageFence());
+      assertThat(retainedOperation.get("inventory_snapshot_revision").toString())
+          .isEqualTo(operation.inventorySnapshotRevision().toString());
+      assertThat(retainedOperation.get("account_control_state", String.class))
+          .isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(retainedOperation.get("account_control_epoch").toString())
+          .isEqualTo(operation.accountControlEpoch().toString());
+      assertThat(retainedOperation.get("status", String.class)).isEqualTo("ACKNOWLEDGED");
+      assertThat(retainedOperation.get("coverage_generation").toString())
+          .isEqualTo(acknowledgement.coverageGeneration().toString());
+      assertThat(retainedOperation.get("readback_member", String.class))
+          .isEqualTo(operation.member());
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_account_index_obligation "
+                          + "WHERE transition_id = ? AND obligation_ordinal = 0",
+                      TRANSITION_ID)
+                  .get("status", String.class))
+          .isEqualTo("ACKNOWLEDGED");
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT lifecycle FROM game_session_canonical_gameplay_binding_inventory "
+                          + "WHERE transition_id = ?",
+                      TRANSITION_ID)
+                  .get("lifecycle", String.class))
+          .isEqualTo("PROVISIONAL");
+    } finally {
+      if (redisFixture != null) {
+        redisFixture.deleteAccountKey(ACCOUNT_ID);
+        redisFixture.close();
+      }
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void leaseBoundRuntimeFenceTriggerRejectsRawAbortAfterAccountMemberProjection() {
     TestSchema testSchema = newTestSchema("gs_member_stale_");
     RedisMemberFixture redisFixture = null;

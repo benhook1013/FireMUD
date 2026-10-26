@@ -1998,39 +1998,40 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   private static CanonicalGameplayAccountMemberRepairOperation toMemberRepairOperation(Record row) {
-    if (!"ADD_OR_RETAIN".equals(row.get("desired_action", String.class))
-        || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(row.get("account_control_state", String.class))) {
-      throw conflict("Durable member-repair operation carries an unsupported action or scope");
-    }
-    CanonicalGameplayBindingRef bindingRef =
-        CanonicalGameplayBindingRef.fromExactBytes(row.get("binding_ref", byte[].class));
-    UUID accountId = row.get("account_id", UUID.class);
-    UUID tenantId = row.get("tenant_id", UUID.class);
-    if (!bindingRef.tenantId().equals(tenantId.toString())) {
-      throw conflict("Durable member-repair bindingRef belongs to a different tenant");
-    }
-    CanonicalGameplayBindingAccountIndexObligation original =
-        new CanonicalGameplayBindingAccountIndexObligation(
-            row.get("transition_id", UUID.class),
-            row.get("obligation_ordinal", Integer.class),
-            bindingRef,
-            accountId,
-            tenantId,
-            CanonicalGameplayBindingAccountIndexObligation.Action.valueOf(
-                row.get("original_action", String.class)),
-            readBigInteger(row, "binding_generation"),
-            nullableBigInteger(row, "original_expected_prior_generation"),
-            row.get("account_index_fence", UUID.class),
-            CanonicalGameplayBindingAccountIndexObligation.ExecutionPhase.valueOf(
-                row.get("original_execution_phase", String.class)),
-            CanonicalGameplayBindingAccountIndexObligation.Status.valueOf(
-                row.get("original_status", String.class)),
-            readBigInteger(row, "original_inventory_revision"),
-            CanonicalGameplayBindingAccountIndexObligation.ProjectionState.valueOf(
-                row.get("original_projection_state", String.class)),
-            row.get("original_projection_member", String.class),
-            nullableBigInteger(row, "original_projection_inventory_revision"));
     try {
+      if (!"ADD_OR_RETAIN".equals(row.get("desired_action", String.class))
+          || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW"
+              .equals(row.get("account_control_state", String.class))) {
+        throw conflict("Durable member-repair operation carries an unsupported action or scope");
+      }
+      CanonicalGameplayBindingRef bindingRef =
+          CanonicalGameplayBindingRef.fromExactBytes(row.get("binding_ref", byte[].class));
+      UUID accountId = row.get("account_id", UUID.class);
+      UUID tenantId = row.get("tenant_id", UUID.class);
+      if (!bindingRef.tenantId().equals(tenantId.toString())) {
+        throw conflict("Durable member-repair bindingRef belongs to a different tenant");
+      }
+      CanonicalGameplayBindingAccountIndexObligation original =
+          new CanonicalGameplayBindingAccountIndexObligation(
+              row.get("transition_id", UUID.class),
+              row.get("obligation_ordinal", Integer.class),
+              bindingRef,
+              accountId,
+              tenantId,
+              CanonicalGameplayBindingAccountIndexObligation.Action.valueOf(
+                  row.get("original_action", String.class)),
+              readBigInteger(row, "binding_generation"),
+              nullableBigInteger(row, "original_expected_prior_generation"),
+              row.get("account_index_fence", UUID.class),
+              CanonicalGameplayBindingAccountIndexObligation.ExecutionPhase.valueOf(
+                  row.get("original_execution_phase", String.class)),
+              CanonicalGameplayBindingAccountIndexObligation.Status.valueOf(
+                  row.get("original_status", String.class)),
+              readBigInteger(row, "original_inventory_revision"),
+              CanonicalGameplayBindingAccountIndexObligation.ProjectionState.valueOf(
+                  row.get("original_projection_state", String.class)),
+              row.get("original_projection_member", String.class),
+              nullableBigInteger(row, "original_projection_inventory_revision"));
       return new CanonicalGameplayAccountMemberRepairOperation(
           row.get("transition_id", UUID.class),
           row.get("operation_id", UUID.class),
@@ -2045,6 +2046,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
           original,
           row.get("member", String.class),
           readBigInteger(row, "account_control_epoch"));
+    } catch (CanonicalGameplayBindingInventoryConflictException classified) {
+      throw classified;
     } catch (RuntimeException malformed) {
       throw conflict("Durable account-member repair operation is incomplete or invalid");
     }
