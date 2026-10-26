@@ -1497,7 +1497,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static CanonicalGameplayBindingTransitionSnapshot prepareInTransaction(
       DSLContext transaction, CanonicalGameplayBindingTransitionRequest request) {
     BigInteger revision = lockInventoryRevision(transaction);
-    requireNoPendingIssuerLayoutBootstrapIntent(transaction, request.candidate().issuerId());
+    boolean pendingIssuerLayoutBootstrapIntent =
+        validatePendingIssuerLayoutBootstrapIntent(transaction, request.candidate().issuerId());
     CanonicalGameplayAccountCoverageEvidence accountCoverageEvidence =
         lockAccountCoverageEvidence(transaction, request.candidate().accountId());
     boolean initialBinding = request.expectedPriorBindingRef() == null;
@@ -1512,6 +1513,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
         throw conflict("Same transition retry carries stale account-wide coverage evidence");
       }
       return retry;
+    }
+    if (pendingIssuerLayoutBootstrapIntent) {
+      throw conflict("Initial issuer-layout bootstrap intent blocks new binding preparation");
     }
 
     CanonicalGameplayBindingIdentity candidate = request.candidate();
@@ -1611,7 +1615,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     return prepared;
   }
 
-  private static void requireNoPendingIssuerLayoutBootstrapIntent(
+  private static boolean validatePendingIssuerLayoutBootstrapIntent(
       DSLContext transaction, String issuerId) {
     Record control =
         transaction.fetchOne(
@@ -1627,7 +1631,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       if (orphanIntent != null) {
         throw conflict("Issuer bootstrap intent exists without its positive current control row");
       }
-      return;
+      return false;
     }
 
     UUID operationId = control.get("current_operation_id", UUID.class);
@@ -1666,7 +1670,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || readBigInteger(intent, "inventory_snapshot_revision").signum() <= 0) {
       throw conflict("Issuer bootstrap control does not point to its exact durable intent tuple");
     }
-    throw conflict("Initial issuer-layout bootstrap intent blocks new binding preparation");
+    return true;
   }
 
   private static void validateRequest(CanonicalGameplayBindingTransitionRequest request) {

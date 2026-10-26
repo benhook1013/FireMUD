@@ -306,7 +306,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
     try {
       establishActualLegacyDisposition(testSchema.dsl());
       var inventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
-      prepareActualBinding(inventory);
+      var originalRequest = actualBindingRequest(PREPARED_CHARACTER_ID);
+      var originalPreparation = inventory.prepare(originalRequest);
 
       var owner = new CanonicalGameplayIssuerLayoutBootstrapRepository(testSchema.dsl());
       UUID requestId = UUID.randomUUID();
@@ -326,6 +327,55 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
           countRows(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation");
       int generationCount =
           countRows(testSchema.dsl(), "game_session_canonical_binding_generation");
+      List<String> inventoryBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_gameplay_binding_inventory");
+      List<String> transitionBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_binding_transition");
+      List<String> reservationBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation");
+      List<String> generationBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_binding_generation");
+      List<String> accountObligationBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_binding_account_index_obligation");
+      List<String> issuerObligationBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_binding_issuer_index_obligation");
+      List<String> regionObligationBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_binding_region_bridge_obligation");
+
+      assertThat(inventory.prepare(originalRequest)).isEqualTo(originalPreparation);
+      var conflictingRequest =
+          new CanonicalGameplayBindingTransitionRequest(
+              originalRequest.transitionId(),
+              UUID.randomUUID(),
+              originalRequest.candidate(),
+              originalRequest.issuerReservation(),
+              originalRequest.expectedPriorBindingRef(),
+              originalRequest.expectedPriorBindingGeneration());
+      assertThatThrownBy(() -> inventory.prepare(conflictingRequest))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining(
+              "same transition identity was retried with a different exact request");
+
+      assertThat(currentInventoryRevision(testSchema.dsl())).isEqualTo(originalInventoryRevision);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_gameplay_binding_inventory"))
+          .containsExactlyElementsOf(inventoryBefore);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_binding_transition"))
+          .containsExactlyElementsOf(transitionBefore);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation"))
+          .containsExactlyElementsOf(reservationBefore);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_binding_generation"))
+          .containsExactlyElementsOf(generationBefore);
+      assertThat(
+              rowImages(
+                  testSchema.dsl(), "game_session_canonical_binding_account_index_obligation"))
+          .containsExactlyElementsOf(accountObligationBefore);
+      assertThat(
+              rowImages(testSchema.dsl(), "game_session_canonical_binding_issuer_index_obligation"))
+          .containsExactlyElementsOf(issuerObligationBefore);
+      assertThat(
+              rowImages(
+                  testSchema.dsl(), "game_session_canonical_binding_region_bridge_obligation"))
+          .containsExactlyElementsOf(regionObligationBefore);
 
       assertThatThrownBy(() -> prepareActualBinding(inventory, BLOCKED_CHARACTER_ID))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
@@ -778,6 +828,10 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
 
   private static CanonicalGameplayBindingTransitionSnapshot prepareActualBinding(
       CanonicalGameplayBindingInventoryRepository inventory, UUID characterId) {
+    return inventory.prepare(actualBindingRequest(characterId));
+  }
+
+  private static CanonicalGameplayBindingTransitionRequest actualBindingRequest(UUID characterId) {
     UUID transitionId = UUID.randomUUID();
     UUID reservationId = UUID.randomUUID();
     UUID reservationFence = UUID.randomUUID();
@@ -807,9 +861,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
             BigInteger.ONE,
             BigInteger.TWO,
             BigInteger.ONE);
-    return inventory.prepare(
-        new CanonicalGameplayBindingTransitionRequest(
-            transitionId, UUID.randomUUID(), candidate, reservation, null, null));
+    return new CanonicalGameplayBindingTransitionRequest(
+        transitionId, UUID.randomUUID(), candidate, reservation, null, null);
   }
 
   private static void insertReservationOnly(
