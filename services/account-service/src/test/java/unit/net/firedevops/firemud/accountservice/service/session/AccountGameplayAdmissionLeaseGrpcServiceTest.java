@@ -3,8 +3,10 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -212,6 +214,37 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         observer -> service.abortGameplayAdmissionLease(foreignAbort, observer),
         peer,
         Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(owner);
+  }
+
+  @Test
+  void unexpectedParserRuntimeFailureTerminatesTheObserverWithoutCallingOwner() {
+    var request = acquisition(NAMESPACE);
+    // Fault injection checks the handler boundary, not a reproduced malformed-wire vector.
+    for (RuntimeException parserFailure :
+        List.of(
+            new NullPointerException("private parser detail " + JWT),
+            new IllegalStateException("private parser detail " + JWT))) {
+      try (var codec =
+          mockStatic(AccountGameplayAdmissionLeaseGrpcCodec.class, CALLS_REAL_METHODS)) {
+        codec
+            .when(() -> AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(request))
+            .thenThrow(parserFailure);
+        var failed = new Capture();
+        withPeer(
+            peer(NAMESPACE, "game-session-service"),
+            () -> service.acquireGameplayAdmissionLease(request, failed));
+        assertThat(failed.code()).isEqualTo(Status.Code.INTERNAL);
+        assertThat(failed.description)
+            .isEqualTo("Account gameplay admission lease operation denied or unavailable")
+            .doesNotContain(JWT, "private parser detail");
+        assertThat(failed.failureHadCause).isFalse();
+        assertThat(failed.errors).isEqualTo(1);
+        assertThat(failed.responses).isZero();
+        assertThat(failed.completed).isFalse();
+        codec.verify(() -> AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(request));
+      }
+    }
     verifyNoInteractions(owner);
   }
 
@@ -470,19 +503,29 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
       implements StreamObserver<AccountGameplayAdmissionLeaseResponse> {
     private Status.Code code;
     private String description;
+    private boolean failureHadCause;
+    private int errors;
+    private int responses;
+    private boolean completed;
 
     @Override
-    public void onNext(AccountGameplayAdmissionLeaseResponse value) {}
+    public void onNext(AccountGameplayAdmissionLeaseResponse value) {
+      responses++;
+    }
 
     @Override
     public void onError(Throwable failure) {
+      failureHadCause = failure.getCause() != null;
+      errors++;
       Status status = Status.fromThrowable(failure);
       code = status.getCode();
       description = status.getDescription();
     }
 
     @Override
-    public void onCompleted() {}
+    public void onCompleted() {
+      completed = true;
+    }
 
     private Status.Code code() {
       return code;
