@@ -39,6 +39,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
   private static final String ANCHOR = "game_session_canonical_issuer_installed_anchor";
   private static final String CONTROL = "game_session_canonical_issuer_layout_bootstrap_control";
   private static final String FIELDSET_MAGIC = "issuer-physical-field-set/v1";
+  private static final int MAX_LOCAL_PHYSICAL_FIELD_COUNT =
+      CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_LOCAL_HASH_FIELDS;
   private static final String METADATA_FIELD =
       CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.METADATA_FIELD;
   private static final String CAPACITY_PREFIX =
@@ -75,6 +77,13 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
                   input.partitionId());
           if (existing != null) {
             requireSameProof(existing, input);
+            CanonicalGameplayIssuerPartitionMutationRepository
+                .recordInitialPhysicalReadbackInTransaction(
+                    transaction,
+                    work.buildPlan().bootstrapIntent().operationId(),
+                    input.partitionId(),
+                    work.initialPhysicalRevision(),
+                    input.fieldSetBytes());
             return;
           }
           int inserted =
@@ -88,11 +97,12 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
                       + "partition_capacity, mapping_identity, layout_descriptor_bytes, "
                       + "layout_descriptor_digest, source_checkpoint_bytes, source_checkpoint_digest, "
                       + "source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest, "
-                      + "partition_id, exact_metadata_bytes, exact_physical_field_set_bytes, "
+                      + "partition_id, initial_physical_mutation_revision, exact_metadata_bytes, "
+                      + "exact_physical_field_set_bytes, "
                       + "exact_physical_field_set_digest, physical_field_count, physical_reservation_count, "
                       + "physical_binding_count, physical_counted_capacity_count, "
                       + "planned_aggregate_capacity_count, proof_state) VALUES ("
-                      + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXACT_PHYSICAL_READBACK')",
+                      + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXACT_PHYSICAL_READBACK')",
                   input.buildOperationId(),
                   input.bootstrapOperationId(),
                   input.bootstrapRequestId(),
@@ -114,6 +124,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
                   input.incarnationBytes(),
                   input.incarnationDigest(),
                   input.partitionId(),
+                  input.initialPhysicalRevision(),
                   input.metadataBytes(),
                   input.fieldSetBytes(),
                   input.fieldSetDigest(),
@@ -133,6 +144,13 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           if (saved == null)
             throw conflict("Exact partition proof is unreadable after persistence");
           requireSameProof(saved, input);
+          CanonicalGameplayIssuerPartitionMutationRepository
+              .recordInitialPhysicalReadbackInTransaction(
+                  transaction,
+                  work.buildPlan().bootstrapIntent().operationId(),
+                  input.partitionId(),
+                  work.initialPhysicalRevision(),
+                  input.fieldSetBytes());
         });
   }
 
@@ -273,6 +291,30 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     if (!fieldSetDigest.equals(CanonicalGameplayIssuerMemberV2Codec.sha256(fieldSetBytes))) {
       throw conflict("Installed-anchor partition field set does not match its exact digest");
     }
+    Record mutationHead =
+        transaction.fetchOne(
+            "SELECT * FROM "
+                + CanonicalGameplayIssuerPartitionMutationRepository.HEAD_TABLE
+                + " WHERE issuer_id = ? AND partition_id = ?",
+            ISSUER,
+            partitionId);
+    if (mutationHead == null
+        || !anchor
+            .bootstrapOperationId()
+            .equals(mutationHead.get("bootstrap_operation_id", UUID.class))
+        || !"CURRENT".equals(mutationHead.get("state", String.class))) {
+      throw conflict("Installed issuer partition lacks its positively installed mutation revision");
+    }
+    Map<String, byte[]> exactFields = decodeFieldSet(fieldSetBytes);
+    UUID initialRevision = mutationHead.get("initial_revision", UUID.class);
+    if (initialRevision == null) {
+      throw conflict("Installed issuer partition initial mutation revision is missing");
+    }
+    if (!initialRevision.equals(row.get("initial_physical_mutation_revision", UUID.class))) {
+      throw conflict("Installed issuer partition proof lacks its exact initial mutation revision");
+    }
+    CanonicalGameplayIssuerPartitionMutationRepository.requireRevisionField(
+        exactFields, initialRevision);
     return new InstalledAnchorPartitionProof(
         partitionId,
         fieldSetBytes,
@@ -591,6 +633,25 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       int expectedPartitionCapacity = expectedCapacityByPartition.getOrDefault(partitionId, 0);
       Map<String, byte[]> fields =
           decodeFieldSet(requireBytes(row, "exact_physical_field_set_bytes"));
+      UUID initialRevision = requireUuid(row, "initial_physical_mutation_revision");
+      if (initialRevision.equals(new UUID(0L, 0L))) {
+        throw conflict("Initial issuer physical proof has a nil mutation revision");
+      }
+      Record mutationHead =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + CanonicalGameplayIssuerPartitionMutationRepository.HEAD_TABLE
+                  + " WHERE issuer_id = ? AND partition_id = ?",
+              ISSUER,
+              partitionId);
+      if (mutationHead == null
+          || !intent.operationId().equals(mutationHead.get("bootstrap_operation_id", UUID.class))
+          || !initialRevision.equals(mutationHead.get("initial_revision", UUID.class))
+          || !"CURRENT".equals(mutationHead.get("state", String.class))) {
+        throw conflict("Initial issuer proof does not match its current SQL mutation head");
+      }
+      CanonicalGameplayIssuerPartitionMutationRepository.requireRevisionField(
+          fields, initialRevision);
       byte[] metadata = fields.get(METADATA_FIELD);
       if (metadata == null || !Arrays.equals(metadata, requireBytes(row, "exact_metadata_bytes"))) {
         throw conflict("Partition proof does not retain its exact common physical metadata");
@@ -603,9 +664,14 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       int physicalReservations = 0;
       Set<String> expectedFieldNames = new HashSet<>();
       expectedFieldNames.add(METADATA_FIELD);
+      expectedFieldNames.add(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD);
       for (Map.Entry<String, byte[]> field : fields.entrySet()) {
         String fieldName = field.getKey();
-        if (fieldName.equals(METADATA_FIELD)) continue;
+        if (fieldName.equals(METADATA_FIELD)
+            || fieldName.equals(
+                CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) {
+          continue;
+        }
         CanonicalGameplayIssuerMemberV2Value value;
         try {
           value = CanonicalGameplayIssuerMemberV2Codec.decode(field.getValue());
@@ -1042,6 +1108,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         CanonicalGameplayIssuerMemberV2Codec.sha256(
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(work.incarnation())),
         work.partitionId(),
+        work.initialPhysicalRevision(),
         physical.metadataBytes(),
         fieldSet,
         CanonicalGameplayIssuerMemberV2Codec.sha256(fieldSet),
@@ -1119,6 +1186,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         || !Arrays.equals(expected.incarnationBytes(), requireBytes(row, "incarnation_bytes"))
         || !expected.incarnationDigest().equals(requireText(row, "incarnation_digest"))
         || !expected.partitionId().equals(readInteger(row, "partition_id"))
+        || !expected
+            .initialPhysicalRevision()
+            .equals(row.get("initial_physical_mutation_revision", UUID.class))
         || !Arrays.equals(expected.metadataBytes(), requireBytes(row, "exact_metadata_bytes"))
         || !Arrays.equals(
             expected.fieldSetBytes(), requireBytes(row, "exact_physical_field_set_bytes"))
@@ -1137,6 +1207,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
 
   static byte[] encodeFieldSet(Map<String, byte[]> fields) {
     List<Map.Entry<String, byte[]>> entries = new ArrayList<>(fields.entrySet());
+    if (entries.isEmpty() || entries.size() > MAX_LOCAL_PHYSICAL_FIELD_COUNT) {
+      throw conflict("Physical field proof count is outside its bound");
+    }
     entries.sort(
         (left, right) ->
             compareUnsigned(
@@ -1171,8 +1244,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         throw conflict("Persisted issuer physical field proof has an unsupported encoding");
       }
       int count = input.readInt();
-      if (count < 1
-          || count > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_HASH_FIELDS) {
+      if (count < 1 || count > MAX_LOCAL_PHYSICAL_FIELD_COUNT) {
         throw conflict("Persisted issuer physical field count is outside its bound");
       }
       Map<String, byte[]> fields = new HashMap<>();
@@ -1340,6 +1412,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       byte[] incarnationBytes,
       String incarnationDigest,
       BigInteger partitionId,
+      UUID initialPhysicalRevision,
       byte[] metadataBytes,
       byte[] fieldSetBytes,
       String fieldSetDigest,
@@ -1349,6 +1422,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       int countedCapacityCount,
       BigInteger aggregateCountedCapacity) {
     private ProofInput {
+      Objects.requireNonNull(initialPhysicalRevision, "initialPhysicalRevision");
       layoutDescriptorBytes = layoutDescriptorBytes.clone();
       sourceCheckpointBytes = sourceCheckpointBytes.clone();
       sourceEventBytes = sourceEventBytes == null ? null : sourceEventBytes.clone();

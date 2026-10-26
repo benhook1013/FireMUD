@@ -169,7 +169,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
 
     var firstOwner = owner(work, currentState(fixture, work));
     var first = firstOwner.buildAndRead(work);
-    assertThat(first.physicalFieldCount()).isEqualTo(4);
+    assertThat(first.physicalFieldCount()).isEqualTo(5);
     assertThat(first.physicalPartitionReservationCount()).isEqualTo(2);
     assertThat(first.physicalBindingCount()).isEqualTo(1);
     assertThat(first.physicalCountedCapacityCount()).isEqualTo(1);
@@ -191,7 +191,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     byte[] key = key(fixture, work.partitionId());
     assertThat(administratorCommands.type(key)).isEqualTo("hash");
     assertThat(administratorCommands.pttl(key)).isEqualTo(-1L);
-    assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
+    assertThat(administratorCommands.hlen(key)).isEqualTo(5L);
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
   }
 
@@ -209,11 +209,11 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     assertThat(administratorCommands.type(key)).isEqualTo("none");
     var readback = owner(work, currentState(fixture, work)).buildAndRead(work);
 
-    assertThat(readback.physicalFieldCount()).isEqualTo(1);
+    assertThat(readback.physicalFieldCount()).isEqualTo(2);
     assertThat(readback.physicalPartitionReservationCount()).isZero();
     assertThat(readback.physicalCountedCapacityCount()).isZero();
     assertThat(readback.plannedAggregateCapacityCount()).isEqualTo(BigInteger.ONE);
-    assertThat(administratorCommands.hlen(key)).isEqualTo(1L);
+    assertThat(administratorCommands.hlen(key)).isEqualTo(2L);
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
   }
 
@@ -272,7 +272,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("projection is unavailable");
       assertThat(administratorCommands.hget(key, bindingField)).containsExactly(conflict);
-      assertThat(administratorCommands.hlen(key)).isEqualTo(3L);
+      assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
       administratorCommands.hset(key, bindingField, exact);
     }
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
@@ -391,7 +391,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     assertThat(afterCheckpointCalls).hasValue(2);
     assertThat(administratorCommands.type(key)).isEqualTo("hash");
-    assertThat(administratorCommands.hlen(key)).isEqualTo(3L);
+    assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
 
     AtomicInteger afterCalls = new AtomicInteger();
     var changedAfterOwner =
@@ -407,7 +407,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     assertThat(afterCalls).hasValue(2);
     assertThat(administratorCommands.type(key)).isEqualTo("hash");
-    assertThat(administratorCommands.hlen(key)).isEqualTo(3L);
+    assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
   }
 
@@ -431,7 +431,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
         partitionWork(fixture, work.partitionId());
     var readback =
         owner(restartedWork, currentState(fixture, restartedWork)).buildAndRead(restartedWork);
-    assertThat(readback.physicalFieldCount()).isEqualTo(3);
+    assertThat(readback.physicalFieldCount()).isEqualTo(4);
     assertThat(readback.physicalCountedCapacityCount()).isEqualTo(1);
     assertThat(statusesRemainPending(fixture.dsl())).isTrue();
   }

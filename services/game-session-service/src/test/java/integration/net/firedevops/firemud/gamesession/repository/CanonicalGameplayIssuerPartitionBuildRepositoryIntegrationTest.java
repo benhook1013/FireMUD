@@ -62,6 +62,370 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void v1037RemovesOnlyDuplicateFirstNewReleaseGuards() {
+    TestSchema testSchema = newTestSchemaAtVersion("gs_issuer_release_guard_", "1036");
+    try {
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_reservation",
+                  "game_session_first_new_issuer_release_reservation"))
+          .isTrue();
+      assertThat(functionExists(testSchema.dsl(), "require_first_new_issuer_release_reservation()"))
+          .isTrue();
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_binding_account_index_obligation",
+                  "game_session_first_new_issuer_release_account_atomic"))
+          .isTrue();
+
+      migrateThrough1037(testSchema);
+
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_reservation",
+                  "game_session_first_new_issuer_release_reservation"))
+          .isFalse();
+      assertThat(functionExists(testSchema.dsl(), "require_first_new_issuer_release_reservation()"))
+          .isFalse();
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_binding_account_index_obligation",
+                  "game_session_first_new_issuer_release_account_atomic"))
+          .isFalse();
+
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_reservation",
+                  "game_session_first_new_abort_reservation_release"))
+          .isTrue();
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_binding_account_index_obligation",
+                  "game_session_first_new_abort_account_phase_atomic"))
+          .isTrue();
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_reservation",
+                  "game_session_first_new_issuer_release_reservation_atomic"))
+          .isTrue();
+
+      String retainedReservationGuard =
+          testSchema
+              .dsl()
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  "require_first_new_abort_reservation_release()")
+              .get(0, String.class);
+      assertThat(retainedReservationGuard)
+          .contains("OLD.lifecycle = 'RELEASE_PENDING' AND NEW.lifecycle = 'RELEASED'")
+          .contains("release.physical_readback_field_set_bytes IS NOT NULL")
+          .contains(
+              "First-NEW reservation release requires its exact completed physical issuer proof");
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void v1038PhysicalIssuerHistoryRejectsTruncateCascade() {
+    TestSchema testSchema = newTestSchemaAtVersion("gs_issuer_physical_history_", "1037");
+    try {
+      migrateThrough1038(testSchema);
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_mutation_head",
+                  "trg_gs_issuer_partition_mutation_head_no_truncate"))
+          .isTrue();
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_mutation",
+                  "trg_gs_issuer_partition_mutation_no_truncate"))
+          .isTrue();
+      assertThat(
+              triggerExists(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_binding_local_retirement",
+                  "trg_gs_issuer_local_retirement_no_truncate"))
+          .isTrue();
+      assertThat(
+              functionExists(
+                  testSchema.dsl(), "reject_canonical_issuer_physical_history_truncate()"))
+          .isTrue();
+      assertThat(
+              triggerDefinition(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_partition_mutation",
+                  "trg_gs_issuer_partition_mutation_history"))
+          .contains("INSERT")
+          .contains("UPDATE")
+          .contains("DELETE")
+          .contains("guard_canonical_issuer_partition_mutation_history");
+      assertThat(
+              triggerDefinition(
+                  testSchema.dsl(),
+                  "game_session_canonical_issuer_binding_local_retirement",
+                  "trg_gs_issuer_binding_local_retirement"))
+          .contains("INSERT")
+          .contains("UPDATE")
+          .contains("DELETE")
+          .contains("guard_canonical_issuer_binding_local_retirement");
+
+      var fixture = pendingFixture(testSchema);
+      UUID initialRevision = UUID.randomUUID();
+      testSchema
+          .dsl()
+          .execute(
+              "INSERT INTO game_session_canonical_issuer_partition_mutation_head"
+                  + " (issuer_id, partition_id, bootstrap_operation_id, initial_revision,"
+                  + " current_revision, state) VALUES (?, 0, ?, ?, ?, 'INITIAL_INSTALL_PENDING')",
+              ISSUER,
+              fixture.intent().operationId(),
+              initialRevision,
+              initialRevision);
+      assertThatThrownBy(
+              () ->
+                  testSchema
+                      .dsl()
+                      .execute(
+                          "INSERT INTO game_session_canonical_issuer_partition_mutation"
+                              + " (mutation_id, issuer_id, partition_id, mutation_kind, owner_operation_id,"
+                              + " expected_revision, successor_revision, exact_intended_change_bytes,"
+                              + " exact_intended_change_digest, status)"
+                              + " VALUES (?, ?, 0, 'ADD_CAPACITY', ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
+                          UUID.randomUUID(),
+                          ISSUER,
+                          UUID.randomUUID(),
+                          initialRevision,
+                          UUID.randomUUID(),
+                          new byte[] {1},
+                          "sha256:" + "a".repeat(64)))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> assertThat(exception.sqlState()).isEqualTo("23514"));
+
+      List<String> headBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_mutation_head");
+      List<String> mutationsBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_mutation");
+      List<String> retirementsBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_binding_local_retirement");
+      List<String> migrationHistoryBefore = migrationHistorySnapshot(testSchema.dsl());
+      assertThat(headBefore).hasSize(1);
+      assertThat(mutationsBefore).isEmpty();
+      assertThat(retirementsBefore).isEmpty();
+
+      assertThatThrownBy(
+              () ->
+                  testSchema
+                      .dsl()
+                      .execute(
+                          "TRUNCATE TABLE"
+                              + " game_session_canonical_issuer_partition_mutation_head,"
+                              + " game_session_canonical_issuer_partition_mutation,"
+                              + " game_session_canonical_issuer_binding_local_retirement CASCADE"))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> assertThat(exception.sqlState()).isEqualTo("23514"));
+
+      assertThat(
+              rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_mutation_head"))
+          .containsExactlyElementsOf(headBefore);
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_mutation"))
+          .containsExactlyElementsOf(mutationsBefore);
+      assertThat(
+              rowImages(testSchema.dsl(), "game_session_canonical_issuer_binding_local_retirement"))
+          .containsExactlyElementsOf(retirementsBefore);
+      assertThat(migrationHistorySnapshot(testSchema.dsl()))
+          .containsExactlyElementsOf(migrationHistoryBefore);
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void v1038RetainsLegacyBootstrapProofWithoutQualifyingCurrentRevision() {
+    TestSchema historicalSchema = newTestSchemaAtVersion("gs_issuer_legacy_proof_", "1037");
+    TestSchema newProofSchema = newTestSchemaAtVersion("gs_issuer_new_proof_", "1037");
+    try {
+      var historicalFixture = pendingFixture(historicalSchema);
+      var historicalPlan =
+          new CanonicalGameplayIssuerPartitionBuildRepository(historicalSchema.dsl())
+              .prepareInitialBuildPlan(
+                  historicalFixture.intent().operationId(), historicalFixture.requestId());
+      assertThat(historicalPlan.state())
+          .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
+      insertControlledBootstrapProof(historicalSchema.dsl(), historicalFixture, historicalPlan);
+      List<String> legacyProofBefore =
+          rowImages(
+              historicalSchema.dsl(), "game_session_canonical_issuer_bootstrap_partition_proof");
+      assertThat(legacyProofBefore).hasSize(1);
+
+      migrateThrough1038(historicalSchema);
+      String mutationHeadGuard =
+          historicalSchema
+              .dsl()
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  "guard_canonical_issuer_partition_mutation_head()")
+              .get(0, String.class);
+      assertThat(mutationHeadGuard)
+          .contains("proof.initial_physical_mutation_revision = OLD.initial_revision");
+      assertThat(
+              historicalSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT initial_physical_mutation_revision"
+                          + " FROM game_session_canonical_issuer_bootstrap_partition_proof"
+                          + " WHERE bootstrap_operation_id = ? AND partition_id = 0",
+                      historicalFixture.intent().operationId())
+                  .get(0, UUID.class))
+          .isNull();
+      assertThat(
+              historicalSchema
+                  .dsl()
+                  .fetch(
+                      "SELECT (to_jsonb(proof) - 'initial_physical_mutation_revision')::text"
+                          + " AS row_image FROM game_session_canonical_issuer_bootstrap_partition_proof proof"
+                          + " ORDER BY partition_id")
+                  .getValues("row_image", String.class))
+          .containsExactlyElementsOf(legacyProofBefore);
+
+      UUID historicalInitialRevision = UUID.randomUUID();
+      assertThatThrownBy(
+              () ->
+                  historicalSchema
+                      .dsl()
+                      .execute(
+                          "INSERT INTO game_session_canonical_issuer_partition_mutation_head"
+                              + " (issuer_id, partition_id, bootstrap_operation_id, initial_revision,"
+                              + " current_revision, state)"
+                              + " VALUES (?, 0, ?, ?, ?, 'INITIAL_INSTALL_PENDING')",
+                          ISSUER,
+                          historicalFixture.intent().operationId(),
+                          historicalInitialRevision,
+                          historicalInitialRevision))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> assertThat(exception.sqlState()).isEqualTo("P0001"));
+      assertThat(
+              rowImages(
+                  historicalSchema.dsl(), "game_session_canonical_issuer_partition_mutation_head"))
+          .isEmpty();
+
+      migrateThrough1038(newProofSchema);
+      var newProofFixture = pendingFixture(newProofSchema);
+      var newProofPlan =
+          new CanonicalGameplayIssuerPartitionBuildRepository(newProofSchema.dsl())
+              .prepareInitialBuildPlan(
+                  newProofFixture.intent().operationId(), newProofFixture.requestId());
+      assertThat(newProofPlan.state())
+          .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
+      UUID newInitialRevision = UUID.randomUUID();
+      newProofSchema
+          .dsl()
+          .execute(
+              "INSERT INTO game_session_canonical_issuer_partition_mutation_head"
+                  + " (issuer_id, partition_id, bootstrap_operation_id, initial_revision,"
+                  + " current_revision, state) VALUES (?, 0, ?, ?, ?, 'INITIAL_INSTALL_PENDING')",
+              ISSUER,
+              newProofFixture.intent().operationId(),
+              newInitialRevision,
+              newInitialRevision);
+      assertThatThrownBy(
+              () ->
+                  insertControlledBootstrapProof(
+                      newProofSchema.dsl(), newProofFixture, newProofPlan, null))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> assertThat(exception.sqlState()).isEqualTo("23514"));
+      assertThatThrownBy(
+              () ->
+                  insertControlledBootstrapProof(
+                      newProofSchema.dsl(), newProofFixture, newProofPlan, UUID.randomUUID()))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> {
+                assertThat(exception.sqlState()).isEqualTo("23514");
+                assertThat(exception.getMessage()).contains("exact SQL-installed initial revision");
+              });
+      assertThat(
+              rowImages(
+                  newProofSchema.dsl(), "game_session_canonical_issuer_bootstrap_partition_proof"))
+          .isEmpty();
+    } finally {
+      dropSchema(historicalSchema.schema());
+      dropSchema(newProofSchema.schema());
+    }
+  }
+
+  @Test
+  void cohortOrdinalsFollowCanonicalSortedPositionForUnsortedRows() {
+    String digestA = "sha256:" + "a".repeat(64);
+    String digestB = "sha256:" + "b".repeat(64);
+    String digestC = "sha256:" + "c".repeat(64);
+    List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> unsortedRows =
+        List.of(
+            new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                29L,
+                CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.TRANSITION,
+                "z-transition",
+                BigInteger.valueOf(7),
+                "{\"source\":\"transition\"}",
+                digestC),
+            new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                13L,
+                CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION,
+                "b-reservation",
+                BigInteger.valueOf(6),
+                "{\"source\":\"reservation-b\"}",
+                digestB),
+            new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                4L,
+                CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION,
+                "a-reservation",
+                BigInteger.valueOf(5),
+                "{\"source\":\"reservation-a\"}",
+                digestA));
+
+    List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> numberedRows =
+        CanonicalGameplayIssuerPartitionBuildRepository.assignCanonicalCohortOrdinals(unsortedRows);
+
+    assertThat(numberedRows)
+        .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::rowOrdinal)
+        .containsExactly(0L, 1L, 2L);
+    assertThat(numberedRows)
+        .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::kind)
+        .containsExactly(
+            CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION,
+            CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.RESERVATION,
+            CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.TRANSITION);
+    assertThat(numberedRows)
+        .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey)
+        .containsExactly("a-reservation", "b-reservation", "z-transition");
+    assertThat(numberedRows)
+        .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceInventoryRevision)
+        .containsExactly(BigInteger.valueOf(5), BigInteger.valueOf(6), BigInteger.valueOf(7));
+    assertThat(numberedRows)
+        .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+        .containsExactly(
+            "{\"source\":\"reservation-a\"}",
+            "{\"source\":\"reservation-b\"}",
+            "{\"source\":\"transition\"}");
+    assertThat(numberedRows)
+        .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
+        .containsExactly(digestA, digestB, digestC);
+  }
+
+  @Test
   void populatedPendingIntentRetainsCompleteCohortAndBothCoverageTuplesAcrossConcurrentRetry()
       throws Exception {
     TestSchema testSchema = newTestSchemaAtVersion("gs_issuer_build_retry_", "1030");
@@ -1305,6 +1669,30 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .migrate();
   }
 
+  private static void migrateThrough1037(TestSchema testSchema) {
+    Flyway.configure()
+        .dataSource(testSchema.dataSource())
+        .schemas(testSchema.schema())
+        .defaultSchema(testSchema.schema())
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(MigrationVersion.fromVersion("1037"))
+        .load()
+        .migrate();
+  }
+
+  private static void migrateThrough1038(TestSchema testSchema) {
+    Flyway.configure()
+        .dataSource(testSchema.dataSource())
+        .schemas(testSchema.schema())
+        .defaultSchema(testSchema.schema())
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(MigrationVersion.fromVersion("1038"))
+        .load()
+        .migrate();
+  }
+
   private static void migrateRemaining(TestSchema testSchema) {
     Flyway.configure()
         .dataSource(testSchema.dataSource())
@@ -1340,6 +1728,107 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .load()
         .migrate();
     return new TestSchema(schema, dataSource, dsl);
+  }
+
+  private static boolean triggerExists(DSLContext dsl, String table, String trigger) {
+    return Boolean.TRUE.equals(
+        dsl.fetchSingle(
+                "SELECT EXISTS (SELECT 1 FROM pg_trigger"
+                    + " WHERE tgrelid = to_regclass(?) AND tgname = ? AND NOT tgisinternal)",
+                table,
+                trigger)
+            .get(0, Boolean.class));
+  }
+
+  private static String triggerDefinition(DSLContext dsl, String table, String trigger) {
+    return dsl.fetchSingle(
+            "SELECT pg_get_triggerdef(trigger_row.oid) FROM pg_trigger trigger_row"
+                + " WHERE trigger_row.tgrelid = to_regclass(?) AND trigger_row.tgname = ?"
+                + " AND NOT trigger_row.tgisinternal",
+            table,
+            trigger)
+        .get(0, String.class);
+  }
+
+  private static boolean functionExists(DSLContext dsl, String functionSignature) {
+    return Boolean.TRUE.equals(
+        dsl.fetchSingle("SELECT to_regprocedure(?) IS NOT NULL", functionSignature)
+            .get(0, Boolean.class));
+  }
+
+  /** Inserts controlled, non-admitting bytes to exercise proof storage and migration only. */
+  private static void insertControlledBootstrapProof(
+      DSLContext dsl, Fixture fixture, CanonicalGameplayIssuerPartitionBuildPlan plan) {
+    dsl.execute(
+        "INSERT INTO game_session_canonical_issuer_bootstrap_partition_proof"
+            + " (build_operation_id, bootstrap_operation_id, bootstrap_request_id, issuer_id,"
+            + " build_plan_digest, bootstrap_operation_fence, bootstrap_coverage_fence,"
+            + " issuer_inventory_snapshot_revision, layout_version, partition_count,"
+            + " partition_capacity, mapping_identity, layout_descriptor_bytes,"
+            + " layout_descriptor_digest, source_checkpoint_bytes, source_checkpoint_digest,"
+            + " source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest,"
+            + " partition_id, exact_metadata_bytes, exact_physical_field_set_bytes,"
+            + " exact_physical_field_set_digest, physical_field_count, physical_reservation_count,"
+            + " physical_binding_count, physical_counted_capacity_count,"
+            + " planned_aggregate_capacity_count, proof_state)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0,"
+            + " ?, ?, ?, 1, 0, 0, 0, 0, 'EXACT_PHYSICAL_READBACK')",
+        controlledBootstrapProofBindings(fixture, plan));
+  }
+
+  /** Attempts a new proof with no original physical revision; V1038 must reject this insert. */
+  private static void insertControlledBootstrapProof(
+      DSLContext dsl,
+      Fixture fixture,
+      CanonicalGameplayIssuerPartitionBuildPlan plan,
+      UUID initialPhysicalMutationRevision) {
+    Object[] baseBindings = controlledBootstrapProofBindings(fixture, plan);
+    Object[] bindings = java.util.Arrays.copyOf(baseBindings, baseBindings.length + 1);
+    bindings[baseBindings.length] = initialPhysicalMutationRevision;
+    dsl.execute(
+        "INSERT INTO game_session_canonical_issuer_bootstrap_partition_proof"
+            + " (build_operation_id, bootstrap_operation_id, bootstrap_request_id, issuer_id,"
+            + " build_plan_digest, bootstrap_operation_fence, bootstrap_coverage_fence,"
+            + " issuer_inventory_snapshot_revision, layout_version, partition_count,"
+            + " partition_capacity, mapping_identity, layout_descriptor_bytes,"
+            + " layout_descriptor_digest, source_checkpoint_bytes, source_checkpoint_digest,"
+            + " source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest,"
+            + " partition_id, exact_metadata_bytes, exact_physical_field_set_bytes,"
+            + " exact_physical_field_set_digest, physical_field_count, physical_reservation_count,"
+            + " physical_binding_count, physical_counted_capacity_count,"
+            + " planned_aggregate_capacity_count, proof_state, initial_physical_mutation_revision)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0,"
+            + " ?, ?, ?, 1, 0, 0, 0, 0, 'EXACT_PHYSICAL_READBACK', ?)",
+        bindings);
+  }
+
+  private static Object[] controlledBootstrapProofBindings(
+      Fixture fixture, CanonicalGameplayIssuerPartitionBuildPlan plan) {
+    var intent = fixture.intent();
+    String digest = "sha256:" + "a".repeat(64);
+    return new Object[] {
+      plan.buildOperationId(),
+      intent.operationId(),
+      intent.requestId(),
+      intent.issuerId(),
+      plan.planDigest(),
+      intent.operationFence(),
+      intent.coverageFence(),
+      intent.inventorySnapshotRevision(),
+      intent.layoutDescriptor().layoutVersion(),
+      intent.layoutDescriptor().partitionCount(),
+      intent.layoutDescriptor().partitionCapacity(),
+      intent.layoutDescriptor().mappingIdentity(),
+      "test-only-layout-descriptor".getBytes(StandardCharsets.UTF_8),
+      digest,
+      "test-only-source-checkpoint".getBytes(StandardCharsets.UTF_8),
+      digest,
+      "test-only-incarnation".getBytes(StandardCharsets.UTF_8),
+      digest,
+      "test-only-metadata".getBytes(StandardCharsets.UTF_8),
+      "test-only-physical-field-set".getBytes(StandardCharsets.UTF_8),
+      digest
+    };
   }
 
   private static void insertLegacyReservationBeforeIssuerStringConversion(DSLContext dsl) {
