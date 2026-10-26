@@ -67,6 +67,27 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
+          Record lockedControl =
+              transaction.fetchOne(
+                  "SELECT control.account_id"
+                      + " FROM game_session_canonical_account_admission_fence_intent intent"
+                      + " JOIN game_session_canonical_account_coverage_control control"
+                      + " ON control.account_id = intent.account_id"
+                      + " WHERE intent.operation_id = ?"
+                      + " AND intent.intent_state = 'ACQUISITION_INTENT'"
+                      + " AND control.state = 'ACQUISITION_INTENT'"
+                      + " AND control.current_operation_id IS NULL"
+                      + " AND control.current_fence_intent_id = intent.operation_id"
+                      + " AND control.current_operation_fence = intent.operation_fence"
+                      + " AND control.last_operation_fence = intent.operation_fence"
+                      + " AND control.account_admission_fence = intent.planned_account_admission_fence"
+                      + " AND control.inventory_snapshot_revision = intent.inventory_snapshot_revision"
+                      + " AND control.coverage_fence IS NULL AND control.coverage_generation IS NULL"
+                      + " FOR UPDATE OF control",
+                  operationId);
+          if (lockedControl == null) {
+            throw conflict("The exact current acquisition-intent barrier target is unavailable");
+          }
           Record row =
               transaction.fetchOne(
                   "SELECT target.operation_id, target.target_ordinal, target.account_id,"
@@ -88,7 +109,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
                       + " AND control.account_admission_fence = intent.planned_account_admission_fence"
                       + " AND control.inventory_snapshot_revision = intent.inventory_snapshot_revision"
                       + " AND control.coverage_fence IS NULL AND control.coverage_generation IS NULL"
-                      + " FOR UPDATE OF target, intent, control",
+                      + " FOR SHARE OF target, intent",
                   operationId,
                   targetOrdinal);
           if (row == null) {
