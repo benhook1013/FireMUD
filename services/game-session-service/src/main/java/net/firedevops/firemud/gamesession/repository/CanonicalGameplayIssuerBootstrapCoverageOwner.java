@@ -24,8 +24,7 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
           currentStateSource) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
-    this.partitionRedisOwner =
-        Objects.requireNonNull(partitionRedisOwner, "partitionRedisOwner");
+    this.partitionRedisOwner = Objects.requireNonNull(partitionRedisOwner, "partitionRedisOwner");
     this.currentStateSource = Objects.requireNonNull(currentStateSource, "currentStateSource");
   }
 
@@ -53,8 +52,7 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
         coverageRepository.readInstalledAnchor(
             bootstrapOperationId, bootstrapRequestId, initialState);
     if (installed.isPresent()) {
-      return readInstalledAnchorPartitions(
-          plan, installed.get(), coverageRepository, initialState);
+      return readInstalledAnchorPartitions(plan, installed.get(), coverageRepository, initialState);
     }
 
     CanonicalGameplayIssuerBootstrapMemberOperationRepository memberOperationRepository =
@@ -119,7 +117,8 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
         coverageRepository
             .readInstalledAnchor(
                 installed.bootstrapOperationId(), installed.bootstrapRequestId(), afterReadback)
-            .orElseThrow(() -> unavailable("Installed issuer anchor disappeared during exact readback"));
+            .orElseThrow(
+                () -> unavailable("Installed issuer anchor disappeared during exact readback"));
     if (!Arrays.equals(installed.exactAnchorBytes(), confirmed.exactAnchorBytes())
         || !installed.exactAnchorDigest().equals(confirmed.exactAnchorDigest())) {
       throw unavailable("Installed issuer anchor changed during physical partition readback");
@@ -145,7 +144,8 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(current.incarnation()),
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(expected.incarnation()))
         || !sameCheckpoint(current.accountCheckpoint(), expected.accountCheckpoint())) {
-      throw unavailable("Current Account source or stable Redis incarnation changed during bootstrap");
+      throw unavailable(
+          "Current Account source or stable Redis incarnation changed during bootstrap");
     }
     return current;
   }
@@ -220,12 +220,14 @@ public final class CanonicalGameplayIssuerBootstrapCoverageOwner {
 
   private static void requireNonNil(UUID value, String name) {
     Objects.requireNonNull(value, name);
-    if (value.equals(new UUID(0L, 0L))) throw new IllegalArgumentException(name + " must not be nil");
+    if (value.equals(new UUID(0L, 0L)))
+      throw new IllegalArgumentException(name + " must not be nil");
   }
 
   private static void requireNoAmbientTransaction() {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
-      throw unavailable("Initial issuer bootstrap completion cannot join an ambient SQL transaction");
+      throw unavailable(
+          "Initial issuer bootstrap completion cannot join an ambient SQL transaction");
     }
   }
 

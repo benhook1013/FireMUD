@@ -285,6 +285,48 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
     return plan;
   }
 
+  /**
+   * Reconstructs the immutable plan retained by an already installed initial anchor. This reads
+   * only the frozen V1030 cohort and V1031 plan artifacts; it deliberately does not compare them
+   * with the now-advancing live inventory clock or source rows.
+   */
+  CanonicalGameplayIssuerPartitionBuildPlan readInstalledPlanForAnchorInTransaction(
+      DSLContext transaction, UUID bootstrapOperationId, UUID bootstrapRequestId) {
+    requireNonNil(bootstrapOperationId, "bootstrapOperationId");
+    requireNonNil(bootstrapRequestId, "bootstrapRequestId");
+    if (bootstrapOperationId.equals(bootstrapRequestId)) {
+      throw conflict("Bootstrap operation and request identities must be distinct");
+    }
+    Record control = lockControl(transaction, ISSUER);
+    if (control == null) throw conflict("Installed initial anchor lost its issuer control row");
+    Record intentRow = lockIntent(transaction, bootstrapOperationId);
+    if (intentRow == null) throw conflict("Installed initial anchor lost its bootstrap intent row");
+    BigInteger frozenRevision = readBigInteger(intentRow, "inventory_snapshot_revision");
+    CanonicalGameplayIssuerLayoutBootstrapIntent intent =
+        loadAndRequireCurrentIntent(
+            transaction,
+            control,
+            intentRow,
+            bootstrapOperationId,
+            bootstrapRequestId,
+            frozenRevision);
+    List<IssuerCohortSourceRow> frozenRows =
+        intent.cohortRows().stream().map(IssuerCohortSourceRow::new).toList();
+    DerivedPlan derived = derivePlan(intent, frozenRows);
+    Record buildPlanRow =
+        transaction.fetchOne(
+            "SELECT * FROM " + BUILD_PLAN + " WHERE bootstrap_operation_id = ? FOR UPDATE",
+            bootstrapOperationId);
+    if (buildPlanRow == null)
+      throw conflict("Installed initial anchor lost its immutable build plan");
+    CanonicalGameplayIssuerPartitionBuildPlan plan =
+        loadAndRequireExactPlan(transaction, intent, frozenRows, derived, buildPlanRow);
+    if (plan.state() != CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED) {
+      throw conflict("Installed initial anchor plan contains an unresolved blocker");
+    }
+    return plan;
+  }
+
   /** Extracts typed source only from a plan returned by {@link #readPreparedPlanInTransaction}. */
   PreparedMemberWork readPreparedMemberWorkFromVerifiedPlan(
       CanonicalGameplayIssuerPartitionBuildPlan plan, long workOrdinal) {

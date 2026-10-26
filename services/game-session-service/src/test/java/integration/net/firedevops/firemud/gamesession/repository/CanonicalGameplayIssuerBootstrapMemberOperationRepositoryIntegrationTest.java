@@ -87,13 +87,17 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
       assertThat(fixture.plan().state())
           .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
       Map<String, List<String>> retainedBefore = rowSnapshots(fixture.testSchema().dsl());
+      Map<String, List<String>> retainedWithXminBefore =
+          rowSnapshotsWithXmin(fixture.testSchema().dsl());
       List<String> historyBefore = historySnapshot(fixture.testSchema().dsl());
-      migrateRemaining(fixture.testSchema());
+      migrateThrough1032(fixture.testSchema());
 
       assertThat(rowSnapshots(fixture.testSchema().dsl())).isEqualTo(retainedBefore);
-      List<String> historyAfterMigration = historySnapshot(fixture.testSchema().dsl());
-      assertThat(historyAfterMigration).hasSize(historyBefore.size() + 1);
-      assertThat(historyAfterMigration.subList(0, historyBefore.size()))
+      assertThat(rowSnapshotsWithXmin(fixture.testSchema().dsl()))
+          .isEqualTo(retainedWithXminBefore);
+      List<String> historyAfter1032 = historySnapshot(fixture.testSchema().dsl());
+      assertThat(historyAfter1032).hasSize(historyBefore.size() + 1);
+      assertThat(historyAfter1032.subList(0, historyBefore.size()))
           .containsExactlyElementsOf(historyBefore);
       assertThat(
               fixture
@@ -102,6 +106,28 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
                   .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1032'")
                   .get(0, String.class))
           .isEqualTo("V1032__canonical_issuer_bootstrap_member_operation.sql");
+
+      migrateRemaining(fixture.testSchema());
+      assertThat(rowSnapshots(fixture.testSchema().dsl())).isEqualTo(retainedBefore);
+      assertThat(rowSnapshotsWithXmin(fixture.testSchema().dsl()))
+          .isEqualTo(retainedWithXminBefore);
+      List<String> historyAfterMigration = historySnapshot(fixture.testSchema().dsl());
+      assertThat(historyAfterMigration.subList(0, historyAfter1032.size()))
+          .containsExactlyElementsOf(historyAfter1032);
+      assertThat(
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1032'")
+                  .get(0, String.class))
+          .isEqualTo("V1032__canonical_issuer_bootstrap_member_operation.sql");
+      assertThat(
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1033'")
+                  .get(0, String.class))
+          .isEqualTo("V1033__canonical_issuer_bootstrap_coverage.sql");
       assertThat(
               fixture
                   .testSchema()
@@ -863,6 +889,18 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
         .migrate();
   }
 
+  private static void migrateThrough1032(TestSchema testSchema) {
+    Flyway.configure()
+        .dataSource(testSchema.dataSource())
+        .schemas(testSchema.schema())
+        .defaultSchema(testSchema.schema())
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(MigrationVersion.fromVersion("1032"))
+        .load()
+        .migrate();
+  }
+
   private static void migrateRemaining(TestSchema testSchema) {
     Flyway.configure()
         .dataSource(testSchema.dataSource())
@@ -895,6 +933,12 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
     return Map.copyOf(snapshots);
   }
 
+  private static Map<String, List<String>> rowSnapshotsWithXmin(DSLContext dsl) {
+    Map<String, List<String>> snapshots = new LinkedHashMap<>();
+    for (String table : RETAINED_TABLES) snapshots.put(table, rowImagesWithXmin(dsl, table));
+    return Map.copyOf(snapshots);
+  }
+
   private static List<String> historySnapshot(DSLContext dsl) {
     return dsl.fetch(
             "SELECT to_jsonb(history_row)::text AS row_image FROM flyway_schema_history history_row"
@@ -907,6 +951,14 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
             "SELECT to_jsonb(retained_row)::text AS row_image FROM "
                 + tableName
                 + " retained_row ORDER BY to_jsonb(retained_row)::text")
+        .getValues("row_image", String.class);
+  }
+
+  private static List<String> rowImagesWithXmin(DSLContext dsl, String tableName) {
+    return dsl.fetch(
+            "SELECT xmin::text || ':' || to_jsonb(retained_row)::text AS row_image FROM "
+                + tableName
+                + " retained_row ORDER BY to_jsonb(retained_row)::text, xmin::text")
         .getValues("row_image", String.class);
   }
 
