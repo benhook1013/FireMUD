@@ -3284,7 +3284,7 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
             + "VALUES (?, ?, ?, 'ACCOUNT_DATABASE_INSERT', 1, 'dev', 51, 'ELIGIBLE', "
             + "clock_timestamp(), 4, ?, ?, 'PRESEEDED_ACTOR_STAGING', "
             + "'CURRENT_AT_REVALIDATION', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, "
-            + "'CANONICAL_UUID', ?, ?, ?, ?, ?, 'PENDING')",
+            + "'CANONICAL_UUID', ?, ?, ?, ?, ?, ?, 'PENDING')",
         assignment,
         request.mutationIntentDigest(),
         binding.canonicalAccountUuid(),
@@ -3337,8 +3337,7 @@ class CanonicalGameplayRosterRetentionPostgresIntegrationTest {
     return new PreseededActorAssignmentRequest(
         assignment,
         binding.canonicalAccountUuid(),
-        new PreseededActorCorePayload(
-            PreseededActorCorePayload.ActorKind.PLAYER, "Retained Actor"),
+        new PreseededActorCorePayload(PreseededActorCorePayload.ActorKind.PLAYER, "Retained Actor"),
         new PreseededActorAssignmentExpectedTarget(
             target.tenantUuid(),
             target.realmUuid(),
