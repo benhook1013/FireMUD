@@ -339,6 +339,137 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void pendingNoPriorAbortSurvivesAnIndependentlyCreatedClosedPointer() throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var target = harness.seed();
+      Prepared prepared = prepare(target, "protected-writer-later-closed", 651);
+      var repository = repository(harness);
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status -> repository.reserveProtected(prepared.request(), prepared.protection()));
+      var pointers =
+          new GameSessionCanonicalAdmissionPointerRepository(
+              harness.dsl(),
+              new GameSessionCanonicalRealmCatalogRepository(harness.dsl()),
+              new GameplayAdmissionPointerEventRepository(harness.dsl()));
+      var catalog = target.catalog();
+      var closeRequest =
+          new net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest(
+              uuid(659),
+              catalog.targetNamespace(),
+              catalog.tenantId(),
+              catalog.realmId(),
+              catalog.creationRequestId(),
+              catalog.catalogRevision(),
+              "controlled-closed-owner",
+              "Independent CLOSED origin after protected reservation");
+      var closed = pointers.prepareInitialClosed(closeRequest);
+      harness.transactions().executeWithoutResult(status -> pointers.createInitialClosed(closed));
+      var originalClosed =
+          pointers
+              .readOriginalClosedOrigin(closeRequest.targetNamespace(), closeRequest.requestId())
+              .orElseThrow();
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              repository.commitProtected(
+                                  prepared.request(),
+                                  prepared.protection(),
+                                  prepared.worldProof())))
+          .isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("representation");
+      assertThat(terminal(harness, prepared.request()).get("status", String.class))
+          .isEqualTo("PENDING");
+      for (String mutation :
+          java.util.List.of(
+              "visible = false",
+              "public_production = false",
+              "catalog_revision = catalog_revision + 1")) {
+        assertThatThrownBy(
+                () ->
+                    harness
+                        .transactions()
+                        .executeWithoutResult(
+                            status ->
+                                harness
+                                    .dsl()
+                                    .execute(
+                                        "UPDATE game_session_canonical_realm_catalog SET "
+                                            + mutation
+                                            + " WHERE target_namespace=? AND realm_id=?",
+                                        catalog.targetNamespace(),
+                                        catalog.realmId())))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("immutable");
+      }
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              harness
+                                  .dsl()
+                                  .execute(
+                                      "UPDATE game_session_canonical_instance_launch SET public_production=false"
+                                          + " WHERE target_namespace=? AND game_instance_uuid=?",
+                                      catalog.targetNamespace(),
+                                      prepared.request().canonicalGameInstanceId())))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("immutable");
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              harness
+                                  .dsl()
+                                  .execute(
+                                      "UPDATE gameplay_admission_pointer SET pointer_version=pointer_version+1"
+                                          + " WHERE target_namespace=? AND realm_id=?",
+                                      catalog.targetNamespace(),
+                                      catalog.realmId())))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining(
+              "Canonical CLOSED pointer may only enter the fenced first-OPEN operation");
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+      Record terminal = terminal(harness, prepared.request());
+      assertThat(terminal.get("status", String.class)).isEqualTo("ABORTED");
+      assertThat(terminal.get("intent_state", String.class)).isEqualTo("TERMINAL");
+      assertThat(terminal.get("pointer_id")).isNull();
+      assertThat(terminal.get("audit_event_id")).isNull();
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(terminal.formatJSON());
+      assertThat(
+              pointers
+                  .readOriginalClosedOrigin(
+                      closeRequest.targetNamespace(), closeRequest.requestId())
+                  .orElseThrow())
+          .usingRecursiveComparison()
+          .isEqualTo(originalClosed);
+    } finally {
+      harness.close();
+    }
+  }
+
   // Controlled Account protection input; this proves Game Session storage, not Account composition.
   @Test
   void expiredOriginalLeaseAllowsOnlyTheExactProtectedAbortAcrossForwardMigration()
@@ -361,6 +492,11 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               .dsl()
               .fetch("SELECT * " + "FROM flyway_schema_history ORDER BY installed_rank")
               .formatJSON();
+      int originalLastRank =
+          harness
+              .dsl()
+              .fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+              .get(0, Integer.class);
       Record intentBefore =
           harness
               .dsl()
@@ -403,18 +539,19 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   .dsl()
                   .fetch(
                       "SELECT * "
-                          + "FROM flyway_schema_history WHERE version IS DISTINCT FROM '1040.1' "
-                          + "ORDER BY installed_rank")
+                          + "FROM flyway_schema_history WHERE installed_rank <= ? "
+                          + "ORDER BY installed_rank",
+                      originalLastRank)
                   .formatJSON())
           .isEqualTo(historyBefore);
       assertThat(
               harness
                   .dsl()
                   .fetchSingle(
-                      "SELECT version FROM flyway_schema_history "
-                          + "ORDER BY installed_rank DESC LIMIT 1")
-                  .get(0, String.class))
-          .isEqualTo("1040.1");
+                      "SELECT count(*) FROM flyway_schema_history "
+                          + "WHERE version IN ('1040.1', '1040.2') AND success")
+                  .get(0, Long.class))
+          .isEqualTo(2L);
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(pending.formatJSON());
       assertThat(

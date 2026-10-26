@@ -337,9 +337,6 @@ public class CanonicalInitialAdmissionRepository {
       requireTerminalProtectionReplay(attempt, accountProtection);
       return;
     }
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      lockAllAdmissionRepresentationsForNoPrior();
-    }
     CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     CanonicalInitialAdmissionLaunchTarget launchTarget = lockLaunchTarget(request, false);
     requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
@@ -350,9 +347,8 @@ public class CanonicalInitialAdmissionRepository {
             request.targetNamespace(), request.initialAdmissionRequestId(), accountProtection);
 
     ExpectedClosedEvidence closedOrigin = lockExpectedClosedOrigin(request);
-    if (closedOrigin == null) {
-      requireNoPriorPointer(request, catalog, launchTarget);
-    }
+    // A negative terminal retains its original origin; it never claims or rewrites a pointer
+    // independently created after this reservation. The positive commit still proves absence.
     Instant terminalAt = nextTimestamp(attempt.updatedAt());
     int updated =
         dsl.execute(
