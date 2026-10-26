@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmi
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionLeaseManualFactory;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortOutcome;
@@ -32,6 +33,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReserv
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayAdmissionAbortCompositionFixture;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayAdmissionAbortManualFactory;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBindingLocalReleaseOperation;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -44,8 +46,9 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 /**
  * Actual Account acquisition/current caller/physical token and abort owner, real GS durable
  * PROVISIONAL reverse read and guarded abort CAS, physical PostgreSQL/Redis and manual mTLS.
- * Launch/publication/initial-target and test PKI inputs remain controlled. This proves neither
- * physical issuer release nor runtime registration, admission, production PKI or terminal cleanup.
+ * Launch/publication/initial-target and test PKI inputs remain controlled. The physical issuer
+ * proof is binding-local only; it does not prove runtime registration, admission, production PKI,
+ * or completion of the remaining Account and region terminal obligations.
  */
 @Execution(ExecutionMode.SAME_THREAD)
 class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
@@ -270,8 +273,171 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   }
 
   @Test
-  void actualReverseReadRefusesWrongPeerDecisionAndChangedOriginalTupleWithoutAccountAbort()
-      throws Exception {
+  void actualAccountAbortedOrdinaryIssuerMemberReleaseHasExactReadbackRetryAndFreesCapacity() throws Exception {
+    try (var session = open()) {
+      UUID originalOperationId = session.gs.originalOperationId();
+      byte[] originalMemberBytes = session.gs.originalMemberValueBytes();
+
+      var abort = session.abort();
+      assertThat(abort.state()).isEqualTo(CanonicalGameplayAdmissionAbortOutcome.State.ABORTED);
+      var aborted = session.gs.source();
+      assertThat(aborted.isAccountAborted()).isTrue();
+      assertThat(aborted.reservation().lifecycle())
+          .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
+
+      var pending = session.gs.prepareIssuerRelease();
+      assertThat(pending.originalOperationId()).isEqualTo(originalOperationId);
+      assertThat(pending.exactOriginalMemberValueBytes()).containsExactly(originalMemberBytes);
+      assertThat(pending.sourceInventoryRevision()).isGreaterThan(aborted.transition().inventoryRevision());
+      assertThat(session.gs.source().transition().inventoryRevision()).isEqualTo(pending.sourceInventoryRevision());
+
+      UUID secondOperationId = session.gs.prepareOtherControllerNew("second-controller");
+      assertThat(secondOperationId).isNotEqualTo(originalOperationId);
+      var clockAfterOtherWriter = session.gs.dsl().fetchSingle(
+          "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
+          .get("inventory_revision", java.math.BigDecimal.class).toBigIntegerExact();
+      assertThat(clockAfterOtherWriter).isGreaterThan(pending.sourceInventoryRevision());
+      assertThat(session.gs.source().transition().inventoryRevision()).isEqualTo(pending.sourceInventoryRevision());
+      assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.TWO);
+      assertThatThrownBy(() -> session.gs.prepareOtherControllerNew("full-before-release"))
+          .isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("capacity");
+
+      String preparedImage = session.image();
+      assertThatThrownBy(() -> session.gs.dsl().execute(
+          "UPDATE game_session_canonical_issuer_binding_local_release_operation"
+              + " SET original_member_value_bytes = ? WHERE operation_id = ?",
+          new byte[] {1}, pending.operationId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(session.image()).isEqualTo(preparedImage);
+      assertThatThrownBy(() -> session.gs.dsl().execute(
+          "UPDATE game_session_canonical_issuer_binding_local_release_operation"
+              + " SET original_reservation_fence = ? WHERE operation_id = ?",
+          UUID.randomUUID(), pending.operationId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(session.image()).isEqualTo(preparedImage);
+      assertThatThrownBy(() -> session.gs.dsl().execute(
+          "UPDATE game_session_canonical_issuer_binding_local_release_operation"
+              + " SET anchor_operation_fence = anchor_operation_fence + 1 WHERE operation_id = ?",
+          pending.operationId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(session.image()).isEqualTo(preparedImage);
+      assertThatThrownBy(() -> session.gs.dsl().execute(
+          "UPDATE game_session_canonical_issuer_partition_reservation"
+              + " SET lifecycle = 'RELEASED', inventory_revision = inventory_revision + 1"
+              + " WHERE reservation_id = ?",
+          pending.abortSource().reservation().reservationId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(session.image()).isEqualTo(preparedImage);
+
+      assertThatThrownBy(() -> session.gs.prepareOtherControllerNew("still-full-during-release"))
+          .isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("capacity");
+
+      session.gs.moveIssuerSourceCheckpoint();
+      assertThatThrownBy(() -> session.gs.projectIssuerRelease(pending))
+          .isInstanceOf(RuntimeException.class);
+      session.gs.restoreIssuerState();
+      assertThat(session.gs.readReleaseCapacityValue(pending)).containsExactly(originalMemberBytes);
+      assertThat(session.gs.readReleaseBindingValue(pending)).containsExactly(originalMemberBytes);
+
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(() -> session.gs.projectIssuerRelease(pending))
+          .isInstanceOf(RuntimeException.class);
+      session.gs.restoreIssuerState();
+      assertThat(session.gs.readReleaseCapacityValue(pending)).containsExactly(originalMemberBytes);
+      assertThat(session.gs.readReleaseBindingValue(pending)).containsExactly(originalMemberBytes);
+
+      byte[] wrongReservationValue = session.gs.otherMemberValueBytes("second-controller");
+      session.gs.installConflictingReleaseCapacity(pending, wrongReservationValue);
+      assertThatThrownBy(() -> session.gs.projectIssuerRelease(pending))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.readReleaseCapacityValue(pending)).containsExactly(wrongReservationValue);
+      assertThat(session.gs.readReleaseBindingValue(pending)).containsExactly(originalMemberBytes);
+      session.gs.restoreOriginalReleaseCapacity(pending);
+
+      session.gs.installConflictingReleaseBinding(pending);
+      byte[] conflictingBinding = session.gs.readReleaseBindingValue(pending);
+      byte[] originalCapacity = session.gs.readReleaseCapacityValue(pending);
+      assertThatThrownBy(() -> session.gs.projectIssuerRelease(pending))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.readReleaseBindingValue(pending)).containsExactly(conflictingBinding);
+      assertThat(session.gs.readReleaseCapacityValue(pending)).containsExactly(originalCapacity);
+      session.gs.restoreOriginalReleaseBinding(pending);
+      assertThat(session.gs.readReleaseBindingValue(pending)).containsExactly(originalMemberBytes);
+      assertThat(session.gs.readReleaseCapacityValue(pending)).containsExactly(originalMemberBytes);
+
+      assertThatThrownBy(() -> session.gs.projectIssuerReleaseAndLoseReply(pending))
+          .hasMessage("controlled lost issuer release reply after physical readback");
+      var resumed = session.gs.prepareIssuerRelease();
+      assertThat(resumed.operationId()).isEqualTo(pending.operationId());
+      assertThat(resumed.sourceInventoryRevision()).isEqualTo(pending.sourceInventoryRevision());
+      assertThat(resumed.exactReleasedMemberValueBytes()).containsExactly(pending.exactReleasedMemberValueBytes());
+      var physicalReadback = session.gs.projectIssuerRelease(resumed);
+      assertThat(physicalReadback.scriptOutcome()).isEqualTo(2L);
+      assertThat(session.gs.readbackHasExactReleasedMember(resumed, physicalReadback)).isTrue();
+      var clockBeforeCompletion = session.gs.dsl().fetchSingle(
+          "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
+          .get("inventory_revision", java.math.BigDecimal.class).toBigIntegerExact();
+      assertThat(clockBeforeCompletion).isEqualTo(clockAfterOtherWriter);
+      var afterPhysicalReadback = session.gs.source();
+      assertThat(afterPhysicalReadback.reservation().lifecycle())
+          .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
+      var released = session.gs.completeIssuerRelease(resumed, physicalReadback);
+      assertThat(released.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      assertThat(released.completionInventoryRevision())
+          .isGreaterThan(released.sourceInventoryRevision());
+      assertThat(released.completionInventoryRevision()).isGreaterThan(clockBeforeCompletion);
+      assertThat(released.exactOriginalMemberValueBytes()).containsExactly(originalMemberBytes);
+      assertThat(released.releasedMemberValue().reservation().lifecycle())
+          .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASED);
+      assertThat(released.releasedMemberValue().reservation().inventoryRevision())
+          .isEqualTo(released.sourceInventoryRevision());
+      assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.ONE);
+
+      var source = session.gs.source();
+      assertThat(source.reservation().lifecycle())
+          .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASED);
+      assertThat(source.candidate().lifecycle())
+          .isEqualTo(CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED);
+      var issuer = session.gs.dsl().fetchSingle(
+          "SELECT status, local_release_operation_id, inventory_revision"
+              + " FROM game_session_canonical_binding_issuer_index_obligation WHERE transition_id = ?",
+          session.gs.transitionId());
+      assertThat(issuer.get("status", String.class)).isEqualTo("RELEASED");
+      assertThat(issuer.get("local_release_operation_id", UUID.class)).isEqualTo(released.operationId());
+      assertThat(issuer.get("inventory_revision", java.math.BigDecimal.class))
+          .isEqualTo(new java.math.BigDecimal(released.completionInventoryRevision()));
+      assertThat(session.gs.dsl().fetchSingle(
+          "SELECT status FROM game_session_canonical_binding_account_index_obligation"
+              + " WHERE transition_id = ? AND obligation_ordinal = 0",
+          session.gs.transitionId()).get("status", String.class)).isIn("REQUIRED", "ACKNOWLEDGED");
+      assertThat(session.gs.dsl().fetchSingle(
+          "SELECT status FROM game_session_canonical_binding_region_bridge_obligation WHERE transition_id = ?",
+          session.gs.transitionId()).get("status", String.class)).isEqualTo("REQUIRED");
+
+      UUID thirdOperationId = session.gs.prepareOtherControllerNew("freed-capacity-other-controller");
+      assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.TWO);
+      var thirdReadback = session.gs.projectOtherControllerNew("freed-capacity-other-controller");
+      assertThat(thirdReadback.operationId()).isEqualTo(thirdOperationId);
+      assertThat(thirdReadback.scriptOutcome()).isIn(1L, 2L, 3L);
+
+      byte[] retainedReadback = released.exactPhysicalReadbackFieldSetBytes();
+      var releaseReplay = session.gs.prepareIssuerRelease();
+      assertThat(releaseReplay.operationId()).isEqualTo(released.operationId());
+      assertThat(releaseReplay.exactReleasedMemberValueBytes()).containsExactly(released.exactReleasedMemberValueBytes());
+      var replayReadback = session.gs.projectIssuerRelease(releaseReplay);
+      assertThat(replayReadback.scriptOutcome()).isEqualTo(2L);
+      var completedReplay = session.gs.completeIssuerRelease(releaseReplay, replayReadback);
+      assertThat(completedReplay.completionInventoryRevision()).isEqualTo(released.completionInventoryRevision());
+      assertThat(completedReplay.exactPhysicalReadbackFieldSetBytes()).containsExactly(retainedReadback);
+      assertThat(session.abort().orphanCleanupId()).isEqualTo(abort.orphanCleanupId());
+    }
+  }
+
+  @Test
+  void actualReverseReadRefusesWrongPeerDecisionAndChangedOriginalTupleWithoutAccountAbort() throws Exception {
     try (var session = open()) {
       var before = session.image();
       assertThat(session.reverse.read(session.gs.transitionId(), session.lease).bindingDecisionId())
@@ -365,6 +531,27 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
         assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
         assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
       }
+      // Issuer release is independent of the historical account ADD acknowledgement.
+      // The physical account member and its cleanup obligation remain retained throughout.
+      var pendingIssuerRelease = session.gs.prepareIssuerRelease();
+      var issuerReadback = session.gs.projectIssuerRelease(pendingIssuerRelease);
+      var issuerRelease = session.gs.completeIssuerRelease(pendingIssuerRelease, issuerReadback);
+      assertThat(issuerRelease.status()).isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      assertThat(session.gs.source().reservation().lifecycle()).isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASED);
+      assertThat(session.gs.source().candidate().accountIndexState()).isEqualTo(CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED);
+      assertThat(session.gs.source().candidate().lifecycle()).isEqualTo(CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED);
+      assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
+      assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
+      session.restartAccount();
+      assertThat(session.abort().orphanCleanupId()).isEqualTo(result.orphanCleanupId());
+      var replayIssuerRelease = session.gs.prepareIssuerRelease();
+      var replayIssuerReadback = session.gs.projectIssuerRelease(replayIssuerRelease);
+      assertThat(session.gs.completeIssuerRelease(replayIssuerRelease, replayIssuerReadback).completionInventoryRevision())
+          .isEqualTo(issuerRelease.completionInventoryRevision());
+      assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
+      assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
+      assertThat(session.gs.hasExactAccountMember()).isTrue();
     }
   }
 
@@ -403,11 +590,17 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 issuance.accountId(),
                 new CallerIdentity(issuance.callerWorkload(), issuance.callerContextId()));
         jwt = new String(credential.compactJwtBytes(), StandardCharsets.US_ASCII);
-        gs =
-            new CanonicalGameplayAdmissionAbortCompositionFixture(
-                accountFixture.dataSource,
-                AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.admissionCandidate(
-                    accountFixture));
+      Candidate candidate =
+          AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.admissionCandidate(accountFixture);
+      Candidate capacityCandidate = new Candidate(
+          candidate.accountId(), candidate.tenantId(), candidate.playableStateNamespaceId(),
+          candidate.characterId(), candidate.playableStateScope(), candidate.gameInstanceId(),
+          candidate.runtimeGameInstanceId(), candidate.sessionId(), candidate.regionId(),
+          candidate.regionEpoch(), candidate.issuerId(), candidate.issuerAuthGeneration(),
+          candidate.issuerIndexLayoutVersion(), candidate.issuerIndexPartitionCount(),
+          java.math.BigInteger.valueOf(2));
+      gs = new CanonicalGameplayAdmissionAbortCompositionFixture(
+          accountFixture.dataSource, capacityCandidate, redis.issuerOwnerClient());
         if (prepareMemberRepair) gs.prepareMemberRepairRedis();
         pkiDirectory = Files.createTempDirectory(temporaryDirectory, "actual-abort-mtls-");
         pki =
@@ -497,17 +690,12 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     }
 
     private String image() {
-      return java.util.List.of(
-              "game_session_canonical_binding_transition",
-              "game_session_canonical_gameplay_binding_inventory",
-              "game_session_canonical_issuer_partition_reservation")
-          .stream()
-          .map(
-              table ->
-                  gs.dsl()
-                      .fetch("SELECT to_jsonb(t)::text AS image FROM " + table + " t ORDER BY 1")
-                      .getValues("image")
-                      .toString())
+      return java.util.List.of("game_session_canonical_binding_transition", "game_session_canonical_gameplay_binding_inventory",
+          "game_session_canonical_issuer_partition_reservation",
+          "game_session_canonical_binding_issuer_index_obligation",
+          "game_session_canonical_issuer_binding_local_operation",
+          "game_session_canonical_issuer_binding_local_release_operation").stream()
+          .map(table -> gs.dsl().fetch("SELECT to_jsonb(t)::text AS image FROM " + table + " t ORDER BY 1").getValues("image").toString())
           .collect(java.util.stream.Collectors.joining("\n"));
     }
 

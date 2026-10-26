@@ -70,7 +70,12 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
           + " WHERE a.inventory_revision <= ?"
           + " UNION ALL SELECT 'ISSUER_OBLIGATION' AS source_kind,"
           + " encode(o.binding_ref, 'hex') || ':' || o.transition_id::text AS source_key,"
-          + " o.inventory_revision AS source_revision, to_jsonb(o)::text AS source_row_json"
+          + " o.inventory_revision AS source_revision,"
+          // Preserve pre-V1036 frozen bytes only for the absence-equivalent new NULL linkage.
+          // An actual release-operation identity remains significant captured source evidence.
+          + " CASE WHEN to_jsonb(o)->'local_release_operation_id' = 'null'::jsonb"
+          + " THEN (to_jsonb(o) - 'local_release_operation_id')::text"
+          + " ELSE to_jsonb(o)::text END AS source_row_json"
           + " FROM game_session_canonical_binding_issuer_index_obligation o"
           + " WHERE o.inventory_revision <= ?"
           + " UNION ALL SELECT 'REGION_OBLIGATION' AS source_kind,"

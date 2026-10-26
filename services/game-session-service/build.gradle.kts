@@ -177,6 +177,14 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingRuntimeTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayAdmissionAbortCompositionFixture*.class")
     }
+    from("src/main/resources") {
+        include("redis/lua/game-session-issuer-bootstrap-partition-build.lua")
+        include("redis/scripts/game-session-issuer-bootstrap-partition-build.json")
+        include("redis/lua/game-session-issuer-binding-local-add.lua")
+        include("redis/scripts/game-session-issuer-binding-local-add.json")
+        include("redis/lua/game-session-issuer-binding-local-release.lua")
+        include("redis/scripts/game-session-issuer-binding-local-release.json")
+    }
 }
 
 val gameSessionClassesProof by configurations.creating {
