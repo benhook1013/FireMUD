@@ -447,3 +447,9 @@ Entry format:
   - Context: The manual Human-to-region composition rejected a guarded update and rolled its transaction back before the diagnostic reread.
   - Observation: Reconstructing expected values from the retained `PREPARED` row yielded NULL admission fields and misleading predicate failures instead of the attempted decision.
   - Expected pattern: Pass the immutable attempted selector to bounded failure-only diagnostics, read actual durable source rows separately, and keep attempted values distinct from committed evidence.
+
+- `2026-10-27`: Historical migration fixtures must not invoke a newly extended fresh writer
+  - Context: #3315 Entity CI failed all 46 roster-retention cases in shared setup. The fixture seeded at V1011 (and a legacy V1017 path) through the current assignment writer before upgrading; that writer now requires the V1022 runtime-projection table.
+  - Observation: the production migration was present and executed in other schema contexts. A controlled historical SQL seed preserves the old assignment receipt, actor and snapshot without manufacturing a runtime projection or moving the test to the latest frontier. Current-schema assignments retain the production writer. Later shutdown connection noise is separate and its cause remains unproven.
+  - Outcome: the one-file fixture correction is prepared; consolidated native/static validation remains pending.
+  - Expected pattern: retain the exact pre-upgrade schema, source rows and history in migration proof. Use explicitly historical fixture input when current Java requires a later schema; do not add production compatibility branches or backfill authority merely to seed a test.

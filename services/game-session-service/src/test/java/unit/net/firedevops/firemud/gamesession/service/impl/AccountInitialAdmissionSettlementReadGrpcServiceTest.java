@@ -24,6 +24,7 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -45,6 +46,7 @@ import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 /** Actual loopback mTLS handler with a controlled terminal owner double, not owner persistence. */
 class AccountInitialAdmissionSettlementReadGrpcServiceTest {
@@ -172,13 +174,67 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
                 "not terminal"))
         .when(owner)
         .read(any());
-    assertThat(invoke(account, request)).isEqualTo(Status.Code.FAILED_PRECONDITION);
-    doThrow(new org.jooq.exception.DataAccessException("storage unavailable"))
+    var knownRefusal = invokeStatus(account, request);
+    assertThat(knownRefusal.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(knownRefusal.getDescription()).isEqualTo("Exact protected terminal is unavailable");
+
+    doThrow(new org.jooq.exception.TooManyRowsException("private cardinality detail"))
         .when(owner)
         .read(any());
-    assertThat(invoke(account, request)).isEqualTo(Status.Code.UNAVAILABLE);
+    var tooManyRows = invokeStatus(account, request);
+    assertThat(tooManyRows.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(tooManyRows.getDescription())
+        .isEqualTo("Exact protected terminal is unavailable")
+        .doesNotContain("private cardinality detail");
+
+    doThrow(
+            new org.jooq.exception.DataAccessException(
+                "private storage detail", new SQLException("private SQL detail", "08006")))
+        .when(owner)
+        .read(any());
+    var connectionFailure = invokeStatus(account, request);
+    assertThat(connectionFailure.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(connectionFailure.getDescription())
+        .isEqualTo("Settlement owner is unavailable")
+        .doesNotContain("private");
+
+    doThrow(new DataAccessResourceFailureException("private resource failure"))
+        .when(owner)
+        .read(any());
+    var resourceFailure = invokeStatus(account, request);
+    assertThat(resourceFailure.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(resourceFailure.getDescription())
+        .isEqualTo("Settlement owner is unavailable")
+        .doesNotContain("private");
+
+    doThrow(
+            new org.jooq.exception.DataAccessException(
+                "private storage detail", new SQLException("private SQL detail", "42P01")))
+        .when(owner)
+        .read(any());
+    var permanentSqlFailure = invokeStatus(account, request);
+    assertThat(permanentSqlFailure.getCode()).isEqualTo(Status.Code.INTERNAL);
+    assertThat(permanentSqlFailure.getDescription())
+        .isEqualTo("Settlement owner read failed")
+        .doesNotContain("private");
+    assertThat(permanentSqlFailure.getCause())
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+
+    var untypedStorageFailure =
+        new org.jooq.exception.DataAccessException("private untyped storage failure");
+    doThrow(untypedStorageFailure).when(owner).read(any());
+    var untypedFailure = invokeStatus(account, request);
+    assertThat(untypedFailure.getCode()).isEqualTo(Status.Code.INTERNAL);
+    assertThat(untypedFailure.getDescription())
+        .isEqualTo("Settlement owner read failed")
+        .doesNotContain("private");
+    assertThat(untypedFailure.getCause()).isSameAs(untypedStorageFailure);
+
     doThrow(new UnsupportedOperationException("unexpected")).when(owner).read(any());
-    assertThat(invoke(account, request)).isEqualTo(Status.Code.INTERNAL);
+    var unexpected = invokeStatus(account, request);
+    assertThat(unexpected.getCode()).isEqualTo(Status.Code.INTERNAL);
+    assertThat(unexpected.getDescription()).isEqualTo("Settlement owner read failed");
+    assertThat(unexpected.getCause()).isInstanceOf(UnsupportedOperationException.class);
   }
 
   private AccountInitialAdmissionSettlementReadGrpcService service() {
@@ -187,7 +243,12 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
 
   private Status.Code invoke(
       GrpcPeerIdentity peer, GetAccountInitialAdmissionSettlementRequest request) {
-    AtomicReference<Status.Code> error = new AtomicReference<>();
+    return invokeStatus(peer, request).getCode();
+  }
+
+  private Status invokeStatus(
+      GrpcPeerIdentity peer, GetAccountInitialAdmissionSettlementRequest request) {
+    AtomicReference<Status> error = new AtomicReference<>();
     Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     context.run(
         () ->
@@ -200,7 +261,7 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
 
                       @Override
                       public void onError(Throwable failure) {
-                        error.set(Status.fromThrowable(failure).getCode());
+                        error.set(Status.fromThrowable(failure));
                       }
 
                       @Override
