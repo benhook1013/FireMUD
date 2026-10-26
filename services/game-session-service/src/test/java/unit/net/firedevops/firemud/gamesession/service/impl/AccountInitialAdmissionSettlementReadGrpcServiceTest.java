@@ -169,14 +169,22 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
     assertThat(invoke(account, request.toBuilder().setTargetNamespace(0, "foreign").build()))
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(owner);
-    doThrow(
-            new AccountInitialAdmissionSettlementReadService.SettlementUnavailableException(
-                "not terminal"))
-        .when(owner)
-        .read(any());
+    var unavailableTerminal =
+        new AccountInitialAdmissionSettlementReadService.SettlementUnavailableException(
+            "not terminal");
+    doThrow(unavailableTerminal).when(owner).read(any());
     var knownRefusal = invokeStatus(account, request);
     assertThat(knownRefusal.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(knownRefusal.getDescription()).isEqualTo("Exact protected terminal is unavailable");
+    assertThat(knownRefusal.getCause()).isSameAs(unavailableTerminal);
+    var encodingFailure = new IllegalArgumentException("private encoding detail");
+    doThrow(encodingFailure).when(owner).read(any());
+    var invalidEvidence = invokeStatus(account, request);
+    assertThat(invalidEvidence.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(invalidEvidence.getDescription())
+        .isEqualTo("Exact protected terminal is unavailable")
+        .doesNotContain("private");
+    assertThat(invalidEvidence.getCause()).isSameAs(encodingFailure);
 
     doThrow(new org.jooq.exception.TooManyRowsException("private cardinality detail"))
         .when(owner)

@@ -38,7 +38,7 @@ public final class AccountStartSessionAdmissionProtectionGrpcService
     try {
       workloadGuard.requireGameSessionCaller();
     } catch (StatusRuntimeException denied) {
-      fail(observer, denied.getStatus());
+      fail(observer, denied.getStatus().withCause(denied));
       return;
     }
     if (TransactionSynchronizationManager.isActualTransactionActive()
@@ -58,10 +58,10 @@ public final class AccountStartSessionAdmissionProtectionGrpcService
       decoded = AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.fromRequest(request);
       workloadGuard.requireTargetNamespace(decoded);
     } catch (StatusRuntimeException denied) {
-      fail(observer, denied.getStatus());
+      fail(observer, denied.getStatus().withCause(denied));
       return;
     } catch (IllegalArgumentException malformed) {
-      fail(observer, Status.INVALID_ARGUMENT);
+      fail(observer, Status.INVALID_ARGUMENT.withCause(malformed));
       return;
     }
 
@@ -71,21 +71,24 @@ public final class AccountStartSessionAdmissionProtectionGrpcService
           AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toResponse(decoded, evidence));
       observer.onCompleted();
     } catch (StatusRuntimeException failure) {
-      fail(observer, failure.getStatus());
+      fail(observer, failure.getStatus().withCause(failure));
     } catch (AccountStartSessionOperatorAuthorizationService.NotFoundException missing) {
-      fail(observer, Status.NOT_FOUND);
+      fail(observer, Status.NOT_FOUND.withCause(missing));
     } catch (ImmutableBindingConflictException
         | AccountStartSessionOperatorAuthorizationService.OriginalAuthorizationDeniedException
             expected) {
-      fail(observer, Status.FAILED_PRECONDITION);
+      fail(observer, Status.FAILED_PRECONDITION.withCause(expected));
     } catch (CannotCreateTransactionException unavailable) {
-      fail(observer, Status.UNAVAILABLE);
+      fail(observer, Status.UNAVAILABLE.withCause(unavailable));
     } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
-      fail(observer, hasUnavailableSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+      fail(
+          observer,
+          (hasUnavailableSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL)
+              .withCause(failure));
     } catch (IllegalArgumentException mismatch) {
-      fail(observer, Status.FAILED_PRECONDITION);
+      fail(observer, Status.FAILED_PRECONDITION.withCause(mismatch));
     } catch (RuntimeException failure) {
-      fail(observer, Status.INTERNAL);
+      fail(observer, Status.INTERNAL.withCause(failure));
     }
   }
 
@@ -105,6 +108,7 @@ public final class AccountStartSessionAdmissionProtectionGrpcService
     observer.onError(
         Status.fromCode(status.getCode())
             .withDescription("Account admission-protection acquisition denied or unavailable")
+            .withCause(status.getCause())
             .asRuntimeException());
   }
 }

@@ -2178,6 +2178,57 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     return sqlException == null ? null : sqlException.getSQLState();
   }
 
+  private static String accountRowSnapshot(DSLContext accountSql, UUID accountUuid) {
+    return accountSql
+        .fetchSingle(
+            "SELECT row_to_json(account_row)::text || '|xmin=' || account_row.xmin::text "
+                + "AS body FROM accounts account_row WHERE account_uuid=?",
+            accountUuid)
+        .get("body", String.class);
+  }
+
+  private static void assertAccountSourceWriteBlockedWhileAdmissionPending(
+      DSLContext accountSql, UUID accountUuid, String passwordBeforeWrite) {
+    assertThatThrownBy(
+            () ->
+                new TransactionTemplate(accountManager(accountSql))
+                    .executeWithoutResult(
+                        ignored ->
+                            updateAccountPasswordThroughOwner(
+                                accountSql, accountUuid, passwordBeforeWrite + "-blocked")))
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure =
+                  Objects.requireNonNull(
+                      findSqlException(failure), "Account source writer SQLException required");
+              assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
+              assertThat(sqlFailure.getMessage())
+                  .contains(
+                      "Original StartSession admission protection remains pending for a required "
+                          + "source");
+            });
+  }
+
+  private static void assertNoCanonicalAdmissionPointerArtifacts(
+      DSLContext gsSql, String initialAdmissionRequestId) {
+    assertThat(
+            gsSql
+                .fetchSingle(
+                    "SELECT count(*) FROM gameplay_admission_pointer "
+                        + "WHERE initial_admission_request_id=?",
+                    initialAdmissionRequestId)
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            gsSql
+                .fetchSingle(
+                    "SELECT count(*) FROM gameplay_admission_pointer_event "
+                        + "WHERE initial_admission_request_id=?",
+                    initialAdmissionRequestId)
+                .get(0, Long.class))
+        .isZero();
+  }
+
   private static String prefixedSha256(byte[] bytes) {
     try {
       return "sha256:"
@@ -2502,42 +2553,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               .sourceDsl()
               .fetchSingle("SELECT password_hash FROM accounts WHERE account_uuid=?", accountUuid)
               .get("password_hash", String.class);
-      String accountRowBeforeSourceWrite =
-          issuer
-              .sourceDsl()
-              .fetchSingle(
-                  "SELECT row_to_json(account_row)::text || '|xmin=' || account_row.xmin::text "
-                      + "AS body FROM accounts account_row WHERE account_uuid=?",
-                  accountUuid)
-              .get("body", String.class);
-      assertThatThrownBy(
-              () ->
-                  new TransactionTemplate(accountManager(issuer.sourceDsl()))
-                      .executeWithoutResult(
-                          ignored ->
-                              updateAccountPasswordThroughOwner(
-                                  issuer.sourceDsl(),
-                                  accountUuid,
-                                  accountPasswordBeforeSourceWrite + "-blocked")))
-          .satisfies(
-              failure -> {
-                SQLException sqlFailure =
-                    Objects.requireNonNull(
-                        findSqlException(failure), "Account source writer SQLException required");
-                assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
-                assertThat(sqlFailure.getMessage())
-                    .contains(
-                        "Original StartSession admission protection remains pending for a required "
-                            + "source");
-              });
-      String accountRowAfterSourceWrite =
-          issuer
-              .sourceDsl()
-              .fetchSingle(
-                  "SELECT row_to_json(account_row)::text || '|xmin=' || account_row.xmin::text "
-                      + "AS body FROM accounts account_row WHERE account_uuid=?",
-                  accountUuid)
-              .get("body", String.class);
+      String accountRowBeforeSourceWrite = accountRowSnapshot(issuer.sourceDsl(), accountUuid);
+      assertAccountSourceWriteBlockedWhileAdmissionPending(
+          issuer.sourceDsl(), accountUuid, accountPasswordBeforeSourceWrite);
+      String accountRowAfterSourceWrite = accountRowSnapshot(issuer.sourceDsl(), accountUuid);
       assertThat(accountRowAfterSourceWrite).isEqualTo(accountRowBeforeSourceWrite);
       assertThat(
               issuer
@@ -2599,22 +2618,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         request.canonicalGameInstanceId())
                     .get("status", String.class))
             .isEqualTo("STARTING");
-        assertThat(
-                gs.dsl()
-                    .fetchSingle(
-                        "SELECT count(*) FROM gameplay_admission_pointer "
-                            + "WHERE initial_admission_request_id=?",
-                        request.initialAdmissionRequestId())
-                    .get(0, Long.class))
-            .isZero();
-        assertThat(
-                gs.dsl()
-                    .fetchSingle(
-                        "SELECT count(*) FROM gameplay_admission_pointer_event "
-                            + "WHERE initial_admission_request_id=?",
-                        request.initialAdmissionRequestId())
-                    .get(0, Long.class))
-            .isZero();
+        assertNoCanonicalAdmissionPointerArtifacts(gs.dsl(), request.initialAdmissionRequestId());
 
         var abortedWorldTerminal = worldHoldOwner.settleFromAuthenticatedOwnerRead(identity);
         assertThat(abortedWorldTerminal.outcome())
@@ -2626,34 +2630,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         assertThat(worldHoldClient.readState(identity, lifecycleRequest).holdStatus().name())
             .isEqualTo("ABORTED");
 
-        assertThatThrownBy(
-                () ->
-                    new TransactionTemplate(accountManager(issuer.sourceDsl()))
-                        .executeWithoutResult(
-                            ignored ->
-                                updateAccountPasswordThroughOwner(
-                                    issuer.sourceDsl(),
-                                    accountUuid,
-                                    accountPasswordBeforeSourceWrite + "-blocked")))
-            .satisfies(
-                failure -> {
-                  SQLException sqlFailure =
-                      Objects.requireNonNull(
-                          findSqlException(failure), "Account source writer SQLException required");
-                  assertThat(sqlFailure.getSQLState()).isEqualTo("55P03");
-                  assertThat(sqlFailure.getMessage())
-                      .contains(
-                          "Original StartSession admission protection remains pending for a required "
-                              + "source");
-                });
+        assertAccountSourceWriteBlockedWhileAdmissionPending(
+            issuer.sourceDsl(), accountUuid, accountPasswordBeforeSourceWrite);
         String accountRowAfterAbortedOwnerBeforeSettlement =
-            issuer
-                .sourceDsl()
-                .fetchSingle(
-                    "SELECT row_to_json(account_row)::text || '|xmin=' || account_row.xmin::text "
-                        + "AS body FROM accounts account_row WHERE account_uuid=?",
-                    accountUuid)
-                .get("body", String.class);
+            accountRowSnapshot(issuer.sourceDsl(), accountUuid);
         assertThat(accountRowAfterAbortedOwnerBeforeSettlement)
             .isEqualTo(accountRowBeforeSourceWrite);
 
@@ -2737,29 +2717,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       assertThat(pendingWorldState.holdStatus().name()).isEqualTo("PENDING");
       assertThat(pendingWorldState.isPendingAtExpectedActiveEpoch()).isTrue();
 
-      var completionRepository = new CanonicalHumanRuntimeCompletionRepository(gs.dsl());
+      var completionRepository = new CanonicalHumanRuntimeCompletionRepository(gs.dsl(), NAMESPACE);
       var beforeCompletion =
           gs.dsl()
               .fetchSingle(
                   "SELECT status,row_version FROM game_instances WHERE game_instance_uuid=?",
                   request.canonicalGameInstanceId());
       assertThat(beforeCompletion.get("status", String.class)).isEqualTo("STARTING");
-      assertThat(
-              gs.dsl()
-                  .fetchSingle(
-                      "SELECT count(*) FROM gameplay_admission_pointer "
-                          + "WHERE initial_admission_request_id=?",
-                      request.initialAdmissionRequestId())
-                  .get(0, Long.class))
-          .isZero();
-      assertThat(
-              gs.dsl()
-                  .fetchSingle(
-                      "SELECT count(*) FROM gameplay_admission_pointer_event "
-                          + "WHERE initial_admission_request_id=?",
-                      request.initialAdmissionRequestId())
-                  .get(0, Long.class))
-          .isZero();
+      assertNoCanonicalAdmissionPointerArtifacts(gs.dsl(), request.initialAdmissionRequestId());
       var completion =
           Objects.requireNonNull(
               gs.write()
@@ -2787,22 +2752,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           .isEqualTo(beforeCompletion.get("row_version", Long.class) + 1L);
       assertThat(admissionOwner.read(NAMESPACE, request.initialAdmissionRequestId()).orElseThrow())
           .isEqualTo(pending);
-      assertThat(
-              gs.dsl()
-                  .fetchSingle(
-                      "SELECT count(*) FROM gameplay_admission_pointer "
-                          + "WHERE initial_admission_request_id=?",
-                      request.initialAdmissionRequestId())
-                  .get(0, Long.class))
-          .isZero();
-      assertThat(
-              gs.dsl()
-                  .fetchSingle(
-                      "SELECT count(*) FROM gameplay_admission_pointer_event "
-                          + "WHERE initial_admission_request_id=?",
-                      request.initialAdmissionRequestId())
-                  .get(0, Long.class))
-          .isZero();
+      assertNoCanonicalAdmissionPointerArtifacts(gs.dsl(), request.initialAdmissionRequestId());
       assertThat(
               issuer
                   .sourceDsl()
@@ -2943,15 +2893,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         assertThat(storedSettlement.get("terminal_digest", String.class))
             .isEqualTo(accountSettlement.digest());
 
+        String settledAccountPassword = accountPasswordBeforeSourceWrite + "-settled";
         var releasedAccount =
             Objects.requireNonNull(
                 new TransactionTemplate(accountManager(issuer.sourceDsl()))
                     .execute(
                         ignored ->
                             updateAccountPasswordThroughOwner(
-                                issuer.sourceDsl(),
-                                accountUuid,
-                                accountPasswordBeforeSourceWrite + "-blocked")),
+                                issuer.sourceDsl(), accountUuid, settledAccountPassword)),
                 "Settled Account owner update readback required");
         assertThat(releasedAccount.getAccountUuid()).isEqualTo(accountUuid);
         String accountPasswordAfterSettlement =
@@ -2959,17 +2908,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .sourceDsl()
                 .fetchSingle("SELECT password_hash FROM accounts WHERE account_uuid=?", accountUuid)
                 .get("password_hash", String.class);
-        assertThat(accountPasswordAfterSettlement)
-            .isEqualTo(accountPasswordBeforeSourceWrite + "-blocked");
+        assertThat(accountPasswordAfterSettlement).isEqualTo(settledAccountPassword);
         assertThat(accountPasswordAfterSettlement).isNotEqualTo(accountPasswordBeforeSourceWrite);
-        String accountRowAfterSettlement =
-            issuer
-                .sourceDsl()
-                .fetchSingle(
-                    "SELECT row_to_json(account_row)::text || '|xmin=' || account_row.xmin::text "
-                        + "AS body FROM accounts account_row WHERE account_uuid=?",
-                    accountUuid)
-                .get("body", String.class);
+        String accountRowAfterSettlement = accountRowSnapshot(issuer.sourceDsl(), accountUuid);
         assertThat(accountRowAfterSettlement).isNotEqualTo(accountRowBeforeSourceWrite);
       }
 
@@ -4241,13 +4182,16 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var identity = pki.server(service);
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
-            .maxInboundMessageSize(
-                AccountInitialAdmissionSettlementReadGrpcCodec.MAX_REQUEST_WIRE_BYTES)
             .sslContext(
                 GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    if (Arrays.stream(receivers)
+        .anyMatch(AccountInitialAdmissionSettlementReadGrpcService.class::isInstance)) {
+      builder.maxInboundMessageSize(
+          AccountInitialAdmissionSettlementReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+    }
     if (additionalService != null)
       builder.addService(
           ServerInterceptors.intercept(additionalService.get(), new GrpcPeerIdentityInterceptor()));

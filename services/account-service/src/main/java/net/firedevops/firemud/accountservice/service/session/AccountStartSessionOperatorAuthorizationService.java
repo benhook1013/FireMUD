@@ -847,14 +847,14 @@ public final class AccountStartSessionOperatorAuthorizationService {
             original.authorityEvidenceBundle(),
             original.bundleReference());
     if (!MessageDigest.isEqual(expected.canonicalBytes(), supplied.canonicalBytes())) {
-      throw denied("World participation tuple differs from the original Account issuance");
+      throw denied("Receiving tuple differs from the original Account issuance");
     }
   }
 
   private static void requireNoAmbientTransactionOrSynchronization() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw denied("World currentness must begin without an ambient Account transaction");
+      throw denied("Receiving currentness must begin without an ambient Account transaction");
     }
   }
 

@@ -103,6 +103,7 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
       observer.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Exact protected terminal is unavailable")
+              .withCause(unproved)
               .asRuntimeException());
     } catch (RuntimeException unexpected) {
       observer.onError(
