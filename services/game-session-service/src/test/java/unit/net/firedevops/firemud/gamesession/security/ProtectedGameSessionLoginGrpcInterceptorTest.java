@@ -12,6 +12,7 @@ import io.grpc.MethodDescriptor;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.Status;
+import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionDecisionReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.CanonicalInitialAdmissionOwnerProofReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,30 @@ class ProtectedGameSessionLoginGrpcInterceptorTest {
         CanonicalInitialAdmissionOwnerProofReadServiceGrpc
             .getGetCanonicalInitialAdmissionOwnerProofMethod(),
         true);
+  }
+
+  @Test
+  void passesOnlyTheActualPurposeSpecificAdmissionDecisionReadMethod() {
+    verifyBoundary(
+        CanonicalGameplayAdmissionDecisionReadServiceGrpc
+            .getGetCanonicalGameplayAdmissionDecisionMethod(),
+        true);
+    verifyBoundary(
+        CanonicalGameplayAdmissionDecisionReadServiceGrpc
+            .getGetCanonicalGameplayAdmissionDecisionMethod()
+            .toBuilder()
+            .setFullMethodName(
+                "game_session.v1.GameSessionControlPlaneService/GetCanonicalGameplayAdmissionDecision")
+            .build(),
+        false);
+    verifyBoundary(
+        CanonicalGameplayAdmissionDecisionReadServiceGrpc
+            .getGetCanonicalGameplayAdmissionDecisionMethod()
+            .toBuilder()
+            .setFullMethodName(
+                "game_session.v1.GameSessionControlPlaneService/GetPublishedRealmAdmissionOwnerRead")
+            .build(),
+        false);
   }
 
   @Test

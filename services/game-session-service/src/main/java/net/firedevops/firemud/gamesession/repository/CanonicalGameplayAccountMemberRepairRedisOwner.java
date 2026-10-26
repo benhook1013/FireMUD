@@ -293,7 +293,8 @@ public final class CanonicalGameplayAccountMemberRepairRedisOwner {
   }
 
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
   }
 
   private static boolean canonicalDecimal(String value, boolean allowZero) {

@@ -43,7 +43,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * original tenant membership or entitlement baseline to remain unchanged.
  */
 final class AccountGameplayAdmissionCurrentSources {
-  private static final String ACCOUNT_ISSUER = "firemud-account-service";
+  private static final String ACCOUNT_ISSUER = GameSessionAccountDelegationProfile.ISSUER;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Set<String> LEASE_SOURCE_FIELDS =
       Set.of(

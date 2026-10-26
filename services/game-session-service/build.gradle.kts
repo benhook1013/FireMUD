@@ -169,6 +169,8 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
     from(sourceSets.main.get().output.classesDirs)
     from(sourceSets["integrationTest"].output.classesDirs) {
         include("integration/net/firedevops/firemud/gamesession/repository/CanonicalHumanPublicationOwnerTestFixtures*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingRuntimeTestFixtures*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayAdmissionAbortCompositionFixture*.class")
     }
 }
 

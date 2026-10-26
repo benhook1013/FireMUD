@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
@@ -21,6 +22,7 @@ import java.util.regex.Pattern;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
@@ -36,6 +38,27 @@ class CanonicalGameplayBindingInventorySqlTest {
           "(?is)INSERT\\s+INTO\\s+([a-z0-9_]+)\\s*\\((.*?)\\)\\s*VALUES\\s*\\((.*?)\\)");
   private static final long RUNTIME_GAME_INSTANCE_ID = 918273645L;
   private static final BigInteger REGION_EPOCH = new BigInteger("76543210987654321");
+
+  @Test
+  void malformedStoredRepairOperationIsTranslatedAtTheDecoderBoundary() throws Exception {
+    Record row = mock(Record.class);
+    UUID tenantId = UUID.randomUUID();
+    CanonicalGameplayBindingRef bindingRef =
+        CanonicalGameplayBindingRef.of(tenantId, UUID.randomUUID(), "session");
+    Mockito.when(row.get("desired_action", String.class)).thenReturn("ADD_OR_RETAIN");
+    Mockito.when(row.get("account_control_state", String.class))
+        .thenReturn("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+    Mockito.when(row.get("binding_ref", byte[].class)).thenReturn(bindingRef.bytes());
+    Mockito.when(row.get("account_id", UUID.class)).thenReturn(UUID.randomUUID());
+    Mockito.when(row.get("tenant_id", UUID.class)).thenReturn(tenantId);
+    Mockito.when(row.get("transition_id", UUID.class)).thenReturn(UUID.randomUUID());
+    Mockito.when(row.get("obligation_ordinal", Integer.class)).thenReturn(0);
+    Mockito.when(row.get("original_action", String.class)).thenReturn("MALFORMED_ACTION");
+
+    assertThrows(
+        CanonicalGameplayBindingInventoryConflictException.class,
+        () -> invoke("toMemberRepairOperation", row));
+  }
 
   @Test
   void everyInventoryInsertHelperKeepsColumnsValuesAndBindingsAligned() throws Exception {
