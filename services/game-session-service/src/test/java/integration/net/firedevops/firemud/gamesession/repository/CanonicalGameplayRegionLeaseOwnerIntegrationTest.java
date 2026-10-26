@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -35,6 +36,7 @@ import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpect
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
@@ -202,14 +204,19 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
 
       world.setAfterRead(2, incarnationSource::changeRecoveryEvidence);
-      assertThatThrownBy(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
-          .isInstanceOf(IllegalStateException.class);
+      Throwable recoveryDriftFailure =
+          catchThrowable(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()));
+      assertThat(recoveryDriftFailure).isInstanceOf(IllegalStateException.class);
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
       Record retainedPreparation =
           dsl.fetchOne(
               "SELECT * FROM game_session_region_timeline_preparation WHERE transition_id = ?",
               TRANSITION_ID);
-      assertThat(retainedPreparation).isNotNull();
+      assertThat(retainedPreparation)
+          .as(
+              "Timeline preparation must precede recovery drift; original failure: %s",
+              recoveryDriftFailure.getCause())
+          .isNotNull();
       assertThat(retainedPreparation.get("phase", String.class)).isEqualTo("REDIS_INITIALIZED");
       UUID initialTimelineOperationId =
           retainedPreparation.get("initialization_operation_id", UUID.class);
@@ -464,7 +471,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             List.of("node-a"),
             "redis-build-1",
             "script-registry-v1",
-            "a".repeat(64),
+            "sha256:" + "a".repeat(64),
             "READY",
             "boot-1",
             "startup-1",
@@ -562,6 +569,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     var candidate = mock(CanonicalGameplayBindingInventoryEntry.class);
     var identity = mock(CanonicalGameplayBindingIdentity.class);
     var target = request.getExpectedTarget();
+    UUID gameInstanceId = UUID.fromString(target.getGameInstanceId());
+    UUID sessionId =
+        UUID.nameUUIDFromBytes(
+            ("region-owner-session-" + TRANSITION_ID).getBytes(StandardCharsets.UTF_8));
+    CanonicalGameplayBindingRef bindingRef =
+        CanonicalGameplayBindingRef.of(tenantId, gameInstanceId, sessionId.toString());
     when(evidence.transition()).thenReturn(transition);
     when(evidence.candidate()).thenReturn(candidate);
     when(transition.status())
@@ -569,12 +582,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     when(transition.transitionId()).thenReturn(TRANSITION_ID);
     when(candidate.lifecycle())
         .thenReturn(CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL);
+    when(candidate.bindingRef()).thenReturn(bindingRef);
+    when(candidate.bindingGeneration()).thenReturn(BigInteger.ONE);
     when(candidate.transitionId()).thenReturn(TRANSITION_ID);
     when(candidate.identity()).thenReturn(identity);
     when(identity.accountId()).thenReturn(UUID.fromString(request.getCanonicalAccountUuid()));
     when(identity.characterId()).thenReturn(UUID.fromString(request.getCharacterUuid()));
     when(identity.tenantId()).thenReturn(tenantId);
-    when(identity.gameInstanceId()).thenReturn(UUID.fromString(target.getGameInstanceId()));
+    when(identity.gameInstanceId()).thenReturn(gameInstanceId);
+    when(identity.runtimeGameInstanceId()).thenReturn(23L);
+    when(identity.sessionId()).thenReturn(sessionId.toString());
     when(identity.playableStateNamespaceId())
         .thenReturn(UUID.fromString(target.getPlayableStateNamespaceUuid()));
     when(identity.playableStateScope()).thenReturn("SHARED");

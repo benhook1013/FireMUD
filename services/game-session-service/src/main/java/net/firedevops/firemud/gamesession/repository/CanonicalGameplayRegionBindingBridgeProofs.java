@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import com.google.protobuf.MessageLite;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -144,12 +143,6 @@ final class CanonicalGameplayRegionBindingBridgeProofs {
             + "\n"
             + status.leaseTokenCorrelation();
     return sha256(exact.getBytes(StandardCharsets.US_ASCII));
-  }
-
-  private static String sha256(MessageLite... values) {
-    byte[][] parts = new byte[values.length][];
-    for (int index = 0; index < values.length; index++) parts[index] = values[index].toByteArray();
-    return sha256(parts);
   }
 
   private static String sha256(byte[]... parts) {

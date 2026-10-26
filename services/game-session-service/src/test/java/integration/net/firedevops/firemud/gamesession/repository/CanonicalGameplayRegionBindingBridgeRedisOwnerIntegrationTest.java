@@ -112,7 +112,6 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
       String key =
           CanonicalGameplayRegionRedisKeys.sessionBinding(
               TENANT_ID, GAME_INSTANCE_ID, REGION_ID, actor.runtimeEntityId().value());
-      String meta = CanonicalGameplayRegionRedisKeys.meta(TENANT_ID, GAME_INSTANCE_ID, REGION_ID);
       var absent =
           owner.probeSessionBinding(
               grant,

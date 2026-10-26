@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -137,7 +138,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     evidence.candidate().identity().runtimeGameInstanceId(),
                     evidence.candidate().bindingRef().bytes(),
                     evidence.candidate().identity().sessionId(),
-                    evidence.candidate().bindingGeneration().toString(),
+                    new BigDecimal(evidence.candidate().bindingGeneration()),
                     source.canonicalRegionId(),
                     source.regionId(),
                     inputs.tenantRegionTag(),
@@ -156,8 +157,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     inputs.incarnationQualificationBytes(),
                     inputs.incarnationDigest(),
                     inputs.absenceProofDigest(),
-                    OffsetDateTime.ofInstant(now, ZoneOffset.UTC),
-                    OffsetDateTime.ofInstant(now, ZoneOffset.UTC));
+                    java.sql.Timestamp.from(now),
+                    java.sql.Timestamp.from(now));
                 Record inserted =
                     transaction.fetchOne(
                         "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ?",
@@ -256,7 +257,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                       + PREPARATION_TABLE
                       + " SET phase = 'INITIALIZING', updated_at = ?"
                       + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
-                  OffsetDateTime.ofInstant(now, ZoneOffset.UTC),
+                  java.sql.Timestamp.from(now),
                   current.operationId);
           if (updated != 1) throw unavailable();
           return Optional.of(
@@ -375,7 +376,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     leaseTokenCorrelation,
                     executorFence,
                     redisMetaDigest,
-                    OffsetDateTime.ofInstant(now, ZoneOffset.UTC),
+                    java.sql.Timestamp.from(now),
                     current.operationId);
             if (updated != 1) throw unavailable();
             return toTimelinePreparation(

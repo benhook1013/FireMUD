@@ -176,6 +176,7 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("integration/net/firedevops/firemud/gamesession/repository/CanonicalHumanPublicationOwnerTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingRuntimeTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayAdmissionAbortCompositionFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerCompositionFixture*.class")
     }
     from("src/main/resources") {
         include("redis/lua/game-session-issuer-bootstrap-partition-build.lua")

@@ -597,6 +597,47 @@ class PreseededActorAssignmentIntegrationTest {
   }
 
   @Test
+  void firstAssignmentCreatesTheFreshEntityTenantMappingAndItsOwnerRows() {
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_tenant_identities "
+                    + "WHERE canonical_tenant_uuid = ?",
+                Integer.class,
+                tenantUuid))
+        .isZero();
+
+    PreseededActorAssignmentResult assigned =
+        assign(
+            assignmentUuid,
+            accountUuid,
+            4L,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "Assigned Actor");
+
+    assertThat(assigned.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM entity_preseeded_actor_assignment_operations operation "
+                    + "JOIN entity_tenant_identities tenant "
+                    + "ON tenant.canonical_tenant_uuid = operation.tenant_uuid "
+                    + "WHERE operation.assignment_uuid = ? AND operation.tenant_uuid = ?",
+                Integer.class,
+                assignmentUuid,
+                tenantUuid))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM characters actor "
+                    + "JOIN entity_tenant_identities tenant "
+                    + "ON tenant.entity_tenant_row_id = actor.tenant_id "
+                    + "WHERE actor.character_uuid = ? AND tenant.canonical_tenant_uuid = ?",
+                Integer.class,
+                assigned.characterUuid(),
+                tenantUuid))
+        .isEqualTo(1);
+  }
+
+  @Test
   void exactRetryReturnsSamePersistedActorAndChangedIntentConflictsBeforeAllocation() {
     PreseededActorAssignmentResult first =
         assign(

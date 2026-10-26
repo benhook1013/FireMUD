@@ -254,6 +254,68 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
   }
 
   @Test
+  void runningRuntimeWithoutRetainedHumanCompletionOrRunOwnedMetadataCannotAcquireFence() {
+    String schema = "gs_runtime_fence_unowned_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
+      byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
+
+      assertThat(
+              dsl.execute(
+                  "UPDATE game_instances SET row_version = row_version + 1,"
+                      + " run_owned_start_request_id = NULL, run_owned_start_request_digest = NULL,"
+                      + " run_owned_start_published_release_bundle_ref = NULL,"
+                      + " run_owned_start_preparing_epoch = NULL, run_owned_start_active_epoch = NULL"
+                      + " WHERE tenant_id = ? AND id = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId()))
+          .isEqualTo(1);
+
+      assertThatThrownBy(() -> markProvisional(dsl, target, candidateRef))
+          .hasMessageContaining("exact current RUNNING launch row and candidate identity");
+
+      var runtimeReadback =
+          dsl.fetchSingle(
+              "SELECT status, row_version, run_owned_start_request_id,"
+                  + " run_owned_start_request_digest, run_owned_start_published_release_bundle_ref,"
+                  + " run_owned_start_preparing_epoch, run_owned_start_active_epoch"
+                  + " FROM game_instances WHERE tenant_id = ? AND id = ?",
+              target.gameSessionTenantId(),
+              target.gameInstanceId());
+      assertThat(runtimeReadback.get("status", String.class)).isEqualTo("RUNNING");
+      assertThat(runtimeReadback.get("row_version", Long.class)).isEqualTo(2L);
+      assertThat(runtimeReadback.get("run_owned_start_request_id", String.class)).isNull();
+      assertThat(runtimeReadback.get("run_owned_start_request_digest", String.class)).isNull();
+      assertThat(runtimeReadback.get("run_owned_start_published_release_bundle_ref", String.class))
+          .isNull();
+      assertThat(runtimeReadback.get("run_owned_start_preparing_epoch", Long.class)).isNull();
+      assertThat(runtimeReadback.get("run_owned_start_active_epoch", Long.class)).isNull();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS actual_count"
+                          + " FROM game_session_canonical_human_runtime_completion"
+                          + " WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      target.targetNamespace(),
+                      target.initialAdmissionRequestId())
+                  .get("actual_count", Long.class))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition"
+                          + " WHERE candidate_binding_ref = ?",
+                      candidateRef)
+                  .get("status", String.class))
+          .isEqualTo("PREPARED");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
   void mismatchedCandidateTenantRuntimeOrCanonicalInstanceCannotAcquireFence() {
     String schema = "gs_runtime_fence_candidate_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
