@@ -463,7 +463,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                           + " WHERE transition_id = ? AND obligation_ordinal = 0",
                       session.gs.transitionId())
                   .get("status", String.class))
-          .isIn("REQUIRED", "ACKNOWLEDGED");
+          .isEqualTo("REQUIRED");
       assertThat(
               session
                   .gs
@@ -479,7 +479,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.TWO);
       var thirdReadback = session.gs.projectOtherControllerNew("freed-capacity-other-controller");
       assertThat(thirdReadback.operationId()).isEqualTo(thirdOperationId);
-      assertThat(thirdReadback.scriptOutcome()).isIn(1L, 2L, 3L);
+      assertThat(thirdReadback.scriptOutcome()).isEqualTo(1L);
 
       byte[] retainedReadback = released.exactPhysicalReadbackFieldSetBytes();
       var releaseReplay = session.gs.prepareIssuerRelease();
@@ -718,6 +718,23 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(session.gs.hasExactAccountMember()).isTrue();
       assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
 
+      // Retained abort replay still authenticates through the actual Account owner after the
+      // later GS Account intent; it must preserve the original source and cleanup identity.
+      var imageBeforeAbortRetry = session.image();
+      session.restartAccount();
+      var abortRetry = session.abort();
+      assertThat(abortRetry.state())
+          .isEqualTo(CanonicalGameplayAdmissionAbortOutcome.State.ABORTED);
+      assertThat(abortRetry.orphanCleanupId()).isEqualTo(abort.orphanCleanupId());
+      assertThat(abortRetry.accountOperation().originalLeaseEvidence().canonicalJson())
+          .isEqualTo(session.lease.canonicalJson());
+      assertThat(session.image()).isEqualTo(imageBeforeAbortRetry);
+      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(retainedRowsBeforeUpgrade);
+      assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
+      assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
+      assertThat(session.gs.issuerPartitionFieldSetBytes())
+          .containsExactly(issuerFieldsBeforeUpgrade);
+
       var pendingRelease = session.gs.prepareIssuerRelease();
       var releaseReadback = session.gs.projectIssuerRelease(pendingRelease);
       var released = session.gs.completeIssuerRelease(pendingRelease, releaseReadback);
@@ -748,6 +765,26 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(session.gs.hasExactAccountMember()).isTrue();
       assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
       assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
+    }
+  }
+
+  @Test
+  void provisionalAbortStillRefusesLaterAccountIntentWithoutChangingOriginalRows()
+      throws Exception {
+    try (var session = open(true)) {
+      session.gs.repairAccountMember();
+      session.gs.beginAccountAcquisitionIntent("provisional-abort-later-account-acquisition");
+      var originalRows = session.gs.retainedFirstNewAbortRowsImage();
+      var originalImage = session.image();
+      var originalFields = session.gs.issuerPartitionFieldSetBytes();
+
+      assertThatThrownBy(session::abort).isInstanceOf(RuntimeException.class);
+
+      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(originalRows);
+      assertThat(session.image()).isEqualTo(originalImage);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(originalFields);
+      assertThat(session.client.read(session.jwt, session.leaseBytes()).state())
+          .isEqualTo(State.PENDING);
     }
   }
 

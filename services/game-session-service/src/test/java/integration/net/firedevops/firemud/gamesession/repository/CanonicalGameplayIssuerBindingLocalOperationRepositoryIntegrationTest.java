@@ -42,6 +42,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
@@ -240,6 +241,30 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .containsExactly(anchor.sourceCheckpointBytes());
     assertThat(first.memberValue().sourceCheckpoint().latestIssuerEventBytes())
         .containsExactly(anchor.sourceEventBytes());
+    Record sourceEventPair =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT anchor_source_event_bytes, anchor_source_event_digest FROM"
+                    + " game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+                first.operationId()),
+            "Expected local operation source-event pair");
+    assertThat(sourceEventPair.get("anchor_source_event_bytes", byte[].class))
+        .containsExactly(anchor.sourceEventBytes());
+    assertThat(sourceEventPair.get("anchor_source_event_digest", String.class))
+        .isEqualTo(anchor.sourceEventDigest());
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO game_session_canonical_issuer_binding_local_operation"
+                        + " SELECT (jsonb_populate_record(NULL::"
+                        + "game_session_canonical_issuer_binding_local_operation,"
+                        + " to_jsonb(operation) || jsonb_build_object('operation_id', ?::text,"
+                        + " 'anchor_source_event_digest', NULL))).*"
+                        + " FROM game_session_canonical_issuer_binding_local_operation operation"
+                        + " WHERE operation_id = ?",
+                    UUID.randomUUID(),
+                    first.operationId()))
+        .hasMessageContaining("chk_gs_issuer_binding_local_operation_source_event_pair");
     assertThat(first.memberValue().incarnation()).isEqualTo(incarnation);
     assertThat(first.memberValue().memberOperation().coverageGeneration())
         .isEqualTo(first.localMemberGeneration());
@@ -430,6 +455,107 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .isEqualTo(2L);
   }
 
+  @Test
+  void localIssuerOwnerRetainsPairedNullSourceEventEvidence() {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    byte[] exactCheckpoint =
+        "issuer-checkpoint-without-latest-event".getBytes(StandardCharsets.UTF_8);
+    var source =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
+            ISSUER, BigInteger.valueOf(7), exactCheckpoint, null);
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(UUID.randomUUID(), descriptor(), source);
+    migrateRemaining(schema);
+    var currentState =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("null-source-event"));
+    var anchor =
+        initialCoverageOwner(dsl, () -> currentState)
+            .completeInitialBootstrap(intent.operationId(), intent.requestId());
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> currentState);
+    var operation =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> currentState)
+            .beginOrResumeOrdinaryNew(
+                request(
+                    "null-source-event-request",
+                    "null-source-event-transition",
+                    identity("null-source-event")));
+
+    Record sourceEventPair =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT anchor_source_event_bytes, anchor_source_event_digest FROM"
+                    + " game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+                operation.operationId()),
+            "Expected local operation source-event pair");
+    assertThat(anchor.sourceEventBytes()).isNull();
+    assertThat(anchor.sourceEventDigest()).isNull();
+    assertThat(sourceEventPair.get("anchor_source_event_bytes", byte[].class)).isNull();
+    assertThat(sourceEventPair.get("anchor_source_event_digest", String.class)).isNull();
+  }
+
+  @Test
+  void ordinaryNewPhysicalOperationBoundRefuses257thBeforePreparationAndRetainsExact256thRetry() {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    BigInteger capacity = BigInteger.valueOf(512);
+    UUID bootstrapRequestId = UUID.randomUUID();
+    var source = sourceCheckpoint(BigInteger.valueOf(7));
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(bootstrapRequestId, descriptor(capacity), source);
+    migrateRemaining(schema);
+    var currentState =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("physical-operation-bound"));
+    var anchor =
+        initialCoverageOwner(dsl, () -> currentState)
+            .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> currentState);
+    var repository =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> currentState);
+    // Every retained registration is created by the actual SQL owner. No local projection or
+    // release/retirement is fabricated; these are pending operations under controlled sources.
+    for (int index = 0; index < 255; index++) {
+      repository.beginOrResumeOrdinaryNew(
+          request(
+              "physical-bound-request-" + index,
+              "physical-bound-transition-" + index,
+              identityWithLayout("physical-bound-" + index, LAYOUT_VERSION, capacity)));
+    }
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isEqualTo(255L);
+    var lastRequest =
+        request(
+            "physical-bound-request-255",
+            "physical-bound-transition-255",
+            identityWithLayout("physical-bound-255", LAYOUT_VERSION, capacity));
+    var last = repository.beginOrResumeOrdinaryNew(lastRequest);
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isEqualTo(256L);
+    String beforeRefusal = localRegistrationImage(dsl);
+    String anchorBefore = anchorImage(dsl);
+    String proofBefore = proofImage(dsl);
+    assertThatThrownBy(
+            () ->
+                repository.beginOrResumeOrdinaryNew(
+                    request(
+                        "physical-bound-request-256",
+                        "physical-bound-transition-256",
+                        identityWithLayout("physical-bound-256", LAYOUT_VERSION, capacity))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("physical owner bound");
+    assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusal);
+    var retry = repository.beginOrResumeOrdinaryNew(lastRequest);
+    assertThat(retry.operationId()).isEqualTo(last.operationId());
+    assertThat(retry.exactMemberValueBytes()).containsExactly(last.exactMemberValueBytes());
+    assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusal);
+    assertThat(anchorImage(dsl)).isEqualTo(anchorBefore);
+    assertThat(proofImage(dsl)).isEqualTo(proofBefore);
+  }
+
   private CanonicalGameplayIssuerBootstrapCoverageOwner initialCoverageOwner(
       DSLContext dsl,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source) {
@@ -444,6 +570,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor() {
+    return descriptor(PARTITION_CAPACITY);
+  }
+
+  private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
+      descriptor(BigInteger capacity) {
     String exact =
         "issuer-layout-descriptor/v1|"
             + ISSUER
@@ -452,14 +583,14 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
             + "|"
             + PARTITION_COUNT
             + "|"
-            + PARTITION_CAPACITY
+            + capacity
             + "|"
             + CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
     return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
         ISSUER,
         LAYOUT_VERSION,
         PARTITION_COUNT,
-        PARTITION_CAPACITY,
+        capacity,
         CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
         exact.getBytes(StandardCharsets.UTF_8));
   }
@@ -552,6 +683,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
 
   private static CanonicalGameplayBindingIdentity identityWithLayout(
       String seed, BigInteger layoutVersion) {
+    return identityWithLayout(seed, layoutVersion, PARTITION_CAPACITY);
+  }
+
+  private static CanonicalGameplayBindingIdentity identityWithLayout(
+      String seed, BigInteger layoutVersion, BigInteger capacity) {
     return new CanonicalGameplayBindingIdentity(
         uuid(seed + "-account"),
         uuid(seed + "-tenant"),
@@ -567,7 +703,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         BigInteger.valueOf(7),
         layoutVersion,
         PARTITION_COUNT,
-        PARTITION_CAPACITY);
+        capacity);
   }
 
   private static CanonicalGameplayBindingIdentity sameControllerDifferentBinding(

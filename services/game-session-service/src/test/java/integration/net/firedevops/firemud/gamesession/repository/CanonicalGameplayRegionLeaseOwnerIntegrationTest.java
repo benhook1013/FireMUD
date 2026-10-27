@@ -22,6 +22,8 @@ import io.lettuce.core.protocol.CommandType;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -31,6 +33,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -75,6 +78,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
@@ -126,7 +130,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   @Test
   void composesLeaseInstallRevalidationHandoffAndFailClosedSourceChanges() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
-    DriverManagerDataSource dataSource = dataSource();
+    ControlledConnectionFailureDataSource dataSource = dataSource();
     Flyway.configure()
         .dataSource(dataSource)
         .locations(
@@ -464,7 +468,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
 
       world.resetReads();
-      world.setAfterRead(2, POSTGRES::stop);
+      var ownerStatusBeforeSqlOutage = statusRepository.find(qualifiedSource).orElseThrow();
+      world.setAfterRead(2, dataSource::failConnections);
       var sixthOwner =
           owner(
               bindingInventory,
@@ -473,8 +478,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               world,
               "instance-f",
               incarnationSource);
-      assertThatThrownBy(() -> sixthOwner.installForTransition(TRANSITION_ID, world.request()))
-          .isInstanceOf(RuntimeException.class);
+      Throwable sqlOutageFailure =
+          catchThrowable(() -> sixthOwner.installForTransition(TRANSITION_ID, world.request()));
+      dataSource.restoreConnections();
+      assertThat(sqlOutageFailure)
+          .isInstanceOf(RuntimeException.class)
+          .hasRootCauseInstanceOf(SQLException.class);
+      assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
       assertThat(redis.admin().type(redisKey)).isEqualTo("string");
       assertThat(redis.admin().pttl(redisKey)).isPositive();
     }
@@ -523,6 +533,48 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         assertThat(proof.accountMemberAddedExactly()).isTrue();
         assertThat(proof.accountControlStatePreserved()).isTrue();
         assertThat(proof.exactMemberRetryPreservedState()).isTrue();
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void acknowledgedRegionBridgeSurvivesExpiredGrantReplacement() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        redis.admin().flushdb();
+      }
+      // This local candidate-launch source is created through the real Game Session owners;
+      // its upstream publication inputs remain controlled test evidence.
+      var runtimeTarget =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              testSchema.dataSource(), UUID.randomUUID(), "firemud");
+      WorldFixture world = WorldFixture.open(runtimeTarget);
+      try (var entitySource = EntityReferenceFixture.open()) {
+        CanonicalGameplayRegionOwnerCompositionFixture.ChangedGrantProof proof =
+            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeThenChangedGrantRefuses(
+                testSchema.dsl(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(REDIS_PORT),
+                world.request(),
+                runtimeTarget.playableTarget(),
+                world.resolver(),
+                entitySource.client());
+
+        assertThat(proof.acknowledgedBridge().exactLostReplyRetry()).isTrue();
+        assertThat(proof.replacementGrantInstalled()).isTrue();
+        assertThat(proof.replacementExecutorFence())
+            .isGreaterThan(proof.acknowledgedBridge().executorFence());
+        assertThat(proof.bridgeRefused()).isTrue();
+        assertThat(proof.refusalMessage())
+            .isEqualTo(
+                "A completed region bridge acknowledgement cannot be rewritten for a new grant");
+        assertThat(proof.acknowledgementRowPreserved()).isTrue();
+        assertThat(proof.inventoryStatePreserved()).isTrue();
+        assertThat(proof.physicalBridgeStatePreserved()).isTrue();
       }
     } finally {
       dropSchema(testSchema.schema());
@@ -579,13 +631,45 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         .build();
   }
 
-  private static DriverManagerDataSource dataSource() {
+  private static ControlledConnectionFailureDataSource dataSource() {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(POSTGRES.getDriverClassName());
     dataSource.setUrl(POSTGRES.getJdbcUrl());
     dataSource.setUsername(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
-    return dataSource;
+    return new ControlledConnectionFailureDataSource(dataSource);
+  }
+
+  private static final class ControlledConnectionFailureDataSource extends DelegatingDataSource {
+    private volatile boolean connectionsUnavailable;
+
+    private ControlledConnectionFailureDataSource(DataSource target) {
+      super(target);
+    }
+
+    void failConnections() {
+      connectionsUnavailable = true;
+    }
+
+    void restoreConnections() {
+      connectionsUnavailable = false;
+    }
+
+    @Override
+    public Connection getConnection() throws SQLException {
+      if (connectionsUnavailable) {
+        throw new SQLException("Controlled test-owned PostgreSQL connection failure");
+      }
+      return super.getConnection();
+    }
+
+    @Override
+    public Connection getConnection(String username, String password) throws SQLException {
+      if (connectionsUnavailable) {
+        throw new SQLException("Controlled test-owned PostgreSQL connection failure");
+      }
+      return super.getConnection(username, password);
+    }
   }
 
   private static TestSchema newTestSchema() {

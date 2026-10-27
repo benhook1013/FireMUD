@@ -189,10 +189,15 @@ class AccountStartSessionAdmissionProtectionServiceTest {
         .thenReturn(Optional.of(fixture.participation()));
     when(h.attempts.findHistoricalExact(any(), any()))
         .thenReturn(Optional.of(fixture.retainedAttempt()));
-    doThrow(Status.UNAVAILABLE.asRuntimeException()).when(h.currentAttemptReader).read(any());
-    assertCode(
-        Status.Code.UNAVAILABLE,
-        () -> withGameSessionPeerResult(() -> h.service.acquire(fixture.request())));
+    var upstream =
+        Status.UNAVAILABLE.withDescription("trusted upstream detail").asRuntimeException();
+    doThrow(upstream).when(h.currentAttemptReader).read(any());
+    var dependencyFailure =
+        statusFailure(() -> withGameSessionPeerResult(() -> h.service.acquire(fixture.request())));
+    assertThat(dependencyFailure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(dependencyFailure.getStatus().getDescription())
+        .isEqualTo("Game Session current-attempt dependency failed");
+    assertThat(dependencyFailure.getCause()).isSameAs(upstream);
     verifyNoInteractions(h.issuer, h.protections);
   }
 
@@ -388,7 +393,9 @@ class AccountStartSessionAdmissionProtectionServiceTest {
               fixture.protection().accountProtectionId(),
               fixture.protection().accountProtectionFence()))
           .thenReturn(Optional.empty());
-      doThrow(Status.fromCode(code).asRuntimeException()).when(dependency.client).read(any());
+      var upstream =
+          Status.fromCode(code).withDescription("trusted upstream detail").asRuntimeException();
+      doThrow(upstream).when(dependency.client).read(any());
       var failure =
           statusFailure(
               () ->
@@ -399,6 +406,9 @@ class AccountStartSessionAdmissionProtectionServiceTest {
                               fixture.protection().accountProtectionFence())));
       assertThat(Status.fromThrowable(failure).getCode())
           .isEqualTo(infrastructureCodes().contains(code) ? code : Status.Code.FAILED_PRECONDITION);
+      assertThat(failure.getCause()).isSameAs(upstream);
+      assertThat(failure.getStatus().getDescription())
+          .isEqualTo("Game Session admission terminal dependency failed");
       verify(dependency.repository, never()).settleExact(any());
     }
   }

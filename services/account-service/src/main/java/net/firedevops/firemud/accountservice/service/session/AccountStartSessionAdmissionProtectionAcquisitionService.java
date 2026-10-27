@@ -363,6 +363,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
         };
     return status
         .withDescription("Game Session current-attempt dependency failed")
+        .withCause(failure)
         .asRuntimeException();
   }
 

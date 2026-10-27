@@ -210,6 +210,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
               row,
               anchor,
               target,
+              proofsByPartition,
               requireCurrentTargetAccountControl
                   && uuid(row, "operation_id").equals(target.operationId()));
       if (!localOperationIds.add(entry.operationId())
@@ -224,25 +225,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       BigInteger partitionId = entry.memberValue().reservation().partitionId();
       var baseline = proofsByPartition.get(partitionId);
       if (baseline == null) {
-        baseline =
-            CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(
-                transaction, anchor, partitionId);
+        baseline = readQualifiedBaseline(transaction, anchor, partitionId);
         proofsByPartition.put(partitionId, baseline);
-        Map<String, byte[]> baselineFields =
-            CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
-                baseline.exactPhysicalFieldSetBytes());
-        requireQualifiedBaseline(anchor, baseline, baselineFields);
-        CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead partitionHead =
-            CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-                transaction, partitionId);
-        byte[] initialRevision =
-            baselineFields.remove(
-                CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MUTATION_REVISION_FIELD);
-        if (!Arrays.equals(
-            initialRevision,
-            partitionHead.initialRevision().toString().getBytes(StandardCharsets.US_ASCII))) {
-          throw unavailable("A retained issuer partition baseline lost its initial revision");
-        }
       }
       CanonicalGameplayIssuerBootstrapCoverageRepository.requireNewMemberAbsentFromBaseline(
           baseline,
@@ -386,11 +370,41 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         requireCurrentTargetAccountControl);
   }
 
+  private CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof
+      readQualifiedBaseline(
+          DSLContext transaction,
+          CanonicalGameplayIssuerInstalledAnchor anchor,
+          BigInteger partitionId) {
+    var baseline =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(
+            transaction, anchor, partitionId);
+    Map<String, byte[]> baselineFields =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+            baseline.exactPhysicalFieldSetBytes());
+    requireQualifiedBaseline(anchor, baseline, baselineFields);
+    CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead partitionHead =
+        CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
+            transaction, partitionId);
+    byte[] initialRevision =
+        baselineFields.remove(
+            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MUTATION_REVISION_FIELD);
+    if (!Arrays.equals(
+        initialRevision,
+        partitionHead.initialRevision().toString().getBytes(StandardCharsets.US_ASCII))) {
+      throw unavailable("A retained issuer partition baseline lost its initial revision");
+    }
+    return baseline;
+  }
+
   private LocalEntry readLocalEntry(
       DSLContext transaction,
       Record row,
       CanonicalGameplayIssuerInstalledAnchor anchor,
       CanonicalGameplayIssuerBindingLocalOperation target,
+      Map<
+              BigInteger,
+              CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof>
+          proofsByPartition,
       boolean requireCurrentAccountControl) {
     if (!ISSUER.equals(text(row, "issuer_id"))
         || !"PENDING_PHYSICAL_PROOF".equals(text(row, "member_status"))
@@ -482,9 +496,11 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     }
     requireAnchorColumns(row, anchor);
 
-    var baseline =
-        CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(
-            transaction, anchor, reservation.partitionId());
+    var baseline = proofsByPartition.get(reservation.partitionId());
+    if (baseline == null) {
+      baseline = readQualifiedBaseline(transaction, anchor, reservation.partitionId());
+      proofsByPartition.put(reservation.partitionId(), baseline);
+    }
     if (!Arrays.equals(
             bytes(row, "baseline_field_set_bytes"), baseline.exactPhysicalFieldSetBytes())
         || !nonnegative(row, "baseline_partition_id").equals(baseline.partitionId())

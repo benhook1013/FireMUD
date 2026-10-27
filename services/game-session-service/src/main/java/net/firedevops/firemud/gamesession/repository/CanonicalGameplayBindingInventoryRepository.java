@@ -644,14 +644,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
                     && Objects.equals(
                         existing.leaseTokenCorrelation(), ownerStatus.leaseTokenCorrelation());
             if (sameGrant) return existing;
+            if (existing.status()
+                == CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED) {
+              throw conflict(
+                  "A completed region bridge acknowledgement cannot be rewritten for a new grant");
+            }
             return rewritePreparedBridgeForCurrentGrant(
-                transaction,
-                currentRevision,
-                currentEvidence,
-                regionRow,
-                existing,
-                inputs,
-                ownerStatus);
+                transaction, currentRevision, currentEvidence, existing, inputs, ownerStatus);
           }
           if (preimage.state() != CanonicalGameplayRegionLeaseRedisOwner.PreimageState.ABSENT) {
             throw conflict("First region bridge operation requires a proven absent Redis preimage");
@@ -776,7 +775,6 @@ public final class CanonicalGameplayBindingInventoryRepository {
       DSLContext transaction,
       BigInteger currentRevision,
       CanonicalGameplayBindingProvisionalCasEvidence evidence,
-      Record regionRow,
       CanonicalGameplayBindingRegionBridgeObligation existing,
       BridgeInputs inputs,
       CanonicalGameplayRegionRuntimeStatus ownerStatus) {
@@ -790,7 +788,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 + " SET status = 'REQUIRED', executor_fence = ?, lease_token_correlation = ?,"
                 + " redis_readback_digest = NULL, acknowledged_at = NULL, inventory_revision = ?"
                 + " WHERE transition_id = ? AND bridge_operation_id = ?"
-                + " AND inventory_revision = ?",
+                + " AND status = 'REQUIRED' AND inventory_revision = ?",
             decimal(ownerStatus.executorFence()),
             ownerStatus.leaseTokenCorrelation(),
             decimal(nextRevision),
@@ -799,15 +797,23 @@ public final class CanonicalGameplayBindingInventoryRepository {
             decimal(oldRevision)),
         "Prepared region bridge changed before current-grant revalidation");
     bumpInventoryClock(transaction, currentRevision, nextRevision);
-    return toRegionObligation(
-        Objects.requireNonNull(
-            transaction.fetchOne(
-                "SELECT * FROM "
-                    + REGION_OBLIGATION
-                    + " WHERE transition_id = ? AND bridge_operation_id = ?",
-                evidence.transition().transitionId(),
-                existing.bridgeOperationId()),
-            "prepared region bridge row must survive current-grant readback"));
+    Record row =
+        transaction.fetchOne(
+            "SELECT * FROM "
+                + REGION_OBLIGATION
+                + " WHERE transition_id = ? AND bridge_operation_id = ?",
+            evidence.transition().transitionId(),
+            existing.bridgeOperationId());
+    CanonicalGameplayBindingRegionBridgeObligation rewritten =
+        row == null ? null : toRegionObligation(row);
+    if (rewritten == null
+        || rewritten.status() != CanonicalGameplayBindingRegionBridgeObligation.Status.REQUIRED
+        || !matchesPreparedOperationForGrant(
+            rewritten, inputs, existing.bridgeOperationId(), ownerStatus)
+        || !rewritten.inventoryRevision().equals(nextRevision)) {
+      throw conflict("Prepared region bridge did not survive exact current-grant readback");
+    }
+    return rewritten;
   }
 
   private CanonicalGameplayBindingRegionBridgeObligation writePreparedBridge(
@@ -869,10 +875,24 @@ public final class CanonicalGameplayBindingInventoryRepository {
             evidence.transition().transitionId());
     CanonicalGameplayBindingRegionBridgeObligation result =
         row == null ? null : toRegionObligation(row);
-    if (result == null || !matchesPreparedOperation(result, inputs)) {
+    if (result == null
+        || result.status() != CanonicalGameplayBindingRegionBridgeObligation.Status.REQUIRED
+        || !matchesPreparedOperationForGrant(result, inputs, operationId, ownerStatus)
+        || !result.inventoryRevision().equals(nextRevision)) {
       throw conflict("Region bridge operation did not survive durable SQL readback");
     }
     return result;
+  }
+
+  private static boolean matchesPreparedOperationForGrant(
+      CanonicalGameplayBindingRegionBridgeObligation obligation,
+      BridgeInputs inputs,
+      UUID expectedOperationId,
+      CanonicalGameplayRegionRuntimeStatus ownerStatus) {
+    return expectedOperationId.equals(obligation.bridgeOperationId())
+        && matchesPreparedOperation(obligation, inputs)
+        && Objects.equals(obligation.executorFence(), ownerStatus.executorFence())
+        && Objects.equals(obligation.leaseTokenCorrelation(), ownerStatus.leaseTokenCorrelation());
   }
 
   private static void writeRevisionRows(
@@ -1276,6 +1296,19 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   /**
+   * Reads a current provisional source or the immutable original of an already definitive abort.
+   */
+  CanonicalGameplayAdmissionAbortSource readFirstNewAdmissionAbortRetrySource(UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return loadFirstNewAdmissionAbortRetrySource(transaction, transitionId, false);
+        });
+  }
+
+  /**
    * Reads only an already recorded definitive first-NEW Account abort for issuer cleanup. Its
    * original transition, candidate, reservation, and cleanup identity remain authoritative; a later
    * mutable Account-control value does not rewrite that retained terminal provenance.
@@ -1322,7 +1355,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       if (!orphanCleanupId.equals(expectedSource.orphanCleanupId())) {
         throw conflict("Account abort retry changed the durable cleanup identity");
       }
-      return readFirstNewAdmissionAbortSource(expectedSource.transition().transitionId());
+      return readRetainedDefinitiveFirstNewAccountAbortSource(
+          expectedSource.transition().transitionId());
     }
 
     return dsl.transactionResult(
@@ -1331,7 +1365,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
           BigInteger currentRevision = lockInventoryRevision(transaction);
           UUID transitionId = expectedSource.transition().transitionId();
           CanonicalGameplayAdmissionAbortSource beforeRuntimeLock =
-              loadFirstNewAdmissionAbortSource(transaction, transitionId, false);
+              loadFirstNewAdmissionAbortRetrySource(transaction, transitionId, false);
           if (beforeRuntimeLock.isAccountAborted()) {
             requireSameFirstNewAdmissionAbortSource(expectedSource, beforeRuntimeLock);
             if (!orphanCleanupId.equals(beforeRuntimeLock.orphanCleanupId())) {
@@ -1345,12 +1379,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
               expectedSource.transition().bindingRef().bytes(),
               expectedSource.originalDecision().targetEvidence());
           CanonicalGameplayAdmissionAbortSource current =
-              loadFirstNewAdmissionAbortSource(transaction, transitionId, true);
+              loadFirstNewAdmissionAbortRetrySource(transaction, transitionId, true);
           requireSameFirstNewAdmissionAbortSource(expectedSource, current);
-          requireAccountCoverageEvidenceCurrent(
-              transaction,
-              current.candidate().identity().accountId(),
-              current.transition().accountCoverageEvidence());
 
           if (current.isAccountAborted()) {
             if (!orphanCleanupId.equals(current.orphanCleanupId())) {
@@ -1358,6 +1388,10 @@ public final class CanonicalGameplayBindingInventoryRepository {
             }
             return current;
           }
+          requireAccountCoverageEvidenceCurrent(
+              transaction,
+              current.candidate().identity().accountId(),
+              current.transition().accountCoverageEvidence());
           if (current.transition().status()
               != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL) {
             throw conflict("Only the exact PROVISIONAL first-NEW transition may abort");
@@ -3016,6 +3050,20 @@ public final class CanonicalGameplayBindingInventoryRepository {
           transaction, evidence, accountObligations.getFirst());
     }
     return evidence;
+  }
+
+  private static CanonicalGameplayAdmissionAbortSource loadFirstNewAdmissionAbortRetrySource(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    Record transition =
+        transaction.fetchOne(
+            "SELECT status FROM "
+                + TRANSITION
+                + " WHERE transition_id = ?"
+                + (forUpdate ? " FOR UPDATE" : ""),
+            transitionId);
+    boolean alreadyAborted =
+        transition != null && "ABORTED".equals(transition.get("status", String.class));
+    return loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate, alreadyAborted);
   }
 
   private static CanonicalGameplayAdmissionAbortSource loadFirstNewAdmissionAbortSource(
