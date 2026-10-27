@@ -65,6 +65,103 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
   }
 
   @Test
+  void regionCodecMismatchAndSizeHaveDeterministicStatuses(@TempDir Path temporary)
+      throws Exception {
+    var pki =
+        LoopbackMtlsTestPki.create(
+            temporary,
+            "World region refusal proof CA",
+            identity("world", NAMESPACE, "world-management-service", true),
+            identity("game-session", NAMESPACE, "game-session-service", false));
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    var mismatched = controlledRegionResult(true);
+    var oversized = controlledRegionResult(false);
+    when(owner.readRegion(any()))
+        .thenReturn(Optional.of(mismatched), Optional.of(oversized))
+        .thenThrow(new IllegalStateException("private owner failure"));
+    Server server = startServer(pki, owner);
+    try {
+      var channel = channel(pki, "game-session", server.getPort());
+      try {
+        var stub =
+            CanonicalInitialPlayerLocationServiceGrpc.newBlockingStub(channel)
+                .withDeadlineAfter(10, TimeUnit.SECONDS);
+        for (var code :
+            List.of(
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.RESOURCE_EXHAUSTED,
+                Status.Code.UNAVAILABLE)) {
+          assertThatThrownBy(() -> stub.readInitialPlayerLocationRegion(request()))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure -> {
+                    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(code);
+                    assertThat(Status.fromThrowable(failure).getDescription())
+                        .doesNotContain("private");
+                    assertThat(Status.fromThrowable(failure).getCause()).isNull();
+                  });
+        }
+      } finally {
+        stopChannel(channel);
+      }
+    } finally {
+      stopServer(server);
+    }
+  }
+
+  /** Controlled owner-output corruption isolates mapping; it grants no World authority. */
+  private static WorldCanonicalInitialPlayerLocationRepository.RegionResult controlledRegionResult(
+      boolean mismatchedRoom) {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request());
+    var start =
+        new net.firedevops.firemud.common.world.RoomTemplateRef(TENANT, VERSION, UUID.randomUUID());
+    var placement =
+        new Result(
+            Outcome.APPLIED,
+            null,
+            start,
+            917L,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var canonicalRegion = UUID.randomUUID();
+    var operationalRegion = UUID.randomUUID();
+    var request =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(OPERATION),
+            NAMESPACE,
+            TENANT,
+            selection.worldSlug(),
+            GAME_INSTANCE,
+            PLAYABLE_NAMESPACE,
+            "SHARED",
+            true,
+            "controlled-region-read",
+            VERSION,
+            "sha256:" + "c".repeat(64),
+            "sha256:" + "d".repeat(64),
+            "sha256:" + "e".repeat(64));
+    var lifecycle =
+        mock(net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.class);
+    when(lifecycle.request()).thenReturn(request);
+    when(lifecycle.startLocation()).thenReturn(start);
+    when(lifecycle.runtimeRoomInstanceId()).thenReturn(mismatchedRoom ? 918L : 917L);
+    when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
+    when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch());
+    when(lifecycle.rowVersion()).thenReturn(1L);
+    when(lifecycle.captureId()).thenReturn(UUID.randomUUID());
+    when(lifecycle.graphSha256()).thenReturn(mismatchedRoom ? "f".repeat(64) : "f".repeat(9000));
+    when(lifecycle.preparationInputDigest()).thenReturn("sha256:" + "1".repeat(64));
+    when(lifecycle.operationalRegionAssignments())
+        .thenReturn(java.util.Map.of(canonicalRegion, operationalRegion));
+    return new WorldCanonicalInitialPlayerLocationRepository.RegionResult(
+        placement, 4L, 917L, canonicalRegion, operationalRegion, lifecycle);
+  }
+
+  @Test
   void bothRpcMethodsRequireTheExactSameNamespaceGameSessionCertificate(@TempDir Path temporary)
       throws Exception {
     var pki =
