@@ -1101,6 +1101,19 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   /**
+   * Reads a current provisional source or the immutable original of an already definitive abort.
+   */
+  CanonicalGameplayAdmissionAbortSource readFirstNewAdmissionAbortRetrySource(UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return loadFirstNewAdmissionAbortRetrySource(transaction, transitionId, false);
+        });
+  }
+
+  /**
    * Reads only an already recorded definitive first-NEW Account abort for issuer cleanup. Its
    * original transition, candidate, reservation, and cleanup identity remain authoritative; a later
    * mutable Account-control value does not rewrite that retained terminal provenance.
@@ -1147,7 +1160,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       if (!orphanCleanupId.equals(expectedSource.orphanCleanupId())) {
         throw conflict("Account abort retry changed the durable cleanup identity");
       }
-      return readFirstNewAdmissionAbortSource(expectedSource.transition().transitionId());
+      return readRetainedDefinitiveFirstNewAccountAbortSource(
+          expectedSource.transition().transitionId());
     }
 
     return dsl.transactionResult(
@@ -1156,7 +1170,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
           BigInteger currentRevision = lockInventoryRevision(transaction);
           UUID transitionId = expectedSource.transition().transitionId();
           CanonicalGameplayAdmissionAbortSource beforeRuntimeLock =
-              loadFirstNewAdmissionAbortSource(transaction, transitionId, false);
+              loadFirstNewAdmissionAbortRetrySource(transaction, transitionId, false);
           if (beforeRuntimeLock.isAccountAborted()) {
             requireSameFirstNewAdmissionAbortSource(expectedSource, beforeRuntimeLock);
             if (!orphanCleanupId.equals(beforeRuntimeLock.orphanCleanupId())) {
@@ -1170,12 +1184,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
               expectedSource.transition().bindingRef().bytes(),
               expectedSource.originalDecision().targetEvidence());
           CanonicalGameplayAdmissionAbortSource current =
-              loadFirstNewAdmissionAbortSource(transaction, transitionId, true);
+              loadFirstNewAdmissionAbortRetrySource(transaction, transitionId, true);
           requireSameFirstNewAdmissionAbortSource(expectedSource, current);
-          requireAccountCoverageEvidenceCurrent(
-              transaction,
-              current.candidate().identity().accountId(),
-              current.transition().accountCoverageEvidence());
 
           if (current.isAccountAborted()) {
             if (!orphanCleanupId.equals(current.orphanCleanupId())) {
@@ -1183,6 +1193,10 @@ public final class CanonicalGameplayBindingInventoryRepository {
             }
             return current;
           }
+          requireAccountCoverageEvidenceCurrent(
+              transaction,
+              current.candidate().identity().accountId(),
+              current.transition().accountCoverageEvidence());
           if (current.transition().status()
               != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL) {
             throw conflict("Only the exact PROVISIONAL first-NEW transition may abort");
@@ -2443,6 +2457,20 @@ public final class CanonicalGameplayBindingInventoryRepository {
           transaction, evidence, accountObligations.getFirst());
     }
     return evidence;
+  }
+
+  private static CanonicalGameplayAdmissionAbortSource loadFirstNewAdmissionAbortRetrySource(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    Record transition =
+        transaction.fetchOne(
+            "SELECT status FROM "
+                + TRANSITION
+                + " WHERE transition_id = ?"
+                + (forUpdate ? " FOR UPDATE" : ""),
+            transitionId);
+    boolean alreadyAborted =
+        transition != null && "ABORTED".equals(transition.get("status", String.class));
+    return loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate, alreadyAborted);
   }
 
   private static CanonicalGameplayAdmissionAbortSource loadFirstNewAdmissionAbortSource(
