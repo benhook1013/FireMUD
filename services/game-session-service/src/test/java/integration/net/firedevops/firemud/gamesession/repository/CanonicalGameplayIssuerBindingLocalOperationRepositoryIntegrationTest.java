@@ -444,8 +444,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     var currentState =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             intent.sourceCheckpoint(), stableIncarnation("physical-operation-bound"));
-    initialCoverageOwner(dsl, () -> currentState)
-        .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    var anchor =
+        initialCoverageOwner(dsl, () -> currentState)
+            .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> currentState);
     var repository =
         new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> currentState);
     // Every retained registration is created by the actual SQL owner. No local projection or
