@@ -35,6 +35,7 @@ local function validMeta()
   local tickId = redis.call('HGET', metaKey, 'current_tick_id')
   local state = redis.call('HGET', metaKey, 'current_tick_state')
   local terminalAt = redis.call('HGET', metaKey, 'current_tick_terminal_at_ms')
+  if not tickId then return false end
   if tickId == '-1' then return state == 'APPLIED' and not terminalAt end
   if not nonnegativeInt64(tickId) then return false end
   if state == 'STAGED' or state == 'RESOLVING' then return not terminalAt end
