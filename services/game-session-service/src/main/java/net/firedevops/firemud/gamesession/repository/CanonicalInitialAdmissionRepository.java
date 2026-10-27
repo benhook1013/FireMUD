@@ -12,7 +12,6 @@ import java.sql.Connection;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -173,7 +172,7 @@ public class CanonicalInitialAdmissionRepository {
     }
     requireOriginStillCurrent(request, catalog, launchTarget);
 
-    Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    Instant now = databaseTimestamp();
     int inserted =
         dsl.execute(
             "INSERT INTO "
@@ -279,7 +278,7 @@ public class CanonicalInitialAdmissionRepository {
         request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER
             ? 1L
             : Math.addExact(request.expectedPriorPointerVersion(), 1L);
-    Instant terminalAt = nextTimestamp(attempt.updatedAt());
+    Instant terminalAt = nextTerminalTimestamp(request, attempt.updatedAt());
     long pointerId = writeOpenPointer(request, catalog, launchTarget, pointerVersion, terminalAt);
     long auditEventId =
         new GameplayAdmissionPointerEventRepository(dsl)
@@ -349,7 +348,7 @@ public class CanonicalInitialAdmissionRepository {
     ExpectedClosedEvidence closedOrigin = lockExpectedClosedOrigin(request);
     // A negative terminal retains its original origin; it never claims or rewrites a pointer
     // independently created after this reservation. The positive commit still proves absence.
-    Instant terminalAt = nextTimestamp(attempt.updatedAt());
+    Instant terminalAt = nextTerminalTimestamp(request, attempt.updatedAt());
     int updated =
         dsl.execute(
             "UPDATE "
@@ -990,9 +989,24 @@ public class CanonicalInitialAdmissionRepository {
     return pointer.get("id", Long.class);
   }
 
-  private static Instant nextTimestamp(Instant previous) {
-    Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-    return now.isAfter(previous) ? now : previous.plus(1L, ChronoUnit.MICROS);
+  private Instant databaseTimestamp() {
+    return dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
+  }
+
+  private Instant nextTerminalTimestamp(
+      CanonicalInitialAdmissionRequest request, Instant previous) {
+    // Keep the attached intent locked until its terminal uses this same microsecond timestamp.
+    // GREATEST ignores a missing intent; terminalizeIntent still enforces exact attached ownership.
+    return dsl.fetchSingle(
+            "SELECT GREATEST(clock_timestamp(), CAST(? AS TIMESTAMPTZ) + INTERVAL '1 microsecond', "
+                + "(SELECT updated_at + INTERVAL '1 microsecond' "
+                + "FROM game_session_canonical_initial_admission_intent "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ? FOR UPDATE))",
+            utc(previous),
+            request.targetNamespace(),
+            request.initialAdmissionRequestId())
+        .get(0, OffsetDateTime.class)
+        .toInstant();
   }
 
   private static OffsetDateTime utc(Instant value) {
