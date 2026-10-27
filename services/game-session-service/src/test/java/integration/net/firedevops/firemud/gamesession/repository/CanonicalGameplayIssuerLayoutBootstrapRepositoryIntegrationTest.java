@@ -12,6 +12,7 @@ import java.sql.SQLException;
 import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -19,8 +20,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
@@ -30,6 +34,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -753,6 +758,385 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       executor.shutdownNow();
       dropSchema(testSchema.schema());
     }
+  }
+
+  @Test
+  void staleUninstalledIntentRequiresExplicitFreshLayoutAndPreservesOriginalHistory() {
+    TestSchema testSchema = newTestSchema("gs_issuer_boot_supersede_");
+    try {
+      DSLContext dsl = testSchema.dsl();
+      establishActualLegacyDisposition(dsl);
+      var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+      var provisional = prepareActualProvisionalFirstNew(testSchema);
+      var owner = new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl);
+      var layout = descriptor(LAYOUT_VERSION, PARTITION_COUNT, PARTITION_CAPACITY);
+      var source = sourceCheckpoint(BigInteger.valueOf(7));
+      var original = owner.beginInitialBootstrapIntent(UUID.randomUUID(), layout, source);
+      var plans = new CanonicalGameplayIssuerPartitionBuildRepository(dsl);
+      plans.prepareInitialBuildPlan(original.operationId(), original.requestId());
+      List<String> originalIntent =
+          rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_intent");
+      List<String> originalCohort =
+          rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_cohort_row");
+      List<String> originalPlan =
+          rowImages(dsl, "game_session_canonical_issuer_partition_build_plan");
+      List<String> originalBuildCohort =
+          rowImages(dsl, "game_session_canonical_issuer_partition_build_cohort_row");
+      List<String> originalWork =
+          rowImages(dsl, "game_session_canonical_issuer_partition_build_member_work");
+      List<String> originalControl =
+          rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control");
+      var newerLayout =
+          descriptor(LAYOUT_VERSION.add(BigInteger.ONE), PARTITION_COUNT, PARTITION_CAPACITY);
+      UUID replacementRequest = UUID.randomUUID();
+      assertThatThrownBy(
+              () ->
+                  owner.supersedeStaleInitialBootstrapIntent(
+                      original.operationId(), replacementRequest, newerLayout, source))
+          .hasMessageContaining("strictly newer inventory");
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
+          .isEqualTo(originalControl);
+      assertThat(countRows(dsl, "game_session_canonical_issuer_bootstrap_supersession")).isZero();
+
+      // The actual GS owner consumes a controlled Account terminal input. This does not prove
+      // the separate authenticated Account definitive-abort producer or its cross-service call.
+      var advanced = inventory.recordFirstNewAccountAbort(provisional, UUID.randomUUID());
+      assertThat(advanced.isAccountAborted()).isTrue();
+      assertThat(advanced.transition().inventoryRevision())
+          .isGreaterThan(original.inventorySnapshotRevision());
+      assertThatThrownBy(
+              () -> plans.prepareInitialBuildPlan(original.operationId(), original.requestId()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(
+              () ->
+                  owner.supersedeStaleInitialBootstrapIntent(
+                      original.operationId(), replacementRequest, layout, source))
+          .hasMessageContaining("strictly newer layout version");
+      assertThatThrownBy(
+              () ->
+                  owner.supersedeStaleInitialBootstrapIntent(
+                      original.operationId(), original.requestId(), newerLayout, source))
+          .hasMessageContaining("fresh distinct request");
+      assertThatThrownBy(
+              () ->
+                  owner.supersedeStaleInitialBootstrapIntent(
+                      UUID.randomUUID(), replacementRequest, newerLayout, source))
+          .hasMessageContaining("no longer current");
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
+          .isEqualTo(originalControl);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_intent"))
+          .isEqualTo(originalIntent);
+      assertThat(countRows(dsl, "game_session_canonical_issuer_bootstrap_supersession")).isZero();
+      assertThatThrownBy(
+              () -> owner.beginInitialBootstrapIntent(replacementRequest, newerLayout, source))
+          .hasMessageContaining("different initial issuer-layout bootstrap");
+
+      // Controlled SQL candidates below test a rejected direct write, never owner authority.
+      assertRelationOnlySupersessionCannotCommit(
+          dsl, original, advanced.transition().inventoryRevision(), newerLayout);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_intent"))
+          .isEqualTo(originalIntent);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
+          .isEqualTo(originalControl);
+      assertThat(countRows(dsl, "game_session_canonical_issuer_bootstrap_supersession")).isZero();
+      var replacement =
+          owner.supersedeStaleInitialBootstrapIntent(
+              original.operationId(), replacementRequest, newerLayout, source);
+      assertThat(replacement.inventorySnapshotRevision())
+          .isEqualTo(advanced.transition().inventoryRevision());
+      assertThat(replacement.operationFence())
+          .isEqualTo(original.coverageFence().add(BigInteger.ONE));
+      assertThat(replacement.coverageFence())
+          .isEqualTo(replacement.operationFence().add(BigInteger.ONE));
+      assertThat(replacement.cohortDigest()).isNotEqualTo(original.cohortDigest());
+      assertThat(
+              CanonicalGameplayIssuerRedisKeys.forPartition(
+                  replacement.layoutDescriptor(), BigInteger.ZERO))
+          .isNotEqualTo(
+              CanonicalGameplayIssuerRedisKeys.forPartition(
+                  original.layoutDescriptor(), BigInteger.ZERO));
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_intent"))
+          .containsAll(originalIntent)
+          .hasSize(2);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_cohort_row"))
+          .containsAll(originalCohort);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_partition_build_plan"))
+          .isEqualTo(originalPlan);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_partition_build_cohort_row"))
+          .isEqualTo(originalBuildCohort);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_partition_build_member_work"))
+          .isEqualTo(originalWork);
+      assertThatThrownBy(() -> owner.readCurrentInitialBootstrapIntent(original.operationId()))
+          .hasMessageContaining("control and immutable intent differ");
+      assertThatThrownBy(
+              () -> plans.prepareInitialBuildPlan(original.operationId(), original.requestId()))
+          .isInstanceOf(IllegalStateException.class);
+      var restarted = new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl);
+      var retry =
+          restarted.supersedeStaleInitialBootstrapIntent(
+              original.operationId(), replacementRequest, newerLayout, source);
+      assertThat(retry.operationId()).isEqualTo(replacement.operationId());
+      assertThat(retry.cohortDigest()).isEqualTo(replacement.cohortDigest());
+      assertThat(
+              restarted
+                  .beginInitialBootstrapIntent(replacementRequest, newerLayout, source)
+                  .operationId())
+          .isEqualTo(replacement.operationId());
+      assertThat(
+              restarted
+                  .readCurrentInitialBootstrapIntent(replacement.operationId())
+                  .operationFence())
+          .isEqualTo(replacement.operationFence());
+      plans.prepareInitialBuildPlan(replacement.operationId(), replacementRequest);
+      List<String> replacementControl =
+          rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_session_canonical_issuer_layout_bootstrap_control"
+                          + " SET current_operation_id = ?, control_epoch = ?, current_operation_fence = ?,"
+                          + " current_coverage_fence = ? WHERE issuer_id = ?",
+                      original.operationId(),
+                      new BigDecimal(original.controlEpoch()),
+                      new BigDecimal(original.operationFence()),
+                      new BigDecimal(original.coverageFence()),
+                      ISSUER))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("requires exact retained supersession lineage");
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
+          .isEqualTo(replacementControl);
+      List<String> retainedRelation =
+          rowImages(dsl, "game_session_canonical_issuer_bootstrap_supersession");
+      assertThat(retainedRelation).hasSize(1);
+      assertThatThrownBy(
+              () ->
+                  restarted.supersedeStaleInitialBootstrapIntent(
+                      original.operationId(), UUID.randomUUID(), newerLayout, source))
+          .hasMessageContaining("no longer current");
+      assertThatThrownBy(
+              () ->
+                  restarted.supersedeStaleInitialBootstrapIntent(
+                      original.operationId(),
+                      replacementRequest,
+                      descriptor(
+                          LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
+                      source))
+          .hasMessageContaining("changed its original trusted inputs");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_session_canonical_issuer_bootstrap_supersession"
+                          + " SET new_inventory_revision = new_inventory_revision"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThatThrownBy(
+              () -> dsl.execute("DELETE FROM game_session_canonical_issuer_bootstrap_supersession"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThatThrownBy(
+              () -> dsl.execute("TRUNCATE game_session_canonical_issuer_bootstrap_supersession"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_bootstrap_supersession"))
+          .isEqualTo(retainedRelation);
+      assertThat(countRows(dsl, "game_session_canonical_issuer_layout_bootstrap_intent"))
+          .isEqualTo(2);
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  private static void assertRelationOnlySupersessionCannotCommit(
+      DSLContext dsl,
+      CanonicalGameplayIssuerLayoutBootstrapIntent original,
+      BigInteger currentRevision,
+      CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor layout) {
+    UUID replacementId = UUID.randomUUID();
+    BigInteger operationFence = original.coverageFence().add(BigInteger.ONE);
+    BigInteger coverageFence = operationFence.add(BigInteger.ONE);
+    assertThatThrownBy(
+            () ->
+                dsl.transaction(
+                    configuration -> {
+                      DSLContext transaction = DSL.using(configuration);
+                      transaction.execute(
+                          "INSERT INTO game_session_canonical_issuer_layout_bootstrap_intent"
+                              + " SELECT (jsonb_populate_record("
+                              + " NULL::game_session_canonical_issuer_layout_bootstrap_intent,"
+                              + " to_jsonb(original) || jsonb_build_object("
+                              + " 'operation_id', ?::uuid, 'request_id', ?::uuid,"
+                              + " 'control_epoch', ?::numeric, 'operation_fence', ?::numeric,"
+                              + " 'coverage_fence', ?::numeric, 'inventory_snapshot_revision', ?::numeric,"
+                              + " 'layout_version', ?::numeric, 'layout_descriptor_bytes', ?::bytea,"
+                              + " 'layout_descriptor_digest', ?::text))).*"
+                              + " FROM game_session_canonical_issuer_layout_bootstrap_intent original"
+                              + " WHERE original.operation_id = ?",
+                          replacementId,
+                          UUID.randomUUID(),
+                          new BigDecimal(operationFence),
+                          new BigDecimal(operationFence),
+                          new BigDecimal(coverageFence),
+                          new BigDecimal(currentRevision),
+                          new BigDecimal(layout.layoutVersion()),
+                          layout.exactBytes(),
+                          CanonicalGameplayIssuerMemberV2Codec.sha256(layout.exactBytes()),
+                          original.operationId());
+                      transaction.execute(
+                          "INSERT INTO game_session_canonical_issuer_bootstrap_supersession"
+                              + " (issuer_id, old_operation_id, new_operation_id, old_inventory_revision,"
+                              + " new_inventory_revision, old_operation_fence, old_coverage_fence,"
+                              + " previous_last_issued_fence, new_operation_fence, new_coverage_fence)"
+                              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          ISSUER,
+                          original.operationId(),
+                          replacementId,
+                          new BigDecimal(original.inventorySnapshotRevision()),
+                          new BigDecimal(currentRevision),
+                          new BigDecimal(original.operationFence()),
+                          new BigDecimal(original.coverageFence()),
+                          new BigDecimal(original.coverageFence()),
+                          new BigDecimal(operationFence),
+                          new BigDecimal(coverageFence));
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining("must move exact current control in the same transaction");
+  }
+
+  private static CanonicalGameplayAdmissionAbortSource prepareActualProvisionalFirstNew(
+      TestSchema testSchema) {
+    var runtimeTarget =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            testSchema.dataSource(), TENANT_ID);
+    CanonicalGameplayBindingIdentity candidate =
+        new CanonicalGameplayBindingIdentity(
+            ACCOUNT_ID,
+            runtimeTarget.canonicalTenantId(),
+            runtimeTarget.playableStateNamespaceId(),
+            PREPARED_CHARACTER_ID,
+            runtimeTarget.playableStateScope(),
+            runtimeTarget.gameInstanceUuid(),
+            runtimeTarget.gameInstanceId(),
+            UUID.randomUUID().toString(),
+            REGION_ID,
+            BigInteger.valueOf(12),
+            ISSUER,
+            BigInteger.valueOf(7),
+            LAYOUT_VERSION,
+            PARTITION_COUNT,
+            PARTITION_CAPACITY);
+    UUID transitionId = UUID.randomUUID();
+    var reservation =
+        new CanonicalIssuerReservationFenceEvidence(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            BigInteger.ONE,
+            BigInteger.TWO,
+            BigInteger.ONE);
+    var inventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+    inventory.prepare(
+        new CanonicalGameplayBindingTransitionRequest(
+            transitionId, UUID.randomUUID(), candidate, reservation, null, null));
+    var prepared = inventory.readProvisionalCasEvidence(transitionId);
+    CanonicalPlayableTarget target = runtimeTarget.playableTarget();
+    var lease =
+        controlledLeaseEvidence(candidate, prepared.transition().bindingGeneration(), target);
+    inventory.markProvisional(
+        prepared,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            candidate,
+            prepared.transition().bindingGeneration(),
+            null,
+            target));
+    return inventory.readFirstNewAdmissionAbortSource(transitionId);
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target) {
+    long now = System.currentTimeMillis();
+    String nowSeconds = Long.toString(now / 1000L);
+    Map<String, Object> carrier = new java.util.LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
+    carrier.put("targetNamespace", target.targetNamespace());
+    carrier.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
+    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("leaseId", UUID.randomUUID().toString());
+    carrier.put("leaseFence", "1");
+    carrier.put(
+        "bindingScope",
+        Map.ofEntries(
+            Map.entry("accountId", candidate.accountId().toString()),
+            Map.entry("tenantId", candidate.tenantId().toString()),
+            Map.entry("realmId", target.realmId().toString()),
+            Map.entry("worldSlug", target.worldSlug()),
+            Map.entry("realmSlug", target.realmSlug()),
+            Map.entry("playableStateNamespaceId", target.playableStateNamespaceId().toString()),
+            Map.entry("playableStateScope", target.playableStateScope()),
+            Map.entry("gameInstanceId", target.canonicalGameInstanceId().toString()),
+            Map.entry("characterId", candidate.characterId().toString()),
+            Map.entry("sessionId", candidate.sessionId()),
+            Map.entry("bindingGeneration", bindingGeneration.toString()),
+            Map.entry("catalogRevision", Long.toString(target.catalogRevision())),
+            Map.entry("pointerVersion", Long.toString(target.pointerVersion())),
+            Map.entry("regionId", candidate.regionId().toString()),
+            Map.entry("regionEpoch", candidate.regionEpoch().toString())));
+    carrier.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration", candidate.issuerAuthGeneration().toString(),
+            "accountAuthorityGeneration", "1",
+            "tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
+            "privateRealmGrantVersions", List.of()));
+    carrier.put("issuanceFence", "1");
+    carrier.put(
+        "membershipBaseline",
+        Map.of(
+            "membershipLifecycleState", "ACTIVE",
+            "membershipVersion", Map.of(candidate.tenantId().toString(), "1"),
+            "membershipAuthorityGeneration", "1"));
+    String prefix = "account:auth-authority:v1:";
+    List<Map<String, Object>> checkpoints = new java.util.ArrayList<>();
+    for (String stream :
+        List.of(
+            "account/" + candidate.accountId(),
+            "issuer/" + candidate.issuerId(),
+            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
+            "tenant/" + candidate.tenantId())) {
+      checkpoints.add(
+          Map.of(
+              "outboxStreamKey",
+              prefix + stream,
+              "outboxSequence",
+              stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0"));
+    }
+    carrier.put("outboxCheckpoints", checkpoints);
+    carrier.put(
+        "tokenIdentityEvidence",
+        Map.ofEntries(
+            Map.entry("accountId", candidate.accountId().toString()),
+            Map.entry("operationId", UUID.randomUUID().toString()),
+            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
+            Map.entry("tokenJti", UUID.randomUUID().toString()),
+            Map.entry("tokenSHA256", "a".repeat(64)),
+            Map.entry("tokenProfile", "game-session-account-delegation"),
+            Map.entry("tokenGeneration", "1"),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("tokenIdentityFence", "1"),
+            Map.entry("issuedAt", nowSeconds),
+            Map.entry("notBefore", nowSeconds),
+            Map.entry("expiresAt", Long.toString(now / 1000L + 60L))));
+    carrier.put("evaluatedAt", Long.toString(now));
+    carrier.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
   }
 
   private static Attempt attempt(

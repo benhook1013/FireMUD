@@ -342,9 +342,6 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
     if (operationRow != null) {
       throw conflict("A local issuer operation already exists for a newly prepared transition");
     }
-    if (operationRequestExists(transaction, transitionRequest.transitionId())) {
-      throw conflict("A different request already owns this local issuer transition");
-    }
 
     CanonicalIssuerPartitionReservation reservation =
         readAndRequireReservation(transaction, transitionRequest, prepared, null);
@@ -1037,14 +1034,6 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
         && Arrays.equals(
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(left.incarnation()),
             CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(right.incarnation()));
-  }
-
-  private static boolean operationRequestExists(DSLContext transaction, UUID transitionId) {
-    return transaction.fetchOne(
-            "SELECT 1 FROM " + OPERATION + " WHERE issuer_id = ? AND transition_id = ?",
-            ISSUER,
-            transitionId)
-        != null;
   }
 
   private static UUID freshOperationId(

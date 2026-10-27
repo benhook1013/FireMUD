@@ -127,6 +127,28 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
         owner(fixture, () -> current)
             .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId());
 
+    String installedAnchorImage = anchorStorageImage(fixture.dsl());
+    String installedProofImage = proofStorageImage(fixture.dsl());
+    var installedPhysicalImage = physicalPartitionImages(fixture);
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayIssuerLayoutBootstrapRepository(fixture.dsl())
+                    .supersedeStaleInitialBootstrapIntent(
+                        fixture.intent().operationId(),
+                        UUID.randomUUID(),
+                        descriptor(PARTITION_COUNT, PARTITION_CAPACITY),
+                        fixture.currentAccountCheckpoint()))
+        .hasMessageContaining("installed issuer anchor forbids");
+    assertThat(anchorStorageImage(fixture.dsl())).isEqualTo(installedAnchorImage);
+    assertThat(proofStorageImage(fixture.dsl())).isEqualTo(installedProofImage);
+    assertThat(physicalPartitionImages(fixture)).isEqualTo(installedPhysicalImage);
+    assertThat(
+            fetchRequired(
+                    fixture.dsl(),
+                    "SELECT count(*) FROM game_session_canonical_issuer_bootstrap_supersession")
+                .get(0, Long.class))
+        .isZero();
+
     assertThat(first.issuerCoverageOperationId()).isEqualTo(fixture.intent().operationId());
     assertThat(first.operationFence()).isEqualTo(fixture.intent().operationFence());
     assertThat(first.coverageFence()).isEqualTo(fixture.intent().coverageFence());

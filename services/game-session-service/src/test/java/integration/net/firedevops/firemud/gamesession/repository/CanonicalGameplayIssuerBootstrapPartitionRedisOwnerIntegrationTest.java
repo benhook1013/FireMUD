@@ -463,9 +463,16 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     String scriptSha = administratorCommands.scriptLoad(script);
     byte[] key = key(fixture, work.partitionId());
 
-    // The test deliberately discards this post-commit script reply to model a lost reply/crash.
-    administratorCommands.evalsha(
-        scriptSha, ScriptOutputType.INTEGER, new byte[][] {key}, scriptArguments(work, physical));
+    // The owner loses the reply; the test driver independently establishes that it committed.
+    Long committed =
+        administratorCommands.evalsha(
+            scriptSha,
+            ScriptOutputType.INTEGER,
+            new byte[][] {key},
+            scriptArguments(work, physical));
+    assertThat(committed).isEqualTo(1L);
+    assertThat(administratorCommands.type(key)).isEqualTo("hash");
+    assertThat(administratorCommands.hlen(key)).isEqualTo(4L);
 
     CanonicalGameplayIssuerBootstrapPartitionWork restartedWork =
         partitionWork(fixture, work.partitionId());
@@ -504,7 +511,7 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     arguments[3] = ascii("1");
     arguments[4] = lowerCapacityMetadata(physical.metadataBytes());
     for (int index = 0; index < work.memberOperations().size(); index++) {
-      int memberArgument = 7 + index * 4;
+      int memberArgument = 8 + 4 * index;
       arguments[memberArgument] = lowerCapacityMember(arguments[memberArgument]);
     }
 
@@ -835,22 +842,27 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
       CanonicalGameplayIssuerBootstrapPartitionWork work,
       CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.PhysicalFieldSet physical) {
     var intent = work.buildPlan().bootstrapIntent();
-    byte[][] arguments = new byte[6 + work.memberOperations().size() * 4][];
+    byte[][] arguments = new byte[7 + work.memberOperations().size() * 4][];
     arguments[0] = ascii(intent.issuerId());
     arguments[1] = ascii(work.partitionId().toString());
     arguments[2] = ascii(intent.layoutDescriptor().partitionCount().toString());
     arguments[3] = ascii(intent.layoutDescriptor().partitionCapacity().toString());
     arguments[4] = physical.metadataBytes();
-    arguments[5] = ascii(Integer.toString(work.memberOperations().size()));
-    int offset = 6;
+    arguments[5] = ascii(work.initialPhysicalRevision().toString());
+    arguments[6] = ascii(Integer.toString(work.memberOperations().size()));
+    int offset = 7;
     for (CanonicalGameplayIssuerBootstrapMemberOperation operation : work.memberOperations()) {
-      arguments[offset++] = operation.expectedMemberValue().owner().bindingRef().bytes();
-      arguments[offset++] = operation.exactMemberValueBytes();
-      arguments[offset++] =
+      arguments[offset] = operation.expectedMemberValue().owner().bindingRef().bytes();
+      offset++;
+      arguments[offset] = operation.exactMemberValueBytes();
+      offset++;
+      arguments[offset] =
           ascii(
               CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
                   operation.expectedMemberValue().reservation().reservationId()));
-      arguments[offset++] = ascii(operation.expectedBindingPresent() ? "1" : "0");
+      offset++;
+      arguments[offset] = ascii(operation.expectedBindingPresent() ? "1" : "0");
+      offset++;
     }
     return arguments;
   }

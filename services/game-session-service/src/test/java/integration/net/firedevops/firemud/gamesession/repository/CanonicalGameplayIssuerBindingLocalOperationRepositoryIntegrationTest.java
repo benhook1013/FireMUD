@@ -154,6 +154,8 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     String installedProofImage = proofImage(dsl);
     String initialReservationImage = reservationImage(dsl);
     BigInteger initialGlobalCoverageGeneration = anchor.globalCoverageGeneration();
+    String beforeFirstAllocation = localRegistrationImage(dsl);
+    assertThat(beforeFirstAllocation).isNotNull().endsWith(":missing");
 
     AtomicInteger sourceReads = new AtomicInteger();
     CyclicBarrier concurrentPreReadBarrier = new CyclicBarrier(2);
@@ -188,6 +190,8 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
       concurrentCallers.shutdownNow();
     }
     assertThat(sourceReads.get()).isEqualTo(4);
+    assertThat(localRegistrationImage(dsl)).isNotEqualTo(beforeFirstAllocation);
+    assertThat(localRegistrationImage(dsl)).doesNotEndWith(":missing");
     assertThat(concurrentReplay.operationId()).isEqualTo(first.operationId());
     assertThat(concurrentReplay.reservation().reservationId())
         .isEqualTo(first.reservation().reservationId());
@@ -913,9 +917,9 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                     + " || (SELECT coalesce(jsonb_agg(to_jsonb(g) ORDER BY tenant_id, playable_state_namespace_id, character_id), '[]'::jsonb)::text"
                     + " FROM game_session_canonical_binding_generation g) || ':'"
                     + " || (SELECT inventory_revision::text FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1) || ':'"
-                    + " || (SELECT coalesce(to_jsonb(c)::text, 'missing') FROM game_session_canonical_issuer_bootstrap_member_op_counter c WHERE issuer_id = '"
+                    + " || coalesce((SELECT to_jsonb(c)::text FROM game_session_canonical_issuer_bootstrap_member_op_counter c WHERE issuer_id = '"
                     + ISSUER
-                    + "')"),
+                    + "'), 'missing')"),
             "Expected local registration aggregate row")
         .get(0, String.class);
   }
