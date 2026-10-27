@@ -3188,6 +3188,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           try {
             assigned =
                 CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(assignmentChannel)
+                    .withDeadlineAfter(10, TimeUnit.SECONDS)
                     .assignPreseededActor(wireRequest);
           } catch (StatusRuntimeException failure) {
             throw new AssertionError(
@@ -3202,6 +3203,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               .isEqualTo(assignmentRequest.mutationIntentDigest());
           var assignmentRetry =
               CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(assignmentChannel)
+                  .withDeadlineAfter(10, TimeUnit.SECONDS)
                   .assignPreseededActor(wireRequest);
           assertThat(assignmentRetry.toByteArray()).containsExactly(assigned.toByteArray());
           var runtimeReferenceSelector =
@@ -3220,6 +3222,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     () ->
                         CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(
                                 worldPeerChannel)
+                            .withDeadlineAfter(10, TimeUnit.SECONDS)
                             .readPreseededActorRuntimeReference(runtimeReferenceSelector))
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(
