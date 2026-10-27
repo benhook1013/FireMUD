@@ -463,7 +463,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                           + " WHERE transition_id = ? AND obligation_ordinal = 0",
                       session.gs.transitionId())
                   .get("status", String.class))
-          .isIn("REQUIRED", "ACKNOWLEDGED");
+          .isEqualTo("REQUIRED");
       assertThat(
               session
                   .gs
@@ -479,7 +479,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(session.gs.preparedLocalCountedReservations()).isEqualTo(java.math.BigInteger.TWO);
       var thirdReadback = session.gs.projectOtherControllerNew("freed-capacity-other-controller");
       assertThat(thirdReadback.operationId()).isEqualTo(thirdOperationId);
-      assertThat(thirdReadback.scriptOutcome()).isIn(1L, 2L, 3L);
+      assertThat(thirdReadback.scriptOutcome()).isEqualTo(1L);
 
       byte[] retainedReadback = released.exactPhysicalReadbackFieldSetBytes();
       var releaseReplay = session.gs.prepareIssuerRelease();

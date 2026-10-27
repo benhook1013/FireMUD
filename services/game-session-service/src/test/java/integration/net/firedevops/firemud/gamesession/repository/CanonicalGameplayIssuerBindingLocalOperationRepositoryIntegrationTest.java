@@ -430,6 +430,62 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .isEqualTo(2L);
   }
 
+  @Test
+  void ordinaryNewPhysicalOperationBoundRefuses257thBeforePreparationAndRetainsExact256thRetry() {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    BigInteger capacity = BigInteger.valueOf(512);
+    UUID bootstrapRequestId = UUID.randomUUID();
+    var source = sourceCheckpoint(BigInteger.valueOf(7));
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(bootstrapRequestId, descriptor(capacity), source);
+    migrateRemaining(schema);
+    var currentState =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("physical-operation-bound"));
+    initialCoverageOwner(dsl, () -> currentState)
+        .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
+    var repository =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> currentState);
+    // Every retained registration is created by the actual SQL owner. No local projection or
+    // release/retirement is fabricated; these are pending operations under controlled sources.
+    for (int index = 0; index < 255; index++) {
+      repository.beginOrResumeOrdinaryNew(
+          request(
+              "physical-bound-request-" + index,
+              "physical-bound-transition-" + index,
+              identityWithLayout("physical-bound-" + index, LAYOUT_VERSION, capacity)));
+    }
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isEqualTo(255L);
+    var lastRequest =
+        request(
+            "physical-bound-request-255",
+            "physical-bound-transition-255",
+            identityWithLayout("physical-bound-255", LAYOUT_VERSION, capacity));
+    var last = repository.beginOrResumeOrdinaryNew(lastRequest);
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isEqualTo(256L);
+    String beforeRefusal = localRegistrationImage(dsl);
+    String anchorBefore = anchorImage(dsl);
+    String proofBefore = proofImage(dsl);
+    assertThatThrownBy(
+            () ->
+                repository.beginOrResumeOrdinaryNew(
+                    request(
+                        "physical-bound-request-256",
+                        "physical-bound-transition-256",
+                        identityWithLayout("physical-bound-256", LAYOUT_VERSION, capacity))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("physical owner bound");
+    assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusal);
+    var retry = repository.beginOrResumeOrdinaryNew(lastRequest);
+    assertThat(retry.operationId()).isEqualTo(last.operationId());
+    assertThat(retry.exactMemberValueBytes()).containsExactly(last.exactMemberValueBytes());
+    assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusal);
+    assertThat(anchorImage(dsl)).isEqualTo(anchorBefore);
+    assertThat(proofImage(dsl)).isEqualTo(proofBefore);
+  }
+
   private CanonicalGameplayIssuerBootstrapCoverageOwner initialCoverageOwner(
       DSLContext dsl,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source) {
@@ -444,6 +500,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor() {
+    return descriptor(PARTITION_CAPACITY);
+  }
+
+  private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
+      descriptor(BigInteger capacity) {
     String exact =
         "issuer-layout-descriptor/v1|"
             + ISSUER
@@ -452,14 +513,14 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
             + "|"
             + PARTITION_COUNT
             + "|"
-            + PARTITION_CAPACITY
+            + capacity
             + "|"
             + CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
     return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
         ISSUER,
         LAYOUT_VERSION,
         PARTITION_COUNT,
-        PARTITION_CAPACITY,
+        capacity,
         CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
         exact.getBytes(StandardCharsets.UTF_8));
   }
@@ -552,6 +613,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
 
   private static CanonicalGameplayBindingIdentity identityWithLayout(
       String seed, BigInteger layoutVersion) {
+    return identityWithLayout(seed, layoutVersion, PARTITION_CAPACITY);
+  }
+
+  private static CanonicalGameplayBindingIdentity identityWithLayout(
+      String seed, BigInteger layoutVersion, BigInteger capacity) {
     return new CanonicalGameplayBindingIdentity(
         uuid(seed + "-account"),
         uuid(seed + "-tenant"),
@@ -567,7 +633,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         BigInteger.valueOf(7),
         layoutVersion,
         PARTITION_COUNT,
-        PARTITION_CAPACITY);
+        capacity);
   }
 
   private static CanonicalGameplayBindingIdentity sameControllerDifferentBinding(

@@ -1417,6 +1417,160 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     }
   }
 
+  @Test
+  void initialBootstrapAllows256PhysicalReservationsIncludingReleasedLineage() {
+    assertPhysicalPartitionPlanBoundary(256, BigInteger.ONE, "RELEASED", false);
+  }
+
+  @Test
+  void initialBootstrapBlocks257PhysicalReservationsDespiteReleasedLogicalExclusion() {
+    assertPhysicalPartitionPlanBoundary(257, BigInteger.ONE, "RELEASED", true);
+  }
+
+  @Test
+  void initialBootstrapBlocks257PhysicalReservationsDespiteLargerLogicalCapacity() {
+    assertPhysicalPartitionPlanBoundary(257, BigInteger.valueOf(512), "RESERVED", true);
+  }
+
+  private static void assertPhysicalPartitionPlanBoundary(
+      int reservationCount, BigInteger partitionCapacity, String extraLifecycle, boolean blocked) {
+    TestSchema testSchema = newTestSchema("gs_build_physical_bound_");
+    try {
+      establishActualLegacyDisposition(testSchema.dsl());
+      var prepared =
+          prepareActualBinding(
+              new CanonicalGameplayBindingInventoryRepository(testSchema.dsl()),
+              LAYOUT_VERSION,
+              BigInteger.ONE,
+              partitionCapacity,
+              BigInteger.valueOf(17),
+              BigInteger.valueOf(19));
+      for (int index = 1; index < reservationCount; index++) {
+        insertReservationOnly(
+            testSchema.dsl(),
+            prepared.candidate(),
+            prepared.inventoryRevision(),
+            UUID.randomUUID(),
+            BigInteger.valueOf(17),
+            BigInteger.valueOf(19),
+            LAYOUT_VERSION,
+            BigInteger.ONE,
+            partitionCapacity,
+            false,
+            extraLifecycle,
+            UUID.randomUUID());
+      }
+      var checkpoint = sourceCheckpoint(BigInteger.valueOf(7));
+      UUID requestId = UUID.randomUUID();
+      var intent =
+          new CanonicalGameplayIssuerLayoutBootstrapRepository(testSchema.dsl())
+              .beginInitialBootstrapIntent(
+                  requestId,
+                  descriptor(LAYOUT_VERSION, BigInteger.ONE, partitionCapacity),
+                  checkpoint);
+      List<String> reservationsBefore =
+          rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation");
+      var owner = new CanonicalGameplayIssuerPartitionBuildRepository(testSchema.dsl());
+      var plan = owner.prepareInitialBuildPlan(intent.operationId(), requestId);
+      assertThat(plan.state())
+          .isEqualTo(
+              blocked
+                  ? CanonicalGameplayIssuerPartitionBuildPlan.State.BLOCKED
+                  : CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
+      assertThat(plan.memberWorks()).hasSize(reservationCount);
+      assertThat(plan.memberWorks())
+          .filteredOn(CanonicalGameplayIssuerPartitionBuildPlan.MemberWork::countsTowardCapacity)
+          .hasSize(extraLifecycle.equals("RELEASED") ? 1 : reservationCount);
+      assertThat(plan.cohortRows())
+          .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+          .containsExactlyElementsOf(
+              intent.cohortRows().stream()
+                  .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+                  .toList());
+      var physicalOwner =
+          new CanonicalGameplayIssuerBootstrapMemberOperationRepository(testSchema.dsl());
+      if (blocked) {
+        assertThat(plan.blockers()).hasSize(reservationCount);
+        assertThat(plan.blockers())
+            .extracting(CanonicalGameplayIssuerPartitionBuildPlan.Blocker::code)
+            .containsOnly(
+                CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode.PARTITION_CAPACITY_EXCEEDED);
+        assertThatThrownBy(
+                () ->
+                    physicalOwner.preparePartitionWork(
+                        intent.operationId(),
+                        requestId,
+                        BigInteger.ZERO,
+                        checkpoint,
+                        physicalBoundaryIncarnation()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "Blocked issuer partition build plan cannot issue member operations");
+        assertThatThrownBy(
+                () ->
+                    physicalOwner.beginOrResumePendingPhysicalProof(
+                        intent.operationId(),
+                        requestId,
+                        0,
+                        checkpoint,
+                        physicalBoundaryIncarnation()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "Blocked issuer partition build plan cannot issue member operations");
+        assertThat(
+                rowImages(
+                    testSchema.dsl(), "game_session_canonical_issuer_bootstrap_member_operation"))
+            .isEmpty();
+        assertThat(
+                rowImages(
+                    testSchema.dsl(), "game_session_canonical_issuer_partition_mutation_head"))
+            .isEmpty();
+      } else {
+        assertThat(plan.blockers()).isEmpty();
+        assertThat(
+                physicalOwner
+                    .preparePartitionWork(
+                        intent.operationId(),
+                        requestId,
+                        BigInteger.ZERO,
+                        checkpoint,
+                        physicalBoundaryIncarnation())
+                    .memberOperations())
+            .hasSize(reservationCount);
+      }
+      var retry = owner.prepareInitialBuildPlan(intent.operationId(), requestId);
+      assertThat(retry.buildOperationId()).isEqualTo(plan.buildOperationId());
+      assertThat(retry.planDigest()).isEqualTo(plan.planDigest());
+      assertThat(retry.blockers()).containsExactlyElementsOf(plan.blockers());
+      assertThat(rowImages(testSchema.dsl(), "game_session_canonical_issuer_partition_reservation"))
+          .containsExactlyElementsOf(reservationsBefore);
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  private static CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation
+      physicalBoundaryIncarnation() {
+    String digest = "sha256:" + "a".repeat(64);
+    return new CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation(
+        "controlled-physical-bound-attestor",
+        digest,
+        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
+            "controlled-deployment",
+            "generation",
+            List.of("node"),
+            "redis-build",
+            "lua-registry",
+            digest,
+            "READY",
+            "boot",
+            "startup",
+            "storage",
+            "aof"),
+        digest,
+        digest);
+  }
+
   private static void assertBlockedInitialReservation(
       CanonicalGameplayIssuerPartitionBuildRepository owner,
       CanonicalGameplayIssuerPartitionBuildPlan plan,
