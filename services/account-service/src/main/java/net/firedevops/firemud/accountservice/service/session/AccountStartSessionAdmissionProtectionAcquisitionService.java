@@ -21,7 +21,6 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -37,6 +36,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
   private final TransactionTemplate lookupTransaction;
   private final TransactionTemplate readbackTransaction;
   private final String workloadNamespace;
+  private final AccountStartSessionAdmissionProtectionWorkloadGuard workloadGuard;
 
   public AccountStartSessionAdmissionProtectionAcquisitionService(
       AccountStartSessionOperatorAuthorizationService issuer,
@@ -63,6 +63,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
       throw new IllegalArgumentException("Canonical Account workload namespace required");
     }
     this.workloadNamespace = workloadNamespace;
+    this.workloadGuard = new AccountStartSessionAdmissionProtectionWorkloadGuard(workloadNamespace);
     lookupTransaction = transaction(transactionManager);
     readbackTransaction = transaction(transactionManager);
     readbackTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -307,21 +308,7 @@ public final class AccountStartSessionAdmissionProtectionAcquisitionService {
   }
 
   private void requireGameSessionPeer() {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
-      throw Status.UNAUTHENTICATED
-          .withDescription("Verified Game Session workload identity required")
-          .asRuntimeException();
-    }
-    if (SessionContext.hasAuthenticatedCallerContext()
-        || !workloadNamespace.equals(peer.namespace())
-        || !peer.uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service")) {
-      throw Status.PERMISSION_DENIED
-          .withDescription(
-              "Exact same-namespace Game Session workload without end-user context required")
-          .asRuntimeException();
-    }
+    workloadGuard.requireGameSessionCaller();
   }
 
   private static void requireNoAmbientTransaction() {
