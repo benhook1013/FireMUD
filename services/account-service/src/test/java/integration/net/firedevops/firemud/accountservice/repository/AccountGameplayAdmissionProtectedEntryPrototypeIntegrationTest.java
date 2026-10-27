@@ -471,8 +471,8 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
-  void v162QualifiesRetainedPg18ReceiptWithoutChangingHistoricalStorage() {
-    var context = context("161");
+  void v1013QualifiesRetainedPg18ReceiptWithoutChangingHistoricalStorage() {
+    var context = context("1012");
     var ack = finalized(context, 15000);
     var expected =
         new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
@@ -492,7 +492,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         .defaultSchema(context.schema())
         .placeholders(Map.of("serviceSchema", context.schema()))
         .locations("classpath:db/migration")
-        .target("162")
+        .target("1013")
         .load()
         .migrate();
     assertThat(
