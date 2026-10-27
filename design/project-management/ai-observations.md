@@ -436,3 +436,11 @@ Entry format:
   - Context: The manual Human-to-region composition rejected a guarded update and rolled its transaction back before the diagnostic reread.
   - Observation: Reconstructing expected values from the retained `PREPARED` row yielded NULL admission fields and misleading predicate failures instead of the attempted decision.
   - Expected pattern: Pass the immutable attempted selector to bounded failure-only diagnostics, read actual durable source rows separately, and keep attempted values distinct from committed evidence.
+
+- `2026-10-27`: Completed Hosted publication remained in native provider wait
+  - Context: #3310 Hosted5 completed on the exact requested head at 16:32:58 NZDT, but the original FireController operation still reported `active / provider_wait / trigger_recovered` after the completed publication was visible.
+  - Observation: the status did not expose the completed review or a capture failure. A bounded provider inspection found review 5661910348 and its six actionable comments; FireController's owner confirmed that the retained capture already contained the publication and began checking parser/attribution. The source completion mismatch delayed consuming the findings.
+  - Expected pattern: preserve the original attempt and quota, distinguish trigger delivery from provider execution, and expose capture incompatibility as an actionable state. Read the completed source for safe local fixes while the tool owner recovers its official evidence; never repost to obtain another review.
+  - Reconsideration trigger: the original attempt is recovered and the exact parser/attribution cause and diagnostic behavior are verified. Gameplay reported the retained handles directly to FireController's owner; no database or runtime bypass was used.
+
+  - Recovery: FireController identified six separately fingerprinted findings grouped into five comment containers. Parser fix `8f6e6121` recovered the same original attempt and all six exact findings; Gameplay verified the pinned head/base and finalized their native decisions. No trigger, allowance or controls changed. Full required controller CI was still pending at its owner's recovery handoff; native/race and packaged checks had passed.

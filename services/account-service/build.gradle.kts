@@ -130,6 +130,9 @@ tasks.named<Test>("test") {
 }
 
 tasks.named<Test>("integrationTest") {
+    // Composition fixtures load this owner's migrations directly from the filesystem.
+    inputs.dir(project(":game-session-service").file("src/main/resources/db/migration"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     val loggingArtifacts = loggingAdminIntegrationTestArtifacts.artifactFiles
     classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminIntegrationTestClasses)
 }

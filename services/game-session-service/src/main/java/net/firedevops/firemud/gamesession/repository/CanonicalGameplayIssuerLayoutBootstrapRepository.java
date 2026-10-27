@@ -157,6 +157,159 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
         });
   }
 
+  /**
+   * Replaces only an uninstalled initial candidate whose immutable inventory cut is stale. The old
+   * intent and every artifact it produced remain retained; a newer layout isolates in-flight Redis
+   * work rather than granting deletion or active-layout replacement authority.
+   */
+  CanonicalGameplayIssuerLayoutBootstrapIntent supersedeStaleInitialBootstrapIntent(
+      UUID expectedOldOperationId,
+      UUID newRequestId,
+      TrustedLayoutDescriptor descriptor,
+      TrustedAccountIssuerCheckpoint sourceCheckpoint) {
+    requireNonNil(expectedOldOperationId, "expectedOldOperationId");
+    requireNonNil(newRequestId, "newRequestId");
+    Objects.requireNonNull(descriptor, "descriptor");
+    Objects.requireNonNull(sourceCheckpoint, "sourceCheckpoint");
+    requireTrustedInputScopes(descriptor, sourceCheckpoint);
+    requireValidSourceEvent(descriptor.issuerId(), sourceCheckpoint);
+    requireNoAmbientTransaction();
+    String descriptorDigest = sha256(descriptor.exactBytes());
+    String checkpointDigest = sha256(sourceCheckpoint.checkpointBytes());
+    String sourceEventDigest =
+        sourceCheckpoint.latestEventBytes() == null
+            ? null
+            : sha256(sourceCheckpoint.latestEventBytes());
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger snapshotRevision = lockInventoryRevision(transaction);
+          Record control = lockControl(transaction, descriptor.issuerId());
+          if (control == null)
+            throw conflict("Initial bootstrap supersession requires current control");
+          UUID currentId = control.get("current_operation_id", UUID.class);
+          Record currentRow = lockIntent(transaction, currentId);
+          if (currentRow == null) throw conflict("Current initial bootstrap intent is missing");
+          var current = loadAndRequireCurrent(transaction, control, currentRow);
+          if (transaction.fetchExists(
+              DSL.selectOne()
+                  .from("game_session_canonical_issuer_installed_anchor")
+                  .where(DSL.field("issuer_id").eq(descriptor.issuerId())))) {
+            throw conflict("An installed issuer anchor forbids initial bootstrap supersession");
+          }
+          if (!expectedOldOperationId.equals(currentId)) {
+            Record replay =
+                transaction.fetchOne(
+                    "SELECT * FROM game_session_canonical_issuer_bootstrap_supersession"
+                        + " WHERE old_operation_id = ? AND new_operation_id = ?",
+                    expectedOldOperationId,
+                    currentId);
+            if (replay == null
+                || !current.requestId().equals(newRequestId)
+                || !current.inventorySnapshotRevision().equals(snapshotRevision)) {
+              throw conflict("Expected original initial bootstrap is no longer current");
+            }
+            requireSameTrustedInputs(
+                current,
+                descriptor,
+                sourceCheckpoint,
+                descriptorDigest,
+                checkpointDigest,
+                sourceEventDigest);
+            return current;
+          }
+          if (newRequestId.equals(expectedOldOperationId)
+              || newRequestId.equals(current.requestId())
+              || transaction.fetchExists(
+                  DSL.selectOne()
+                      .from(INTENT)
+                      .where(
+                          DSL.field("request_id")
+                              .eq(newRequestId)
+                              .or(DSL.field("operation_id").eq(newRequestId))))) {
+            throw conflict("Initial bootstrap supersession requires a fresh distinct request");
+          }
+          if (snapshotRevision.compareTo(current.inventorySnapshotRevision()) <= 0) {
+            throw conflict("Initial bootstrap supersession requires strictly newer inventory");
+          }
+          if (descriptor.layoutVersion().compareTo(current.layoutDescriptor().layoutVersion())
+              <= 0) {
+            throw conflict(
+                "Initial bootstrap supersession requires a strictly newer layout version");
+          }
+          var legacy = readVerifiedLegacyDisposition(transaction, snapshotRevision, true);
+          requireNoFutureInventoryRows(transaction, snapshotRevision);
+          var rows = freezeCohort(captureCohort(transaction, snapshotRevision));
+          BigInteger previousLastFence = readBigInteger(control, "last_issued_fence");
+          BigInteger operationFence = previousLastFence.add(BigInteger.ONE);
+          BigInteger coverageFence = operationFence.add(BigInteger.ONE);
+          UUID operationId = randomNonNilUuid();
+          while (operationId.equals(newRequestId) || operationId.equals(expectedOldOperationId)) {
+            operationId = randomNonNilUuid();
+          }
+          insertIntent(
+              transaction,
+              operationId,
+              newRequestId,
+              descriptor,
+              descriptorDigest,
+              sourceCheckpoint,
+              checkpointDigest,
+              sourceEventDigest,
+              snapshotRevision,
+              operationFence,
+              operationFence,
+              coverageFence,
+              legacy,
+              rows,
+              digestCohort(rows));
+          insertCohort(transaction, operationId, descriptor.issuerId(), rows);
+          transaction.execute(
+              "INSERT INTO game_session_canonical_issuer_bootstrap_supersession"
+                  + " (issuer_id, old_operation_id, new_operation_id, old_inventory_revision,"
+                  + " new_inventory_revision, old_operation_fence, old_coverage_fence,"
+                  + " previous_last_issued_fence, new_operation_fence, new_coverage_fence)"
+                  + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              descriptor.issuerId(),
+              expectedOldOperationId,
+              operationId,
+              decimal(current.inventorySnapshotRevision()),
+              decimal(snapshotRevision),
+              decimal(current.operationFence()),
+              decimal(current.coverageFence()),
+              decimal(previousLastFence),
+              decimal(operationFence),
+              decimal(coverageFence));
+          int changed =
+              transaction.execute(
+                  "UPDATE "
+                      + CONTROL
+                      + " SET control_epoch = ?, last_issued_fence = ?, current_operation_id = ?,"
+                      + " current_operation_fence = ?, current_coverage_fence = ?,"
+                      + " updated_at = CURRENT_TIMESTAMP WHERE issuer_id = ?"
+                      + " AND current_operation_id = ? AND control_epoch = ?"
+                      + " AND current_operation_fence = ? AND current_coverage_fence = ?"
+                      + " AND last_issued_fence = ? AND state = 'INITIAL_BOOTSTRAP_INTENT'",
+                  decimal(operationFence),
+                  decimal(coverageFence),
+                  operationId,
+                  decimal(operationFence),
+                  decimal(coverageFence),
+                  descriptor.issuerId(),
+                  expectedOldOperationId,
+                  decimal(current.controlEpoch()),
+                  decimal(current.operationFence()),
+                  decimal(current.coverageFence()),
+                  decimal(previousLastFence));
+          if (changed != 1)
+            throw conflict("Initial bootstrap supersession lost exact current control");
+          return loadAndRequireCurrent(
+              transaction,
+              Objects.requireNonNull(lockControl(transaction, descriptor.issuerId())),
+              Objects.requireNonNull(lockIntent(transaction, operationId)));
+        });
+  }
+
   /** Reads the exact persisted pending intent and its frozen cohort by owner-allocated ID. */
   CanonicalGameplayIssuerLayoutBootstrapIntent readCurrentInitialBootstrapIntent(UUID operationId) {
     requireNonNil(operationId, "operationId");

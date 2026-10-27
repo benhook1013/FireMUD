@@ -78,6 +78,19 @@ test("script tests avoid service validation but retain normal tooling proof", ()
   assert.deepEqual(runtimeResult.affectedServices, ALL_SERVICES);
 });
 
+test("Game Session changes also select Account owner-composition validation", () => {
+  for (const path of [
+    "services/game-session-service/src/main/java/Owner.java",
+    "services/game-session-service/src/main/resources/db/migration/V1038__owner.sql",
+  ]) {
+    const result = classifyChangeScope([path]);
+    assert.equal(result.runAll, false);
+    assert.deepEqual(result.affectedServices, ["game-session-service", "account-service"]);
+    assert.deepEqual(result.affectedModules, ["game-session-service", "account-service"]);
+    assert.deepEqual(result.bootableModules, ["game-session-service", "account-service"]);
+  }
+});
+
 test("operational Python forces the normal validation path", () => {
   const result = classifyChangeScope([
     "dev-tools/hosted/preview/render-preview-values.py",
