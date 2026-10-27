@@ -3,8 +3,6 @@ package net.firedevops.firemud.gamesession.repository;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -15,9 +13,6 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.SourceEvent;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationDisposition;
 import org.jooq.DSLContext;
@@ -197,30 +192,14 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
       String issuerId, TrustedAccountIssuerCheckpoint checkpoint) {
     byte[] eventBytes = checkpoint.latestEventBytes();
     if (eventBytes == null) return;
-    final String eventJson;
-    try {
-      eventJson =
-          StandardCharsets.UTF_8
-              .newDecoder()
-              .onMalformedInput(CodingErrorAction.REPORT)
-              .onUnmappableCharacter(CodingErrorAction.REPORT)
-              .decode(ByteBuffer.wrap(eventBytes))
-              .toString();
-    } catch (CharacterCodingException malformed) {
-      throw conflict("Controlled Account issuer source event is not exact UTF-8");
-    }
-    final SourceEvent parsed;
-    try {
-      parsed = AccountAuthoritySourceEventV1Codec.verify(eventJson);
-    } catch (RuntimeException malformed) {
-      throw conflict("Controlled Account issuer source event is not codec-verified");
-    }
-    if (!(parsed instanceof IssuerEvent event)
-        || !event.issuerId().equals(issuerId)
-        || !new BigInteger(event.issuerAuthGeneration()).equals(checkpoint.issuerAuthGeneration())
-        || !Arrays.equals(event.canonicalJsonUtf8(), eventBytes)) {
-      throw conflict("Controlled Account issuer event differs from its exact checkpoint scope");
-    }
+    CanonicalGameplayIssuerSourceEventVerifier.requireValid(
+        issuerId,
+        checkpoint.issuerAuthGeneration(),
+        eventBytes,
+        "Controlled Account issuer source event is not exact UTF-8",
+        "Controlled Account issuer source event is not codec-verified",
+        "Controlled Account issuer event differs from its exact checkpoint scope",
+        CanonicalGameplayIssuerLayoutBootstrapRepository::conflict);
   }
 
   private static void requireSameTrustedInputs(

@@ -243,6 +243,7 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
     UUID accountIndexFence;
     CanonicalIssuerReservationFenceEvidence reservationEvidence;
     if (priorByTransition == null) {
+      requirePhysicalOperationSlotAvailable(transaction, request.candidate(), anchor);
       accountIndexFence = freshNonNilUuid();
       reservationEvidence =
           new CanonicalIssuerReservationFenceEvidence(
@@ -265,6 +266,37 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
         reservationEvidence,
         null,
         null);
+  }
+
+  private static void requirePhysicalOperationSlotAvailable(
+      DSLContext transaction,
+      CanonicalGameplayBindingIdentity candidate,
+      CanonicalGameplayIssuerInstalledAnchor anchor) {
+    // The request factory runs under the inventory/source locks, before preparing any candidate
+    // rows or allocating identities. Match the projection owner's nonretired local-operation set;
+    // RELEASED alone does not free a physical slot, and exact registration retries bypass this
+    // gate.
+    BigInteger partitionId = candidate.bindingRef().partitionId(anchor.partitionCount());
+    Record countRow =
+        Objects.requireNonNull(
+            transaction.fetchOne(
+                "SELECT count(*) FROM "
+                    + OPERATION
+                    + " operation WHERE operation.issuer_id = ? AND operation.partition_id = ?"
+                    + " AND NOT EXISTS (SELECT 1 FROM"
+                    + " game_session_canonical_issuer_binding_local_retirement retirement"
+                    + " WHERE retirement.original_local_operation_id = operation.operation_id"
+                    + " AND retirement.status = 'RETIRED')",
+                ISSUER,
+                decimal(partitionId)),
+            "Expected local issuer operation count row");
+    long operationCount =
+        Objects.requireNonNull(
+            countRow.get(0, Long.class), "Expected local issuer operation count");
+    if (operationCount
+        >= CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_MEMBER_OPERATIONS) {
+      throw conflict("The local partition operation set has reached the physical owner bound");
+    }
   }
 
   private CanonicalGameplayIssuerBindingLocalOperation recordOrReplayInTransaction(
