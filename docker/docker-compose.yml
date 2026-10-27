@@ -343,7 +343,7 @@ services:
       retries: 5
 
   redis-coord:
-    image: redis:8.10.2@sha256:97ec88159e6d7cfb5ddef9015386087d58a912de80112f06ebdfa78fa5989901
+    image: redis:8.10.3@sha256:0c257ce8b2f31f9f7595f587edf8ac259a248ba3ced82badc8c7aa826a85224f
     mem_limit: 512m
     restart: unless-stopped
     env_file: *service-env-file
@@ -360,7 +360,7 @@ services:
       retries: 5
 
   redis-cache:
-    image: redis:8.10.2@sha256:97ec88159e6d7cfb5ddef9015386087d58a912de80112f06ebdfa78fa5989901
+    image: redis:8.10.3@sha256:0c257ce8b2f31f9f7595f587edf8ac259a248ba3ced82badc8c7aa826a85224f
     mem_limit: 256m
     restart: unless-stopped
     env_file: *service-env-file

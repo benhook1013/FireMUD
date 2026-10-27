@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -22,8 +20,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
@@ -816,6 +812,30 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
             .toList();
     requireIssuerSourceLinks(
         cohortRows, reservations, bindingOrdinalByReservation, bindings, blockers);
+    // Every reservation, including RELEASED lineage, needs a physical bootstrap operation.
+    // Keep this finite wire bound separate from logical nonterminal reservation capacity.
+    Map<BigInteger, List<PlannedReservation>> physicalByPartition = new HashMap<>();
+    for (PlannedReservation item : planned) {
+      physicalByPartition
+          .computeIfAbsent(item.plannedPartitionId(), ignored -> new ArrayList<>())
+          .add(item);
+    }
+    Set<BigInteger> physicallyOversizedPartitions = new HashSet<>();
+    for (var entry : physicalByPartition.entrySet()) {
+      if (entry.getValue().size()
+          > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_MEMBER_OPERATIONS) {
+        physicallyOversizedPartitions.add(entry.getKey());
+        entry
+            .getValue()
+            .forEach(
+                item ->
+                    blockers.add(
+                        new PlanBlocker(
+                            item.reservation().rowOrdinal(),
+                            CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                                .PARTITION_CAPACITY_EXCEEDED)));
+      }
+    }
     Map<BigInteger, List<PlannedReservation>> countedByPartition = new HashMap<>();
     List<PlannedReservation> countedReservations =
         planned.stream()
@@ -826,10 +846,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
           .computeIfAbsent(item.plannedPartitionId(), ignored -> new ArrayList<>())
           .add(item);
     }
-    for (List<PlannedReservation> partitionReservations : countedByPartition.values()) {
-      if (BigInteger.valueOf(partitionReservations.size())
-              .compareTo(intent.layoutDescriptor().partitionCapacity())
-          > 0) {
+    for (var entry : countedByPartition.entrySet()) {
+      List<PlannedReservation> partitionReservations = entry.getValue();
+      if (!physicallyOversizedPartitions.contains(entry.getKey())
+          && BigInteger.valueOf(partitionReservations.size())
+                  .compareTo(intent.layoutDescriptor().partitionCapacity())
+              > 0) {
         partitionReservations.forEach(
             item ->
                 blockers.add(
@@ -1752,30 +1774,14 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
 
   private static void requireValidSourceEvent(
       String issuerId, BigInteger generation, byte[] eventBytes) {
-    final String eventJson;
-    try {
-      eventJson =
-          StandardCharsets.UTF_8
-              .newDecoder()
-              .onMalformedInput(CodingErrorAction.REPORT)
-              .onUnmappableCharacter(CodingErrorAction.REPORT)
-              .decode(ByteBuffer.wrap(eventBytes))
-              .toString();
-    } catch (CharacterCodingException malformed) {
-      throw conflict("Persisted Account issuer source event is not exact UTF-8");
-    }
-    final AccountAuthoritySourceEventV1Codec.SourceEvent parsed;
-    try {
-      parsed = AccountAuthoritySourceEventV1Codec.verify(eventJson);
-    } catch (RuntimeException malformed) {
-      throw conflict("Persisted Account issuer source event is not codec-verified");
-    }
-    if (!(parsed instanceof IssuerEvent event)
-        || !event.issuerId().equals(issuerId)
-        || !new BigInteger(event.issuerAuthGeneration()).equals(generation)
-        || !Arrays.equals(event.canonicalJsonUtf8(), eventBytes)) {
-      throw conflict("Persisted Account issuer source event differs from its exact checkpoint");
-    }
+    CanonicalGameplayIssuerSourceEventVerifier.requireValid(
+        issuerId,
+        generation,
+        eventBytes,
+        "Persisted Account issuer source event is not exact UTF-8",
+        "Persisted Account issuer source event is not codec-verified",
+        "Persisted Account issuer source event differs from its exact checkpoint",
+        CanonicalGameplayIssuerPartitionBuildRepository::conflict);
   }
 
   private static JsonNode parseObject(String raw) {
