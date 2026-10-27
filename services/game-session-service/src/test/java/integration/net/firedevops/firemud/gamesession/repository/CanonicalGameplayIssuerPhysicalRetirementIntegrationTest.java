@@ -630,7 +630,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
   }
 
   @Test
-  void refusesProjectionBeyondTheCurrentLocalEntryBoundWithoutWrites() {
+  void refusesRegistrationBeyondTheCurrentLocalEntryBoundWithoutWrites() {
     try (var fixture =
         newFixture(BigInteger.valueOf(9), BigInteger.ONE, BigInteger.valueOf(512), 0)) {
       for (int index = 1; index < PARTITION_CAPACITY.intValueExact(); index++) {
@@ -641,23 +641,14 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
       var currentWork = fixture.readCurrentOriginalPartitionWork();
       assertThat(currentWork.localEntries()).hasSize(256);
 
-      byte[] fieldsBefore257th = physicalFieldSet(fixture.issuerPartitionKey());
-      long mutationCountBefore257th = partitionMutationCount(fixture.dsl());
-      String seed257 = "local-entry-bound-257";
-      fixture.prepareOtherControllerNew(seed257);
-      assertThat(localOperationCount(fixture.dsl())).isEqualTo(257L);
-      assertThat(partitionMutationCount(fixture.dsl())).isEqualTo(mutationCountBefore257th);
-      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(fieldsBefore257th);
-
       byte[] fieldsBeforeRefusal = physicalFieldSet(fixture.issuerPartitionKey());
       long mutationCountBeforeRefusal = partitionMutationCount(fixture.dsl());
       String sourceImageBeforeRefusal = durableHistoryImage(fixture.dsl(), NIL_UUID);
-      assertThatThrownBy(() -> fixture.projectOtherControllerNew(seed257))
+      assertThatThrownBy(() -> fixture.prepareOtherControllerNew("local-entry-bound-257"))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage(
-              "Issuer binding-local projection is unavailable: The local partition operation set exceeds the physical owner bound");
+          .hasMessage("The local partition operation set has reached the physical owner bound");
       assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(sourceImageBeforeRefusal);
-      assertThat(localOperationCount(fixture.dsl())).isEqualTo(257L);
+      assertThat(localOperationCount(fixture.dsl())).isEqualTo(256L);
       assertThat(partitionMutationCount(fixture.dsl())).isEqualTo(mutationCountBeforeRefusal);
       assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(fieldsBeforeRefusal);
     }
