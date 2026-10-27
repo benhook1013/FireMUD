@@ -29,9 +29,12 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayDecisionRuntimeFenceIntegrationTest;
 import net.firedevops.firemud.gamesession.repository.CanonicalHumanRuntimeCompletionRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -696,6 +699,189 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
     } finally {
       harness.close();
     }
+  }
+
+  @Test
+  void healthyHumanRunningRepositorySaveRetainsCompletionForLaterLeaseBoundDecision()
+      throws Exception {
+    var harness =
+        CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres, "1044.1");
+    try {
+      var prepared = prepareStarting(harness, "human-runtime-save-forward", 1701);
+      commitControlledHumanAdmission(harness, prepared);
+      var target = humanPlayableTarget(harness, prepared, false);
+      String originalCompletion = completionImage(harness);
+      var repository = new GameInstanceRepository(harness.dsl());
+      var before = repository.findById(target.gameInstanceId()).orElseThrow();
+      assertThat(before.getStatus()).isEqualTo("RUNNING");
+      var saved = harness.transactions().execute(status -> repository.save(before));
+      assertThat(saved).isNotNull();
+      assertThat(saved.getStatus()).isEqualTo("RUNNING");
+      assertThat(saved.getRowVersion()).isEqualTo(before.getRowVersion() + 1L);
+      assertThat(completionImage(harness)).isEqualTo(originalCompletion);
+      byte[] candidate =
+          CanonicalGameplayDecisionRuntimeFenceIntegrationTest.seedCandidateAndPreparedTransition(
+              harness.dsl(), target);
+
+      // V1044 required equality with the immutable completion and refused this real owner save.
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayDecisionRuntimeFenceIntegrationTest.markProvisional(
+                      harness.dsl(), target, candidate))
+          .hasMessageContaining("exact current RUNNING launch row and candidate identity");
+      harness.migrateLatest();
+
+      CanonicalGameplayDecisionRuntimeFenceIntegrationTest.markProvisional(
+          harness.dsl(), target, candidate);
+
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition"
+                          + " WHERE candidate_binding_ref = ?",
+                      candidate)
+                  .get("status", String.class))
+          .isEqualTo("PROVISIONAL");
+      assertThat(completionImage(harness)).isEqualTo(originalCompletion);
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .dsl()
+                      .execute(
+                          "UPDATE game_session_canonical_human_runtime_completion"
+                              + " SET completed_running_row_version = completed_running_row_version + 1"))
+          .hasMessageContaining("Canonical Human runtime completion evidence is immutable");
+      assertThat(completionImage(harness)).isEqualTo(originalCompletion);
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
+  void humanCompletionStillRefusesStoppedMismatchedAndEarlierRuntimeDecisions() throws Exception {
+    for (String mismatch : List.of("STOPPED", "TARGET", "EARLIER_ROW_VERSION")) {
+      var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+      try {
+        var prepared = prepareStarting(harness, "human-runtime-refusal", 1801);
+        commitControlledHumanAdmission(harness, prepared);
+        var target = humanPlayableTarget(harness, prepared, mismatch.equals("TARGET"));
+        String originalCompletion = completionImage(harness);
+        var repository = new GameInstanceRepository(harness.dsl());
+        var running = repository.findById(target.gameInstanceId()).orElseThrow();
+        harness.transactions().executeWithoutResult(status -> repository.save(running));
+        if (mismatch.equals("STOPPED")) {
+          var stopping = repository.findById(target.gameInstanceId()).orElseThrow();
+          stopping.setStatus("STOPPED");
+          harness.transactions().executeWithoutResult(status -> repository.save(stopping));
+        } else if (mismatch.equals("EARLIER_ROW_VERSION")) {
+          // Controlled corruption of only the row-version consequence proves the lower bound;
+          // it is not an owner mutation or substitute runtime-completion authority.
+          harness
+              .dsl()
+              .execute(
+                  "UPDATE game_instances SET row_version = (SELECT completed_running_row_version - 1"
+                      + " FROM game_session_canonical_human_runtime_completion) WHERE id = ?",
+                  target.gameInstanceId());
+        }
+        byte[] candidate =
+            CanonicalGameplayDecisionRuntimeFenceIntegrationTest.seedCandidateAndPreparedTransition(
+                harness.dsl(), target);
+
+        assertThatThrownBy(
+                () ->
+                    CanonicalGameplayDecisionRuntimeFenceIntegrationTest.markProvisional(
+                        harness.dsl(), target, candidate))
+            .as("Human runtime source mismatch %s", mismatch)
+            .hasMessageContaining("exact current RUNNING launch row and candidate identity");
+
+        assertThat(
+                harness
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT status FROM game_session_canonical_binding_transition"
+                            + " WHERE candidate_binding_ref = ?",
+                        candidate)
+                    .get("status", String.class))
+            .isEqualTo("PREPARED");
+        assertThat(completionImage(harness)).isEqualTo(originalCompletion);
+      } finally {
+        harness.close();
+      }
+    }
+  }
+
+  /** Actual GS owners consume controlled Account protection and World verifier output. */
+  private static void commitControlledHumanAdmission(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness, Prepared prepared) {
+    var result =
+        coordinator(
+                harness,
+                admissionRepository(harness),
+                ignored -> prepared.protection(),
+                ignored -> prepared.worldProof())
+            .bind(prepared.request(), prepared.protection().request());
+    assertThat(result.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+  }
+
+  private static String completionImage(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness) {
+    return harness
+        .dsl()
+        .fetchSingle(
+            "SELECT to_jsonb(completion)::text AS image"
+                + " FROM game_session_canonical_human_runtime_completion completion")
+        .get("image", String.class);
+  }
+
+  private static CanonicalPlayableTarget humanPlayableTarget(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness,
+      Prepared prepared,
+      boolean mismatchedRuntimeVersion) {
+    var catalog = prepared.target().catalog();
+    var snapshot =
+        admissionRepository(harness)
+            .readCurrentOpenSnapshotForRealm(
+                catalog.targetNamespace(), catalog.tenantId(), catalog.realmId());
+    var proof = snapshot.ownerProof();
+    long versionId =
+        new GameInstanceRepository(harness.dsl())
+            .findById(prepared.target().gameInstanceId())
+            .orElseThrow()
+            .getVersionId();
+    return new CanonicalPlayableTarget(
+        catalog.targetNamespace(),
+        catalog.tenantSlug(),
+        catalog.tenantId(),
+        catalog.worldSlug(),
+        catalog.sourceIntakeReceipt().source().worldDisplayName(),
+        catalog.realmId(),
+        catalog.realmSlug(),
+        catalog.realmDisplayName(),
+        prepared.target().gameSessionTenantId(),
+        prepared.target().gameInstanceId(),
+        catalog.playableStateNamespaceId(),
+        catalog.stateScope(),
+        proof.canonicalGameInstanceId(),
+        proof.canonicalVersionId(),
+        mismatchedRuntimeVersion ? versionId + 1 : versionId,
+        catalog.catalogRevision(),
+        proof.committedPointerVersion(),
+        snapshot.admissionPointerSnapshotDigest(),
+        proof.activeLifecycleEpoch(),
+        proof.initialAdmissionRequestId(),
+        proof.requestDigest(),
+        proof.originKind(),
+        proof.expectedPriorPointerVersion(),
+        proof.holdId(),
+        proof.holdFence(),
+        proof.holdBindingDigest(),
+        proof.auditEventId(),
+        proof.proofDigest(),
+        proof.outcome(),
+        proof.positiveDurableAbort(),
+        proof.terminalAt(),
+        catalog.characterCreationPolicy());
   }
 
   private static Prepared prepareStarting(

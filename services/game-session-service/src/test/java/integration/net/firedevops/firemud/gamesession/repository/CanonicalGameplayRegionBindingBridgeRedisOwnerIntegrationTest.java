@@ -193,6 +193,8 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
           CanonicalGameplayRegionRedisKeys.sessionBinding(
               TENANT_ID, GAME_INSTANCE_ID, REGION_ID, actor.runtimeEntityId().value());
       String meta = CanonicalGameplayRegionRedisKeys.meta(TENANT_ID, GAME_INSTANCE_ID, REGION_ID);
+      byte[] leaseKey = ascii(grant.key());
+      byte[] leaseValue = redis.admin().get(leaseKey);
       redis.admin().del(ascii(meta));
 
       assertThatThrownBy(
@@ -206,6 +208,26 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(ascii(key))).isEqualTo("none");
 
+      seedMeta(redis.admin(), source, "1");
+      assertThat(redis.admin().hdel(ascii(meta), ascii("current_tick_id"))).isEqualTo(1L);
+      assertThatThrownBy(
+              () ->
+                  owner.probeSessionBinding(
+                      grant,
+                      status,
+                      actor.runtimeEntityId(),
+                      SESSION_ID.toString(),
+                      java.math.BigInteger.ONE))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
+      assertThat(redis.admin().type(ascii(key))).isEqualTo("none");
+      assertThat(redis.admin().hget(ascii(meta), ascii("current_tick_id"))).isNull();
+      assertThat(redis.admin().hget(ascii(meta), ascii("region_epoch")))
+          .containsExactly(ascii("1"));
+      assertThat(redis.admin().get(leaseKey)).containsExactly(leaseValue);
+
+      seedMeta(redis.admin(), source, "1");
       redis.admin().hset(ascii(meta), ascii("region_epoch"), ascii("2"));
       assertThatThrownBy(
               () ->
@@ -218,7 +240,7 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(ascii(key))).isEqualTo("none");
 
-      redis.admin().hset(ascii(meta), ascii("region_epoch"), ascii("1"));
+      seedMeta(redis.admin(), source, "1");
       redis.admin().pexpire(ascii(grant.key()), 0L);
       assertThatThrownBy(
               () ->
