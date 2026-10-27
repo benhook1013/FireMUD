@@ -55,7 +55,9 @@ public final class CanonicalGameplayRegionLeaseRedisScriptContribution
       }
       return descriptor;
     } catch (IOException | RuntimeException failure) {
-      throw unavailable();
+      IllegalStateException unavailable = unavailable();
+      unavailable.initCause(failure);
+      throw unavailable;
     }
   }
 

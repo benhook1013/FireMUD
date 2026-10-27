@@ -191,6 +191,121 @@ class CanonicalInitialPlayerLocationServiceTest {
   }
 
   @Test
+  void regionReadWithAbsentPlacementReturnsEmptyWithoutReadingRegion() {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
+    var location = emptyLocation(selection);
+    var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var entityReads = new AtomicInteger();
+    var service =
+        service(
+            selection,
+            location,
+            holds,
+            gameSession,
+            ignored -> {
+              entityReads.incrementAndGet();
+              throw new AssertionError("Absent placement must not read the Entity receipt");
+            });
+
+    assertThat(service.readRegion(selection)).isEmpty();
+    assertThat(entityReads.get()).isZero();
+    verify(location, never()).readInitialPlayerLocationRegion(any(RequestSelector.class));
+    verify(location, never()).store(any());
+    verifyNoInteractions(holds, gameSession);
+  }
+
+  @Test
+  void regionReadWithRetainedConflictFailsBeforeReadingRegion() {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
+    var conflict =
+        new Result(
+            Outcome.CONFLICT,
+            "CHARACTER_ALREADY_PLACED",
+            null,
+            null,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var location = mock(WorldCanonicalInitialPlayerLocationRepository.class);
+    when(location.readByOperationId(
+            eq(selection.placementOperationId()), any(RequestSelector.class)))
+        .thenReturn(Optional.of(conflict));
+    var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var entityReads = new AtomicInteger();
+    var service =
+        service(
+            selection,
+            location,
+            holds,
+            gameSession,
+            ignored -> {
+              entityReads.incrementAndGet();
+              return entityReceipt(selection);
+            });
+
+    assertThatThrownBy(() -> service.readRegion(selection))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+
+    assertThat(entityReads.get()).isZero();
+    verify(location, never()).readInitialPlayerLocationRegion(any(RequestSelector.class));
+    verify(location, never()).store(any());
+    verifyNoInteractions(holds, gameSession);
+  }
+
+  @Test
+  void mismatchedEntityReceiptStopsRegionReadBeforePlacementMutation() {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
+    var placement =
+        new Result(
+            Outcome.APPLIED,
+            null,
+            new RoomTemplateRef(TENANT, VERSION, uuid("abababab-abab-4bab-8bab-abababababab")),
+            9182L,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var location = mock(WorldCanonicalInitialPlayerLocationRepository.class);
+    when(location.readByOperationId(
+            eq(selection.placementOperationId()), any(RequestSelector.class)))
+        .thenReturn(Optional.of(placement));
+    var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var entityReads = new AtomicInteger();
+    var service =
+        service(
+            selection,
+            location,
+            holds,
+            gameSession,
+            ignored -> {
+              entityReads.incrementAndGet();
+              return mismatchedEntityReceipt(selection);
+            });
+
+    assertThatThrownBy(() -> service.readRegion(selection))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+
+    assertThat(entityReads.get()).isEqualTo(1);
+    verify(location, never()).readInitialPlayerLocationRegion(any(RequestSelector.class));
+    verify(location, never()).store(any());
+    verifyNoInteractions(holds, gameSession);
+  }
+
+  @Test
   void mismatchedEntityReceiptStopsBeforeHoldOrPlacementWrite() {
     var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
     var location = emptyLocation(selection);
@@ -198,14 +313,7 @@ class CanonicalInitialPlayerLocationServiceTest {
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     var service =
         service(
-            selection,
-            location,
-            holds,
-            gameSession,
-            ignored ->
-                entityReceipt(selection).toBuilder()
-                    .setCharacterUuid(uuid("66666666-6666-4666-8666-666666666666").toString())
-                    .build());
+            selection, location, holds, gameSession, ignored -> mismatchedEntityReceipt(selection));
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
@@ -476,6 +584,13 @@ class CanonicalInitialPlayerLocationServiceTest {
         .setStatus(
             PreseededActorAssignmentReceiptStatus
                 .PRESEEDED_ACTOR_ASSIGNMENT_RECEIPT_STATUS_ASSIGNED)
+        .build();
+  }
+
+  private static ReadPreseededActorAssignmentReceiptResponse mismatchedEntityReceipt(
+      CanonicalInitialPlayerLocationGrpcCodec.Selection selection) {
+    return entityReceipt(selection).toBuilder()
+        .setCharacterUuid(uuid("66666666-6666-4666-8666-666666666666").toString())
         .build();
   }
 
