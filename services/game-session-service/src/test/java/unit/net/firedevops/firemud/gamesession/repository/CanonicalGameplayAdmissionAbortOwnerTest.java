@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -37,7 +38,7 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
     var accountClient = mock(AccountGameplayAdmissionLeaseClient.class);
     var source = source(false);
-    when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(source);
+    when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(source);
     when(accountClient.abort(eq("presented-initial-gsa"), any(byte[].class), eq(TRANSITION_ID)))
         .thenThrow(new IllegalStateException("Account abort response unavailable"));
 
@@ -64,7 +65,8 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
     var client = mock(AccountGameplayAdmissionLeaseClient.class);
     var terminalSource = source(true);
-    when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(terminalSource);
+    when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID))
+        .thenReturn(terminalSource);
     when(client.abort(eq("expired-or-revoked-caller"), any(byte[].class), eq(TRANSITION_ID)))
         .thenThrow(new IllegalStateException("current caller refused"));
     assertThatThrownBy(
@@ -73,6 +75,38 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
                     .abortFirstNew(TRANSITION_ID, "expired-or-revoked-caller"))
         .hasMessage("current caller refused");
     verify(client).abort(eq("expired-or-revoked-caller"), any(byte[].class), eq(TRANSITION_ID));
+    verify(repository, never()).recordFirstNewAccountAbort(any(), any());
+  }
+
+  @Test
+  void retainedTerminalRetryReturnsTheOriginalCleanupOnlyAfterExactAccountReplay() {
+    var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
+    var client = mock(AccountGameplayAdmissionLeaseClient.class);
+    var retained = source(true);
+    var lease = retained.originalDecision().leaseEvidence();
+    when(lease.hasSameIdentity(lease)).thenReturn(true);
+    var operation =
+        mock(
+            net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec
+                .OperationEvidence.class);
+    when(operation.originalLeaseEvidence()).thenReturn(lease);
+    when(operation.state())
+        .thenReturn(
+            net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec
+                .State.ABORTED);
+    when(operation.bindingDecisionId()).thenReturn(TRANSITION_ID);
+    when(operation.orphanCleanupId()).thenReturn(CLEANUP_ID);
+    when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(retained);
+    when(client.abort(any(), any(), any())).thenReturn(operation);
+
+    var result =
+        new CanonicalGameplayAdmissionAbortOwner(repository, client)
+            .abortFirstNew(TRANSITION_ID, "presented-initial-gsa");
+
+    assertThat(result.orphanCleanupId()).isEqualTo(CLEANUP_ID);
+    assertThat(result.accountOperation()).isSameAs(operation);
+    verify(client).abort(eq("presented-initial-gsa"), any(byte[].class), eq(TRANSITION_ID));
+    verify(repository, never()).readFirstNewAdmissionAbortSource(any());
     verify(repository, never()).recordFirstNewAccountAbort(any(), any());
   }
 
@@ -130,7 +164,7 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
         }
         case PENDING -> {}
       }
-      when(repository.readFirstNewAdmissionAbortSource(TRANSITION_ID)).thenReturn(retained);
+      when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(retained);
       when(client.abort(any(), any(), any())).thenReturn(operation);
       assertThatThrownBy(
               () ->

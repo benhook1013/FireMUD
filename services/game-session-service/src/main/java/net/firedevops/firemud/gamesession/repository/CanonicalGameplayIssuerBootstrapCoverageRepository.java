@@ -583,8 +583,8 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     Map<UUID, byte[]> exactOperationValues = new HashMap<>();
     Map<BigInteger, Integer> expectedReservationsByPartition = new HashMap<>();
     Map<BigInteger, Integer> expectedCapacityByPartition = new HashMap<>();
-    int expectedBindingCount = 0;
     int expectedCapacityCount = 0;
+    Map<BigInteger, Integer> expectedBindingsByPartition = new HashMap<>();
     for (CanonicalGameplayIssuerPartitionBuildPlan.MemberWork work : plan.memberWorks()) {
       worksByOrdinal.put(work.workOrdinal(), work);
       expectedReservationsByPartition.merge(work.plannedPartitionId(), 1, Integer::sum);
@@ -623,7 +623,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         throw conflict("Finite SQL work contains a duplicate reservation identity");
       }
       if (Boolean.TRUE.equals(operation.get("expected_binding_present", Boolean.class)))
-        expectedBindingCount++;
+        expectedBindingsByPartition.merge(work.plannedPartitionId(), 1, Integer::sum);
     }
 
     BigInteger expectedPartition = BigInteger.ZERO;
@@ -644,6 +644,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       int expectedPartitionReservations =
           expectedReservationsByPartition.getOrDefault(partitionId, 0);
       int expectedPartitionCapacity = expectedCapacityByPartition.getOrDefault(partitionId, 0);
+      int expectedPartitionBindings = expectedBindingsByPartition.getOrDefault(partitionId, 0);
       Map<String, byte[]> fields =
           decodeFieldSet(requireBytes(row, "exact_physical_field_set_bytes"));
       UUID initialRevision = requireUuid(row, "initial_physical_mutation_revision");
@@ -740,7 +741,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       if (!expectedFieldNames.equals(fields.keySet())
           || physicalReservations != expectedPartitionReservations
           || physicalCapacity != expectedPartitionCapacity
-          || physicalBindings != countBindingsForPartition(operations, worksByOrdinal, partitionId)
+          || physicalBindings != expectedPartitionBindings
           || physicalReservations != readInt(row, "physical_reservation_count")
           || physicalBindings != readInt(row, "physical_binding_count")
           || physicalCapacity != readInt(row, "physical_counted_capacity_count")
@@ -767,7 +768,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     }
     if (!expectedPartition.equals(partitionCount)
         || !reservationCount.equals(BigInteger.valueOf(plan.memberWorks().size()))
-        || !bindingCount.equals(BigInteger.valueOf(expectedBindingCount))
+        || !bindingCount.equals(
+            BigInteger.valueOf(
+                expectedBindingsByPartition.values().stream().mapToInt(Integer::intValue).sum()))
         || !aggregateCountedCapacity.equals(expectedAggregateCapacity)
         || aggregateCountedCapacity.compareTo(aggregateBound) > 0) {
       throw conflict(
@@ -779,21 +782,6 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         bindingCount.longValueExact(),
         aggregateCountedCapacity,
         "sha256:" + java.util.HexFormat.of().formatHex(root.digest()));
-  }
-
-  private static int countBindingsForPartition(
-      List<Record> operations,
-      Map<Long, CanonicalGameplayIssuerPartitionBuildPlan.MemberWork> worksByOrdinal,
-      BigInteger partitionId) {
-    int count = 0;
-    for (Record operation : operations) {
-      long ordinal = requireNonNegativeLong(operation, "work_ordinal");
-      CanonicalGameplayIssuerPartitionBuildPlan.MemberWork work = worksByOrdinal.get(ordinal);
-      if (work != null
-          && work.plannedPartitionId().equals(partitionId)
-          && Boolean.TRUE.equals(operation.get("expected_binding_present", Boolean.class))) count++;
-    }
-    return count;
   }
 
   private static void requireOperationMatches(

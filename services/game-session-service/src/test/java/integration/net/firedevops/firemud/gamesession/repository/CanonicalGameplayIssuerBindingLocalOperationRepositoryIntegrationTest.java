@@ -42,6 +42,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
@@ -234,6 +235,30 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .containsExactly(anchor.sourceCheckpointBytes());
     assertThat(first.memberValue().sourceCheckpoint().latestIssuerEventBytes())
         .containsExactly(anchor.sourceEventBytes());
+    Record sourceEventPair =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT anchor_source_event_bytes, anchor_source_event_digest FROM"
+                    + " game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+                first.operationId()),
+            "Expected local operation source-event pair");
+    assertThat(sourceEventPair.get("anchor_source_event_bytes", byte[].class))
+        .containsExactly(anchor.sourceEventBytes());
+    assertThat(sourceEventPair.get("anchor_source_event_digest", String.class))
+        .isEqualTo(anchor.sourceEventDigest());
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO game_session_canonical_issuer_binding_local_operation"
+                        + " SELECT (jsonb_populate_record(NULL::"
+                        + "game_session_canonical_issuer_binding_local_operation,"
+                        + " to_jsonb(operation) || jsonb_build_object('operation_id', ?::text,"
+                        + " 'anchor_source_event_digest', NULL))).*"
+                        + " FROM game_session_canonical_issuer_binding_local_operation operation"
+                        + " WHERE operation_id = ?",
+                    UUID.randomUUID(),
+                    first.operationId()))
+        .hasMessageContaining("chk_gs_issuer_binding_local_operation_source_event_pair");
     assertThat(first.memberValue().incarnation()).isEqualTo(incarnation);
     assertThat(first.memberValue().memberOperation().coverageGeneration())
         .isEqualTo(first.localMemberGeneration());
@@ -422,6 +447,46 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                         intent.layoutDescriptor(), BigInteger.ZERO)
                     .getBytes(StandardCharsets.US_ASCII)))
         .isEqualTo(2L);
+  }
+
+  @Test
+  void localIssuerOwnerRetainsPairedNullSourceEventEvidence() {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    byte[] exactCheckpoint =
+        "issuer-checkpoint-without-latest-event".getBytes(StandardCharsets.UTF_8);
+    var source =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
+            ISSUER, BigInteger.valueOf(7), exactCheckpoint, null);
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(UUID.randomUUID(), descriptor(), source);
+    migrateRemaining(schema);
+    var currentState =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("null-source-event"));
+    var anchor =
+        initialCoverageOwner(dsl, () -> currentState)
+            .completeInitialBootstrap(intent.operationId(), intent.requestId());
+    var operation =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> currentState)
+            .beginOrResumeOrdinaryNew(
+                request(
+                    "null-source-event-request",
+                    "null-source-event-transition",
+                    identity("null-source-event")));
+
+    Record sourceEventPair =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT anchor_source_event_bytes, anchor_source_event_digest FROM"
+                    + " game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+                operation.operationId()),
+            "Expected local operation source-event pair");
+    assertThat(anchor.sourceEventBytes()).isNull();
+    assertThat(anchor.sourceEventDigest()).isNull();
+    assertThat(sourceEventPair.get("anchor_source_event_bytes", byte[].class)).isNull();
+    assertThat(sourceEventPair.get("anchor_source_event_digest", String.class)).isNull();
   }
 
   @Test
