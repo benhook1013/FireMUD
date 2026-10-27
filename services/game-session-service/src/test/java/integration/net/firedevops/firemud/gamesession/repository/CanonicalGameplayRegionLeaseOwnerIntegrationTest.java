@@ -287,6 +287,48 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .containsExactly(ascii(initialTimelineOperationId.toString()));
       assertThat(redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest")))
           .containsExactly(ascii(initialTimelineSourceDigest));
+
+      var preparation = statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow();
+      byte[] initialLeaseValue = redis.admin().get(redisKey);
+      assertThat(redis.admin().hdel(ascii(initialMetaKey), ascii("current_tick_id"))).isEqualTo(1L);
+      assertThatThrownBy(
+              () ->
+                  redisOwner.initializeOrResumeTimeline(
+                      preparation,
+                      null,
+                      Duration.ofSeconds(30),
+                      new RuntimeIdentity(
+                          "game-session-service",
+                          "instance-a",
+                          "localhost",
+                          NOW,
+                          "controlled-test",
+                          "controlled-sha",
+                          "controlled-image")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
+      assertThatThrownBy(
+              () -> redisOwner.verifyInitializedTimeline(firstInstallation.grant, preparation))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
+      assertThat(redis.admin().hlen(ascii(initialMetaKey))).isEqualTo(4L);
+      assertThat(redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_id"))).isNull();
+      assertThat(redis.admin().hget(ascii(initialMetaKey), ascii("region_epoch")))
+          .containsExactly(ascii("1"));
+      assertThat(redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state")))
+          .containsExactly(ascii("APPLIED"));
+      assertThat(redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_operation_id")))
+          .containsExactly(ascii(initialTimelineOperationId.toString()));
+      assertThat(redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest")))
+          .containsExactly(ascii(initialTimelineSourceDigest));
+      assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
+      assertThat(redis.admin().pttl(redisKey)).isPositive();
+
+      redis.admin().hset(ascii(initialMetaKey), ascii("current_tick_id"), ascii("-1"));
+      redisOwner.verifyInitializedTimeline(firstInstallation.grant, preparation);
+
       var currentIncarnation =
           incarnationSource.readCurrent(
               CanonicalGameplayRegionIncarnationSource.RegionScope.from(qualifiedSource));

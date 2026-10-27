@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.region-session-binding-bridge.v1",
   "resourcePath": "redis/lua/game-session-region-session-binding-bridge.lua",
-  "sha256": "29c1832217644dd22f79f84dc749d3b93ce2da440e60b95efe9a988dd2337009",
+  "sha256": "b65358cd964d6147eeba69cc401d2b2caa1a307fa0720490c8f56959ec91fb1a",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
