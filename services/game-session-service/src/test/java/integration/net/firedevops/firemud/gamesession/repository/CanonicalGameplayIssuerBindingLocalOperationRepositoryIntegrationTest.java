@@ -474,6 +474,8 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     var anchor =
         initialCoverageOwner(dsl, () -> currentState)
             .completeInitialBootstrap(intent.operationId(), intent.requestId());
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> currentState);
     var operation =
         new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> currentState)
             .beginOrResumeOrdinaryNew(
