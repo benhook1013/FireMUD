@@ -451,19 +451,42 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         target.characterCreationPolicy());
   }
 
+  /** Retains the existing controlled upstream lease before any provisional publication. */
+  CanonicalGameplayAdmissionDecision originalPreparedDecisionWithControlledAccountLease() {
+    return new CanonicalGameplayAdmissionDecision(
+        transitionId,
+        controlledLeaseEvidence(identity, generation, target),
+        identity,
+        generation,
+        null,
+        target);
+  }
+
+  /** Current controlled issuer source used by the actual bootstrap and local ACK owners. */
+  CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+      currentIssuerSource() {
+    return issuerSource;
+  }
+
   public void publish(AccountGameplayAdmissionLeaseEvidence lease) {
     repository.markProvisional(
         repository.readProvisionalCasEvidence(transitionId),
         new CanonicalGameplayAdmissionDecision(
             transitionId, lease, identity, generation, null, target));
+    acknowledgeOriginalIssuer();
+  }
+
+  /** Actual issuer projection/readback and native SQL ACK after candidate-owned publication. */
+  CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledgeOriginalIssuer() {
     var physicalReadback =
         new CanonicalGameplayIssuerBindingLocalRedisOwner(
                 issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
             .projectAndRead(localOperation);
-    issuerAcknowledgementBytes =
+    var acknowledgement =
         new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
-            .acknowledge(physicalReadback)
-            .exactBytes();
+            .acknowledge(physicalReadback);
+    issuerAcknowledgementBytes = acknowledgement.exactBytes();
+    return acknowledgement;
   }
 
   /** Uses a controlled Account lease input and the actual provisional SQL/Redis owners. */

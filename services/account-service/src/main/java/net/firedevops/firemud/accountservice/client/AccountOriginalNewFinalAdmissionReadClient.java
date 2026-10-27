@@ -9,8 +9,8 @@ import java.util.UUID;
  * <p>Account calls this source after its original credential has been issued. Implementations must
  * perform the authenticated same-namespace Game Session final-result read themselves; no RPC
  * caller-provided timestamp, boolean, candidate, or receipt can construct this result for Account.
- * Until the canonical authenticated final-result reader is wired, no implementation is supplied and
- * Account fails closed.
+ * The concrete manual mTLS reader is available for explicit composition; default runtime wiring
+ * remains absent and fails closed.
  */
 @FunctionalInterface
 public interface AccountOriginalNewFinalAdmissionReadClient {

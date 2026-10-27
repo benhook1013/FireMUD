@@ -117,6 +117,17 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
 
   /** Reads and integrity-checks retained evidence without implying that it is currently usable. */
   CanonicalGameplayIssuerBindingLocalAcknowledgement readHistorical(UUID operationId) {
+    return readHistorical(dsl, operationId);
+  }
+
+  /**
+   * Reads and integrity-checks one immutable historical receipt without a current issuer source.
+   * This verifies the retained receipt and its original operation/anchor rows only; it makes no
+   * claim about current issuer state, epoch, storage incarnation, or admission authority.
+   */
+  static CanonicalGameplayIssuerBindingLocalAcknowledgement readHistorical(
+      DSLContext dsl, UUID operationId) {
+    Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(operationId, "operationId");
     requireNoAmbientTransaction();
     Record row =
@@ -258,7 +269,7 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
     }
   }
 
-  private static CanonicalGameplayIssuerBindingLocalAcknowledgement readAcknowledgement(
+  static CanonicalGameplayIssuerBindingLocalAcknowledgement readAcknowledgement(
       DSLContext query, Record row) {
     byte[] exactBytes = bytes(row, "acknowledgement_bytes");
     CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledgement;
