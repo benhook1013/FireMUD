@@ -47,7 +47,7 @@ public final class CanonicalGameplayAdmissionAbortOwner {
     }
 
     CanonicalGameplayAdmissionAbortSource source =
-        repository.readFirstNewAdmissionAbortSource(transitionId);
+        repository.readFirstNewAdmissionAbortRetrySource(transitionId);
     AccountGameplayAdmissionLeaseEvidence originalLease = source.originalDecision().leaseEvidence();
     byte[] originalLeaseBytes =
         source.originalDecision().leaseEvidenceJson().getBytes(StandardCharsets.UTF_8);
