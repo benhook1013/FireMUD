@@ -10,6 +10,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference.ActorOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
@@ -125,8 +127,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                         + " stable_incarnation_source_bytes, stable_incarnation_qualification_bytes,"
                         + " stable_incarnation_digest,"
                         + " timeline_preimage_state, timeline_absence_proof_digest, region_epoch,"
-                        + " last_committed_tick_id, phase, created_at, updated_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABSENT', ?, 1, -1, 'PREPARED', ?, ?)",
+                        + " last_committed_tick_id, phase, created_at, updated_at, entity_created_origin)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABSENT', ?, 1, -1, 'PREPARED', ?, ?, CAST(? AS jsonb))",
                     operationId,
                     evidence.transition().transitionId(),
                     evidence.candidate().identity().accountId(),
@@ -148,8 +150,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     source.lifecycleRequest().canonicalBytes(),
                     source.graphSha256(),
                     source.preparationInputDigest(),
-                    UUID.fromString(worldRequest.getAssignmentUuid()),
-                    worldRequest.getAssignmentIntentDigest(),
+                    CanonicalGameplayActorOrigins.assignmentId(inputs.actorOrigin()),
+                    CanonicalGameplayActorOrigins.assignmentDigest(inputs.actorOrigin()),
                     inputs.worldSourceDigest(),
                     inputs.preparationDigest(),
                     inputs.incarnationScopeBytes(),
@@ -158,7 +160,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     inputs.incarnationDigest(),
                     inputs.absenceProofDigest(),
                     java.sql.Timestamp.from(now),
-                    java.sql.Timestamp.from(now));
+                    java.sql.Timestamp.from(now),
+                    CanonicalGameplayActorOrigins.creationJson(inputs.actorOrigin()));
                 Record inserted =
                     transaction.fetchOne(
                         "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ?",
@@ -464,7 +467,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     var identity = evidence.candidate().identity();
     var assignment = resolvedRegion.lifecycleAssignment();
     var target = worldRequest.getExpectedTarget();
-    UUID assignmentId = canonicalNonNilUuid(worldRequest.getAssignmentUuid());
+    ActorOrigin actorOrigin = CanonicalGameplayActorOrigins.fromWorldRequest(worldRequest);
     if (evidence.transition().status()
             != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
         || evidence.candidate().lifecycle()
@@ -473,7 +476,6 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         || evidence.transition().expectedPriorBindingRef() != null
         || evidence.transition().expectedPriorBindingGeneration() != null
         || !evidence.transition().transitionId().equals(evidence.candidate().transitionId())
-        || worldRequest.getSchemaVersion() != 1
         || !worldRequest.hasExpectedTarget()
         || !worldRequest.getUnknownFields().asMap().isEmpty()
         || !target.getUnknownFields().asMap().isEmpty()
@@ -490,7 +492,6 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         || !identity.gameInstanceId().equals(source.gameInstanceId())
         || !identity.regionId().equals(source.regionId())
         || !identity.regionEpoch().equals(BigInteger.ONE)
-        || !worldRequest.getAssignmentIntentDigest().matches("[0-9a-f]{64}")
         || !source.canonicalRegionId().equals(resolvedRegion.canonicalRegionInstanceId())
         || !source.regionId().equals(resolvedRegion.operationalRegionId())
         || !source.regionId().equals(assignment.operationalRegionId())
@@ -521,8 +522,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             absenceProofDigest);
     return new InitialTimelineInputs(
         tag,
-        assignmentId,
-        worldRequest.getAssignmentIntentDigest(),
+        actorOrigin,
         worldDigest,
         preparationDigest,
         incarnation.scopeBytes(),
@@ -551,8 +551,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && Arrays.equals(preparation.bindingRef, evidence.candidate().bindingRef().bytes())
         && preparation.sessionId.equals(identity.sessionId())
         && preparation.bindingGeneration.equals(evidence.candidate().bindingGeneration())
-        && preparation.assignmentId.equals(inputs.assignmentId())
-        && preparation.assignmentIntentDigest.equals(inputs.assignmentIntentDigest())
+        && preparation.actorOrigin.equals(inputs.actorOrigin())
         && preparation.worldSourceDigest.equals(inputs.worldSourceDigest())
         && preparation.preparationDigest.equals(inputs.preparationDigest())
         && Arrays.equals(preparation.incarnationScopeBytes, inputs.incarnationScopeBytes())
@@ -613,8 +612,10 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         row.get("binding_ref", byte[].class),
         row.get("session_id", String.class),
         new BigInteger(row.get("binding_generation", java.math.BigDecimal.class).toPlainString()),
-        row.get("assignment_uuid", UUID.class),
-        row.get("assignment_intent_digest", String.class),
+        CanonicalGameplayActorOrigins.fromStored(
+            row.get("assignment_uuid", UUID.class),
+            row.get("assignment_intent_digest", String.class),
+            row.get("entity_created_origin", String.class)),
         row.get("canonical_region_id", UUID.class),
         row.get("region_id", UUID.class),
         row.get("tenant_region_tag", String.class),
@@ -638,8 +639,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
 
   private record InitialTimelineInputs(
       String tenantRegionTag,
-      UUID assignmentId,
-      String assignmentIntentDigest,
+      ActorOrigin actorOrigin,
       String worldSourceDigest,
       String preparationDigest,
       byte[] incarnationScopeBytes,
@@ -1007,8 +1007,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     private final byte[] bindingRef;
     private final String sessionId;
     private final BigInteger bindingGeneration;
-    private final UUID assignmentId;
-    private final String assignmentIntentDigest;
+    private final ActorOrigin actorOrigin;
     private final UUID canonicalRegionId;
     private final UUID regionId;
     private final String tenantRegionTag;
@@ -1042,8 +1041,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         byte[] bindingRef,
         String sessionId,
         BigInteger bindingGeneration,
-        UUID assignmentId,
-        String assignmentIntentDigest,
+        ActorOrigin actorOrigin,
         UUID canonicalRegionId,
         UUID regionId,
         String tenantRegionTag,
@@ -1076,9 +1074,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       this.bindingRef = Objects.requireNonNull(bindingRef, "bindingRef").clone();
       this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
       this.bindingGeneration = Objects.requireNonNull(bindingGeneration, "bindingGeneration");
-      this.assignmentId = Objects.requireNonNull(assignmentId, "assignmentId");
-      this.assignmentIntentDigest =
-          Objects.requireNonNull(assignmentIntentDigest, "assignmentIntentDigest");
+      this.actorOrigin = Objects.requireNonNull(actorOrigin, "actorOrigin");
       this.canonicalRegionId = Objects.requireNonNull(canonicalRegionId, "canonicalRegionId");
       this.regionId = Objects.requireNonNull(regionId, "regionId");
       this.tenantRegionTag = Objects.requireNonNull(tenantRegionTag, "tenantRegionTag");

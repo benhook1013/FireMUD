@@ -42,6 +42,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
@@ -131,6 +132,66 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             entityReferenceClient,
             null)
         .first();
+  }
+
+  /**
+   * Controlled World/Entity source proof for PLAYER_CREATED. The native SQL/Redis owner executes
+   * unchanged; no World placement, activation, live hold, or production registration is established.
+   */
+  static Proof installCreatedAndBridgeThenCheckSources(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
+      java.util.function.Consumer<ExistingBinding> checkSources)
+      throws Exception {
+    return installAndBridgeInternal(
+            dsl, redisHost, redisPort, worldRequest, currentTarget, worldRegionResolver,
+            entityReferenceClient, null, null, createdReferenceClient,
+            binding -> {
+              try (var redis = RegionRedis.open(redisHost, redisPort)) {
+                var before = createdBridgeState(dsl, redis, binding);
+                var retry = binding.owner().bridge(binding.installation());
+                if (!binding.acknowledgement().obligation().equals(retry.obligation())
+                    || !before.equals(createdBridgeState(dsl, redis, binding))) {
+                  throw new IllegalStateException("Created-origin exact retry changed SQL/Redis evidence");
+                }
+                checkSources.accept(binding);
+                if (!before.equals(createdBridgeState(dsl, redis, binding))) {
+                  throw new IllegalStateException("Rejected created-origin source changed SQL/Redis evidence");
+                }
+              }
+            })
+        .first();
+  }
+
+  private static List<Object> createdBridgeState(
+      DSLContext dsl, RegionRedis redis, ExistingBinding binding) {
+    var obligation = binding.acknowledgement().obligation();
+    var physical = snapshotRegionBridgeRedisState(
+        redis,
+        dsl.fetchSingle(
+            "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                + " WHERE transition_id = ?", obligation.transitionId()),
+        obligation.runtimeEntityId());
+    if (physical.leaseValue() == null
+        || !physical.sessionBindingValue().equals(Map.of(
+            "session_id", obligation.sessionId(),
+            "binding_generation", obligation.bindingGeneration().toString()))
+        || !"1".equals(physical.metadata().get("region_epoch"))
+        || !"-1".equals(physical.metadata().get("current_tick_id"))
+        || !"APPLIED".equals(physical.metadata().get("current_tick_state"))) {
+      throw new IllegalStateException("Created-origin native region binding/readback is absent");
+    }
+    return List.of(
+        new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot(),
+        snapshotRegionOwnerSqlState(
+            dsl, obligation.tenantId(), obligation.gameInstanceId(), obligation.regionId()),
+        physical);
   }
 
   /** Reacquires a real region grant after the bridge ACK and proves that the ACK remains closed. */
@@ -493,6 +554,24 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       SecondBinding secondBinding,
       AtomicReference<ChangedGrantProof> changedGrantProofCapture)
       throws Exception {
+    return installAndBridgeInternal(
+        dsl, redisHost, redisPort, worldRequest, currentTarget, worldRegionResolver,
+        entityReferenceClient, secondBinding, changedGrantProofCapture, null, null);
+  }
+
+  private static TwoBindingProof installAndBridgeInternal(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      SecondBinding secondBinding,
+      AtomicReference<ChangedGrantProof> changedGrantProofCapture,
+      CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
+      java.util.function.Consumer<ExistingBinding> afterBridge)
+      throws Exception {
     UUID transitionId = UUID.randomUUID();
     UUID sessionId = UUID.randomUUID();
     var resolved = worldRegionResolver.resolve(worldRequest);
@@ -565,6 +644,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               stableSource,
               worldRegionResolver,
               bridgeEntityReferenceClient,
+              createdReferenceClient,
               runtimeIdentity,
               Duration.ofSeconds(30),
               Clock.systemUTC());
@@ -621,6 +701,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               acknowledged.inventoryRevision(),
               acknowledged.acknowledgedAt(),
               acknowledged.equals(replayed));
+      if (afterBridge != null) {
+        afterBridge.accept(new ExistingBinding(bridgeOwner, installation, firstAcknowledgement));
+      }
       if (secondBinding == null) {
         if (changedGrantProofCapture != null) {
           changedGrantProofCapture.set(
@@ -1027,7 +1110,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private static void requireMaterializedBridgeCaptured(DSLContext dsl, UUID transitionId) {
     String exactRow =
         dsl.fetchSingle(
-                "SELECT to_jsonb(g)::text FROM game_session_canonical_binding_region_bridge_obligation g"
+                "SELECT CASE WHEN entity_created_origin IS NULL"
+                    + " THEN (to_jsonb(g) - 'entity_created_origin')::text"
+                    + " ELSE to_jsonb(g)::text END"
+                    + " FROM game_session_canonical_binding_region_bridge_obligation g"
                     + " WHERE transition_id = ? AND bridge_operation_id IS NOT NULL",
                 transitionId)
             .get(0, String.class);

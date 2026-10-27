@@ -2,7 +2,11 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 
@@ -10,13 +14,22 @@ import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeR
 final class CanonicalGameplayRegionBindingBridgeOwner {
   private final CanonicalGameplayRegionLeaseOwner regionLeaseOwner;
   private final CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient;
+  private final CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient;
 
   CanonicalGameplayRegionBindingBridgeOwner(
       CanonicalGameplayRegionLeaseOwner regionLeaseOwner,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
+    this(regionLeaseOwner, entityReferenceClient, null);
+  }
+
+  CanonicalGameplayRegionBindingBridgeOwner(
+      CanonicalGameplayRegionLeaseOwner regionLeaseOwner,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient) {
     this.regionLeaseOwner = Objects.requireNonNull(regionLeaseOwner, "regionLeaseOwner");
     this.entityReferenceClient =
         Objects.requireNonNull(entityReferenceClient, "entityReferenceClient");
+    this.createdReferenceClient = createdReferenceClient;
   }
 
   /** Acquires the real region grant/fence, then performs the selected first-NEW bridge. */
@@ -60,17 +73,15 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
       throw unavailable();
     }
 
-    ReadPreseededActorRuntimeReferenceRequest entityRequest =
-        entityRequest(installation.worldRequest);
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference =
-        entityReferenceClient.read(entityRequest);
+    CanonicalGameplayRuntimeActorReference reference =
+        readReference(installation.worldRequest);
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage initialPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, reference);
     regionLeaseOwner.prepareBridge(installation, initialPreimage, reference);
 
     // The stable operation and current SQL fence are durable before this first physical write.
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference beforeWriteReference =
-        entityReferenceClient.read(entityRequest);
+    CanonicalGameplayRuntimeActorReference beforeWriteReference =
+        readReference(installation.worldRequest);
     if (!sameReference(reference, beforeWriteReference)) throw unavailable();
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeWritePreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, beforeWriteReference);
@@ -78,8 +89,8 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
         regionLeaseOwner.prepareBridge(installation, beforeWritePreimage, beforeWriteReference);
     regionLeaseOwner.applyRegionSessionBinding(installation, beforeWriteReference);
 
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference currentReference =
-        entityReferenceClient.read(entityRequest);
+    CanonicalGameplayRuntimeActorReference currentReference =
+        readReference(installation.worldRequest);
     if (!sameReference(reference, currentReference)) throw unavailable();
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeReadbackPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, currentReference);
@@ -89,8 +100,8 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback =
         regionLeaseOwner.readBackRegionSessionBinding(
             installation, beforeReadbackPreimage.context().status(), currentReference);
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference afterReadbackReference =
-        entityReferenceClient.read(entityRequest);
+    CanonicalGameplayRuntimeActorReference afterReadbackReference =
+        readReference(installation.worldRequest);
     if (!sameReference(reference, afterReadbackReference)) throw unavailable();
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeAckPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, afterReadbackReference);
@@ -114,18 +125,37 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
               finalAdmissionSource) {
     Objects.requireNonNull(installation, "installation");
     Objects.requireNonNull(finalAdmissionSource, "finalAdmissionSource");
-    ReadPreseededActorRuntimeReferenceRequest request = entityRequest(installation.worldRequest);
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference before =
-        entityReferenceClient.read(request);
+    CanonicalGameplayRuntimeActorReference before =
+        readReference(installation.worldRequest);
     CanonicalGameplayRegionLeaseOwner.OriginalNewFinalBindingCurrentProof proof =
         regionLeaseOwner.revalidateOriginalNewFinalBinding(
             installation, finalAdmissionSource, before);
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference after =
-        entityReferenceClient.read(request);
+    CanonicalGameplayRuntimeActorReference after =
+        readReference(installation.worldRequest);
     if (!sameReference(before, after) || !proof.matchesCurrentEntityReference(after)) {
       throw unavailable();
     }
     return proof;
+  }
+
+  private CanonicalGameplayRuntimeActorReference readReference(
+      net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
+    var origin = CanonicalGameplayActorOrigins.fromWorldRequest(request);
+    if (origin instanceof CanonicalGameplayRuntimeActorReference.CreationOrigin) {
+      if (createdReferenceClient == null) throw unavailable();
+      var target = request.getExpectedTarget();
+      return createdReferenceClient.read(PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
+          .setSchemaVersion(1).setOrigin(request.getPlayerCreatedOrigin())
+          .setTenantUuid(target.getCanonicalTenantUuid())
+          .setAccountUuid(request.getCanonicalAccountUuid())
+          .setPlayableStateNamespaceUuid(target.getPlayableStateNamespaceUuid())
+          .setGameInstanceUuid(target.getGameInstanceId())
+          .setCharacterUuid(request.getCharacterUuid())
+          .setCanonicalVersionUuid(target.getCanonicalVersionUuid())
+          .setRealmUuid(target.getRealmUuid()).setWorldSlug(target.getWorldSlug())
+          .setRealmSlug(target.getRealmSlug()).build());
+    }
+    return entityReferenceClient.read(entityRequest(request));
   }
 
   private static ReadPreseededActorRuntimeReferenceRequest entityRequest(
@@ -141,8 +171,8 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
   }
 
   private static boolean sameReference(
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference expected,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference actual) {
+      CanonicalGameplayRuntimeActorReference expected,
+      CanonicalGameplayRuntimeActorReference actual) {
     return CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(expected)
         .equals(CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(actual));
   }

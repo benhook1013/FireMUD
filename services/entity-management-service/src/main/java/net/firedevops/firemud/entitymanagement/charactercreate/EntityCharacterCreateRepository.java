@@ -459,6 +459,10 @@ public final class EntityCharacterCreateRepository {
                   operation);
           if (updated != 1)
             throw new IllegalStateException("Creation terminal serialization failed");
+          if (character != null) {
+            new EntityPlayerCreatedRuntimeProjectionRepository()
+                .allocateFreshCreation(tx, terminal, action);
+          }
           return terminal;
         });
   }
@@ -488,7 +492,7 @@ public final class EntityCharacterCreateRepository {
       throw EntityCharacterCreateBindings.conflict();
   }
 
-  private static EntityCharacterCreateTerminal terminal(Record row) {
+  static EntityCharacterCreateTerminal terminal(Record row) {
     byte[] bytes = row.get("terminal_bytes", byte[].class);
     if (bytes == null)
       throw Status.UNAVAILABLE

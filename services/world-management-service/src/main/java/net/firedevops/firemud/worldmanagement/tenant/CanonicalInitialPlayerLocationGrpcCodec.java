@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.RegionResult;
@@ -17,7 +19,7 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRoom;
 
-/** Closed schema-1 codec for the unregistered World initial-player-location owner boundary. */
+/** Closed disjoint-origin codec for the unregistered World initial-player-location owner boundary. */
 final class CanonicalInitialPlayerLocationGrpcCodec {
   static final int SCHEMA_VERSION = 1;
   static final int MAX_REQUEST_BYTES = 16 * 1024;
@@ -42,11 +44,11 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
       CanonicalInitialPlayerLocationRequest request, int maximumRequestBytes) {
     if (request == null
         || request.getSerializedSize() > maximumRequestBytes
-        || request.getSchemaVersion() != SCHEMA_VERSION
+        || (request.getSchemaVersion() != SCHEMA_VERSION && request.getSchemaVersion() != 2)
         || !request.getUnknownFields().asMap().isEmpty()
         || !request.hasExpectedTarget()
         || !request.getExpectedTarget().getUnknownFields().asMap().isEmpty()) {
-      throw invalid("a complete closed schema-1 request is required");
+      throw invalid("a complete closed schema-1 or schema-2 request is required");
     }
 
     var target = request.getExpectedTarget();
@@ -72,8 +74,20 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
         "published_release_bundle_ref",
         MAX_RELEASE_REF_LENGTH);
 
-    String assignmentIntentDigest =
-        rawDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");
+    PlayerCreatedActorOrigin createdOrigin = null;
+    UUID assignmentId = null;
+    String assignmentIntentDigest = null;
+    if (request.getSchemaVersion() == 1) {
+      if (request.hasPlayerCreatedOrigin()) throw invalid("schema 1 prohibits creation origin");
+      assignmentId = uuid(request.getAssignmentUuid(), "assignment_uuid");
+      assignmentIntentDigest = rawDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");
+    } else {
+      if (!request.hasPlayerCreatedOrigin() || !request.getAssignmentUuid().isEmpty()
+          || !request.getAssignmentIntentDigest().isEmpty()) {
+        throw invalid("schema 2 requires only the original creation origin");
+      }
+      createdOrigin = CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(request.getPlayerCreatedOrigin());
+    }
     String admissionRequestDigest =
         rawDigest(request.getInitialAdmissionRequestDigest(), "initial_admission_request_digest");
     String terminalProofDigest =
@@ -101,7 +115,7 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
         target.getPublishedReleaseBundleRef(),
         uuid(request.getCanonicalAccountUuid(), "canonical_account_uuid"),
         uuid(request.getCharacterUuid(), "character_uuid"),
-        uuid(request.getAssignmentUuid(), "assignment_uuid"),
+        assignmentId,
         assignmentIntentDigest,
         uuid(request.getInitialAdmissionHoldUuid(), "initial_admission_hold_uuid"),
         uuid(request.getInitialAdmissionHoldFence(), "initial_admission_hold_fence"),
@@ -110,7 +124,8 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
         request.getActiveLifecycleEpoch(),
         terminalProofDigest,
         request.getCommittedPointerVersion(),
-        request.getAuditEventId());
+        request.getAuditEventId(),
+        createdOrigin);
   }
 
   static CanonicalInitialPlayerLocationResponse toResponse(Selection selection, Result result) {
@@ -127,14 +142,18 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
 
     var response =
         CanonicalInitialPlayerLocationResponse.newBuilder()
-            .setSchemaVersion(SCHEMA_VERSION)
+            .setSchemaVersion(selection.playerCreatedOrigin() == null ? 1 : 2)
             .setPlacementOperationUuid(selection.placementOperationId().toString())
             .setRequestDigest(result.requestDigest())
             .setCanonicalAccountUuid(selection.canonicalAccountId().toString())
             .setCharacterUuid(selection.characterId().toString())
-            .setAssignmentUuid(selection.assignmentId().toString())
-            .setAssignmentIntentDigest(selection.assignmentIntentDigest())
             .setResultDigest(result.resultDigest());
+    if (selection.playerCreatedOrigin() == null) {
+      response.setAssignmentUuid(selection.assignmentId().toString())
+          .setAssignmentIntentDigest(selection.assignmentIntentDigest());
+    } else {
+      response.setPlayerCreatedOrigin(selection.playerCreatedOrigin());
+    }
     if (result.outcome() == Outcome.APPLIED) {
       if (result.startLocation() == null
           || result.runtimeRoomInstanceId() == null
@@ -319,7 +338,8 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
       long activeLifecycleEpoch,
       String terminalProofDigest,
       long committedPointerVersion,
-      long auditEventId) {
+      long auditEventId,
+      PlayerCreatedActorOrigin playerCreatedOrigin) {
     Selection {
       Objects.requireNonNull(placementOperationId, "placementOperationId");
       Objects.requireNonNull(expectedTarget, "expectedTarget");
@@ -330,7 +350,13 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
       Objects.requireNonNull(playableStateNamespaceId, "playableStateNamespaceId");
       Objects.requireNonNull(canonicalAccountId, "canonicalAccountId");
       Objects.requireNonNull(characterId, "characterId");
-      Objects.requireNonNull(assignmentId, "assignmentId");
+      if (playerCreatedOrigin == null) {
+        Objects.requireNonNull(assignmentId, "assignmentId");
+        Objects.requireNonNull(assignmentIntentDigest, "assignmentIntentDigest");
+      } else {
+        CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(playerCreatedOrigin);
+        if (assignmentId != null || assignmentIntentDigest != null) throw invalid("mixed actor origins");
+      }
       Objects.requireNonNull(initialAdmissionHoldId, "initialAdmissionHoldId");
       Objects.requireNonNull(initialAdmissionHoldFence, "initialAdmissionHoldFence");
     }

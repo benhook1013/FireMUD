@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package entity_management.v1;
+
+option java_package = "net.firedevops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+// Manual historical reads only. World authenticates for placement provenance; Game Session
+// authenticates for a runtime reference. Neither method allocates or repairs a projection.
+service CanonicalPlayerCreatedRuntimeReferenceService {
+  rpc ReadPlayerCreatedActorPlacementReceipt(PlayerCreatedActorRuntimeReferenceRequest)
+      returns (PlayerCreatedActorRuntimeReferenceResponse);
+  rpc ReadPlayerCreatedActorRuntimeReference(PlayerCreatedActorRuntimeReferenceRequest)
+      returns (PlayerCreatedActorRuntimeReferenceResponse);
+}
+
+// Original Entity creation selectors, not a PRESEEDED assignment or a new creation operation.
+message PlayerCreatedActorOrigin {
+  string target_namespace = 1;
+  string creation_operation_uuid = 2;
+  string mutation_digest = 3;
+  string terminal_uuid = 4;
+  string terminal_sha256 = 5;
+}
+
+// Stable identity and exact runtime association. Creation-time pointer/catalog counters are
+// returned separately and must never be substituted for a current route or eligibility read.
+message PlayerCreatedActorRuntimeReferenceRequest {
+  uint32 schema_version = 1;
+  PlayerCreatedActorOrigin origin = 2;
+  string tenant_uuid = 3;
+  string account_uuid = 4;
+  string playable_state_namespace_uuid = 5;
+  string game_instance_uuid = 6;
+  string character_uuid = 7;
+  string canonical_version_uuid = 8;
+  string realm_uuid = 9;
+  string world_slug = 10;
+  string realm_slug = 11;
+}
+
+message PlayerCreatedActorRuntimeReferenceResponse {
+  uint32 schema_version = 1;
+  PlayerCreatedActorRuntimeReferenceRequest selector = 2;
+  int64 runtime_entity_id = 3;
+  int64 projection_generation = 4;
+  int64 projection_fence = 5;
+  int64 original_catalog_revision = 6;
+  int64 original_pointer_version = 7;
+  int64 original_active_lifecycle_epoch = 8;
+  string original_descriptor_digest = 9;
+  string original_authored_binding_digest = 10;
+  string original_policy_content_digest = 11;
+}

@@ -13,6 +13,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
@@ -604,7 +606,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayBindingProvisionalCasEvidence expectedEvidence,
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolvedRegion,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference runtimeReference,
+      CanonicalGameplayRuntimeActorReference runtimeReference,
       CanonicalGameplayRegionRuntimeStatus ownerStatus,
       CanonicalGameplayRegionLeaseRedisOwner.BindingPreimage preimage) {
     requireNoAmbientTransaction();
@@ -669,7 +671,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayBindingRegionBridgeObligation prepared,
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolvedRegion,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference runtimeReference,
+      CanonicalGameplayRuntimeActorReference runtimeReference,
       CanonicalGameplayRegionRuntimeStatus ownerStatus,
       CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback,
       Instant acknowledgedAt) {
@@ -833,8 +835,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
           inputs.projectionGeneration(),
           inputs.projectionFence(),
           inputs.workloadNamespace(),
-          inputs.assignmentId(),
-          inputs.assignmentIntentDigest(),
+          CanonicalGameplayActorOrigins.assignmentId(inputs.actorOrigin()),
+          CanonicalGameplayActorOrigins.assignmentDigest(inputs.actorOrigin()),
+          CanonicalGameplayActorOrigins.creationJson(inputs.actorOrigin()),
           inputs.entityReferenceDigest(),
           inputs.worldSourceDigest(),
           inputs.canonicalRegionId(),
@@ -856,7 +859,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             + " runtime_entity_id = ?,"
             + " entity_projection_generation = ?, entity_projection_fence = ?,"
             + " entity_workload_namespace = ?, assignment_uuid = ?,"
-            + " assignment_intent_digest = ?, entity_reference_digest = ?,"
+            + " assignment_intent_digest = ?, entity_created_origin = CAST(? AS jsonb), entity_reference_digest = ?,"
             + " world_source_digest = ?, canonical_region_id = ?,"
             + " world_lifecycle_epoch = ?, world_lifecycle_row_version = ?,"
             + " world_capture_id = ?, world_graph_sha256 = ?,"
@@ -1058,8 +1061,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         && obligation.entityProjectionGeneration() == inputs.projectionGeneration()
         && obligation.entityProjectionFence() == inputs.projectionFence()
         && obligation.entityWorkloadNamespace().equals(inputs.workloadNamespace())
-        && obligation.assignmentId().equals(inputs.assignmentId())
-        && obligation.assignmentIntentDigest().equals(inputs.assignmentIntentDigest())
+        && obligation.actorOrigin().equals(inputs.actorOrigin())
         && obligation.entityReferenceDigest().equals(inputs.entityReferenceDigest())
         && obligation.worldSourceDigest().equals(inputs.worldSourceDigest())
         && obligation.canonicalRegionId().equals(inputs.canonicalRegionId())
@@ -1089,7 +1091,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayBindingProvisionalCasEvidence evidence,
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolvedRegion,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference,
+      CanonicalGameplayRuntimeActorReference reference,
       CanonicalGameplayRegionRuntimeStatus ownerStatus) {
     Objects.requireNonNull(worldRequest, "worldRequest");
     Objects.requireNonNull(resolvedRegion, "resolvedRegion");
@@ -1107,16 +1109,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
     CanonicalGameplayBindingIdentity identity = evidence.candidate().identity();
     var target = worldRequest.getExpectedTarget();
     var assignment = resolvedRegion.lifecycleAssignment();
-    if (worldRequest.getSchemaVersion() != 1
-        || !worldRequest.getUnknownFields().asMap().isEmpty()
-        || !reference.target().equals(target)
-        || !reference.assignmentUuid().toString().equals(worldRequest.getAssignmentUuid())
-        || !reference
-            .canonicalAccountUuid()
-            .toString()
-            .equals(worldRequest.getCanonicalAccountUuid())
-        || !reference.characterUuid().toString().equals(worldRequest.getCharacterUuid())
-        || !reference.intentDigest().equals(worldRequest.getAssignmentIntentDigest())
+    if (!worldRequest.getUnknownFields().asMap().isEmpty()
+        || !reference.matchesWorldRequest(worldRequest)
+        || !reference.origin().equals(CanonicalGameplayActorOrigins.fromWorldRequest(worldRequest))
         || !identity.accountId().toString().equals(worldRequest.getCanonicalAccountUuid())
         || !identity.characterId().toString().equals(worldRequest.getCharacterUuid())
         || !identity.tenantId().toString().equals(target.getCanonicalTenantUuid())
@@ -1159,8 +1154,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
         reference.projectionGeneration(),
         reference.projectionFence(),
         reference.workloadNamespace(),
-        reference.assignmentUuid(),
-        reference.intentDigest(),
+        reference.origin(),
         CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference),
         CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(worldRequest, resolvedRegion),
         resolvedRegion.canonicalRegionInstanceId(),
@@ -1218,12 +1212,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   private record BridgeInputs(
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
       long projectionGeneration,
       long projectionFence,
       String workloadNamespace,
-      UUID assignmentId,
-      String assignmentIntentDigest,
+      CanonicalGameplayRuntimeActorReference.ActorOrigin actorOrigin,
       String entityReferenceDigest,
       String worldSourceDigest,
       UUID canonicalRegionId,
@@ -5484,8 +5477,10 @@ public final class CanonicalGameplayBindingInventoryRepository {
         row.get("entity_projection_generation", Long.class),
         row.get("entity_projection_fence", Long.class),
         row.get("entity_workload_namespace", String.class),
-        row.get("assignment_uuid", UUID.class),
-        row.get("assignment_intent_digest", String.class),
+        CanonicalGameplayActorOrigins.fromStored(
+            row.get("assignment_uuid", UUID.class),
+            row.get("assignment_intent_digest", String.class),
+            row.get("entity_created_origin", String.class)),
         row.get("entity_reference_digest", String.class),
         row.get("world_source_digest", String.class),
         row.get("canonical_region_id", UUID.class),
