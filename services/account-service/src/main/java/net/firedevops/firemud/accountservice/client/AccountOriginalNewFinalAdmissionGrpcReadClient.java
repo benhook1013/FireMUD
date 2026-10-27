@@ -21,8 +21,7 @@ import net.firedevops.firemud.gamesession.v1.OriginalNewFinalAdmissionReadServic
 /** Explicit, manually composed Account mTLS client for the concrete original final result. */
 public final class AccountOriginalNewFinalAdmissionGrpcReadClient
     extends AbstractReloadingBlockingGrpcClient<
-        OriginalNewFinalAdmissionReadServiceGrpc
-            .OriginalNewFinalAdmissionReadServiceBlockingStub>
+        OriginalNewFinalAdmissionReadServiceGrpc.OriginalNewFinalAdmissionReadServiceBlockingStub>
     implements AccountOriginalNewFinalAdmissionReadClient {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private final String workloadNamespace;
@@ -60,7 +59,8 @@ public final class AccountOriginalNewFinalAdmissionGrpcReadClient
 
     var wireRequest =
         CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.toRequest(toSelector(expected));
-    var selector = CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(wireRequest);
+    var selector =
+        CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(wireRequest);
     var response =
         requireInitializedStub("Original NEW final admission client is not initialized")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)

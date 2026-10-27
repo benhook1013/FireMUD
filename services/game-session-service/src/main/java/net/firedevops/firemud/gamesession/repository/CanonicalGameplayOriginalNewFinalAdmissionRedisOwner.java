@@ -569,7 +569,6 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
                   issuerJson,
                   ascii(Long.toString(absoluteDeadlineMillis)),
                   issuerPayload));
-      if (result == null) throw unavailable();
       return result;
     } catch (RuntimeException failure) {
       throw unavailable();
@@ -700,7 +699,6 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     if (future == null) throw unavailable();
     try {
       T result = future.get(COMMAND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
-      if (result == null) throw unavailable();
       return result;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();

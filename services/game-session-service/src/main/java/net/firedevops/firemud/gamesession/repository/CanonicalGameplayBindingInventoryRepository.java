@@ -410,11 +410,18 @@ public final class CanonicalGameplayBindingInventoryRepository {
           requireNoActiveAccountControl(
               lockExistingAccountCoverageControl(
                   transaction, originalDecision.candidate().accountId()));
-          lockLeaseBoundRuntimeBeforeTransition(
-              transaction,
-              originalDecision.bindingDecisionId(),
-              originalDecision.candidate().bindingRef().bytes(),
-              originalDecision.targetEvidence());
+          String runtimeStatus =
+              lockLeaseBoundRuntimeBeforeTransition(
+                  transaction,
+                  originalDecision.bindingDecisionId(),
+                  originalDecision.candidate().bindingRef().bytes(),
+                  originalDecision.targetEvidence());
+          // This capability feeds final CAS/recovery, including COMMITTED retries. Historical
+          // receipt retention alone cannot mint current admission source for a stopped runtime.
+          if (!"RUNNING".equals(runtimeStatus)) {
+            throw conflict(
+                "Original NEW final admission source requires its current RUNNING runtime");
+          }
 
           Record row =
               transaction.fetchOne(
@@ -2291,11 +2298,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
               "Original NEW reservation CAS changed");
           bumpInventoryClock(transaction, revision, next);
           return toTransitionSnapshot(
-              findTransition(transaction, transition.transitionId()),
-              transaction.fetchOne(
+              Objects.requireNonNull(
+                  findTransition(transaction, transition.transitionId()),
+                  "Committed original NEW transition must remain present"),
+              transaction.fetchSingle(
                   "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ?",
                   entry.bindingRef().bytes()),
-              transaction.fetchOne(
+              transaction.fetchSingle(
                   "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
                   reservation.reservationId()));
         });
@@ -2494,14 +2503,15 @@ public final class CanonicalGameplayBindingInventoryRepository {
     }
   }
 
-  private static void lockLeaseBoundRuntimeBeforeTransition(
+  private static String lockLeaseBoundRuntimeBeforeTransition(
       DSLContext transaction,
       UUID transitionId,
       byte[] candidateBindingRef,
       CanonicalPlayableTarget expectedTarget) {
     // Keep the runtime-before-transition lock order: resolve without row locks, then acquire only
     // the exact candidate runtime row before CAS evidence locks the transition. The V34 trigger
-    // rechecks the complete launch tuple when the transition is updated.
+    // rechecks the complete launch tuple when the transition is updated. Return the locked row's
+    // status so current admission sources can require RUNNING without gating historical cleanup.
     Record targetLink =
         transaction.fetchOne(
             "SELECT transition.status, transition.admission_lease_id,"
@@ -2532,14 +2542,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
       if (expectedTarget != null) {
         throw conflict("Lease-bound decision has no exact candidate launch identity");
       }
-      return;
+      return null;
     }
 
     if (expectedTarget == null) {
       String status = targetLink.get("status", String.class);
       if (targetLink.get("admission_lease_id", UUID.class) == null
           || (!"PROVISIONAL".equals(status) && !"AMBIGUOUS".equals(status))) {
-        return;
+        return null;
       }
     }
 
@@ -2580,7 +2590,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
     Record runtime =
         transaction.fetchOne(
-            "SELECT id FROM game_instances"
+            "SELECT id, status FROM game_instances"
                 + " WHERE tenant_id = ? AND id = ? AND game_instance_uuid = ? FOR UPDATE",
             gameSessionTenantId,
             gameInstanceId,
@@ -2588,6 +2598,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if (runtime == null) {
       throw conflict("Lease-bound decision has no exact current Game Instance row");
     }
+    return runtime.get("status", String.class);
   }
 
   private static int updateLeaseBoundProvisionalTransition(

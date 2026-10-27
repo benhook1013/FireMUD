@@ -43,6 +43,7 @@ class AccountOriginalNewFinalAdmissionGrpcReadClientTest {
     assertThat(selector.rebindHandleSha256()).isEqualTo(HASH);
     assertThat(request)
         .contains("rebindHandleSha256")
-        .doesNotContain(lineage.toString(), tokenJti.toString(), "lineageId", "tokenJti", "compactJwt");
+        .doesNotContain(
+            lineage.toString(), tokenJti.toString(), "lineageId", "tokenJti", "compactJwt");
   }
 }

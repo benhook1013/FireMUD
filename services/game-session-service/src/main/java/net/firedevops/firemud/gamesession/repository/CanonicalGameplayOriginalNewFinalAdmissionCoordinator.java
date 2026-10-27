@@ -190,7 +190,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         }
       }
     } catch (RuntimeException uncertain) {
-      throw unavailable();
+      throw unavailable(uncertain);
     } finally {
       wipe(originalLeaseBytes);
     }
@@ -341,14 +341,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private static boolean sameRegionAcknowledgement(
+  static boolean sameRegionAcknowledgement(
       CanonicalGameplayBindingRegionBridgeObligation left,
       CanonicalGameplayBindingRegionBridgeObligation right,
       boolean allowCommitRevisionAdvance) {
     if (!allowCommitRevisionAdvance || left.inventoryRevision().equals(right.inventoryRevision())) {
       return left.equals(right);
     }
-    if (!right.inventoryRevision().equals(left.inventoryRevision().add(java.math.BigInteger.ONE))) {
+    // The inventory clock is global: another binding may advance it before this commit.
+    if (right.inventoryRevision().compareTo(left.inventoryRevision()) <= 0) {
       return false;
     }
     var normalized =
@@ -457,11 +458,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         source
             .finalReceipt()
             .orElseThrow(CanonicalGameplayOriginalNewFinalAdmissionCoordinator::unavailable);
+    // Account's confirmation digest binds its final-read and ACTIVE-registry evidence in
+    // Account's own domain; it is not the digest of the physical Game Session payload.
     if (!confirmation.originalLeaseId().equals(originalDecision.leaseId())
         || confirmation.originalLeaseFence() != originalDecision.leaseFence().longValueExact()
         || confirmation.admissionAtMillis() != receipt.admissionAtMillis()
         || confirmation.continuityExpiresAtMillis() != receipt.continuityExpiresAtMillis()
-        || !confirmation.confirmationReadbackSha256().equals(receipt.finalSessionSha256())
         || (credential != null && !confirmation.lineageId().equals(credential.lineageId()))) {
       throw unavailable();
     }
@@ -536,8 +538,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
   }
 
   private static IllegalStateException unavailable() {
+    return unavailable(null);
+  }
+
+  private static IllegalStateException unavailable(Throwable cause) {
     return new IllegalStateException(
-        "Original NEW final admission could not be safely confirmed; retry the exact original operation");
+        "Original NEW final admission could not be safely confirmed; retry the exact original operation",
+        cause);
   }
 
   private static final class Currentness {

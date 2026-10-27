@@ -14,8 +14,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Controlled INITIAL attestor key/channel only. The receiver independently supplies and rechecks
- * actual SQL context. This fixture supplies no LOGIN result, journal row, grant, or acknowledgement,
- * and is not operational deployment/incarnation custody.
+ * actual SQL context. This fixture supplies no LOGIN result, journal row, grant, or
+ * acknowledgement, and is not operational deployment/incarnation custody.
  */
 final class CanonicalGameplayControlledInitialObservationFixture {
   private static final String KEY_ID = "controlled-original-final-attestor";
@@ -35,13 +35,30 @@ final class CanonicalGameplayControlledInitialObservationFixture {
   CanonicalGameplayProtectedIncarnationReceiver receiver(
       CanonicalGameplayAccountInitialBarrierInitializerRepository repository,
       CanonicalGameplayTenantGameplayTagRepository tags) {
-    var expected = new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
-        "controlled-final-target", "generation-1", List.of("redis-node-a"),
-        "controlled-redis-build", "controlled-registry-v1", "sha256:" + "d".repeat(64),
-        "READY", "boot-1", "startup-1", "storage-1", "aof-1");
-    var configuration = new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
-        BINDING, ACCEPTED, Map.of(KEY_ID, (RSAPublicKey) keys.getPublic()), expected,
-        ACL, CONFIG, 16 * 1024, 1, Duration.ofSeconds(30));
+    var expected =
+        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
+            "controlled-final-target",
+            "generation-1",
+            List.of("redis-node-a"),
+            "controlled-redis-build",
+            "controlled-registry-v1",
+            "sha256:" + "d".repeat(64),
+            "READY",
+            "boot-1",
+            "startup-1",
+            "storage-1",
+            "aof-1");
+    var configuration =
+        new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
+            BINDING,
+            ACCEPTED,
+            Map.of(KEY_ID, (RSAPublicKey) keys.getPublic()),
+            expected,
+            ACL,
+            CONFIG,
+            16 * 1024,
+            1,
+            Duration.ofSeconds(30));
     return new CanonicalGameplayProtectedIncarnationReceiver(
         repository, tags, this::observe, configuration, Clock.systemUTC());
   }

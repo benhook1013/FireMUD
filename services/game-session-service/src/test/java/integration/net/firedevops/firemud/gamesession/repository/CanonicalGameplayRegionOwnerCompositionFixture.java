@@ -86,8 +86,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             dsl,
             coordinationRedis,
-            RedisScriptCatalog.loadInstalled(
-                CanonicalGameplayRegionOwnerCompositionFixture.class.getClassLoader()),
+            RedisScriptCatalog.fromContributions(
+                List.of(
+                    new CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                    new CanonicalGameplayRegionBindingBridgeRedisScriptContribution())),
             new ControlledStableIncarnationSource(),
             worldRegionResolver,
             entityReferenceClient,

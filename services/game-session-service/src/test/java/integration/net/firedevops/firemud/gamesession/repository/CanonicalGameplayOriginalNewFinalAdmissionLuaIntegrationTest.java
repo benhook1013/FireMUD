@@ -163,14 +163,15 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
-  void missingIndexClosedBarrierAndStaleCandidateRefuseWithoutRepairOrWrite() {
+  void missingIndexClosedBarrierAndStaleCandidateRefuseWithoutRepairOrWrite() throws Exception {
     ScriptCase testCase = seed();
     assertThat(eval(testCase)).isEqualTo(1L);
     byte[] finalized = admin.get(ascii(testCase.keys()[0]));
     byte[] accountIndex = ascii(testCase.keys()[2]);
     byte[] accountBarrier = ascii(testCase.keys()[4]);
+    byte[][] accountIndexKeys = {accountIndex};
 
-    assertThat(admin.del(accountIndex)).isEqualTo(1L);
+    assertThat(admin.del(accountIndexKeys)).isEqualTo(1L);
     assertThat(eval(testCase)).isEqualTo(-1L);
     assertThat(admin.type(accountIndex)).isEqualTo("none");
     assertThat(admin.get(ascii(testCase.keys()[0]))).containsExactly(finalized);
@@ -178,7 +179,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
 
     admin.sadd(accountIndex, ascii(SESSION));
     byte[] characterIndex = ascii(testCase.keys()[1]);
-    admin.del(characterIndex);
+    byte[][] characterIndexKeys = {characterIndex};
+    admin.del(characterIndexKeys);
     assertThat(eval(testCase)).isEqualTo(-1L);
     assertThat(admin.type(characterIndex)).isEqualTo("none");
     assertThat(admin.get(ascii(testCase.keys()[0]))).containsExactly(finalized);
@@ -186,7 +188,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     admin.set(characterIndex, testCase.arguments()[9]);
 
     byte[] tenantIndex = ascii(testCase.keys()[3]);
-    admin.del(tenantIndex);
+    byte[][] tenantIndexKeys = {tenantIndex};
+    admin.del(tenantIndexKeys);
     assertThat(eval(testCase)).isEqualTo(-1L);
     assertThat(admin.type(tenantIndex)).isEqualTo("none");
     assertThat(admin.get(ascii(testCase.keys()[0]))).containsExactly(finalized);
@@ -198,7 +201,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(admin.type(accountIndex)).isEqualTo("string");
     assertThat(admin.get(ascii(testCase.keys()[0]))).containsExactly(finalized);
 
-    admin.del(accountIndex);
+    admin.del(accountIndexKeys);
     admin.sadd(accountIndex, ascii(SESSION));
     admin.hset(accountBarrier, ascii("state"), ascii("CLOSED"));
     assertThat(eval(testCase)).isEqualTo(-1L);
@@ -230,7 +233,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
-  void expiredDeadlineRefusesWithoutChangingCandidateOrAnyIndex() {
+  void expiredDeadlineRefusesWithoutChangingCandidateOrAnyIndex() throws Exception {
     ScriptCase testCase = seed();
     byte[] candidate = admin.get(ascii(testCase.keys()[0]));
     byte[][] arguments = testCase.arguments().clone();

@@ -25,6 +25,7 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 /** Controlled signer/JWKS inputs; this fixture does not supply Account issuance authority. */
 final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements AutoCloseable {
   private static final ObjectMapper JSON = new ObjectMapper();
+  private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
   private final CanonicalGameplayOriginalNewCandidate candidate;
   private final AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential credential;
   private final CanonicalGameplayOriginalNewBoundCredentialVerifier verifier;
@@ -34,7 +35,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
   CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
       CanonicalGameplayOriginalNewCandidate candidate, Clock clock) throws Exception {
     this.candidate = candidate;
-    new java.security.SecureRandom().nextBytes(handle);
+    RANDOM.nextBytes(handle);
     KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
     generator.initialize(3072);
     KeyPair keys = generator.generateKeyPair();
@@ -239,17 +240,79 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                       + " WHERE game_instance_uuid = ?",
                   identity.gameInstanceId())
               .get(0, String.class);
-      var binding =
+      var seededBinding =
           tools.jackson.databind.json.JsonMapper.builder()
               .build()
               .readValue(
                   bindingJson,
                   net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence.class);
-      var descriptor = binding.descriptor();
-      var release = binding.releaseAttestation();
+      var descriptor = seededBinding.descriptor();
+      // The shared GS runtime deliberately retains a minimal schema-1 launch release. It has no
+      // World selector. Decode the separately retained complete publication fixture instead and
+      // construct a distinct controlled World lifecycle binding through the canonical APIs. No
+      // seeded launch bytes or receipt are rewritten or claimed as genuine World publication.
+      byte[] policyBytes =
+          java.util.Objects.requireNonNull(
+              dsl.fetchSingle(
+                      "SELECT complete_policy_set_evidence FROM game_session_canonical_realm_catalog"
+                          + " WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
+                      namespace,
+                      identity.tenantId(),
+                      target.realmId())
+                  .get(0, byte[].class),
+              "Controlled complete publication fixture is required");
+      var publishedSet =
+          net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec.decode(
+              policyBytes);
+      var publishedRelease =
+          net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.fromStored(
+                  publishedSet.terminalEvidenceBytes())
+              .releaseContent();
+      var worldSelector = publishedRelease.worldStartLocationEvidence();
+      var participants =
+          publishedRelease.participantDigests().stream()
+              .map(
+                  participant ->
+                      new net.firedevops.firemud.common.gamedesign
+                          .AuthoredWorldReleaseAttestationEvidence.Participant(
+                          participant.participantKey(),
+                          participant.scopeValue(),
+                          false,
+                          null,
+                          participant.appliedCommitId(),
+                          participant.contentDigest(),
+                          participant.digestSchemaVersion(),
+                          participant.abilitySchemaDigest() != null,
+                          participant.abilitySchemaDigest()))
+              .toList();
+      var release =
+          net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.create(
+              descriptor.targetNamespace(),
+              descriptor.resultDigest(),
+              descriptor.canonicalTenantId(),
+              publishedRelease.canonicalVersionId(),
+              descriptor.worldSlug(),
+              descriptor.authoredWorldSourceOperationId(),
+              descriptor.authoredWorldSourceEvidenceDigest(),
+              descriptor.launchDescriptorId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              publishedRelease.publishWorkflowId(),
+              worldSelector.request().appliedCommitId(),
+              participants,
+              publishedRelease.manifestHash(),
+              publishedRelease.manifestSchemaVersion(),
+              publishedRelease.requiredManifestAssetKeys(),
+              publishedRelease.artifactDigests(),
+              publishedRelease.commandDefinitions(),
+              descriptor.generationConfigRevision(),
+              worldSelector);
+      var binding =
+          new net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence(
+              descriptor, release);
       var selector =
           net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence.fromStored(
-              release.worldStartLocationEvidence().selectorReceiptBytes());
+              worldSelector.selectorReceiptBytes());
       UUID placementId = UUID.randomUUID();
       UUID assignment = UUID.randomUUID();
       var wireTarget =

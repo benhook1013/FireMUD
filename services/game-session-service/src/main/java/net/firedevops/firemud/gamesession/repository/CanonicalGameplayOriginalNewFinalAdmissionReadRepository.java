@@ -623,7 +623,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
         || repair.get("original_projection_member", String.class) != null
         || decimalNullable(repair, "original_projection_inventory_revision") != null
         || decimal(repair, "operation_fence").signum() <= 0
-        || decimal(repair, "coverage_fence").signum() <= 0
+        || requiredUuid(repair, "coverage_fence").equals(new UUID(0L, 0L))
         || decimal(repair, "inventory_snapshot_revision").signum() <= 0
         || decimal(repair, "original_inventory_revision")
                 .compareTo(decimal(repair, "inventory_snapshot_revision"))
@@ -740,7 +740,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
         || !SHA256.matcher(requiredText(row, "world_source_digest")).matches()
         || !PREFIXED_SHA256.matcher(requiredText(row, "world_preparation_input_digest")).matches()
         || !SHA256.matcher(requiredText(row, "world_graph_sha256")).matches()
-        || !candidate.bindingIdentity().regionId().equals(requiredUuid(row, "canonical_region_id"))
+        || requiredUuid(row, "canonical_region_id").equals(new UUID(0L, 0L))
         || row.get("world_capture_id", UUID.class) == null
         || decimal(row, "world_lifecycle_epoch").signum() <= 0
         || decimal(row, "world_lifecycle_row_version").signum() < 0
