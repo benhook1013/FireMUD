@@ -6,6 +6,10 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
+import io.grpc.TlsServerCredentials;
+import io.grpc.stub.StreamObserver;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
@@ -24,24 +28,39 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload;
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.gamesession.service.CanonicalRegionBootstrapAssignmentResolver;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
@@ -53,7 +72,9 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
@@ -76,6 +97,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   private static final UUID OPERATIONAL_REGION_ID =
       UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final Instant NOW = Instant.parse("2026-10-26T00:00:00Z");
+  private static final String ENTITY_CLIENT_PEER =
+      "spiffe://firemud/ns/firemud/sa/game-session-service";
+  private static final String ENTITY_SERVER_PEER =
+      "spiffe://firemud/ns/firemud/sa/entity-management-service";
+
+  @TempDir static Path pkiDirectory;
+  private static LoopbackMtlsTestPki.Pki pki;
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -84,6 +112,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   @Container
   private static final GenericContainer<?> REDIS =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(REDIS_PORT);
+
+  @BeforeAll
+  static void certificates() throws Exception {
+    pki =
+        LoopbackMtlsTestPki.create(
+            pkiDirectory,
+            "Region member order test CA",
+            new LoopbackMtlsTestPki.IdentitySpec("client", ENTITY_CLIENT_PEER, false),
+            new LoopbackMtlsTestPki.IdentitySpec("entity-server", ENTITY_SERVER_PEER, true));
+  }
 
   @Test
   void composesLeaseInstallRevalidationHandoffAndFailClosedSourceChanges() throws Exception {
@@ -442,6 +480,105 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     }
   }
 
+  @Test
+  void accountMemberAcknowledgementAfterRegionBridgePreservesOriginalBridgeEvidence()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      // The shared test Redis container may have state from the sibling owner test.
+      try (RedisFixture redis = RedisFixture.open()) {
+        redis.admin().flushdb();
+      }
+      // This local candidate-launch source is created through the real Game Session owners;
+      // its upstream publication inputs remain controlled test evidence.
+      var runtimeTarget =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              testSchema.dataSource(), UUID.randomUUID(), "firemud");
+      WorldFixture world = WorldFixture.open(runtimeTarget);
+      CanonicalPlayableTarget currentTarget = runtimeTarget.playableTarget();
+      // World and Entity responses are controlled fixtures; region and Account owners are actual.
+      try (var entitySource = EntityReferenceFixture.open()) {
+        CanonicalGameplayRegionOwnerCompositionFixture.MemberRepairProof proof =
+            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeThenRepairAccountMember(
+                testSchema.dsl(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(REDIS_PORT),
+                world.request(),
+                currentTarget,
+                world.resolver(),
+                entitySource.client());
+
+        assertThat(proof.regionBridge().exactLostReplyRetry()).isTrue();
+        assertThat(proof.memberAcknowledgement().schemaVersion()).isEqualTo(2);
+        assertThat(proof.memberAcknowledgement().transitionId())
+            .isEqualTo(proof.regionBridge().transitionId());
+        assertThat(proof.memberAcknowledgement().readback().member())
+            .isEqualTo(proof.memberAcknowledgement().operation().member());
+        assertThat(proof.memberAcknowledgedInventoryRevision())
+            .isEqualTo(proof.regionAcknowledgedInventoryRevision().add(BigInteger.ONE));
+        assertThat(proof.sharedRevisionPropagated()).isTrue();
+        assertThat(proof.regionAcknowledgementEvidenceUnchanged()).isTrue();
+        assertThat(proof.physicalBridgeEvidenceUnchanged()).isTrue();
+        assertThat(proof.accountMemberAddedExactly()).isTrue();
+        assertThat(proof.accountControlStatePreserved()).isTrue();
+        assertThat(proof.exactMemberRetryPreservedState()).isTrue();
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  private static Server entityReferenceServer() throws Exception {
+    var service =
+        new CanonicalPreseededActorAssignmentServiceGrpc
+            .CanonicalPreseededActorAssignmentServiceImplBase() {
+          @Override
+          public void readPreseededActorRuntimeReference(
+              ReadPreseededActorRuntimeReferenceRequest request,
+              StreamObserver<ReadPreseededActorRuntimeReferenceResponse> observer) {
+            var peer = GrpcPeerIdentity.current();
+            if (peer == null || !ENTITY_CLIENT_PEER.equals(peer.uri())) {
+              observer.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+              return;
+            }
+            observer.onNext(entityResponse(request));
+            observer.onCompleted();
+          }
+        };
+    var factory =
+        new BoundedGrpcServerFactory(
+            "127.0.0.1:0",
+            List.of(),
+            pki.keyManagerFactory(pki.identity("entity-server")),
+            pki.trustManagerFactory(),
+            TlsServerCredentials.ClientAuth.REQUIRE,
+            GrpcRequestBytePolicy.ordinary(),
+            GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+    factory.addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()));
+    return factory.createServer().start();
+  }
+
+  private static ReadPreseededActorRuntimeReferenceResponse entityResponse(
+      ReadPreseededActorRuntimeReferenceRequest request) {
+    return ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+        .setSchemaVersion(1)
+        .setAssignmentUuid(request.getAssignmentUuid())
+        .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+        .setCharacterUuid(request.getCharacterUuid())
+        .setIntentDigest(request.getIntentDigest())
+        .setExpectedTarget(request.getExpectedTarget())
+        .setPublishedOwnerProofDigest("f".repeat(64))
+        .setRuntimeEntityId(91L)
+        .setProjectionGeneration(11L)
+        .setProjectionFence(12L)
+        .setCorePayload(
+            PreseededActorAssignmentCorePayload.newBuilder()
+                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                .setDisplayName("Fixture Player"))
+        .build();
+  }
+
   private static DriverManagerDataSource dataSource() {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(POSTGRES.getDriverClassName());
@@ -449,6 +586,38 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     dataSource.setUsername(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
     return dataSource;
+  }
+
+  private static TestSchema newTestSchema() {
+    String schema = "gs_region_member_order_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(POSTGRES.getDriverClassName());
+    String separator = POSTGRES.getJdbcUrl().contains("?") ? "&" : "?";
+    dataSource.setUrl(POSTGRES.getJdbcUrl() + separator + "currentSchema=" + schema);
+    dataSource.setUsername(POSTGRES.getUsername());
+    dataSource.setPassword(POSTGRES.getPassword());
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .load()
+        .migrate();
+    return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
+  }
+
+  private static void dropSchema(String schema) {
+    try (var connection =
+            java.sql.DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var statement = connection.createStatement()) {
+      statement.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    } catch (Exception failure) {
+      throw new IllegalStateException(
+          "Failed to dispose reverse-order region/member schema", failure);
+    }
   }
 
   /** Controlled current-incarnation fixture; it does not attest production Redis custody. */
@@ -665,6 +834,41 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         .build();
   }
 
+  private static CanonicalInitialPlayerLocationRequest initialLocationRequest(
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target) {
+    var expectedTarget =
+        PreseededActorAssignmentExpectedTarget.newBuilder()
+            .setCanonicalTenantUuid(target.canonicalTenantId().toString())
+            .setRealmUuid(target.realmId().toString())
+            .setWorldSlug(target.worldSlug())
+            .setRealmSlug(target.realmSlug())
+            .setGameInstanceId(target.gameInstanceUuid().toString())
+            .setCatalogRevision(target.catalogRevision())
+            .setCanonicalVersionUuid(target.canonicalVersionId().toString())
+            .setFrozenPolicyDigest("a".repeat(64))
+            .setPlayableStateNamespaceUuid(target.playableStateNamespaceId().toString())
+            .setPublishedReleaseBundleRef(target.publishedReleaseBundleRef())
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .build();
+    return CanonicalInitialPlayerLocationRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setPlacementOperationUuid(UUID.randomUUID().toString())
+        .setExpectedTarget(expectedTarget)
+        .setCanonicalAccountUuid(ACCOUNT_ID.toString())
+        .setCharacterUuid(CHARACTER_ID.toString())
+        .setAssignmentUuid(UUID.randomUUID().toString())
+        .setAssignmentIntentDigest("b".repeat(64))
+        .setInitialAdmissionHoldUuid(target.holdId().toString())
+        .setInitialAdmissionHoldFence(target.holdFence().toString())
+        .setInitialAdmissionRequestId(target.initialAdmissionRequestId())
+        .setInitialAdmissionRequestDigest(target.initialAdmissionRequestDigest())
+        .setActiveLifecycleEpoch(target.activeWorldEpoch())
+        .setTerminalProofDigest(target.ownerProofDigest())
+        .setCommittedPointerVersion(target.pointerVersion())
+        .setAuditEventId(target.auditEventId())
+        .build();
+  }
+
   private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
       CanonicalInitialPlayerLocationRequest request,
       WorldCanonicalInstanceLifecycleEvidence evidence) {
@@ -739,9 +943,15 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     private final CanonicalInitialPlayerLocationRegionResolver resolver;
 
     private WorldFixture(WorldCanonicalInstanceLifecycleEvidence original) {
+      this(original, initialLocationRequest(original.request()));
+    }
+
+    private WorldFixture(
+        WorldCanonicalInstanceLifecycleEvidence original,
+        CanonicalInitialPlayerLocationRequest request) {
       this.original = original;
       this.current = new AtomicReference<>(original);
-      this.request = initialLocationRequest(original.request());
+      this.request = request;
       this.initialClient = mock(CanonicalInitialPlayerLocationClient.class);
       this.lifecycleClient = mock(WorldCanonicalInstanceLifecycleClient.class);
       when(initialClient.readInitialPlayerLocationRegion(request))
@@ -762,6 +972,36 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
     static WorldFixture open() throws Exception {
       return new WorldFixture(AuthoringFixtures.lifecycleEvidence("ACTIVE", 7L));
+    }
+
+    static WorldFixture open(CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target) {
+      var lifecycleRequest =
+          new WorldCanonicalInstanceLifecycleEvidence.Request(
+              WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+              UUID.randomUUID(),
+              target.targetNamespace(),
+              target.canonicalTenantId(),
+              target.worldSlug(),
+              target.gameInstanceUuid(),
+              target.playableStateNamespaceId(),
+              target.playableStateScope(),
+              true,
+              target.controlPlaneRequestId(),
+              target.canonicalVersionId(),
+              "sha256:" + "a".repeat(64),
+              "sha256:" + "b".repeat(64),
+              "sha256:" + "c".repeat(64));
+      var evidence = mock(WorldCanonicalInstanceLifecycleEvidence.class);
+      when(evidence.request()).thenReturn(lifecycleRequest);
+      when(evidence.lifecycleStatus()).thenReturn("ACTIVE");
+      when(evidence.lifecycleEpoch()).thenReturn(target.activeWorldEpoch());
+      when(evidence.rowVersion()).thenReturn(1L);
+      when(evidence.captureId()).thenReturn(UUID.randomUUID());
+      when(evidence.graphSha256()).thenReturn("d".repeat(64));
+      when(evidence.preparationInputDigest()).thenReturn("sha256:" + "e".repeat(64));
+      when(evidence.operationalRegionAssignments())
+          .thenReturn(java.util.Map.of(CANONICAL_REGION_ID, OPERATIONAL_REGION_ID));
+      return new WorldFixture(evidence, initialLocationRequest(target));
     }
 
     CanonicalInitialPlayerLocationRegionResolver resolver() {
@@ -795,6 +1035,50 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       replacement = null;
       callbackOnRead = -1;
       afterRead = () -> {};
+    }
+  }
+
+  private static final class EntityReferenceFixture implements AutoCloseable {
+    private final Server server;
+    private final CanonicalPreseededActorRuntimeReferenceClient client;
+
+    private EntityReferenceFixture(
+        Server server, CanonicalPreseededActorRuntimeReferenceClient client) {
+      this.server = server;
+      this.client = client;
+    }
+
+    static EntityReferenceFixture open() throws Exception {
+      Server server = entityReferenceServer();
+      ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+      endpoints.setEntityManagementService("localhost:" + server.getPort());
+      var client =
+          new CanonicalPreseededActorRuntimeReferenceClient(
+              endpoints,
+              pki.clientProperties(pkiDirectory, pki.identity("client")),
+              new GrpcChannelFactory(),
+              "firemud");
+      try {
+        client.init();
+        return new EntityReferenceFixture(server, client);
+      } catch (Exception failure) {
+        client.close();
+        server.shutdownNow();
+        throw failure;
+      }
+    }
+
+    CanonicalPreseededActorRuntimeReferenceClient client() {
+      return client;
+    }
+
+    @Override
+    public void close() throws Exception {
+      client.close();
+      server.shutdownNow();
+      if (!server.awaitTermination(5, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Controlled Entity reference server did not terminate");
+      }
     }
   }
 
@@ -882,4 +1166,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
     }
   }
+
+  private record TestSchema(String schema, DriverManagerDataSource dataSource, DSLContext dsl) {}
 }

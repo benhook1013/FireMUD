@@ -4549,7 +4549,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             "UPDATE "
                 + REGION_OBLIGATION
                 + " SET inventory_revision = ? WHERE transition_id = ? AND binding_ref = ?"
-                + " AND status = 'REQUIRED' AND inventory_revision = ?",
+                + " AND status IN ('REQUIRED', 'ACKNOWLEDGED') AND inventory_revision = ?",
             decimal(nextRevision),
             operation.transitionId(),
             operation.bindingRef().bytes(),

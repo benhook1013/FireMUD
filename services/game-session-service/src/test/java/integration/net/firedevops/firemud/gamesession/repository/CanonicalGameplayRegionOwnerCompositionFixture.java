@@ -23,11 +23,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
@@ -40,6 +42,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
@@ -124,6 +127,287 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             entityReferenceClient,
             null)
         .first();
+  }
+
+  /**
+   * Runs the physical region bridge first, then the actual Account-member repair owner and retry.
+   */
+  public static MemberRepairProof installAndBridgeThenRepairAccountMember(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient)
+      throws Exception {
+    Proof regionBridge =
+        installAndBridge(
+            dsl,
+            redisHost,
+            redisPort,
+            worldRequest,
+            currentTarget,
+            worldRegionResolver,
+            entityReferenceClient);
+    return repairAccountMemberAfterRegionBridge(dsl, redisHost, redisPort, regionBridge);
+  }
+
+  private static MemberRepairProof repairAccountMemberAfterRegionBridge(
+      DSLContext dsl, String redisHost, int redisPort, Proof regionBridge) {
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    try (var redis = RegionRedis.openForMemberRepair(redisHost, redisPort)) {
+      var catalog =
+          RedisScriptCatalog.fromContributions(
+              List.of(
+                  new CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                  new CanonicalGameplayRegionBindingBridgeRedisScriptContribution(),
+                  new CanonicalGameplayAccountMemberRepairRedisScriptContribution()));
+      Record bridgeBefore =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                      + " WHERE transition_id = ?",
+                  regionBridge.transitionId()),
+              "persisted region bridge acknowledgement");
+      BigInteger bridgeRevision =
+          new BigInteger(Objects.requireNonNull(bridgeBefore.get("inventory_revision")).toString());
+      String bridgeEvidenceBefore =
+          dsl.fetchSingle(
+                  "SELECT (to_jsonb(obligation) - 'inventory_revision')::text AS image"
+                      + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                      + " WHERE transition_id = ?",
+                  regionBridge.transitionId())
+              .get("image", String.class);
+      boolean originalAcknowledgementMatchesBridgeProof =
+          "ACKNOWLEDGED".equals(bridgeBefore.get("status", String.class))
+              && regionBridge
+                  .bridgeOperationId()
+                  .equals(bridgeBefore.get("bridge_operation_id", UUID.class))
+              && regionBridge
+                  .executorFence()
+                  .equals(
+                      new BigInteger(
+                          Objects.requireNonNull(
+                                  bridgeBefore.get("executor_fence"),
+                                  "persisted region executor fence")
+                              .toString()))
+              && regionBridge
+                  .redisReadbackDigest()
+                  .equals(bridgeBefore.get("redis_readback_digest", String.class))
+              && bridgeRevision.equals(regionBridge.acknowledgedInventoryRevision())
+              && regionBridge
+                  .acknowledgedAt()
+                  .truncatedTo(ChronoUnit.MICROS)
+                  .equals(
+                      bridgeBefore
+                          .get("acknowledged_at", java.time.OffsetDateTime.class)
+                          .toInstant());
+      RegionBridgeRedisState regionRedisBefore =
+          snapshotRegionBridgeRedisState(redis, bridgeBefore, regionBridge.runtimeEntityId());
+      Set<String> accountMembersBefore =
+          snapshotAccountMembers(redis, bridgeBefore.get("account_id", UUID.class));
+      String accountControlImageBefore =
+          accountControlImage(dsl, bridgeBefore.get("account_id", UUID.class));
+      var inventoryBefore = inventory.readSnapshot();
+      var accountRepairOwner =
+          new CanonicalGameplayAccountMemberRepairOwner(dsl, redis.ownerClient(), catalog);
+
+      CanonicalGameplayAccountMemberAcknowledgement acknowledgement =
+          accountRepairOwner.repair(regionBridge.transitionId());
+      var inventoryAfterAcknowledgement = inventory.readSnapshot();
+      BigInteger expectedRevision = bridgeRevision.add(BigInteger.ONE);
+      Record bridgeAfter =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                      + " WHERE transition_id = ?",
+                  regionBridge.transitionId()),
+              "region bridge acknowledgement after member repair");
+      String bridgeEvidenceAfter =
+          dsl.fetchSingle(
+                  "SELECT (to_jsonb(obligation) - 'inventory_revision')::text AS image"
+                      + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                      + " WHERE transition_id = ?",
+                  regionBridge.transitionId())
+              .get("image", String.class);
+      RegionBridgeRedisState regionRedisAfterAcknowledgement =
+          snapshotRegionBridgeRedisState(redis, bridgeAfter, regionBridge.runtimeEntityId());
+      Set<String> accountMembersAfter = snapshotAccountMembers(redis, acknowledgement.accountId());
+      String accountControlImageAfterAcknowledgement =
+          accountControlImage(dsl, acknowledgement.accountId());
+      Set<String> expectedAccountMembers = new java.util.TreeSet<>(accountMembersBefore);
+      expectedAccountMembers.add(acknowledgement.member());
+      boolean sharedRevisionPropagated =
+          inventoryAfterAcknowledgement.inventoryRevision().equals(expectedRevision)
+              && inventoryAfterAcknowledgement.bindings().size() == 1
+              && "PROVISIONAL"
+                  .equals(inventoryAfterAcknowledgement.bindings().getFirst().lifecycle().name())
+              && "ACKNOWLEDGED"
+                  .equals(
+                      inventoryAfterAcknowledgement
+                          .bindings()
+                          .getFirst()
+                          .accountIndexState()
+                          .name())
+              && "REPAIR_REQUIRED"
+                  .equals(
+                      inventoryAfterAcknowledgement.bindings().getFirst().issuerIndexState().name())
+              && inventoryAfterAcknowledgement
+                  .bindings()
+                  .getFirst()
+                  .inventoryRevision()
+                  .equals(expectedRevision)
+              && inventoryAfterAcknowledgement.transitions().size() == 1
+              && "PROVISIONAL"
+                  .equals(inventoryAfterAcknowledgement.transitions().getFirst().status().name())
+              && inventoryAfterAcknowledgement
+                  .transitions()
+                  .getFirst()
+                  .inventoryRevision()
+                  .equals(expectedRevision)
+              && inventoryAfterAcknowledgement.reservations().size() == 1
+              && inventoryAfterAcknowledgement
+                  .reservations()
+                  .getFirst()
+                  .inventoryRevision()
+                  .equals(expectedRevision)
+              && inventoryAfterAcknowledgement.accountIndexObligations().size() == 1
+              && "ACKNOWLEDGED"
+                  .equals(
+                      inventoryAfterAcknowledgement
+                          .accountIndexObligations()
+                          .getFirst()
+                          .status()
+                          .name())
+              && inventoryAfterAcknowledgement
+                  .accountIndexObligations()
+                  .getFirst()
+                  .inventoryRevision()
+                  .equals(expectedRevision)
+              && inventoryAfterAcknowledgement.issuerIndexObligations().size() == 1
+              && "REQUIRED"
+                  .equals(
+                      inventoryAfterAcknowledgement
+                          .issuerIndexObligations()
+                          .getFirst()
+                          .status()
+                          .name())
+              && inventoryAfterAcknowledgement
+                  .issuerIndexObligations()
+                  .getFirst()
+                  .inventoryRevision()
+                  .equals(expectedRevision)
+              && inventoryAfterAcknowledgement.regionBridgeObligations().size() == 1
+              && "ACKNOWLEDGED"
+                  .equals(
+                      inventoryAfterAcknowledgement
+                          .regionBridgeObligations()
+                          .getFirst()
+                          .status()
+                          .name())
+              && inventoryAfterAcknowledgement
+                  .regionBridgeObligations()
+                  .getFirst()
+                  .inventoryRevision()
+                  .equals(expectedRevision)
+              && "RESERVED"
+                  .equals(
+                      inventoryAfterAcknowledgement.reservations().getFirst().lifecycle().name())
+              && new BigInteger(
+                      Objects.requireNonNull(
+                              bridgeAfter.get("inventory_revision"),
+                              "region acknowledgement inventory revision after member repair")
+                          .toString())
+                  .equals(expectedRevision);
+      boolean bridgeAcknowledgementEvidenceUnchanged =
+          originalAcknowledgementMatchesBridgeProof
+              && bridgeEvidenceBefore.equals(bridgeEvidenceAfter)
+              && "ACKNOWLEDGED".equals(bridgeAfter.get("status", String.class));
+      boolean physicalBridgeEvidenceUnchanged =
+          regionRedisBefore.equals(regionRedisAfterAcknowledgement)
+              && regionRedisBefore.leaseValue() != null
+              && regionRedisBefore.metadata().size() == 5
+              && regionRedisBefore.sessionBindingValue().size() == 2;
+      boolean accountMemberAddedExactly = expectedAccountMembers.equals(accountMembersAfter);
+      boolean accountControlStatePreserved =
+          accountControlImageBefore.equals(accountControlImageAfterAcknowledgement);
+      String memberRepairOperationImageAfterAcknowledgement =
+          dsl.fetchSingle(
+                  "SELECT to_jsonb(operation)::text AS image"
+                      + " FROM game_session_canonical_account_member_repair_operation operation"
+                      + " WHERE operation_id = ?",
+                  acknowledgement.operationId())
+              .get("image", String.class);
+      String accountCoverageControlImageAfterAcknowledgement =
+          dsl.fetchSingle(
+                  "SELECT to_jsonb(control)::text AS image"
+                      + " FROM game_session_canonical_account_coverage_control control"
+                      + " WHERE account_id = ?",
+                  acknowledgement.accountId())
+              .get("image", String.class);
+
+      CanonicalGameplayAccountMemberAcknowledgement retry =
+          accountRepairOwner.repair(regionBridge.transitionId());
+      var inventoryAfterRetry = inventory.readSnapshot();
+      Record bridgeAfterRetry =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                      + " WHERE transition_id = ?",
+                  regionBridge.transitionId()),
+              "region bridge acknowledgement after exact member retry");
+      String bridgeEvidenceAfterRetry =
+          dsl.fetchSingle(
+                  "SELECT (to_jsonb(obligation) - 'inventory_revision')::text AS image"
+                      + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                      + " WHERE transition_id = ?",
+                  regionBridge.transitionId())
+              .get("image", String.class);
+      String memberRepairOperationImageAfterRetry =
+          dsl.fetchSingle(
+                  "SELECT to_jsonb(operation)::text AS image"
+                      + " FROM game_session_canonical_account_member_repair_operation operation"
+                      + " WHERE operation_id = ?",
+                  acknowledgement.operationId())
+              .get("image", String.class);
+      String accountCoverageControlImageAfterRetry =
+          accountControlImage(dsl, acknowledgement.accountId());
+      boolean exactMemberRetryPreservedState =
+          acknowledgement.equals(retry)
+              && inventoryAfterAcknowledgement.equals(inventoryAfterRetry)
+              && bridgeEvidenceAfter.equals(bridgeEvidenceAfterRetry)
+              && memberRepairOperationImageAfterAcknowledgement.equals(
+                  memberRepairOperationImageAfterRetry)
+              && accountCoverageControlImageAfterAcknowledgement.equals(
+                  accountCoverageControlImageAfterRetry)
+              && regionRedisAfterAcknowledgement.equals(
+                  snapshotRegionBridgeRedisState(
+                      redis, bridgeAfterRetry, regionBridge.runtimeEntityId()))
+              && accountMembersAfter.equals(
+                  snapshotAccountMembers(redis, acknowledgement.accountId()));
+      if (!sharedRevisionPropagated
+          || !bridgeAcknowledgementEvidenceUnchanged
+          || !physicalBridgeEvidenceUnchanged
+          || !accountMemberAddedExactly
+          || !accountControlStatePreserved
+          || !exactMemberRetryPreservedState
+          || inventoryBefore.inventoryRevision().compareTo(bridgeRevision) != 0) {
+        throw new IllegalStateException(
+            "Reverse-order region and Account-member acknowledgements did not preserve exact evidence");
+      }
+      return new MemberRepairProof(
+          regionBridge,
+          acknowledgement,
+          bridgeRevision,
+          expectedRevision,
+          sharedRevisionPropagated,
+          bridgeAcknowledgementEvidenceUnchanged,
+          physicalBridgeEvidenceUnchanged,
+          accountMemberAddedExactly,
+          accountControlStatePreserved,
+          exactMemberRetryPreservedState);
+    }
   }
 
   /** Runs the real first owner chain, then exercises a second candidate under its private grant. */
@@ -1023,6 +1307,52 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         Map.copyOf(metadata));
   }
 
+  private static RegionBridgeRedisState snapshotRegionBridgeRedisState(
+      RegionRedis redis, Record bridgeRow, long runtimeEntityId) {
+    UUID tenantId = bridgeRow.get("tenant_id", UUID.class);
+    UUID gameInstanceId = bridgeRow.get("game_instance_id", UUID.class);
+    UUID regionId = bridgeRow.get("region_id", UUID.class);
+    String metaKey = CanonicalGameplayRegionRedisKeys.meta(tenantId, gameInstanceId, regionId);
+    Map<String, String> metadata = new LinkedHashMap<>();
+    redis
+        .admin()
+        .hgetall(ascii(metaKey))
+        .forEach((field, value) -> metadata.put(asciiString(field), asciiString(value)));
+    Map<String, String> sessionBinding = new LinkedHashMap<>();
+    redis
+        .admin()
+        .hgetall(
+            ascii(
+                CanonicalGameplayRegionRedisKeys.sessionBinding(
+                    tenantId, gameInstanceId, regionId, runtimeEntityId)))
+        .forEach((field, value) -> sessionBinding.put(asciiString(field), asciiString(value)));
+    return new RegionBridgeRedisState(
+        asciiString(
+            redis
+                .admin()
+                .get(
+                    ascii(
+                        CanonicalGameplayRegionRedisKeys.lease(
+                            tenantId, gameInstanceId, regionId)))),
+        Map.copyOf(metadata),
+        Map.copyOf(sessionBinding));
+  }
+
+  private static Set<String> snapshotAccountMembers(RegionRedis redis, UUID accountId) {
+    return redis.admin().smembers(ascii("session:game:index:account:" + accountId)).stream()
+        .map(CanonicalGameplayRegionOwnerCompositionFixture::asciiString)
+        .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+  }
+
+  private static String accountControlImage(DSLContext dsl, UUID accountId) {
+    return dsl.fetchSingle(
+            "SELECT to_jsonb(control)::text AS image"
+                + " FROM game_session_canonical_account_coverage_control control"
+                + " WHERE account_id = ?",
+            accountId)
+        .get("image", String.class);
+  }
+
   private static String asciiString(byte[] value) {
     return value == null ? null : new String(value, StandardCharsets.US_ASCII);
   }
@@ -1073,6 +1403,21 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private record RegionRedisState(
       String leaseType, String leaseValue, Map<String, String> metadata) {}
 
+  private record RegionBridgeRedisState(
+      String leaseValue, Map<String, String> metadata, Map<String, String> sessionBindingValue) {}
+
+  public record MemberRepairProof(
+      Proof regionBridge,
+      CanonicalGameplayAccountMemberAcknowledgement memberAcknowledgement,
+      BigInteger regionAcknowledgedInventoryRevision,
+      BigInteger memberAcknowledgedInventoryRevision,
+      boolean sharedRevisionPropagated,
+      boolean regionAcknowledgementEvidenceUnchanged,
+      boolean physicalBridgeEvidenceUnchanged,
+      boolean accountMemberAddedExactly,
+      boolean accountControlStatePreserved,
+      boolean exactMemberRetryPreservedState) {}
+
   public record AccountAbortProof(
       UUID transitionId,
       UUID cleanupId,
@@ -1108,13 +1453,20 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     }
 
     static RegionRedis open(String host, int port) {
+      return open(host, port, false);
+    }
+
+    static RegionRedis openForMemberRepair(String host, int port) {
+      return open(host, port, true);
+    }
+
+    private static RegionRedis open(String host, int port, boolean allowAccountMemberRepair) {
       var baseUri = RedisURI.Builder.redis(host, port).withTimeout(Duration.ofSeconds(5)).build();
       RedisClient administrator = RedisClient.create(baseUri);
       StatefulRedisConnection<byte[], byte[]> adminConnection =
           administrator.connect(ByteArrayCodec.INSTANCE);
       RedisCommands<byte[], byte[]> admin = adminConnection.sync();
-      admin.aclSetuser(
-          REDIS_PRINCIPAL,
+      AclSetuserArgs permissions =
           new AclSetuserArgs()
               .reset()
               .on()
@@ -1134,7 +1486,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)
-              .addCommand(CommandType.PEXPIRE));
+              .addCommand(CommandType.PEXPIRE);
+      if (allowAccountMemberRepair) {
+        permissions
+            .keyPattern("session:game:index:account:*")
+            .addCommand(CommandType.SADD)
+            .addCommand(CommandType.SISMEMBER);
+      }
+      admin.aclSetuser(REDIS_PRINCIPAL, permissions);
       RedisURI ownerUri =
           RedisURI.Builder.redis(host, port)
               .withTimeout(Duration.ofSeconds(5))

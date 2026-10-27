@@ -46,7 +46,9 @@ public final class CanonicalGameplayRegionBindingBridgeRedisScriptContribution
       }
       return descriptor;
     } catch (IOException | RuntimeException failure) {
-      throw unavailable();
+      IllegalStateException unavailable = unavailable();
+      unavailable.initCause(failure);
+      throw unavailable;
     }
   }
 
