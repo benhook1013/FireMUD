@@ -56,12 +56,17 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       Prepared prepared = prepare(target, "protected-writer-commit", 501);
       CanonicalInitialAdmissionRepository repository = repository(harness);
 
+      OffsetDateTime reservationBefore = databaseTimestamp(harness);
       harness
           .transactions()
           .executeWithoutResult(
               status -> repository.reserveProtected(prepared.request(), prepared.protection()));
+      OffsetDateTime reservationAfter = databaseTimestamp(harness);
       Record pending = terminal(harness, prepared.request());
       assertThat(pending.get("status", String.class)).isEqualTo("PENDING");
+      assertThat(pending.get("created_at", OffsetDateTime.class))
+          .isBetween(reservationBefore, reservationAfter)
+          .isEqualTo(pending.get("updated_at", OffsetDateTime.class));
       assertThat(pending.get("account_protection_id", UUID.class))
           .isEqualTo(prepared.protection().accountProtectionId());
       assertThat(pending.get("account_protection_evidence_bytes", byte[].class))
@@ -145,12 +150,14 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(pending.formatJSON());
 
+      OffsetDateTime terminalBefore = databaseTimestamp(harness);
       harness
           .transactions()
           .executeWithoutResult(
               status ->
                   repository.commitProtected(
                       prepared.request(), prepared.protection(), prepared.worldProof()));
+      OffsetDateTime terminalAfter = databaseTimestamp(harness);
 
       var proof =
           repository
@@ -161,6 +168,14 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       assertThat(proof.provesCommit()).isTrue();
       assertThat(proof.proofDigest()).startsWith("sha256:");
       Record terminal = terminal(harness, prepared.request());
+      assertTerminalChronology(pending, terminal, terminalBefore, terminalAfter);
+      assertThat(
+              terminal
+                  .get("pointer_updated_at", java.time.LocalDateTime.class)
+                  .toInstant(ZoneOffset.UTC))
+          .isEqualTo(terminal.get("terminal_at", OffsetDateTime.class).toInstant());
+      assertThat(terminal.get("audit_at", java.time.LocalDateTime.class).toInstant(ZoneOffset.UTC))
+          .isEqualTo(terminal.get("terminal_at", OffsetDateTime.class).toInstant());
       assertThat(terminal.get("status", String.class)).isEqualTo("COMMITTED");
       assertThat(terminal.get("account_protection_id", UUID.class))
           .isEqualTo(prepared.protection().accountProtectionId());
@@ -277,6 +292,8 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .transactions()
           .executeWithoutResult(
               status -> repository.reserveProtected(prepared.request(), prepared.protection()));
+      Record pending = terminal(harness, prepared.request());
+      OffsetDateTime terminalBefore = databaseTimestamp(harness);
       harness
           .transactions()
           .executeWithoutResult(
@@ -284,7 +301,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   repository.abortProtected(
                       prepared.request(), prepared.protection(), "controlled upstream denial"));
 
+      OffsetDateTime terminalAfter = databaseTimestamp(harness);
       Record terminal = terminal(harness, prepared.request());
+      assertTerminalChronology(pending, terminal, terminalBefore, terminalAfter);
       assertThat(terminal.get("status", String.class)).isEqualTo("ABORTED");
       assertThat(terminal.get("pointer_id")).isNull();
       assertThat(terminal.get("pointer_version")).isNull();
@@ -1241,14 +1260,36 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
     return harness
         .dsl()
         .fetchSingle(
-            "SELECT a.*, i.state AS intent_state, i.terminal_at AS intent_terminal "
+            "SELECT a.*, i.state AS intent_state, i.terminal_at AS intent_terminal, "
+                + "i.updated_at AS intent_updated_at, p.updated_at AS pointer_updated_at, "
+                + "e.occurred_at AS audit_at "
                 + "FROM game_session_canonical_initial_admission_attempt a "
                 + "JOIN game_session_canonical_initial_admission_intent i "
                 + "ON i.target_namespace = a.target_namespace "
                 + "AND i.initial_admission_request_id = a.initial_admission_request_id "
+                + "LEFT JOIN gameplay_admission_pointer p ON p.id = a.pointer_id "
+                + "LEFT JOIN gameplay_admission_pointer_event e ON e.id = a.audit_event_id "
                 + "WHERE a.target_namespace = ? AND a.initial_admission_request_id = ?",
             request.targetNamespace(),
             request.initialAdmissionRequestId());
+  }
+
+  private static OffsetDateTime databaseTimestamp(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.Harness harness) {
+    return harness.dsl().fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
+  }
+
+  private static void assertTerminalChronology(
+      Record pending, Record terminal, OffsetDateTime before, OffsetDateTime after) {
+    OffsetDateTime terminalAt = terminal.get("terminal_at", OffsetDateTime.class);
+    assertThat(terminalAt)
+        .isBetween(before, after)
+        .isAfter(pending.get("updated_at", OffsetDateTime.class))
+        .isAfter(pending.get("intent_updated_at", OffsetDateTime.class))
+        .isEqualTo(terminal.get("updated_at", OffsetDateTime.class))
+        .isEqualTo(terminal.get("intent_updated_at", OffsetDateTime.class))
+        .isEqualTo(terminal.get("intent_terminal", OffsetDateTime.class));
+    assertThat(terminalAt.getNano() % 1_000).isZero();
   }
 
   private static UUID uuid(int value) {

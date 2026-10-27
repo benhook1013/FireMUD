@@ -1759,26 +1759,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThatThrownBy(() -> owner.acquire(conflict, lifecycleRequest))
         .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException.class);
 
-    String changedDigest =
-        request.initialAdmissionRequestDigest().charAt(0) == '0'
-            ? "1" + request.initialAdmissionRequestDigest().substring(1)
-            : "0" + request.initialAdmissionRequestDigest().substring(1);
-    var mismatchedRequest =
-        new WorldCanonicalInitialAdmissionHold.Request(
-            request.targetNamespace(),
-            request.canonicalTenantId(),
-            request.worldSlug(),
-            request.realmId(),
-            request.playableStateNamespaceId(),
-            request.playableStateScope(),
-            request.canonicalGameInstanceId(),
-            request.canonicalVersionId(),
-            request.activeLifecycleEpoch(),
-            request.initialAdmissionRequestId(),
-            changedDigest,
-            request.initialAdmissionOrigin(),
-            request.expectedCatalogRevision(),
-            request.expectedPriorPointerVersion());
+    var mismatchedRequest = withChangedDigest(request);
     assertThatThrownBy(() -> owner.acquire(mismatchedRequest, lifecycleRequest))
         .isInstanceOf(
             WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class);
@@ -2021,12 +2002,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       var waiters =
           world.fetch(
               "SELECT a.pid FROM pg_stat_activity a "
-                  + "WHERE a.wait_event_type='Lock' "
+                  + "WHERE a.pid<>? AND a.datname=current_database() "
+                  + "AND a.wait_event_type='Lock' "
                   + "AND ?=ANY(pg_blocking_pids(a.pid)) "
-                  + "AND strpos(a.query, 'SELECT tenant_id,game_instance_id,version_id,status,lifecycle_epoch,') > 0 "
-                  + "AND strpos(a.query, 'FROM world_instance WHERE id=') > 0 "
-                  + "AND strpos(a.query, 'FOR UPDATE') > 0 "
                   + "ORDER BY a.pid",
+              gatePid,
               gatePid);
       if (!waiters.isEmpty()) return waiters.get(0).get("pid", Integer.class);
       Thread.sleep(10L);
@@ -2079,6 +2059,28 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             + futureStatus(transition)
             + "; lockActivities="
             + lockActivitySnapshot(world, gatePid, acquisitionPid, transitionPid));
+  }
+
+  private static WorldCanonicalInitialAdmissionHold.Request withChangedDigest(
+      WorldCanonicalInitialAdmissionHold.Request request) {
+    String digest = request.initialAdmissionRequestDigest();
+    String changedDigest =
+        digest.charAt(0) == '0' ? "1" + digest.substring(1) : "0" + digest.substring(1);
+    return new WorldCanonicalInitialAdmissionHold.Request(
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.worldSlug(),
+        request.realmId(),
+        request.playableStateNamespaceId(),
+        request.playableStateScope(),
+        request.canonicalGameInstanceId(),
+        request.canonicalVersionId(),
+        request.activeLifecycleEpoch(),
+        request.initialAdmissionRequestId(),
+        changedDigest,
+        request.initialAdmissionOrigin(),
+        request.expectedCatalogRevision(),
+        request.expectedPriorPointerVersion());
   }
 
   private static String futureStatus(Future<?> future) {
@@ -2324,26 +2326,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               failure ->
                   assertThat(((StatusRuntimeException) failure).getStatus().getCode())
                       .isEqualTo(Status.Code.ALREADY_EXISTS));
-      String changedDigest =
-          holdRequest.initialAdmissionRequestDigest().charAt(0) == '0'
-              ? "1" + holdRequest.initialAdmissionRequestDigest().substring(1)
-              : "0" + holdRequest.initialAdmissionRequestDigest().substring(1);
-      var mismatchedRequest =
-          new WorldCanonicalInitialAdmissionHold.Request(
-              holdRequest.targetNamespace(),
-              holdRequest.canonicalTenantId(),
-              holdRequest.worldSlug(),
-              holdRequest.realmId(),
-              holdRequest.playableStateNamespaceId(),
-              holdRequest.playableStateScope(),
-              holdRequest.canonicalGameInstanceId(),
-              holdRequest.canonicalVersionId(),
-              holdRequest.activeLifecycleEpoch(),
-              holdRequest.initialAdmissionRequestId(),
-              changedDigest,
-              holdRequest.initialAdmissionOrigin(),
-              holdRequest.expectedCatalogRevision(),
-              holdRequest.expectedPriorPointerVersion());
+      var mismatchedRequest = withChangedDigest(holdRequest);
       assertThatThrownBy(() -> worldHoldClient.acquire(mismatchedRequest, lifecycleRequest))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(

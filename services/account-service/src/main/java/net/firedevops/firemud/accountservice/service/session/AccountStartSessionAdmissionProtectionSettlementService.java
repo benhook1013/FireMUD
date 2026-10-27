@@ -277,6 +277,7 @@ public final class AccountStartSessionAdmissionProtectionSettlementService {
         };
     return status
         .withDescription("Game Session admission terminal dependency failed")
+        .withCause(failure)
         .asRuntimeException();
   }
 
