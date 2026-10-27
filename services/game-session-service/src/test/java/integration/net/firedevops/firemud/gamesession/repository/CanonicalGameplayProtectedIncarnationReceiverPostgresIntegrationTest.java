@@ -1017,7 +1017,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
 
       private CanonicalGameplayLoginResult originalLogin() {
         UUID tokenJti =
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT verified_token_jti FROM game_session_initial_gameplay_login_journal"
                         + " WHERE request_id = ?",
                     original.requestId())
@@ -1026,7 +1026,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       }
 
       private String initialTargetPostimage() {
-        return dsl.fetchOne(
+        return dsl.fetchSingle(
                 "SELECT to_jsonb(t)::text FROM game_session_canonical_initial_account_barrier_target t"
                     + " WHERE initializer_id = ?",
                 initialRepository.readCurrent(original.requestId()).initializerId())

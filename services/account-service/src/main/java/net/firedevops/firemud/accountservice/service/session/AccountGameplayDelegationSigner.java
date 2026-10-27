@@ -475,11 +475,10 @@ public final class AccountGameplayDelegationSigner {
     byte[] finalJwks = null;
     try {
       CurrentSigner initial = accountTransaction.execute(status -> currentCommittedSigner());
-      if (initial == null
-          || !genesis.accountId().equals(accountAuthority.accountId())
-          || !genesis.signerKid().equals(initial.expectedIdentity().kid())
-          || !genesis.signerGeneration().equals(initial.expectedIdentity().generation()))
+      if (initial == null || !genesis.accountId().equals(accountAuthority.accountId()))
         throw unavailable();
+      // Recovery verifies the frozen JWT's original key against today's trusted JWKS.
+      // A completed rotation can retain that key without making it the active signer.
       SourceIdentity pin = trustedJwksSource.sourceIdentity();
       initialJwks = requireExactTrustedSnapshot(initial, pin, trustedJwksSource.load());
       byte[] pinned = initialJwks;

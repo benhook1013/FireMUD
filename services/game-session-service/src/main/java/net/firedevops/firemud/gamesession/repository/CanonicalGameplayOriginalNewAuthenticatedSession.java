@@ -164,7 +164,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       long continuityExpiresAtMillis = positiveDecimal(continuityExpires);
       long tokenIssuedAtSeconds = positiveDecimal(issuedAt);
       long tokenExpiresAtSeconds = positiveDecimal(expiresAt);
-      long issuanceFenceValue = positiveDecimal(issuanceFence);
+      positiveDecimal(issuanceFence);
       long durationMillis = positiveDecimal(duration);
       requireCanonicalDuration(durationMillis);
       if (!"1".equals(tokenGeneration)) throw invalid();
@@ -202,7 +202,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
           handle);
     } catch (RuntimeException rejected) {
       throw invalid();
-    } catch (Exception malformed) {
+    } catch (IOException malformed) {
       throw invalid();
     } finally {
       wipe(handle);
@@ -242,7 +242,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       root.set("outboxCheckpoints", JSON.valueToTree(lease.get("outboxCheckpoints")));
       root.put("canonicalSessionDurationMillis", Long.toString(canonicalSessionDurationMillis));
       return canonicalNode(root);
-    } catch (Exception malformed) {
+    } catch (IOException | RuntimeException malformed) {
       throw invalid();
     } finally {
       wipe(handle);
@@ -265,7 +265,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
                   if (containsPlaceholder(value)) throw invalid();
                 }
               });
-    } catch (Exception malformed) {
+    } catch (IOException | RuntimeException malformed) {
       throw invalid();
     }
   }
@@ -306,7 +306,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       ObjectNode root,
       CanonicalGameplayOriginalNewCandidate candidate,
       AccountGameplayAdmissionLeaseEvidence lease)
-      throws Exception {
+      throws IOException {
     if (!candidate
         .transition()
         .bindingGeneration()
@@ -318,7 +318,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
     requireCanonicalEqual(root.get("outboxCheckpoints"), carrier.get("outboxCheckpoints"));
   }
 
-  private static void requireCanonicalEqual(JsonNode node, Object source) throws Exception {
+  private static void requireCanonicalEqual(JsonNode node, Object source) throws IOException {
     byte[] left = canonicalNode(node);
     byte[] right = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(source));
     try {

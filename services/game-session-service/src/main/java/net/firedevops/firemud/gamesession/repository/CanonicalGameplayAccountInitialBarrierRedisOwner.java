@@ -259,15 +259,14 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
     requireNoAmbientTransaction();
     RedisScriptDescriptor descriptor = requireDescriptor();
     byte[] script = scriptSource(descriptor);
-    CanonicalGameplayAccountInitialBarrierValue value =
-        CanonicalGameplayAccountInitialBarrierValue.open(
-            snapshot.accountId(),
-            snapshot.tenantId(),
-            snapshot.playableStateNamespaceId(),
-            assignment.tenantGameplayTag(),
-            snapshot.initializerId(),
-            snapshot.sourceControlEpoch(),
-            before.incarnationDigest());
+    CanonicalGameplayAccountInitialBarrierValue.open(
+        snapshot.accountId(),
+        snapshot.tenantId(),
+        snapshot.playableStateNamespaceId(),
+        assignment.tenantGameplayTag(),
+        snapshot.initializerId(),
+        snapshot.sourceControlEpoch(),
+        before.incarnationDigest());
     String key =
         CanonicalGameplayAccountInitialBarrierKey.forTarget(
             assignment, snapshot.initializerId(), snapshot.originalRequestId());

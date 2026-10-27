@@ -369,7 +369,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
           CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
               transaction, anchor, current);
           Record initializer =
-              transaction.fetchOne(
+              transaction.fetchSingle(
                   "SELECT * FROM "
                       + INITIALIZER
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
@@ -795,7 +795,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                 "Original initializer no longer belongs to the current OPEN live control");
           }
           Record saved =
-              transaction.fetchOne(
+              transaction.fetchSingle(
                   "SELECT * FROM "
                       + INITIALIZER
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",

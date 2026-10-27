@@ -986,7 +986,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       } else {
         Objects.requireNonNull(originalCallerContextId, "originalCallerContextId");
         Objects.requireNonNull(sourceControlState, "sourceControlState");
-        Objects.requireNonNull(sourceControlEpoch, "sourceControlEpoch");
         Objects.requireNonNull(accountLoginEvidenceDigest, "accountLoginEvidenceDigest");
         Objects.requireNonNull(sourceControlDigest, "sourceControlDigest");
         if (originalAttemptFence <= 0L

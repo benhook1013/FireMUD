@@ -125,7 +125,6 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
                 || !"CUTOFF_PENDING".equals(text(priorOperation, "operation_state"))) {
               throw conflict("Issuer cutoff retry differs from its exact pending operation");
             }
-            verifyFrozenCohort(transaction, control);
             verifyCutoffTargets(transaction, control);
             return control;
           }
@@ -170,7 +169,6 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
           updateControl(transaction, pending, control.liveBarrierEpoch());
           insertCohortRows(transaction, pending.currentOperationId(), rows);
           insertCutoffTargets(transaction, pending, targets, tagByTarget);
-          verifyFrozenCohort(transaction, pending);
           verifyCutoffTargets(transaction, pending);
           return pending;
         });
@@ -206,14 +204,12 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
                 && control.state()
                     == CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED) {
               requireCutoffOperationCurrent(transaction, control);
-              verifyFrozenCohort(transaction, control);
               verifyCutoffTargets(transaction, control);
               return control;
             }
             throw conflict("The exact current cutoff is not pending completion");
           }
           requireCutoffOperationCurrent(transaction, control);
-          verifyFrozenCohort(transaction, control);
           verifyCutoffTargets(transaction, control);
           Record remaining =
               transaction.fetchOne(
@@ -272,7 +268,6 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
       throw conflict("A CLOSED target requires the current pending issuer cutoff");
     }
     requireCutoffOperationCurrent(transaction, control);
-    verifyFrozenCohort(transaction, control);
     verifyCutoffTargets(transaction, control);
     Record target =
         transaction.fetchOne(
@@ -616,14 +611,30 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
     }
   }
 
-  private static void verifyFrozenCohort(
+  private static List<CohortRow> verifyFrozenCohort(
       DSLContext transaction, CanonicalGameplayIssuerAdmissionControlValue control) {
+    // Terminal cleanup may advance live source revisions after intent. Resolve every target only
+    // from the original retained JSON and its retained transition/reservation dependencies.
     List<CohortRow> rows =
         transaction
             .fetch(
-                "SELECT * FROM "
+                "WITH frozen AS (SELECT *, source_row_json::jsonb AS source FROM "
                     + COHORT
-                    + " WHERE operation_id = ? AND issuer_id = ? ORDER BY row_ordinal",
+                    + " WHERE operation_id = ? AND issuer_id = ?)"
+                    + " SELECT c.*, (scope.source ->> 'tenant_id')::uuid AS tenant_id,"
+                    + " (scope.source ->> 'playable_state_namespace_id')::uuid"
+                    + " AS playable_state_namespace_id FROM frozen c"
+                    + " LEFT JOIN frozen transition ON transition.source_kind = 'TRANSITION'"
+                    + " AND transition.source_key = c.source ->> 'transition_id'"
+                    + " LEFT JOIN frozen reservation ON reservation.source_kind = 'RESERVATION'"
+                    + " AND reservation.source_key = c.source ->> 'reservation_id'"
+                    + " CROSS JOIN LATERAL (SELECT CASE"
+                    + " WHEN c.source_kind IN ('BINDING', 'TRANSITION', 'RESERVATION',"
+                    + " 'PENDING_INITIALIZER') THEN c.source"
+                    + " WHEN c.source_kind IN ('ACCOUNT_OBLIGATION', 'ISSUER_OBLIGATION',"
+                    + " 'REGION_OBLIGATION', 'LOCAL_OPERATION') THEN transition.source"
+                    + " WHEN c.source_kind = 'BOOTSTRAP_MEMBER_OPERATION' THEN reservation.source"
+                    + " END AS source) scope ORDER BY c.row_ordinal",
                 control.currentOperationId(),
                 ISSUER)
             .map(
@@ -641,8 +652,8 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
                       text(row, "source_key"),
                       integer(row, "source_inventory_revision"),
                       json,
-                      null,
-                      null,
+                      uuid(row, "tenant_id"),
+                      uuid(row, "playable_state_namespace_id"),
                       null,
                       storedDigest);
                 });
@@ -667,6 +678,7 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
         || !digestCohort(rows).equals(control.cohortDigest())) {
       throw conflict("Issuer cutoff cohort no longer matches its frozen complete digest");
     }
+    return rows;
   }
 
   private static String requireCurrentTenantTagMapping(DSLContext transaction, UUID tenantId) {
@@ -698,7 +710,7 @@ final class CanonicalGameplayIssuerAdmissionControlRepository {
             control.currentOperationId(),
             ISSUER);
     Map<TargetScope, List<CohortRow>> cohortTargets =
-        groupTargets(captureCutoffCohort(transaction, control.inventorySnapshotRevision()));
+        groupTargets(verifyFrozenCohort(transaction, control));
     if (rows.size() != cohortTargets.size()) {
       throw conflict("Issuer cutoff target set differs from its complete frozen cohort");
     }

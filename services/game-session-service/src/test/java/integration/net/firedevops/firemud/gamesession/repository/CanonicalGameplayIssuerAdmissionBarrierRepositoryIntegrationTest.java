@@ -39,6 +39,8 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -387,7 +389,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             state
                 .fixture()
                 .dsl()
-                .fetchOne(
+                .fetchSingle(
                     "SELECT status FROM game_session_canonical_binding_transition"
                         + " WHERE transition_id = ?",
                     state.fixture().transitionId())
@@ -438,6 +440,137 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   }
 
   @Test
+  void cutoffCompletesFromFrozenSourcesAfterTheProvisionalOriginAborts() {
+    FixtureState state = fixtureState();
+    var opened = state.owner().initializeAndRead(state.fixture().originalOperationId());
+    UUID cutoffOperationId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    var pending = state.repository().beginCutoff(cutoffOperationId, requestId);
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    List<String> frozenRows =
+        state
+            .fixture()
+            .dsl()
+            .fetch(
+                "SELECT to_jsonb(c)::text AS image FROM"
+                    + " game_session_canonical_issuer_admission_cohort_row c"
+                    + " WHERE operation_id = ? ORDER BY row_ordinal",
+                cutoffOperationId)
+            .getValues("image", String.class);
+    var frozenTarget =
+        state
+            .fixture()
+            .dsl()
+            .fetchSingle(
+                "SELECT target_source_digest, closed_payload_digest FROM"
+                    + " game_session_canonical_issuer_admission_cutoff_target"
+                    + " WHERE operation_id = ?",
+                cutoffOperationId);
+
+    new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl())
+        .recordFirstNewAccountAbort(state.fixture().source(), UUID.randomUUID());
+    var transition =
+        state
+            .fixture()
+            .dsl()
+            .fetchSingle(
+                "SELECT status, inventory_revision FROM game_session_canonical_binding_transition"
+                    + " WHERE transition_id = ?",
+                state.fixture().transitionId());
+    assertThat(transition.get("status", String.class)).isEqualTo("ABORTED");
+    assertThat(transition.get("inventory_revision", java.math.BigDecimal.class).toBigIntegerExact())
+        .isGreaterThan(pending.inventorySnapshotRevision());
+    var retry = state.repository().beginCutoff(cutoffOperationId, requestId);
+    assertThat(retry.cohortDigest()).isEqualTo(pending.cohortDigest());
+    assertThat(retry.cohortRowCount()).isEqualTo(pending.cohortRowCount());
+    assertThat(retry.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
+    assertThatThrownBy(() -> state.repository().completeCutoff(cutoffOperationId))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(target.expectedOpenValue().exactBytes())
+        .containsExactly(opened.exactPhysicalPayload());
+    var closed =
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
+    assertThat(closed.scriptOutcome()).isEqualTo(3L);
+    assertThat(closed.exactPhysicalPayload()).containsExactly(target.closedValue().exactBytes());
+    var installed = state.repository().completeCutoff(cutoffOperationId);
+    assertThat(installed.state())
+        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+    assertThat(installed.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
+    assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
+    assertThat(
+            state
+                .fixture()
+                .dsl()
+                .fetch(
+                    "SELECT to_jsonb(c)::text AS image FROM"
+                        + " game_session_canonical_issuer_admission_cohort_row c"
+                        + " WHERE operation_id = ? ORDER BY row_ordinal",
+                    cutoffOperationId)
+                .getValues("image", String.class))
+        .containsExactlyElementsOf(frozenRows);
+    var completedTarget =
+        state
+            .fixture()
+            .dsl()
+            .fetchSingle(
+                "SELECT target_source_digest, closed_payload_digest, target_state,"
+                    + " exact_closed_readback_bytes FROM game_session_canonical_issuer_admission_cutoff_target"
+                    + " WHERE operation_id = ?",
+                cutoffOperationId);
+    assertThat(completedTarget.get("target_source_digest", String.class))
+        .isEqualTo(frozenTarget.get("target_source_digest", String.class));
+    assertThat(completedTarget.get("closed_payload_digest", String.class))
+        .isEqualTo(frozenTarget.get("closed_payload_digest", String.class));
+    assertThat(completedTarget.get("target_state", String.class)).isEqualTo("CLOSED");
+    assertThat(completedTarget.get("exact_closed_readback_bytes", byte[].class))
+        .containsExactly(target.closedValue().exactBytes());
+    assertThatThrownBy(() -> state.owner().initializeAndRead(state.fixture().originalOperationId()))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"SOURCE_BYTES", "MISSING_SOURCE", "MISSING_TARGET", "TARGET_DIGEST"})
+  void cutoffRefusesChangedOrMissingFrozenEvidence(String corruption) {
+    FixtureState state = fixtureState();
+    state.owner().initializeAndRead(state.fixture().originalOperationId());
+    UUID cutoffOperationId = UUID.randomUUID();
+    state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    // Controlled corruption of retained SQL evidence; no trigger or runtime guard is bypassed.
+    String mutation =
+        switch (corruption) {
+          case "SOURCE_BYTES" ->
+              "UPDATE game_session_canonical_issuer_admission_cohort_row"
+                  + " SET source_row_json = source_row_json || ' ' WHERE operation_id = ?";
+          case "MISSING_SOURCE" ->
+              "DELETE FROM game_session_canonical_issuer_admission_cohort_row WHERE operation_id = ?";
+          case "MISSING_TARGET" ->
+              "DELETE FROM game_session_canonical_issuer_admission_cutoff_target WHERE operation_id = ?";
+          case "TARGET_DIGEST" ->
+              "UPDATE game_session_canonical_issuer_admission_cutoff_target"
+                  + " SET target_source_digest = 'sha256:' || repeat('0', 64) WHERE operation_id = ?";
+          default -> throw new IllegalArgumentException(corruption);
+        };
+    assertThat(state.fixture().dsl().execute(mutation, cutoffOperationId)).isPositive();
+    assertThatThrownBy(
+            () ->
+                state
+                    .repository()
+                    .readPreparedCutoffTarget(
+                        cutoffOperationId,
+                        target.closedValue().tenantId(),
+                        target.closedValue().playableStateNamespaceId()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(() -> state.repository().completeCutoff(cutoffOperationId))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+  }
+
+  @Test
   void reusesFrozenTargetInitializerAcrossOperationsRevisionProgressAndOriginAbort() {
     FixtureState state = fixtureState();
     UUID originalOperationId = state.fixture().originalOperationId();
@@ -459,7 +592,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             state
                 .fixture()
                 .dsl()
-                .fetchOne(
+                .fetchSingle(
                     "SELECT status FROM game_session_canonical_binding_transition"
                         + " WHERE transition_id = ?",
                     state.fixture().transitionId())
@@ -561,6 +694,8 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     Candidate actualCandidate = fixture.candidate();
     CanonicalGameplayBindingIdentity identity = identity(actualCandidate);
     fixture.publish(controlledLeaseEvidence(identity, fixture.generation(), fixture.target()));
+    // Controlled upstream Account current-source and stable-incarnation inputs; native SQL/Redis
+    // owners execute below, but this fixture does not establish production source custody.
     var currentState = new AtomicReference<>(currentIssuerState(actualCandidate));
     var sourceReader =
         (CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource)
@@ -583,11 +718,6 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             sourceReader),
         ownerClient,
         currentState);
-  }
-
-  private CanonicalGameplayIssuerBindingLocalOperation prepareCurrentOperation(
-      FixtureState state, String seed) {
-    return prepareCurrentOperation(state, seed, state.candidate().accountId());
   }
 
   private CanonicalGameplayIssuerBindingLocalOperation prepareCurrentOperation(
@@ -811,7 +941,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     return state
         .fixture()
         .dsl()
-        .fetchOne(
+        .fetchSingle(
             "SELECT initialization_state FROM game_session_canonical_issuer_admission_initializer"
                 + " WHERE operation_id = ?",
             operationId)
@@ -822,7 +952,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     return state
         .fixture()
         .dsl()
-        .fetchOne(
+        .fetchSingle(
             "SELECT count(*) AS receipt_count"
                 + " FROM game_session_canonical_issuer_admission_initializer_receipt"
                 + " WHERE operation_id = ?",

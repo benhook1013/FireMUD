@@ -271,6 +271,49 @@ class AccountGameplayDelegationSignerTest {
         .validateClaims(castClaims(boundClaims));
     assertThat(result.toString())
         .doesNotContain(new String(boundJwt.get(), StandardCharsets.US_ASCII));
+    var genesis =
+        mock(
+            net.firedevops.firemud.accountservice.repository
+                .AccountOriginalNewBoundGameplayIssuanceRepository.Genesis.class);
+    when(genesis.accountId()).thenReturn(ACCOUNT_ID);
+    when(genesis.lineageId()).thenReturn(lineageId);
+    when(genesis.tokenJti()).thenReturn(boundJti);
+    when(genesis.tokenHash()).thenReturn(result.compactTokenSha256());
+    when(genesis.signerKid()).thenReturn(result.kid());
+    when(genesis.signerGeneration()).thenReturn(result.signerGeneration());
+    when(genesis.issuedAtEpochSecond()).thenReturn(NOW.getEpochSecond());
+    when(genesis.notBeforeEpochSecond()).thenReturn(NOW.getEpochSecond());
+    when(genesis.expiresAtEpochSecond()).thenReturn(NOW.plusSeconds(120).getEpochSecond());
+    when(genesis.issuanceFence()).thenReturn(fixture.authoritySnapshot.issuanceFence());
+    String savedBoundJwt = new String(boundJwt.get(), StandardCharsets.US_ASCII);
+    fixture.replaceCommittedEvidence(ownerEvidence(mismatchedPair, "43", "account-key-43"));
+    fixture.sourceJwks.set(
+        jwksJson(signerPair, KID, mismatchedPair, "account-key-43")
+            .getBytes(StandardCharsets.UTF_8));
+    Files.writeString(fixture.privateRoot.resolve("current.key"), "unavailable private material");
+    var recovered =
+        fixture.signer.verifyOriginalNewBoundCredential(
+            savedBoundJwt,
+            genesis,
+            fixture.authoritySnapshot,
+            tenantId.toString(),
+            tuple,
+            Map.of(tenantId.toString(), "8"));
+    assertThat(recovered.tokenSha256()).isEqualTo(result.compactTokenSha256());
+    assertThat(recovered.lineageId()).isEqualTo(lineageId);
+    assertThat(recovered.tokenJti()).isEqualTo(boundJti);
+    fixture.sourceJwks.set(
+        jwksJson(mismatchedPair, "account-key-43").getBytes(StandardCharsets.UTF_8));
+    assertThrows(
+        AccountGameplayDelegationSigner.SigningUnavailableException.class,
+        () ->
+            fixture.signer.verifyOriginalNewBoundCredential(
+                savedBoundJwt,
+                genesis,
+                fixture.authoritySnapshot,
+                tenantId.toString(),
+                tuple,
+                Map.of(tenantId.toString(), "8")));
     Arrays.fill(loginJwt.get(), (byte) 0);
     Arrays.fill(boundJwt.get(), (byte) 0);
   }
