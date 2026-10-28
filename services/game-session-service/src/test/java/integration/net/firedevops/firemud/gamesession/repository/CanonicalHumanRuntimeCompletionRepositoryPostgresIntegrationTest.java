@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Connection;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -42,9 +43,11 @@ import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorld
 import net.firedevops.firemud.gamesession.service.impl.ProtectedCanonicalInitialAdmissionCoordinator;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.Record;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -57,6 +60,82 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void independentAutocommitConnectionCannotBorrowAnAmbientSpringTransaction() throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var prepared = prepareStarting(harness, "human-runtime-autocommit-guard", 1201);
+      reserveProtection(harness, admissionRepository(harness), prepared);
+      String runtimeBefore =
+          harness.dsl().fetch("SELECT * FROM game_instances ORDER BY tenant_id, id").formatJSON();
+      String completionBefore =
+          harness
+              .dsl()
+              .fetch(
+                  "SELECT * FROM game_session_canonical_human_runtime_completion "
+                      + "ORDER BY target_namespace, initial_admission_request_id")
+              .formatJSON();
+      try (Connection independent = harness.dataSource().getConnection()) {
+        assertThat(independent.getAutoCommit()).isTrue();
+        assertThat(independent.isReadOnly()).isFalse();
+        assertThat(independent.getTransactionIsolation())
+            .isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
+        var independentDsl = DSL.using(independent, SQLDialect.POSTGRES);
+        var completion =
+            new CanonicalHumanRuntimeCompletionRepository(independentDsl, "canonical-intent-it");
+        harness
+            .transactions()
+            .executeWithoutResult(
+                status -> {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                      .isFalse();
+                  assertThat(
+                          harness
+                              .dsl()
+                              .fetchSingle("SHOW transaction_isolation")
+                              .get(0, String.class))
+                      .isEqualTo("read committed");
+                  assertThat(
+                          independentDsl
+                              .fetchSingle("SELECT pg_backend_pid()")
+                              .get(0, Integer.class))
+                      .isNotEqualTo(
+                          harness
+                              .dsl()
+                              .fetchSingle("SELECT pg_backend_pid()")
+                              .get(0, Integer.class));
+                  assertThatThrownBy(
+                          () ->
+                              completion.completeProtected(
+                                  prepared.request(), prepared.protection(), prepared.worldProof()))
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessage(
+                          "Human runtime completion requires a writable READ COMMITTED transaction");
+                });
+      }
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch("SELECT * FROM game_instances ORDER BY tenant_id, id")
+                  .formatJSON())
+          .isEqualTo(runtimeBefore);
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch(
+                      "SELECT * FROM game_session_canonical_human_runtime_completion "
+                          + "ORDER BY target_namespace, initial_admission_request_id")
+                  .formatJSON())
+          .isEqualTo(completionBefore);
+      assertThat(attemptStatus(harness, prepared.request())).isEqualTo("PENDING");
+      assertNoAdmissionEffects(harness, prepared.request());
+    } finally {
+      harness.close();
+    }
+  }
 
   @Test
   void manualCompletionRequiresActiveWritableReadCommittedTransaction() throws Exception {
