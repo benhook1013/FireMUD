@@ -25,6 +25,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterEach;
@@ -264,7 +265,67 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       fixture.prepareOtherControllerNew("unrelated-before-final-commit");
       assertThat(inventory.commitOriginalNewFinalAdmission(actual).status())
           .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+      var committedInventory = inventory.readSnapshot();
+      var committedIssuerObligation =
+          committedInventory.issuerIndexObligations().stream()
+              .filter(obligation -> obligation.transitionId().equals(fixture.transitionId()))
+              .findFirst()
+              .orElseThrow();
+      var committedReservation =
+          committedInventory.reservations().stream()
+              .filter(reservation -> reservation.transitionId().equals(fixture.transitionId()))
+              .findFirst()
+              .orElseThrow();
+      assertThat(committedIssuerObligation.transitionId()).isEqualTo(fixture.transitionId());
+      assertThat(committedIssuerObligation.bindingRef())
+          .isEqualTo(decision.candidate().bindingRef());
+      assertThat(committedIssuerObligation.bindingGeneration())
+          .isEqualTo(source.candidate().transition().bindingGeneration());
+      assertThat(committedIssuerObligation.reservationId())
+          .isEqualTo(committedReservation.reservationId());
+      assertThat(committedIssuerObligation.status())
+          .isEqualTo(CanonicalGameplayBindingIssuerIndexObligation.Status.ACKNOWLEDGED);
+      assertThat(committedIssuerObligation.localReleaseOperationId()).isNull();
+      assertThat(committedIssuerObligation.inventoryRevision())
+          .isEqualTo(committedInventory.inventoryRevision());
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayBindingIssuerIndexObligation(
+                      committedIssuerObligation.transitionId(),
+                      committedIssuerObligation.bindingRef(),
+                      committedIssuerObligation.bindingGeneration(),
+                      committedIssuerObligation.reservationId(),
+                      CanonicalGameplayBindingIssuerIndexObligation.Status.ACKNOWLEDGED,
+                      committedIssuerObligation.inventoryRevision(),
+                      UUID.randomUUID()))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayBindingIssuerIndexObligation(
+                      committedIssuerObligation.transitionId(),
+                      committedIssuerObligation.bindingRef(),
+                      committedIssuerObligation.bindingGeneration(),
+                      committedIssuerObligation.reservationId(),
+                      CanonicalGameplayBindingIssuerIndexObligation.Status.RELEASED,
+                      committedIssuerObligation.inventoryRevision(),
+                      null))
+          .isInstanceOf(IllegalArgumentException.class);
       var committedSource = inventory.readOriginalNewFinalAdmissionSource(decision);
+      var committedTransition =
+          committedInventory.transitions().stream()
+              .filter(transition -> transition.transitionId().equals(fixture.transitionId()))
+              .findFirst()
+              .orElseThrow();
+      assertThat(committedTransition.status())
+          .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+      assertThat(committedSource.finalReceipt()).isPresent();
+      var committedReceipt = committedSource.finalReceipt().orElseThrow();
+      assertThat(committedReceipt.finalSessionSha256()).isEqualTo(actual.finalSessionSha256());
+      assertThat(committedReceipt.admissionAtMillis()).isEqualTo(actual.admissionAtMillis());
+      assertThat(committedReceipt.continuityExpiresAtMillis())
+          .isEqualTo(actual.continuityExpiresAtMillis());
+      assertThat(committedReceipt.sessionDurationMillis())
+          .isEqualTo(actual.canonicalSessionDurationMillis());
       assertThat(committedSource.regionAcknowledgement().inventoryRevision())
           .isGreaterThan(
               source.regionAcknowledgement().inventoryRevision().add(java.math.BigInteger.ONE));
@@ -412,6 +473,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       assertThat(sqlImage()).isEqualTo(rows);
       assertThat(physicalImage()).isEqualTo(physical);
       var recoveredInventory = new CanonicalGameplayBindingInventoryRepository(fixture.dsl());
+      var recoveredSnapshot = recoveredInventory.readSnapshot();
+      assertThat(recoveredSnapshot.issuerIndexObligations()).contains(committedIssuerObligation);
       var recoveredSource = recoveredInventory.readOriginalNewFinalAdmissionSource(decision);
       assertThat(recoveredSource.transitionStatus())
           .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);

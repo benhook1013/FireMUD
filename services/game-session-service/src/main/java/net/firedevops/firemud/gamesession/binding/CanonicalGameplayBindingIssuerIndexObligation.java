@@ -37,7 +37,7 @@ public record CanonicalGameplayBindingIssuerIndexObligation(
     requireNonNil(reservationId, "reservationId");
     Objects.requireNonNull(status, "status");
     requirePositive(inventoryRevision, "inventoryRevision");
-    if ((status == Status.REQUIRED && localReleaseOperationId != null)
+    if ((status != Status.RELEASED && localReleaseOperationId != null)
         || (status == Status.RELEASED
             && (localReleaseOperationId == null
                 || localReleaseOperationId.equals(new UUID(0L, 0L))))) {
@@ -61,6 +61,7 @@ public record CanonicalGameplayBindingIssuerIndexObligation(
 
   public enum Status {
     REQUIRED,
+    ACKNOWLEDGED,
     RELEASED
   }
 }
