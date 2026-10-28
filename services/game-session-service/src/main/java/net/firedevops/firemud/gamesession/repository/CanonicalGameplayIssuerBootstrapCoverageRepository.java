@@ -221,16 +221,7 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
       throw conflict("Current issuer-control tuple is malformed or no longer positive");
     }
 
-    List<Record> issuerIntents =
-        transaction.fetch(
-            "SELECT operation_id FROM "
-                + "game_session_canonical_issuer_layout_bootstrap_intent"
-                + " WHERE issuer_id = ? ORDER BY operation_id FOR UPDATE",
-            ISSUER);
-    if (issuerIntents.size() != 1
-        || !currentOperationId.equals(requireUuid(issuerIntents.get(0), "operation_id"))) {
-      throw conflict("A conflicting or unpointed issuer layout intent prevents ordinary NEW");
-    }
+    requireRetainedSupersessionLineage(transaction, currentOperationId);
 
     Record intentRequest =
         transaction.fetchOne(
@@ -267,6 +258,88 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     return actual;
   }
 
+  /** Every retained intent must belong to the one issuer-bound chain ending at current control. */
+  private static void requireRetainedSupersessionLineage(
+      DSLContext transaction, UUID currentOperationId) {
+    Map<UUID, Record> intents = new HashMap<>();
+    for (Record intent :
+        transaction.fetch(
+            "SELECT * FROM game_session_canonical_issuer_layout_bootstrap_intent"
+                + " WHERE issuer_id = ? ORDER BY operation_id FOR UPDATE",
+            ISSUER)) {
+      intents.put(requireUuid(intent, "operation_id"), intent);
+    }
+    Map<UUID, Record> incoming = new HashMap<>();
+    Set<UUID> outgoing = new HashSet<>();
+    for (Record relation :
+        transaction.fetch(
+            "SELECT * FROM game_session_canonical_issuer_bootstrap_supersession"
+                + " WHERE issuer_id = ? ORDER BY old_operation_id FOR UPDATE",
+            ISSUER)) {
+      UUID oldId = requireUuid(relation, "old_operation_id");
+      UUID newId = requireUuid(relation, "new_operation_id");
+      Record oldIntent = intents.get(oldId);
+      Record newIntent = intents.get(newId);
+      if (oldIntent == null
+          || newIntent == null
+          || oldId.equals(newId)
+          || !outgoing.add(oldId)
+          || incoming.put(newId, relation) != null
+          || !ISSUER.equals(requireText(relation, "issuer_id"))
+          || !readInteger(relation, "old_inventory_revision")
+              .equals(readInteger(oldIntent, "inventory_snapshot_revision"))
+          || !readInteger(relation, "new_inventory_revision")
+              .equals(readInteger(newIntent, "inventory_snapshot_revision"))
+          || !readInteger(relation, "old_operation_fence")
+              .equals(readInteger(oldIntent, "operation_fence"))
+          || !readInteger(relation, "old_coverage_fence")
+              .equals(readInteger(oldIntent, "coverage_fence"))
+          || !readInteger(relation, "new_operation_fence")
+              .equals(readInteger(newIntent, "operation_fence"))
+          || !readInteger(relation, "new_coverage_fence")
+              .equals(readInteger(newIntent, "coverage_fence"))
+          || readInteger(newIntent, "inventory_snapshot_revision")
+                  .compareTo(readInteger(oldIntent, "inventory_snapshot_revision"))
+              <= 0
+          || readInteger(newIntent, "layout_version")
+                  .compareTo(readInteger(oldIntent, "layout_version"))
+              <= 0
+          || !readInteger(oldIntent, "control_epoch")
+              .equals(readInteger(oldIntent, "operation_fence"))
+          || !readInteger(newIntent, "control_epoch")
+              .equals(readInteger(newIntent, "operation_fence"))
+          || readInteger(relation, "previous_last_issued_fence")
+                  .compareTo(readInteger(oldIntent, "operation_fence"))
+              < 0
+          || readInteger(relation, "previous_last_issued_fence")
+                  .compareTo(readInteger(oldIntent, "coverage_fence"))
+              < 0
+          || !readInteger(newIntent, "operation_fence")
+              .equals(readInteger(relation, "previous_last_issued_fence").add(BigInteger.ONE))
+          || !readInteger(newIntent, "coverage_fence")
+              .equals(readInteger(newIntent, "operation_fence").add(BigInteger.ONE))
+          || requireUuid(newIntent, "request_id").equals(requireUuid(oldIntent, "request_id"))
+          || requireUuid(newIntent, "request_id").equals(oldId)) {
+        throw conflict("Malformed retained issuer bootstrap supersession lineage");
+      }
+    }
+    Set<UUID> visited = new HashSet<>();
+    UUID cursor = currentOperationId;
+    if (outgoing.contains(cursor)) {
+      throw conflict("Current issuer intent is not the terminal supersession lineage");
+    }
+    while (cursor != null) {
+      if (!intents.containsKey(cursor) || !visited.add(cursor)) {
+        throw conflict("Broken or cyclic retained issuer bootstrap supersession lineage");
+      }
+      Record edge = incoming.get(cursor);
+      cursor = edge == null ? null : requireUuid(edge, "old_operation_id");
+    }
+    if (visited.size() != intents.size() || incoming.size() != intents.size() - 1) {
+      throw conflict("A conflicting or unpointed issuer layout intent prevents ordinary NEW");
+    }
+  }
+
   /** Exact immutable baseline field set for one partition of the installed initial anchor. */
   static InstalledAnchorPartitionProof readInstalledAnchorPartitionProof(
       DSLContext transaction,
@@ -301,8 +374,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
         transaction.fetchOne(
             "SELECT * FROM "
                 + CanonicalGameplayIssuerPartitionMutationRepository.HEAD_TABLE
-                + " WHERE issuer_id = ? AND partition_id = ?",
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ?",
             ISSUER,
+            anchor.bootstrapOperationId(),
             partitionId);
     if (mutationHead == null
         || !anchor
@@ -655,8 +729,9 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
           transaction.fetchOne(
               "SELECT * FROM "
                   + CanonicalGameplayIssuerPartitionMutationRepository.HEAD_TABLE
-                  + " WHERE issuer_id = ? AND partition_id = ?",
+                  + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ?",
               ISSUER,
+              intent.operationId(),
               partitionId);
       if (mutationHead == null
           || !intent.operationId().equals(mutationHead.get("bootstrap_operation_id", UUID.class))

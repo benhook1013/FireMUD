@@ -168,6 +168,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isZero();
     assertThat(count(dsl, "game_session_canonical_gameplay_binding_inventory")).isZero();
 
+    assertThat(localRegistrationImage(dsl)).endsWith(":missing");
+
     CanonicalGameplayIssuerInstalledAnchor anchor =
         initialCoverageOwner(dsl, currentState::get)
             .completeInitialBootstrap(intent.operationId(), bootstrapRequestId);
@@ -882,6 +884,58 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     }
   }
 
+  @Test
+  void differentPartitionProgressDoesNotFenceTargetButSamePartitionProgressDoes() throws Exception {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    BigInteger partitions = BigInteger.TWO;
+    UUID bootstrapRequest = UUID.randomUUID();
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(
+                bootstrapRequest, descriptor(partitions), sourceCheckpoint(BigInteger.valueOf(7)));
+    migrateRemaining(schema);
+    var state =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("partition-isolation"));
+    var anchor =
+        initialCoverageOwner(dsl, () -> state)
+            .completeInitialBootstrap(intent.operationId(), bootstrapRequest);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> state);
+    var runtime =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            schema.dataSource(), uuid("partition-isolation-tenant"));
+    List<CanonicalGameplayBindingIdentity> zero = new ArrayList<>();
+    CanonicalGameplayBindingIdentity other = null;
+    for (int index = 0; index < 128 && (zero.size() < 2 || other == null); index++) {
+      var candidate = identity("partition-isolation-" + index, runtime, partitions);
+      if (candidate.bindingRef().partitionId(partitions).equals(BigInteger.ZERO))
+        zero.add(candidate);
+      else other = candidate;
+    }
+    assertThat(zero).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(other).isNotNull();
+    var operations = new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> state);
+    var first =
+        operations.beginOrResumeOrdinaryNew(
+            request("partition-target", "partition-target-transition", zero.get(0)));
+    var sql = new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, () -> state);
+    var beforeOther = sql.readPreparedPartitionWork(first);
+    var second =
+        operations.beginOrResumeOrdinaryNew(
+            request("partition-other", "partition-other-transition", other));
+    projectionOwner(dsl, () -> state).projectAndRead(second);
+    // This includes another partition's new reservation, capacity and committed physical revision.
+    sql.requireStillCurrent(beforeOther);
+    assertThat(sql.readPreparedPartitionWork(first).localEntries()).hasSize(1);
+    operations.beginOrResumeOrdinaryNew(
+        request("partition-same", "partition-same-transition", zero.get(1)));
+    assertThatThrownBy(() -> sql.requireStillCurrent(beforeOther))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("changed during projection");
+  }
+
   private static ConcurrentProjections concurrentProjection(
       CanonicalGameplayIssuerBindingLocalRedisOwner owner,
       CanonicalGameplayIssuerBindingLocalOperation first,
@@ -998,13 +1052,18 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor() {
+    return descriptor(PARTITION_COUNT);
+  }
+
+  private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
+      descriptor(BigInteger partitions) {
     String exact =
         "issuer-layout-descriptor/v1|"
             + ISSUER
             + "|"
             + LAYOUT_VERSION
             + "|"
-            + PARTITION_COUNT
+            + partitions
             + "|"
             + PARTITION_CAPACITY
             + "|"
@@ -1012,7 +1071,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
         ISSUER,
         LAYOUT_VERSION,
-        PARTITION_COUNT,
+        partitions,
         PARTITION_CAPACITY,
         CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
         exact.getBytes(StandardCharsets.UTF_8));
@@ -1106,6 +1165,13 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
 
   private static CanonicalGameplayBindingIdentity identity(
       String seed, CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget) {
+    return identity(seed, runtimeTarget, PARTITION_COUNT);
+  }
+
+  private static CanonicalGameplayBindingIdentity identity(
+      String seed,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget,
+      BigInteger partitions) {
     return new CanonicalGameplayBindingIdentity(
         uuid(seed + "-account"),
         runtimeTarget.canonicalTenantId(),
@@ -1120,7 +1186,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
         ISSUER,
         BigInteger.valueOf(7),
         LAYOUT_VERSION,
-        PARTITION_COUNT,
+        partitions,
         PARTITION_CAPACITY);
   }
 
@@ -1454,9 +1520,9 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                     + " || (SELECT coalesce(jsonb_agg(to_jsonb(g) ORDER BY tenant_id, playable_state_namespace_id, character_id), '[]'::jsonb)::text"
                     + " FROM game_session_canonical_binding_generation g) || ':'"
                     + " || (SELECT inventory_revision::text FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1) || ':'"
-                    + " || (SELECT coalesce(to_jsonb(c)::text, 'missing') FROM game_session_canonical_issuer_bootstrap_member_op_counter c WHERE issuer_id = '"
+                    + " || coalesce((SELECT to_jsonb(c)::text FROM game_session_canonical_issuer_bootstrap_member_op_counter c WHERE issuer_id = '"
                     + ISSUER
-                    + "')"),
+                    + "'), 'missing')"),
             "Expected local registration aggregate row")
         .get(0, String.class);
   }

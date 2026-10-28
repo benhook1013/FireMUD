@@ -560,6 +560,197 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     assertThat(proofImage(dsl)).isEqualTo(proofBefore);
   }
 
+  @Test
+  void forwardMigrationRetainsCommittedAndPendingPhysicalMutationLineage() {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    var source = sourceCheckpoint(BigInteger.valueOf(7));
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(UUID.randomUUID(), descriptor(), source);
+    Flyway.configure()
+        .dataSource(schema.dataSource())
+        .schemas(schema.schema())
+        .defaultSchema(schema.schema())
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(MigrationVersion.fromVersion("1038.3"))
+        .load()
+        .migrate();
+    var state =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("lineage-migration"));
+    var anchor =
+        initialCoverageOwner(dsl, () -> state)
+            .completeInitialBootstrap(intent.operationId(), intent.requestId());
+    // Current ordinary NEW requires V1046 live control, which does not exist at this cut.
+    // The historical receipt owner is a controlled correlation only; no local operation is minted.
+    UUID historicalOwnerId = UUID.randomUUID();
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isZero();
+    UUID committedId = UUID.randomUUID();
+    UUID pendingId = UUID.randomUUID();
+    UUID successor = UUID.randomUUID();
+    UUID laterSuccessor = UUID.randomUUID();
+    UUID initialRevision =
+        dsl.fetchSingle(
+                "SELECT current_revision FROM game_session_canonical_issuer_partition_mutation_head WHERE issuer_id = ?",
+                ISSUER)
+            .get(0, UUID.class);
+    byte[] intended = "controlled-pre-upgrade-mutation".getBytes(StandardCharsets.US_ASCII);
+    byte[] readback =
+        CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(
+            java.util.Map.of(
+                CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD,
+                successor.toString().getBytes(StandardCharsets.US_ASCII)));
+    // Controlled pre-upgrade SQL receipts exercise retention, immutability and the pending FK.
+    // They do not claim an ordinary NEW producer, Redis mutation/readback or admission. The
+    // bootstrap above uses the actual SQL/Redis owner with controlled Account/incarnation inputs.
+    dsl.transaction(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          insertPreLineageMutation(
+              transaction,
+              committedId,
+              historicalOwnerId,
+              "ADD_CAPACITY",
+              initialRevision,
+              successor,
+              intended);
+          transaction.execute(
+              "UPDATE game_session_canonical_issuer_partition_mutation_head"
+                  + " SET pending_mutation_id = ? WHERE issuer_id = ?",
+              committedId,
+              ISSUER);
+          transaction.execute(
+              "UPDATE game_session_canonical_issuer_partition_mutation"
+                  + " SET status = 'COMMITTED', exact_readback_field_set_bytes = ?,"
+                  + " exact_readback_field_set_digest = ?, completed_at = CURRENT_TIMESTAMP WHERE mutation_id = ?",
+              readback,
+              digest(readback),
+              committedId);
+          transaction.execute(
+              "UPDATE game_session_canonical_issuer_partition_mutation_head"
+                  + " SET current_revision = ?, pending_mutation_id = NULL WHERE issuer_id = ?",
+              successor,
+              ISSUER);
+          insertPreLineageMutation(
+              transaction,
+              pendingId,
+              historicalOwnerId,
+              "ADD_BINDING",
+              successor,
+              laterSuccessor,
+              intended);
+          transaction.execute(
+              "UPDATE game_session_canonical_issuer_partition_mutation_head"
+                  + " SET pending_mutation_id = ? WHERE issuer_id = ?",
+              pendingId,
+              ISSUER);
+        });
+    List<String> beforeHistory =
+        dsl.fetch(
+                "SELECT to_jsonb(mutation)::text FROM game_session_canonical_issuer_partition_mutation mutation ORDER BY mutation_id")
+            .getValues(0, String.class);
+    List<String> beforeHeads =
+        dsl.fetch(
+                "SELECT to_jsonb(head)::text FROM game_session_canonical_issuer_partition_mutation_head head ORDER BY partition_id")
+            .getValues(0, String.class);
+    String beforeAnchor = anchorImage(dsl);
+    String beforeProof = proofImage(dsl);
+    migrateRemaining(schema);
+    assertThat(
+            dsl.fetch(
+                    "SELECT (to_jsonb(mutation) - 'bootstrap_operation_id')::text"
+                        + " FROM game_session_canonical_issuer_partition_mutation mutation ORDER BY mutation_id")
+                .getValues(0, String.class))
+        .containsExactlyElementsOf(beforeHistory);
+    assertThat(
+            dsl.fetch(
+                    "SELECT to_jsonb(head)::text FROM game_session_canonical_issuer_partition_mutation_head head ORDER BY partition_id")
+                .getValues(0, String.class))
+        .containsExactlyElementsOf(beforeHeads);
+    assertThat(anchorImage(dsl)).isEqualTo(beforeAnchor);
+    assertThat(proofImage(dsl)).isEqualTo(beforeProof);
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isZero();
+    assertThat(
+            dsl.fetch(
+                    "SELECT DISTINCT bootstrap_operation_id FROM game_session_canonical_issuer_partition_mutation")
+                .getValues(0, UUID.class))
+        .containsExactly(anchor.bootstrapOperationId());
+    dsl.transaction(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          var head =
+              CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
+                  transaction, anchor.bootstrapOperationId(), BigInteger.ZERO);
+          assertThat(head.pendingMutationId()).isEqualTo(pendingId);
+          assertThat(head.currentRevision()).isEqualTo(successor);
+          var history =
+              List.of(
+                  CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+                      transaction,
+                      CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY,
+                      historicalOwnerId,
+                      BigInteger.ZERO),
+                  CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+                      transaction,
+                      CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING,
+                      historicalOwnerId,
+                      BigInteger.ZERO));
+          assertThat(history).hasSize(2);
+          assertThat(history.stream().map(CanonicalGameplayIssuerPartitionMutation::status))
+              .containsExactlyInAnyOrder(
+                  CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED,
+                  CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF);
+        });
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_issuer_partition_mutation SET bootstrap_operation_id = ? WHERE mutation_id = ?",
+                    UUID.randomUUID(),
+                    pendingId))
+        .hasMessageContaining("immutable");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_session_canonical_issuer_partition_mutation_head SET bootstrap_operation_id = ? WHERE issuer_id = ?",
+                    UUID.randomUUID(),
+                    ISSUER))
+        .hasMessageContaining("immutable");
+    assertThat(
+            dsl.fetch(
+                    "SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint"
+                        + " WHERE conrelid IN ('game_session_canonical_issuer_partition_mutation'::regclass,"
+                        + " 'game_session_canonical_issuer_partition_mutation_head'::regclass)"
+                        + " AND conname IN ('fk_gs_issuer_partition_mutation_head', 'fk_gs_issuer_partition_mutation_head_pending')")
+                .getValues("definition", String.class))
+        .hasSize(2)
+        .allSatisfy(definition -> assertThat(definition).contains("bootstrap_operation_id"));
+  }
+
+  private static void insertPreLineageMutation(
+      DSLContext transaction,
+      UUID mutationId,
+      UUID ownerId,
+      String kind,
+      UUID expected,
+      UUID successor,
+      byte[] intended) {
+    transaction.execute(
+        "INSERT INTO game_session_canonical_issuer_partition_mutation"
+            + " (mutation_id, issuer_id, partition_id, mutation_kind, owner_operation_id, expected_revision,"
+            + " successor_revision, exact_intended_change_bytes, exact_intended_change_digest, status)"
+            + " VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
+        mutationId,
+        ISSUER,
+        kind,
+        ownerId,
+        expected,
+        successor,
+        intended,
+        digest(intended));
+  }
+
   private CanonicalGameplayIssuerBootstrapCoverageOwner initialCoverageOwner(
       DSLContext dsl,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source) {

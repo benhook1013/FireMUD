@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -160,7 +161,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     BigInteger targetPartition = target.reservation().partitionId();
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead mutationHead =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-            transaction, targetPartition);
+            transaction, anchor.bootstrapOperationId(), targetPartition);
     CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof
         targetBaseline =
             CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(
@@ -183,12 +184,15 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         transaction.fetch(
             "SELECT operation.* FROM "
                 + LOCAL_OPERATION
-                + " operation WHERE operation.issuer_id = ? AND NOT EXISTS (SELECT 1 FROM "
+                + " operation WHERE operation.issuer_id = ? AND operation.partition_id = ? AND NOT EXISTS (SELECT 1 FROM "
                 + "game_session_canonical_issuer_binding_local_retirement retirement"
                 + " WHERE retirement.original_local_operation_id = operation.operation_id"
                 + " AND retirement.status = 'RETIRED')"
                 + " ORDER BY operation.operation_fence, operation.operation_id",
-            ISSUER);
+            ISSUER,
+            targetPartition);
+    PartitionSources sources =
+        readPartitionSources(transaction, operationRows, anchor, targetPartition);
     List<LocalEntry> entries = new ArrayList<>(operationRows.size());
     Set<UUID> localReservationIds = new HashSet<>();
     Set<String> localBindingRefs = new HashSet<>();
@@ -200,7 +204,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     proofsByPartition.put(targetPartition, targetBaseline);
 
     int partitionLocalOperationCount = 0;
-    BigInteger localAggregateCapacity = BigInteger.ZERO;
+    BigInteger localAggregateCapacity = readIssuerLocalCapacity(transaction);
     BigInteger localPartitionCapacity = BigInteger.ZERO;
     boolean foundTarget = false;
     for (Record row : operationRows) {
@@ -211,6 +215,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
               anchor,
               target,
               proofsByPartition,
+              sources,
               requireCurrentTargetAccountControl
                   && uuid(row, "operation_id").equals(target.operationId()));
       if (!localOperationIds.add(entry.operationId())
@@ -237,8 +242,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         if (entry.countsTowardCapacity())
           localPartitionCapacity = localPartitionCapacity.add(BigInteger.ONE);
       }
-      if (entry.countsTowardCapacity())
-        localAggregateCapacity = localAggregateCapacity.add(BigInteger.ONE);
       if (entry.registeredOperationId().equals(target.operationId())) {
         if (!Arrays.equals(entry.exactRegisteredMemberValueBytes(), target.exactMemberValueBytes())
             || !entry.registeredMemberValue().equals(target.memberValue())
@@ -265,8 +268,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
             "A post-baseline issuer operation reuses an installed reservation identity");
       }
     }
-    BigInteger currentReservationCount =
-        verifyCurrentReservationAccounting(transaction, anchor, baselineReservationIds.size());
+    verifyCurrentReservationAccounting(transaction, anchor, baselineReservationIds.size());
     verifyRetirementAccounting(transaction);
 
     BigInteger aggregateCapacity = anchor.aggregateCountedCapacity().add(localAggregateCapacity);
@@ -308,7 +310,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
               transaction, kind, target.operationId(), targetPartition, intent);
       mutationHead =
           CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-              transaction, targetPartition);
+              transaction, anchor.bootstrapOperationId(), targetPartition);
       if (physicalMutation.status()
               == CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF
           && !physicalMutation.mutationId().equals(mutationHead.pendingMutationId())) {
@@ -347,8 +349,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
             anchor,
             targetBaseline.exactPhysicalFieldSetBytes(),
             entries,
-            currentReservationCount,
-            aggregateCapacity,
             partitionCapacity,
             mutationHead.currentRevision(),
             mutationHead.pendingMutationId());
@@ -384,7 +384,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     requireQualifiedBaseline(anchor, baseline, baselineFields);
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead partitionHead =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-            transaction, partitionId);
+            transaction, anchor.bootstrapOperationId(), partitionId);
     byte[] initialRevision =
         baselineFields.remove(
             CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MUTATION_REVISION_FIELD);
@@ -396,6 +396,83 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     return baseline;
   }
 
+  private static BigInteger readIssuerLocalCapacity(DSLContext transaction) {
+    Record row =
+        transaction.fetchOne(
+            "SELECT COUNT(*) AS count FROM "
+                + LOCAL_OPERATION
+                + " operation JOIN "
+                + RESERVATION
+                + " reservation ON reservation.reservation_id = operation.reservation_id"
+                + " AND reservation.issuer_id = operation.issuer_id"
+                + " WHERE operation.issuer_id = ? AND reservation.lifecycle <> 'RELEASED'"
+                + " AND NOT EXISTS (SELECT 1 FROM game_session_canonical_issuer_binding_local_retirement retirement"
+                + " WHERE retirement.original_local_operation_id = operation.operation_id AND retirement.status = 'RETIRED')",
+            ISSUER);
+    if (row == null) throw unavailable("The issuer-wide local capacity count is unavailable");
+    return number(row, "count");
+  }
+
+  private static PartitionSources readPartitionSources(
+      DSLContext transaction,
+      List<Record> operations,
+      CanonicalGameplayIssuerInstalledAnchor anchor,
+      BigInteger partitionId) {
+    List<UUID> reservationIds =
+        operations.stream().map(row -> uuid(row, "reservation_id")).toList();
+    List<UUID> transitionIds = operations.stream().map(row -> uuid(row, "transition_id")).toList();
+    List<byte[]> bindingRefs = operations.stream().map(row -> bytes(row, "binding_ref")).toList();
+    Map<UUID, Record> reservations =
+        readSourceRows(transaction, RESERVATION, "reservation_id", reservationIds);
+    Map<UUID, Record> transitions =
+        readSourceRows(transaction, TRANSITION, "transition_id", transitionIds);
+    Map<UUID, Record> obligations =
+        readSourceRows(transaction, ISSUER_OBLIGATION, "transition_id", transitionIds);
+    Map<ByteBuffer, Record> inventory = new HashMap<>();
+    for (Record row :
+        transaction
+            .select()
+            .from(org.jooq.impl.DSL.table(INVENTORY))
+            .where(org.jooq.impl.DSL.field("binding_ref", byte[].class).in(bindingRefs))
+            .fetch()) {
+      if (inventory.put(ByteBuffer.wrap(bytes(row, "binding_ref")), row) != null)
+        throw unavailable("Duplicate local issuer inventory source rows");
+    }
+    Map<MutationKey, CanonicalGameplayIssuerPartitionMutation> mutations = new HashMap<>();
+    for (var mutation :
+        CanonicalGameplayIssuerPartitionMutationRepository.readPartitionInTransaction(
+            transaction, anchor.bootstrapOperationId(), partitionId)) {
+      if (mutations.put(new MutationKey(mutation.kind(), mutation.ownerOperationId()), mutation)
+          != null) throw unavailable("Duplicate local issuer mutation source rows");
+    }
+    return new PartitionSources(reservations, inventory, transitions, obligations, mutations);
+  }
+
+  private static Map<UUID, Record> readSourceRows(
+      DSLContext transaction, String table, String identityColumn, List<UUID> identities) {
+    Map<UUID, Record> rows = new HashMap<>();
+    for (Record row :
+        transaction
+            .select()
+            .from(org.jooq.impl.DSL.table(table))
+            .where(org.jooq.impl.DSL.field(identityColumn, UUID.class).in(identities))
+            .fetch()) {
+      if (rows.put(uuid(row, identityColumn), row) != null)
+        throw unavailable("Duplicate local issuer source rows in " + table);
+    }
+    return rows;
+  }
+
+  private record MutationKey(
+      CanonicalGameplayIssuerPartitionMutation.Kind kind, UUID ownerOperationId) {}
+
+  private record PartitionSources(
+      Map<UUID, Record> reservations,
+      Map<ByteBuffer, Record> inventory,
+      Map<UUID, Record> transitions,
+      Map<UUID, Record> obligations,
+      Map<MutationKey, CanonicalGameplayIssuerPartitionMutation> mutations) {}
+
   private LocalEntry readLocalEntry(
       DSLContext transaction,
       Record row,
@@ -405,6 +482,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
               BigInteger,
               CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof>
           proofsByPartition,
+      PartitionSources sources,
       boolean requireCurrentAccountControl) {
     if (!ISSUER.equals(text(row, "issuer_id"))
         || !"PENDING_PHYSICAL_PROOF".equals(text(row, "member_status"))
@@ -511,22 +589,11 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
           "A durable local issuer operation no longer links to its exact immutable baseline partition");
     }
 
-    Record reservationRow =
-        transaction.fetchOne(
-            "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
-            reservation.reservationId());
+    Record reservationRow = sources.reservations().get(reservation.reservationId());
     Record inventoryRow =
-        transaction.fetchOne(
-            "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ?",
-            member.owner().bindingRef().bytes());
-    Record transitionRow =
-        transaction.fetchOne(
-            "SELECT * FROM " + TRANSITION + " WHERE transition_id = ?", reservation.transitionId());
-    Record issuerObligation =
-        transaction.fetchOne(
-            "SELECT * FROM " + ISSUER_OBLIGATION + " WHERE transition_id = ? AND binding_ref = ?",
-            reservation.transitionId(),
-            member.owner().bindingRef().bytes());
+        sources.inventory().get(ByteBuffer.wrap(member.owner().bindingRef().bytes()));
+    Record transitionRow = sources.transitions().get(reservation.transitionId());
+    Record issuerObligation = sources.obligations().get(reservation.transitionId());
     if (reservationRow == null
         || inventoryRow == null
         || transitionRow == null
@@ -551,17 +618,17 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
               transaction, row, member.owner().accountId());
     }
     CanonicalGameplayIssuerPartitionMutation capacityMutation =
-        CanonicalGameplayIssuerPartitionMutationRepository.readOptionalInTransaction(
-            transaction,
-            CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY,
-            operationId,
-            reservation.partitionId());
+        sources
+            .mutations()
+            .get(
+                new MutationKey(
+                    CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY, operationId));
     CanonicalGameplayIssuerPartitionMutation bindingMutation =
-        CanonicalGameplayIssuerPartitionMutationRepository.readOptionalInTransaction(
-            transaction,
-            CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING,
-            operationId,
-            reservation.partitionId());
+        sources
+            .mutations()
+            .get(
+                new MutationKey(
+                    CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING, operationId));
     boolean capacityMustBePresent =
         (capacityMutation != null
                 && capacityMutation.status()
@@ -1220,8 +1287,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       CanonicalGameplayIssuerInstalledAnchor anchor,
       byte[] baselineBytes,
       List<LocalEntry> entries,
-      BigInteger reservationCount,
-      BigInteger aggregateCapacity,
       BigInteger partitionCapacity,
       UUID currentRevision,
       UUID pendingMutationId) {
@@ -1244,8 +1309,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         digest.update((byte) (entry.capacityMustBePresent() ? 1 : 0));
         digest.update((byte) (entry.bindingMustBePresent() ? 1 : 0));
       }
-      update(digest, reservationCount.toString().getBytes(StandardCharsets.US_ASCII));
-      update(digest, aggregateCapacity.toString().getBytes(StandardCharsets.US_ASCII));
       update(digest, partitionCapacity.toString().getBytes(StandardCharsets.US_ASCII));
       update(digest, currentRevision.toString().getBytes(StandardCharsets.US_ASCII));
       update(
