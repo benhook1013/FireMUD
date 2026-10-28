@@ -131,7 +131,8 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
     var request =
         new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
             1,
-            CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(OPERATION),
+            net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+                .initialLocationReadRequestId(OPERATION),
             NAMESPACE,
             TENANT,
             selection.worldSlug(),

@@ -742,10 +742,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var secondLifecycle =
           new WorldCanonicalInstanceLifecycleEvidence.Request(
               original.schemaVersion(),
-              UUID.nameUUIDFromBytes(
-                  ("firemud-world-initial-location-lifecycle-read/v1/"
-                          + secondRequest.getPlacementOperationUuid())
-                      .getBytes(StandardCharsets.US_ASCII)),
+              WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                  UUID.fromString(secondRequest.getPlacementOperationUuid())),
               original.targetNamespace(),
               original.canonicalTenantId(),
               original.worldSlug(),
