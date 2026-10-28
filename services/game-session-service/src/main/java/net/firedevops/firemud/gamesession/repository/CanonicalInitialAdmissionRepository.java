@@ -148,10 +148,10 @@ public class CanonicalInitialAdmissionRepository {
       requireTerminalProtectionReplay(existing, accountProtection);
       return;
     }
+    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
       lockAllAdmissionRepresentationsForNoPrior();
     }
-    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     CanonicalInitialAdmissionLaunchTarget launchTarget =
         requireStarting ? lockStartingLaunchTarget(request) : lockLaunchTarget(request, true);
     requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
@@ -258,10 +258,10 @@ public class CanonicalInitialAdmissionRepository {
       requireTerminalProtectionReplay(attempt, accountProtection);
       return;
     }
+    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
       lockAllAdmissionRepresentationsForNoPrior();
     }
-    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
     CanonicalInitialAdmissionLaunchTarget launchTarget = lockLaunchTarget(request, true);
     requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
     requireSameRequest(attempt, request, launchTarget);
@@ -733,6 +733,7 @@ public class CanonicalInitialAdmissionRepository {
         request.realmId().toString());
   }
 
+  // Acquire the catalog row first, matching CLOSED creation's catalog -> pointer-write order.
   private void lockAllAdmissionRepresentationsForNoPrior() {
     dsl.execute(
         "LOCK TABLE gameplay_admission_pointer, gameplay_admission_pointer_event, "
