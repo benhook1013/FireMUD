@@ -23,6 +23,10 @@ import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentRe
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 
 /**
  * Unregistered method-guarded assignment write and immutable receipt read. Assignment delegates
@@ -188,7 +192,16 @@ public final class CanonicalPreseededActorAssignmentGrpcService
     final Optional<PreseededActorRuntimeReference> stored;
     try {
       stored = Objects.requireNonNull(receiptService.readRuntimeReference(selector));
-    } catch (RuntimeException unavailable) {
+    } catch (TransientDataAccessException
+        | DataAccessResourceFailureException
+        | CannotCreateTransactionException
+        | TransactionTimedOutException unavailable) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Runtime reference owner is unavailable")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException unexpected) {
       responseObserver.onError(
           Status.INTERNAL.withDescription("Runtime reference read failed").asRuntimeException());
       return;
