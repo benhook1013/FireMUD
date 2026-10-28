@@ -457,31 +457,39 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
         var login = fixture.originalLogin();
         var holder = Fixture.dataSource(fixture.schema).getConnection();
         var acceptanceConnection = Fixture.dataSource(fixture.schema).getConnection()) {
-      var repository = spy(
-          new CanonicalGameplayAccountInitialBarrierInitializerRepository(fixture.dsl, trustedClock));
+      var repository =
+          spy(
+              new CanonicalGameplayAccountInitialBarrierInitializerRepository(
+                  fixture.dsl, trustedClock));
       AtomicReference<CanonicalGameplayAccountInitialBarrierRedisOwner.Readback> captured =
           new AtomicReference<>();
-      org.mockito.Mockito.doAnswer(invocation -> {
-            captured.set(invocation.getArgument(1));
-            throw new IllegalStateException("controlled capture before SQL completion");
-          })
-          .when(repository).acceptOpenReadback(eq(fixture.original.requestId()), any());
-      var owner = fixture.initialOwner(
-          physical.ownerClient(), repository,
-          RedisScriptCatalog.fromContributions(
-              List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution())),
-          trustedClock);
-      assertThat(owner.initializeOnce(
-              fixture.original, login, fixture.tenantId, fixture.namespaceId))
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                captured.set(invocation.getArgument(1));
+                throw new IllegalStateException("controlled capture before SQL completion");
+              })
+          .when(repository)
+          .acceptOpenReadback(eq(fixture.original.requestId()), any());
+      var owner =
+          fixture.initialOwner(
+              physical.ownerClient(),
+              repository,
+              RedisScriptCatalog.fromContributions(
+                  List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution())),
+              trustedClock);
+      assertThat(
+              owner.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId))
           .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
       var readback = java.util.Objects.requireNonNull(captured.get());
       assertThat(trustedMillis.get())
-          .isGreaterThanOrEqualTo(Math.max(
-              readback.beforeIncarnation().issuedAtEpochMillis(),
-              readback.afterIncarnation().issuedAtEpochMillis()))
-          .isLessThan(Math.min(
-              readback.beforeIncarnation().expiresAtEpochMillis(),
-              readback.afterIncarnation().expiresAtEpochMillis()));
+          .isGreaterThanOrEqualTo(
+              Math.max(
+                  readback.beforeIncarnation().issuedAtEpochMillis(),
+                  readback.afterIncarnation().issuedAtEpochMillis()))
+          .isLessThan(
+              Math.min(
+                  readback.beforeIncarnation().expiresAtEpochMillis(),
+                  readback.afterIncarnation().expiresAtEpochMillis()));
       assertThat(fixture.initialRepository.readCurrent(fixture.original.requestId()).state())
           .isEqualTo(
               CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE);
@@ -490,10 +498,12 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       assertThat(retainedPhysical).isEqualTo(readback.barrierFields());
       DSLContext holderDsl = DSL.using(holder, SQLDialect.POSTGRES);
       DSLContext acceptanceDsl = DSL.using(acceptanceConnection, SQLDialect.POSTGRES);
-      int holderPid = java.util.Objects.requireNonNull(
-          holderDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-      int acceptancePid = java.util.Objects.requireNonNull(
-          acceptanceDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+      int holderPid =
+          java.util.Objects.requireNonNull(
+              holderDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+      int acceptancePid =
+          java.util.Objects.requireNonNull(
+              acceptanceDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
       var acceptanceRepository =
           new CanonicalGameplayAccountInitialBarrierInitializerRepository(
               acceptanceDsl, trustedClock);
@@ -505,16 +515,22 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       } else {
         holderDsl.fetchSingle(
             "SELECT account_id FROM game_session_canonical_account_coverage_control"
-                + " WHERE account_id = ? FOR UPDATE", fixture.accountId);
+                + " WHERE account_id = ? FOR UPDATE",
+            fixture.accountId);
       }
       try (var executor = Executors.newSingleThreadExecutor()) {
         try {
-          var acceptance = executor.submit(
-              () -> acceptanceRepository.acceptOpenReadback(fixture.original.requestId(), readback));
+          var acceptance =
+              executor.submit(
+                  () ->
+                      acceptanceRepository.acceptOpenReadback(
+                          fixture.original.requestId(), readback));
           awaitInitialBackendBlockedBy(fixture.dsl, acceptancePid, holderPid);
-          trustedMillis.set(Math.max(
-              readback.beforeIncarnation().expiresAtEpochMillis(),
-              readback.afterIncarnation().expiresAtEpochMillis()) + 1L);
+          trustedMillis.set(
+              Math.max(
+                      readback.beforeIncarnation().expiresAtEpochMillis(),
+                      readback.afterIncarnation().expiresAtEpochMillis())
+                  + 1L);
           holder.rollback();
           assertThatThrownBy(() -> acceptance.get(5L, TimeUnit.SECONDS))
               .hasStackTraceContaining(
@@ -1465,11 +1481,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
                 Duration.ofSeconds(30));
         var receiver =
             new CanonicalGameplayProtectedIncarnationReceiver(
-                repository,
-                tenantTags,
-                new ControlledSigner(keyPair),
-                configuration,
-                trustedClock);
+                repository, tenantTags, new ControlledSigner(keyPair), configuration, trustedClock);
         return new CanonicalGameplayAccountInitialBarrierRedisOwner(
             client, catalog, repository, tenantTags, receiver);
       }
