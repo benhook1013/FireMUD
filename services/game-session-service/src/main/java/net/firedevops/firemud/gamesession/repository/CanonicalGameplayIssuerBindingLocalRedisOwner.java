@@ -109,7 +109,7 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       requireNoAmbientTransaction();
       var work = projectionRepository.prepareAddMutationWork(operation);
       requireFreshCurrentState(work);
-      if (!work.targetEntry().operationId().equals(operation.operationId())) {
+      if (!work.targetEntry().registeredOperationId().equals(operation.operationId())) {
         throw unavailable();
       }
       CanonicalGameplayIssuerPartitionMutation mutation = work.physicalMutation();
@@ -122,6 +122,7 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
         projectionRepository.requireStillCurrent(work);
         return new Readback(operation, 3L, currentReadback);
       }
+      if (!work.targetEntry().operationId().equals(operation.operationId())) throw unavailable();
       if (!mutation.mutationId().equals(work.pendingMutationId())
           || !mutation.expectedRevision().equals(work.currentRevision())) {
         throw unavailable();
@@ -331,7 +332,7 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
                                   work.targetOperation().memberValue().reservation().partitionId()))
                   .count());
       if (BigInteger.valueOf(physicalCapacityCount).compareTo(work.anchor().partitionCapacity()) > 0
-          || physicalCapacityCount < baselineCapacityCount + 1
+          || physicalCapacityCount < baselineCapacityCount + (target.countsTowardCapacity() ? 1 : 0)
           || physicalCapacityCount > baselineCapacityCount + registeredCapacityCount
           || physicalReservationCount < baselineReservationCount + 1
           || physicalReservationCount > baselineReservationCount + registeredReservationCount
