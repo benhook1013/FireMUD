@@ -699,8 +699,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       return dsl.transactionResult(
           configuration -> {
             DSLContext transaction = DSL.using(configuration);
-            String scopeLockKey = "game-session-region-owner-install:v1:" + expectedTag;
-            transaction.fetch("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", scopeLockKey);
+            lockRegionScope(transaction, expectedTag);
             Record currentRow =
                 transaction.fetchOne(
                     "SELECT * FROM "
