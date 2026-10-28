@@ -135,10 +135,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
     if (!value.initializer().matchesCurrentIssuerState(current)) {
       throw conflict("Original OPEN initializer no longer matches current Account issuer source");
     }
-    boolean createPermit =
-        claimFirstCreatePermit(value.initializer().operationId(), value, current);
     CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared =
-        prepared(value, source.requestAssignment(), operationId, createPermit);
+        prepared(value, source.requestAssignment(), operationId);
     requireStillCurrent(prepared);
     return prepared;
   }
@@ -760,25 +758,36 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
   private CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared(
       CanonicalGameplayIssuerAdmissionBarrierValue value,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
-      UUID requestOperationId,
-      boolean createPermit) {
+      UUID requestOperationId) {
     return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer(
         value,
         assignment,
         requestOperationId,
         CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
-            ISSUER, value.tenantId(), value.playableStateNamespaceId(), value.tenantGameplayTag()),
-        createPermit);
+            ISSUER, value.tenantId(), value.playableStateNamespaceId(), value.tenantGameplayTag()));
   }
 
   /**
    * Consumes the sole durable authority to create the first Redis OPEN. The state transition is
    * committed before the Redis owner can attempt its command; every later call is replay-only.
    */
-  private boolean claimFirstCreatePermit(
-      UUID operationId,
-      CanonicalGameplayIssuerAdmissionBarrierValue value,
-      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current) {
+  @Override
+  public boolean claimFirstCreatePermit(
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+    Objects.requireNonNull(prepared, "prepared");
+    requireNoAmbientTransaction();
+    CanonicalGameplayIssuerAdmissionBarrierValue value = prepared.value();
+    UUID operationId = value.initializer().operationId();
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current =
+        readCurrentState();
+    if (!value.initializer().matchesCurrentIssuerState(current)) {
+      throw conflict("Original OPEN initializer no longer matches current Account issuer source");
+    }
+    CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
+        prepared.assignment() == null
+            ? null
+            : tenantTags.assignmentForTransition(prepared.assignment().transitionId());
+    if (assignment != null) requireSameAssignment(prepared.assignment(), assignment);
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
@@ -794,6 +803,12 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
             throw conflict(
                 "Original initializer no longer belongs to the current OPEN live control");
           }
+          if (assignment != null) {
+            requireCurrentTagMapping(
+                transaction, assignment.tenantId(), assignment.tenantGameplayTag());
+            requireCurrentRequestTarget(
+                transaction, prepared.requestOperationId(), assignment, current);
+          }
           Record saved =
               transaction.fetchSingle(
                   "SELECT * FROM "
@@ -801,6 +816,8 @@ final class CanonicalGameplayIssuerAdmissionBarrierRepository
                       + " WHERE operation_id = ? AND issuer_id = ? FOR UPDATE",
                   operationId,
                   ISSUER);
+          readFrozenInitializer(
+              transaction, saved, prepared.assignment(), anchor, control, current);
           requirePersistedInitializer(saved, value);
           String state = saved.get("initialization_state", String.class);
           if ("PREPARED".equals(state)) {

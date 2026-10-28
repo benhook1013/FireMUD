@@ -74,7 +74,6 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       PreparedInitializer prepared = repository.readPreparedInitializer(operationId);
       requireCurrentState(prepared.value().initializer());
       repository.requireStillCurrent(prepared);
-      String createMode = prepared.consumeCreatePermit() ? "CREATE_ONCE" : "REPLAY_ONLY";
       RedisScriptDescriptor descriptor =
           requireDescriptor(
               CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution.OPEN_SCRIPT_ID,
@@ -84,21 +83,23 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       byte[] script = scriptSource(descriptor);
       CanonicalGameplayIssuerAdmissionBarrierValue value = prepared.value();
       byte[] payload = value.exactBytes();
-      long result =
-          writeOneKey(
-              script,
-              prepared.key(),
-              ascii(value.issuerId()),
-              ascii(value.tenantId().toString()),
-              ascii(value.playableStateNamespaceId().toString()),
-              ascii(value.tenantGameplayTag()),
-              ascii(value.ownerOperationId().toString()),
-              ascii(value.admissionEpoch().toString()),
-              ascii(value.initializer().exactDigest()),
-              ascii(value.exactDigest()),
-              payload,
-              ascii(value.state().name()),
-              ascii(createMode));
+      byte[] key = ascii(prepared.key());
+      byte[][] arguments = {
+        ascii(value.issuerId()),
+        ascii(value.tenantId().toString()),
+        ascii(value.playableStateNamespaceId().toString()),
+        ascii(value.tenantGameplayTag()),
+        ascii(value.ownerOperationId().toString()),
+        ascii(value.admissionEpoch().toString()),
+        ascii(value.initializer().exactDigest()),
+        ascii(value.exactDigest()),
+        payload,
+        ascii(value.state().name()),
+        ascii("REPLAY_ONLY")
+      };
+      byte[] createOnce = ascii("CREATE_ONCE");
+      if (repository.claimFirstCreatePermit(prepared)) arguments[10] = createOnce;
+      long result = writeOneKey(script, key, arguments);
       if (result < 1 || result > 2) throw unavailable();
       byte[] observed = readExactPhysicalState(prepared.key(), value);
       requireCurrentState(value.initializer());
@@ -215,6 +216,10 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
   }
 
   private long writeOneKey(byte[] script, String key, byte[]... arguments) {
+    return writeOneKey(script, ascii(key), arguments);
+  }
+
+  private long writeOneKey(byte[] script, byte[] key, byte[]... arguments) {
     requireNoAmbientTransaction();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
@@ -223,9 +228,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
       String sha = await(commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
       Long reply =
-          await(
-              commands.evalsha(
-                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments));
+          await(commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments));
       if (reply == null) throw unavailable();
       return reply;
     } catch (RuntimeException failure) {
@@ -462,6 +465,9 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
   interface ProjectionRepository {
     PreparedInitializer readPreparedInitializer(UUID operationId);
 
+    /** Commits the sole first-create claim; false permits only replay of an existing OPEN. */
+    boolean claimFirstCreatePermit(PreparedInitializer prepared);
+
     PreparedCutoffTarget readPreparedCutoffTarget(
         UUID cutoffOperationId, UUID tenantId, UUID namespaceId);
 
@@ -479,19 +485,16 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
     private final CanonicalGameplayTenantGameplayTagRepository.Assignment assignment;
     private final UUID requestOperationId;
     private final String key;
-    private final java.util.concurrent.atomic.AtomicBoolean createPermit;
 
     PreparedInitializer(
         CanonicalGameplayIssuerAdmissionBarrierValue value,
         CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
         UUID requestOperationId,
-        String key,
-        boolean createPermit) {
+        String key) {
       this.value = Objects.requireNonNull(value, "value");
       this.assignment = assignment;
       this.requestOperationId = Objects.requireNonNull(requestOperationId, "requestOperationId");
       this.key = Objects.requireNonNull(key, "key");
-      this.createPermit = new java.util.concurrent.atomic.AtomicBoolean(createPermit);
       if (value.state() != CanonicalGameplayIssuerAdmissionBarrierValue.State.OPEN
           || !CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
                   value.issuerId(),
@@ -523,11 +526,6 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
 
     String key() {
       return key;
-    }
-
-    /** Consumes the SQL owner's first-attempt authority before any Redis command is attempted. */
-    boolean consumeCreatePermit() {
-      return createPermit.getAndSet(false);
     }
   }
 

@@ -27,7 +27,6 @@
   "outcomes": [
     {"code": "OPEN_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
     {"code": "TARGET_ALREADY_PRESENT", "category": "STALE", "effect": "NON_MUTATING"},
-    {"code": "TYPE_TTL_OR_FIELDS_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
     {"code": "INVALID_ARGUMENTS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
   ],
   "resetSensitivity": "CLUSTER",

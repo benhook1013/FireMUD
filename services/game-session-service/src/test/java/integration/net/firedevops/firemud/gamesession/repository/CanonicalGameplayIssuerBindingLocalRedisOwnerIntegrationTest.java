@@ -79,6 +79,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
   private static final String OWNER_PRINCIPAL = "gamesession_coord_app";
   private static final String ISSUER_KEY_PREFIX = "session:game:index:issuer:";
   private static final String METADATA_FIELD = "!issuer-partition-bootstrap/v1";
+  private static final String ACKNOWLEDGEMENT_TABLE =
+      "game_session_canonical_issuer_binding_local_acknowledgement";
   private static final BigInteger LAYOUT_VERSION = BigInteger.valueOf(3);
   private static final BigInteger PARTITION_COUNT = BigInteger.ONE;
   private static final BigInteger PARTITION_CAPACITY = BigInteger.valueOf(2);
@@ -318,7 +320,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThatThrownBy(() -> acknowledgementRepository.acknowledge(firstCapacityOnly))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("nonterminal binding");
-    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement")).isZero();
+    assertThat(count(dsl, ACKNOWLEDGEMENT_TABLE)).isZero();
     assertThat(count(dsl, "game_session_canonical_issuer_binding_local_ack_gen_counter")).isZero();
     var firstCapacityFields =
         CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
@@ -542,8 +544,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                     "Expected immutable local issuer operation")
                 .get("member_status", String.class))
         .isEqualTo("PENDING_PHYSICAL_PROOF");
-    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement"))
-        .isEqualTo(1L);
+    assertThat(count(dsl, ACKNOWLEDGEMENT_TABLE)).isEqualTo(1L);
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
@@ -584,8 +585,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
         .isEqualTo(issuerAcknowledgement.evidence().issuerBindingLocalAcknowledgementGeneration());
     assertThat(restartedAcknowledgementRepository.readHistorical(first.operationId()).exactBytes())
         .containsExactly(issuerAcknowledgement.exactBytes());
-    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement"))
-        .isEqualTo(1L);
+    assertThat(count(dsl, ACKNOWLEDGEMENT_TABLE)).isEqualTo(1L);
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
@@ -611,8 +611,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                         + " WHERE operation_id = ?",
                     first.operationId()))
         .hasMessageContaining("issuer binding-local acknowledgements are immutable");
-    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_acknowledgement"))
-        .isEqualTo(1L);
+    assertThat(count(dsl, ACKNOWLEDGEMENT_TABLE)).isEqualTo(1L);
     currentState.set(
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             checkpointShape(BigInteger.valueOf(8)), incarnation));

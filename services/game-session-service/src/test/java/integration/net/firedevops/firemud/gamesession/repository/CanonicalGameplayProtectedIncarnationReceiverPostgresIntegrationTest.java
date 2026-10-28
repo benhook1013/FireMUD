@@ -30,8 +30,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
@@ -78,6 +81,213 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
   @Container
   static GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Test
+  void localDescriptorFailuresRetainNeverDispatchedOriginalForLaterValidPreparation()
+      throws Exception {
+    try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
+        InitialRedisFixture physical = InitialRedisFixture.open();
+        var login = fixture.originalLogin()) {
+      var snapshot = fixture.initialRepository.readCurrent(fixture.original.requestId());
+      String retained = fixture.initialTargetPostimage();
+      String key =
+          CanonicalGameplayAccountInitialBarrierKey.forTarget(
+              fixture.tenantTags.assignmentForInitialBarrierTarget(fixture.original.requestId()),
+              snapshot.initializerId(),
+              fixture.original.requestId());
+      RedisClient undispatched = mock(RedisClient.class);
+      RedisScriptCatalog catalog = mock(RedisScriptCatalog.class);
+      when(catalog.require(CanonicalGameplayAccountInitialBarrierRedisScriptContribution.SCRIPT_ID))
+          .thenThrow(new IllegalStateException("missing local descriptor"))
+          .thenReturn(mock(RedisScriptDescriptor.class));
+      var owner = fixture.initialOwner(undispatched, fixture.initialRepository, catalog);
+      for (int failure = 0; failure < 2; failure++) {
+        assertThat(
+                owner.initializeOnce(
+                    fixture.original, login, fixture.tenantId, fixture.namespaceId))
+            .isEqualTo(
+                new CanonicalGameplayAccountInitialOpenProof.Refused(
+                    CanonicalGameplayAccountInitialOpenProof.Reason.TARGET_NEVER_DISPATCHED));
+        assertThat(fixture.initialRepository.readCurrent(fixture.original.requestId()).state())
+            .isEqualTo(
+                CanonicalGameplayAccountInitialBarrierInitializerRepository.State.NEVER_DISPATCHED);
+        assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+        assertThat(physical.connection.sync().exists(key)).isZero();
+      }
+      org.mockito.Mockito.verifyNoInteractions(undispatched);
+      var validOwner = fixture.initialOwner(physical.ownerClient(), fixture.initialRepository);
+      assertThat(
+              validOwner.initializeOnce(
+                  fixture.original, login, fixture.tenantId, fixture.namespaceId))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+      assertThat(
+              fixture.initialRepository.readCurrent(fixture.original.requestId()).initializerId())
+          .isEqualTo(snapshot.initializerId());
+      physical.connection.sync().del(key);
+    }
+  }
+
+  @Test
+  void abandonedNeverDispatchedOriginalPreventsFreshInitialForLaterLogin() throws Exception {
+    try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open()) {
+      String initializer =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "SELECT to_jsonb(i)::text FROM"
+                      + " game_session_canonical_initial_account_barrier_initializer i")
+              .get(0, String.class);
+      String target = fixture.initialTargetPostimage();
+      fixture.dsl.execute(
+          "UPDATE game_session_initial_gameplay_login_journal"
+              + " SET abandoned = TRUE, abandoned_at = clock_timestamp() WHERE request_id = ?",
+          fixture.original.requestId());
+      String abandonedJournal =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "SELECT to_jsonb(j)::text FROM game_session_initial_gameplay_login_journal j"
+                      + " WHERE request_id = ?",
+                  fixture.original.requestId())
+              .get(0, String.class);
+      var later =
+          new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 18L);
+      try (var login =
+          Fixture.mockInitialLoginResult(later, fixture.accountId, UUID.randomUUID())) {
+        fixture.dsl.execute(
+            "INSERT INTO game_session_initial_gameplay_login_journal"
+                + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, ?)",
+            later.requestId(),
+            later.callerContextId(),
+            later.expectedAttemptFence());
+        fixture.dsl.execute(
+            "UPDATE game_session_initial_gameplay_login_journal"
+                + " SET verified_token_jti = ?, verified_token_sha256 = ?,"
+                + " verified_token_generation = 1, verified_issuance_fence = 1"
+                + " WHERE request_id = ?",
+            login.evidence().tokenJti(),
+            login.evidence().tokenSha256(),
+            later.requestId());
+        assertThatThrownBy(
+                () ->
+                    fixture.initialRepository.beginOrRead(
+                        later, login, fixture.tenantId, fixture.namespaceId))
+            .hasStackTraceContaining("uq_gs_initial_account_barrier_never_retarget");
+      }
+      assertThat(
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT to_jsonb(i)::text FROM"
+                          + " game_session_canonical_initial_account_barrier_initializer i")
+                  .get(0, String.class))
+          .isEqualTo(initializer);
+      assertThat(fixture.initialTargetPostimage()).isEqualTo(target);
+      assertThat(
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT to_jsonb(j)::text FROM game_session_initial_gameplay_login_journal j"
+                          + " WHERE request_id = ?",
+                      fixture.original.requestId())
+                  .get(0, String.class))
+          .isEqualTo(abandonedJournal);
+      assertThat(
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT target_state FROM game_session_canonical_initial_account_barrier_target"
+                          + " WHERE original_request_id = ?",
+                      fixture.original.requestId())
+                  .get(0, String.class))
+          .isEqualTo("NEVER_DISPATCHED");
+    }
+  }
+
+  @Test
+  void initialTagAssignmentAndDispatchSerializeInventoryBeforeControlInBothOrders()
+      throws Exception {
+    for (boolean tagFirst : List.of(true, false)) {
+      try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
+          var holder = Fixture.dataSource(fixture.schema).getConnection();
+          var tagConnection = Fixture.dataSource(fixture.schema).getConnection();
+          var dispatchConnection = Fixture.dataSource(fixture.schema).getConnection()) {
+        var observation =
+            fixture
+                .receiver(new ControlledSigner(fixture.keyPair))
+                .observeForInitialAccountBarrier(fixture.original.requestId());
+        DSLContext holderDsl = DSL.using(holder, SQLDialect.POSTGRES);
+        DSLContext tagDsl = DSL.using(tagConnection, SQLDialect.POSTGRES);
+        DSLContext dispatchDsl = DSL.using(dispatchConnection, SQLDialect.POSTGRES);
+        int holderPid =
+            java.util.Objects.requireNonNull(
+                holderDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+        int tagPid =
+            java.util.Objects.requireNonNull(
+                tagDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+        int dispatchPid =
+            java.util.Objects.requireNonNull(
+                dispatchDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+        var tags =
+            new CanonicalGameplayTenantGameplayTagRepository(
+                tagDsl, fixture.targetWorkloadNamespace, 1);
+        var repository =
+            new CanonicalGameplayAccountInitialBarrierInitializerRepository(
+                dispatchDsl, Clock.fixed(NOW, ZoneOffset.UTC));
+        java.util.concurrent.Callable<Object> tag =
+            () -> tags.assignmentForInitialBarrierTarget(fixture.original.requestId());
+        java.util.concurrent.Callable<Object> dispatch =
+            () -> repository.recordDispatchPossible(fixture.original.requestId(), observation);
+        holder.setAutoCommit(false);
+        holderDsl.fetchSingle(
+            "SELECT account_id FROM game_session_canonical_account_coverage_control"
+                + " WHERE account_id = ? FOR UPDATE",
+            fixture.accountId);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+          try {
+            var first = executor.submit(tagFirst ? tag : dispatch);
+            int firstPid = tagFirst ? tagPid : dispatchPid;
+            int secondPid = tagFirst ? dispatchPid : tagPid;
+            awaitInitialBackendBlockedBy(fixture.dsl, firstPid, holderPid);
+            var second = executor.submit(tagFirst ? dispatch : tag);
+            awaitInitialBackendBlockedBy(fixture.dsl, secondPid, firstPid);
+            // Neither waiter may own target rows before it owns account control.
+            holderDsl.fetchSingle(
+                "SELECT initializer_id FROM game_session_canonical_initial_account_barrier_initializer"
+                    + " WHERE original_request_id = ? FOR UPDATE NOWAIT",
+                fixture.original.requestId());
+            holder.rollback();
+            assertThat(first.get(5L, TimeUnit.SECONDS)).isNotNull();
+            assertThat(second.get(5L, TimeUnit.SECONDS)).isNotNull();
+          } finally {
+            holder.rollback();
+          }
+        }
+        assertThat(fixture.initialRepository.readCurrent(fixture.original.requestId()).state())
+            .isEqualTo(
+                CanonicalGameplayAccountInitialBarrierInitializerRepository.State
+                    .DISPATCH_POSSIBLE);
+      }
+    }
+  }
+
+  private static void awaitInitialBackendBlockedBy(
+      DSLContext observer, int waitingPid, int holderPid) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    boolean blocked = false;
+    while (System.nanoTime() < deadline) {
+      blocked =
+          Boolean.TRUE.equals(
+              observer
+                  .fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", holderPid, waitingPid)
+                  .get(0, Boolean.class));
+      if (blocked) break;
+      TimeUnit.MILLISECONDS.sleep(10L);
+    }
+    assertThat(blocked)
+        .as("PostgreSQL backend %s waits on exact holder %s", waitingPid, holderPid)
+        .isTrue();
+  }
 
   @Test
   void initialOwnerComposesSqlSignedObservationAndRedisWithoutRecreatingResetOpen()
@@ -1028,14 +1238,25 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       private String initialTargetPostimage() {
         return dsl.fetchSingle(
                 "SELECT to_jsonb(t)::text FROM game_session_canonical_initial_account_barrier_target t"
-                    + " WHERE initializer_id = ?",
-                initialRepository.readCurrent(original.requestId()).initializerId())
+                    + " WHERE original_request_id = ?",
+                original.requestId())
             .get(0, String.class);
       }
 
       private CanonicalGameplayAccountInitialBarrierRedisOwner initialOwner(
           RedisClient client,
           CanonicalGameplayAccountInitialBarrierInitializerRepository repository) {
+        return initialOwner(
+            client,
+            repository,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution())));
+      }
+
+      private CanonicalGameplayAccountInitialBarrierRedisOwner initialOwner(
+          RedisClient client,
+          CanonicalGameplayAccountInitialBarrierInitializerRepository repository,
+          RedisScriptCatalog catalog) {
         var configuration =
             new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
                 ATTESTOR_BINDING,
@@ -1055,12 +1276,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
                 configuration,
                 Clock.systemUTC());
         return new CanonicalGameplayAccountInitialBarrierRedisOwner(
-            client,
-            RedisScriptCatalog.fromContributions(
-                List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution())),
-            repository,
-            tenantTags,
-            receiver);
+            client, catalog, repository, tenantTags, receiver);
       }
 
       private InitialGameplayLoginAttemptCoordinates original() {

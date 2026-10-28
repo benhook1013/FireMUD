@@ -64,10 +64,6 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
               RedisScriptDescriptor.OutcomeCategory.STALE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
           outcome(
-              "TYPE_TTL_OR_FIELDS_REFUSED",
-              RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
-              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
-          outcome(
               "INVALID_ARGUMENTS",
               RedisScriptDescriptor.OutcomeCategory.VALIDATION_FAILURE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING));
@@ -122,9 +118,10 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before =
           incarnationReceiver.observeForInitialAccountBarrier(snapshot.originalRequestId());
       requireObservation(snapshot, before);
+      PreparedWrite prepared = prepareWrite(snapshot, assignment, before);
       repository.recordDispatchPossible(snapshot.originalRequestId(), before);
       // The state transition above is durable before this one and only possible remote attempt.
-      tryCreateOnce(snapshot, assignment, before);
+      tryCreateOnce(prepared);
     } catch (RuntimeException possibleDispatchOrSourceFailure) {
       // Never create a replacement initializer or repeat a possibly dispatched write. A positive
       // exact readback can still finish the original receipt; absence remains explicit uncertainty.
@@ -252,39 +249,44 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
     return verifyCurrentOpen(snapshot.originalRequestId());
   }
 
-  private void tryCreateOnce(
+  private PreparedWrite prepareWrite(
       CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot snapshot,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before) {
-    requireNoAmbientTransaction();
     RedisScriptDescriptor descriptor = requireDescriptor();
     byte[] script = scriptSource(descriptor);
-    CanonicalGameplayAccountInitialBarrierValue.open(
-        snapshot.accountId(),
-        snapshot.tenantId(),
-        snapshot.playableStateNamespaceId(),
-        assignment.tenantGameplayTag(),
-        snapshot.initializerId(),
-        snapshot.sourceControlEpoch(),
-        before.incarnationDigest());
+    CanonicalGameplayAccountInitialBarrierValue value =
+        CanonicalGameplayAccountInitialBarrierValue.open(
+            snapshot.accountId(),
+            snapshot.tenantId(),
+            snapshot.playableStateNamespaceId(),
+            assignment.tenantGameplayTag(),
+            snapshot.initializerId(),
+            snapshot.sourceControlEpoch(),
+            before.incarnationDigest());
     String key =
         CanonicalGameplayAccountInitialBarrierKey.forTarget(
             assignment, snapshot.initializerId(), snapshot.originalRequestId());
+    List<String> arguments = FIELDS.stream().map(value.fields()::get).toList();
+    // Validate every local byte conversion before the durable possible-dispatch claim.
+    ascii(key);
+    arguments.forEach(CanonicalGameplayAccountInitialBarrierRedisOwner::ascii);
+    return new PreparedWrite(asciiString(script), key, arguments);
+  }
+
+  private void tryCreateOnce(PreparedWrite prepared) {
+    requireNoAmbientTransaction();
     long outcome =
         writeOneKey(
-            script,
-            key,
-            ascii(CanonicalGameplayAccountInitialBarrierValue.SCHEMA),
-            ascii(snapshot.accountId().toString()),
-            ascii(snapshot.tenantId().toString()),
-            ascii(snapshot.playableStateNamespaceId().toString()),
-            ascii(assignment.tenantGameplayTag()),
-            ascii(snapshot.initializerId().toString()),
-            ascii(snapshot.sourceControlEpoch().toString()),
-            ascii(before.incarnationDigest()),
-            ascii(CanonicalGameplayAccountInitialBarrierValue.OPEN));
+            ascii(prepared.script()),
+            prepared.key(),
+            prepared.arguments().stream()
+                .map(CanonicalGameplayAccountInitialBarrierRedisOwner::ascii)
+                .toArray(byte[][]::new));
     if (outcome < 0 || outcome > 1) throw unavailable();
   }
+
+  private record PreparedWrite(String script, String key, List<String> arguments) {}
 
   private CanonicalGameplayTenantGameplayTagRepository.Assignment requireInitialAssignment(
       UUID originalRequestId,

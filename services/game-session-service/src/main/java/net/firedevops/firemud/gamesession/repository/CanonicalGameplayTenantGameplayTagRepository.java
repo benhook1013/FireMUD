@@ -134,6 +134,26 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
+          // Match the initializer owner: inventory clock, account control, initializer/target.
+          Record inventoryClock =
+              transaction.fetchOne(
+                  "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                      + " WHERE singleton_id = 1 FOR UPDATE");
+          if (inventoryClock == null)
+            throw conflict("Canonical binding inventory clock is missing");
+          Record locator =
+              transaction.fetchOne(
+                  "SELECT account_id FROM game_session_canonical_initial_account_barrier_initializer"
+                      + " WHERE original_request_id = ?",
+                  originalRequestId);
+          if (locator == null) throw conflict("Exact original INITIAL account target is missing");
+          UUID locatedAccountId = requiredUuid(locator, "account_id");
+          Record control =
+              transaction.fetchOne(
+                  "SELECT account_id FROM game_session_canonical_account_coverage_control"
+                      + " WHERE account_id = ? FOR UPDATE",
+                  locatedAccountId);
+          if (control == null) throw conflict("Account coverage control row is missing");
           Record row =
               transaction.fetchOne(
                   "SELECT i.initializer_id, i.account_id, i.source_control_epoch,"
