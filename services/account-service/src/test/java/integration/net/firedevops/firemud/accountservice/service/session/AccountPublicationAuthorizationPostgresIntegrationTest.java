@@ -1037,22 +1037,33 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                 : "ABORTED";
         byte[] receipt =
             f.tx(() -> repository.settle(operation, terminal, phase, terminal.canonicalBytes()));
-        var before = publicationRetentionRows(f.dsl);
+        int predecessorHistoryRank =
+            java.util.Objects.requireNonNull(
+                f.dsl.fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+                    .get(0, Integer.class));
+        var before = publicationRetentionRows(f.dsl, predecessorHistoryRank);
         f.upgradeToCurrent();
-        assertThat(publicationRetentionRows(f.dsl)).isEqualTo(before);
+        assertThat(
+                f.dsl.fetchSingle(
+                        "SELECT count(*) FROM flyway_schema_history"
+                            + " WHERE installed_rank > ? AND success",
+                        predecessorHistoryRank)
+                    .get(0, Long.class))
+            .isPositive();
+        assertThat(publicationRetentionRows(f.dsl, predecessorHistoryRank)).isEqualTo(before);
         f.dsl.fetch(
             "SELECT require_selected_inventory_operation_v2(?::bytea)", operation.canonicalBytes());
         assertThat(
                 f.tx(
                     () -> repository.settle(operation, terminal, phase, terminal.canonicalBytes())))
             .containsExactly(receipt);
-        assertThat(publicationRetentionRows(f.dsl)).isEqualTo(before);
+        assertThat(publicationRetentionRows(f.dsl, predecessorHistoryRank)).isEqualTo(before);
       }
     }
   }
 
   private static java.util.Map<String, java.util.List<String>> publicationRetentionRows(
-      org.jooq.DSLContext dsl) {
+      org.jooq.DSLContext dsl, int predecessorHistoryRank) {
     var result = new java.util.LinkedHashMap<String, java.util.List<String>>();
     for (String table :
         java.util.List.of(
@@ -1062,7 +1073,11 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
             "account_control_ui_issuance_operations",
             "flyway_schema_history")) {
       String filter =
-          table.equals("flyway_schema_history") ? " WHERE version IS DISTINCT FROM '1011'" : "";
+          table.equals("flyway_schema_history") ? " WHERE installed_rank <= ?" : "";
+      Object[] bindings =
+          table.equals("flyway_schema_history")
+              ? new Object[] {predecessorHistoryRank}
+              : new Object[0];
       result.put(
           table,
           dsl.fetch(
@@ -1070,7 +1085,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                       + table
                       + " r"
                       + filter
-                      + " ORDER BY 1")
+                      + " ORDER BY 1",
+                  bindings)
               .getValues(0, String.class));
     }
     return result;
