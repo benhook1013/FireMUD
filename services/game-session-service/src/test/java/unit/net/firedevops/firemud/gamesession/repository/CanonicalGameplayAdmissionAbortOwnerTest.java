@@ -112,13 +112,16 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
 
   @Test
   void ambientTransactionOrSynchronizationRefusesBeforeAnyOwnerInteraction() {
-    for (boolean actualTransaction : new boolean[] {false, true}) {
+    for (boolean synchronizationOnly : new boolean[] {false, true}) {
       var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
       var client = mock(AccountGameplayAdmissionLeaseClient.class);
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .initSynchronization();
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .setActualTransactionActive(actualTransaction);
+      if (synchronizationOnly) {
+        org.springframework.transaction.support.TransactionSynchronizationManager
+            .initSynchronization();
+      } else {
+        org.springframework.transaction.support.TransactionSynchronizationManager
+            .setActualTransactionActive(true);
+      }
       try {
         assertThatThrownBy(
                 () ->
