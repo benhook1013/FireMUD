@@ -487,6 +487,6 @@ Entry format:
 
 - 2026-10-29: The complete credential/candidate receiving gate R864 passed 141 selected tests but could not start Game Session main SpotBugs because the Java command line exceeded local OS limits. This is unavailable static proof, not a clean analysis or a code finding. Preserve the failed aggregate and require exact-head CI recovery; the command-size contribution and whether shorter hosted paths avoid it remain unverified.
 
-### 2026-10-29 — Hosted completion parsing and capture diagnostics
+## 2026-10-29 — Hosted completion parsing and capture diagnostics
 
 Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was recorded at 04:30:37, a 39-minute 19-second capture delay. FireController identified an optional `review_info_content` marker that broke standing-result parsing and unrelated CI-bot edits that masked the useful capture diagnostic. The owner deployed parser/diagnostic regression fixes in `2f1e5da5` and recovered the original zero-finding evidence without another trigger or spent reservation. Retain optional-marker and unrelated-comment cases in completion recovery tests; provider check success alone cannot establish a zero-finding native review.
