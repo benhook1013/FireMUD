@@ -619,6 +619,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           BigInteger currentRevision = lockInventoryRevision(transaction);
+          lockLeaseBoundRuntimeBeforeTransition(
+              transaction,
+              expectedEvidence.transition().transitionId(),
+              expectedEvidence.candidate().bindingRef().bytes(),
+              null);
           CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
               loadProvisionalCasEvidence(
                   transaction, expectedEvidence.transition().transitionId(), true);
@@ -697,6 +702,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           BigInteger currentRevision = lockInventoryRevision(transaction);
+          lockLeaseBoundRuntimeBeforeTransition(
+              transaction,
+              prepared.transitionId(),
+              expectedEvidence.candidate().bindingRef().bytes(),
+              null);
           CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
               loadProvisionalCasEvidence(transaction, prepared.transitionId(), true);
           requireSameProvisionalOperation(expectedEvidence, currentEvidence);
