@@ -583,10 +583,10 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     var anchor =
         initialCoverageOwner(dsl, () -> state)
             .completeInitialBootstrap(intent.operationId(), intent.requestId());
-    var local =
-        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> state)
-            .beginOrResumeOrdinaryNew(
-                request("migration-request", "migration-transition", identity("migration")));
+    // Current ordinary NEW requires V1046 live control, which does not exist at this cut.
+    // The historical receipt owner is a controlled correlation only; no local operation is minted.
+    UUID historicalOwnerId = UUID.randomUUID();
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isZero();
     UUID committedId = UUID.randomUUID();
     UUID pendingId = UUID.randomUUID();
     UUID successor = UUID.randomUUID();
@@ -603,15 +603,15 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                 CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD,
                 successor.toString().getBytes(StandardCharsets.US_ASCII)));
     // Controlled pre-upgrade SQL receipts exercise retention, immutability and the pending FK.
-    // They do not claim a Redis mutation/readback or authorize admission; the bootstrap above is
-    // the actual local SQL/Redis owner, under controlled Account/incarnation collaborators.
+    // They do not claim an ordinary NEW producer, Redis mutation/readback or admission. The
+    // bootstrap above uses the actual SQL/Redis owner with controlled Account/incarnation inputs.
     dsl.transaction(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           insertPreLineageMutation(
               transaction,
               committedId,
-              local.operationId(),
+              historicalOwnerId,
               "ADD_CAPACITY",
               initialRevision,
               successor,
@@ -636,7 +636,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
           insertPreLineageMutation(
               transaction,
               pendingId,
-              local.operationId(),
+              historicalOwnerId,
               "ADD_BINDING",
               successor,
               laterSuccessor,
@@ -671,6 +671,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .containsExactlyElementsOf(beforeHeads);
     assertThat(anchorImage(dsl)).isEqualTo(beforeAnchor);
     assertThat(proofImage(dsl)).isEqualTo(beforeProof);
+    assertThat(count(dsl, "game_session_canonical_issuer_binding_local_operation")).isZero();
     assertThat(
             dsl.fetch(
                     "SELECT DISTINCT bootstrap_operation_id FROM game_session_canonical_issuer_partition_mutation")
@@ -685,8 +686,17 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
           assertThat(head.pendingMutationId()).isEqualTo(pendingId);
           assertThat(head.currentRevision()).isEqualTo(successor);
           var history =
-              CanonicalGameplayIssuerPartitionMutationRepository.readPartitionInTransaction(
-                  transaction, anchor.bootstrapOperationId(), BigInteger.ZERO);
+              List.of(
+                  CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+                      transaction,
+                      CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY,
+                      historicalOwnerId,
+                      BigInteger.ZERO),
+                  CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+                      transaction,
+                      CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING,
+                      historicalOwnerId,
+                      BigInteger.ZERO));
           assertThat(history).hasSize(2);
           assertThat(history.stream().map(CanonicalGameplayIssuerPartitionMutation::status))
               .containsExactlyInAnyOrder(

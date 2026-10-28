@@ -898,8 +898,11 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     var state =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             intent.sourceCheckpoint(), stableIncarnation("partition-isolation"));
-    initialCoverageOwner(dsl, () -> state)
-        .completeInitialBootstrap(intent.operationId(), bootstrapRequest);
+    var anchor =
+        initialCoverageOwner(dsl, () -> state)
+            .completeInitialBootstrap(intent.operationId(), bootstrapRequest);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> state);
     var runtime =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
             schema.dataSource(), uuid("partition-isolation-tenant"));
