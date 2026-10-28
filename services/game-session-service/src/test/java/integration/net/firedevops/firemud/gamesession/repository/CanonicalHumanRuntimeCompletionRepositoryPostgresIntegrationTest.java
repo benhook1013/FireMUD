@@ -32,7 +32,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepository;
-import net.firedevops.firemud.gamesession.repository.CanonicalGameplayDecisionRuntimeFenceIntegrationTest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingRuntimeTestFixtures;
 import net.firedevops.firemud.gamesession.repository.CanonicalHumanRuntimeCompletionRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -974,19 +974,18 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       assertThat(saved.getRowVersion()).isEqualTo(before.getRowVersion() + 1L);
       assertThat(completionImage(harness)).isEqualTo(originalCompletion);
       byte[] candidate =
-          CanonicalGameplayDecisionRuntimeFenceIntegrationTest.seedCandidateAndPreparedTransition(
+          CanonicalGameplayBindingRuntimeTestFixtures.seedCandidateAndPreparedTransition(
               harness.dsl(), target);
 
       // V1044 required equality with the immutable completion and refused this real owner save.
       assertThatThrownBy(
               () ->
-                  CanonicalGameplayDecisionRuntimeFenceIntegrationTest.markProvisional(
+                  CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
                       harness.dsl(), target, candidate))
           .hasMessageContaining("exact current RUNNING launch row and candidate identity");
       harness.migrateLatest();
 
-      CanonicalGameplayDecisionRuntimeFenceIntegrationTest.markProvisional(
-          harness.dsl(), target, candidate);
+      CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(harness.dsl(), target, candidate);
 
       assertThat(
               harness
@@ -1039,12 +1038,12 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
                   target.gameInstanceId());
         }
         byte[] candidate =
-            CanonicalGameplayDecisionRuntimeFenceIntegrationTest.seedCandidateAndPreparedTransition(
+            CanonicalGameplayBindingRuntimeTestFixtures.seedCandidateAndPreparedTransition(
                 harness.dsl(), target);
 
         assertThatThrownBy(
                 () ->
-                    CanonicalGameplayDecisionRuntimeFenceIntegrationTest.markProvisional(
+                    CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
                         harness.dsl(), target, candidate))
             .as("Human runtime source mismatch %s", mismatch)
             .hasMessageContaining("exact current RUNNING launch row and candidate identity");
