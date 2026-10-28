@@ -15,9 +15,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Unregistered owner-local completion of one protected Human STARTING runtime. */
@@ -41,7 +38,6 @@ public final class CanonicalHumanRuntimeCompletionRepository {
    * Completes only the exact protected STARTING row. It creates no admission pointer, terminal
    * attempt, Account settlement, or World hold release.
    */
-  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
   public Completion completeProtected(
       CanonicalInitialAdmissionRequest request,
       AccountStartSessionAdmissionProtectionEvidence protection,

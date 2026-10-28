@@ -49,6 +49,132 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void protectedClosedAbortUsesImmutableOriginWhilePositiveCommitStillRequiresCurrentOrigin()
+      throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var target = harness.seed();
+      var catalog = target.catalog();
+      var rejectCurrentOrigin = new java.util.concurrent.atomic.AtomicBoolean();
+      var currentOriginReads = new AtomicInteger();
+      var pointers =
+          new GameSessionCanonicalAdmissionPointerRepository(
+              harness.dsl(),
+              new GameSessionCanonicalRealmCatalogRepository(harness.dsl()),
+              new GameplayAdmissionPointerEventRepository(harness.dsl())) {
+            @Override
+            public ExpectedClosedEvidence lockExpectedClosedForRealm(
+                String namespace,
+                UUID tenant,
+                UUID realm,
+                long pointerVersion,
+                long catalogRevision) {
+              currentOriginReads.incrementAndGet();
+              if (rejectCurrentOrigin.get()) {
+                throw new IllegalStateException("controlled current-origin refusal");
+              }
+              return super.lockExpectedClosedForRealm(
+                  namespace, tenant, realm, pointerVersion, catalogRevision);
+            }
+          };
+      var closeRequest =
+          new net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest(
+              uuid(1199),
+              catalog.targetNamespace(),
+              catalog.tenantId(),
+              catalog.realmId(),
+              catalog.creationRequestId(),
+              catalog.catalogRevision(),
+              "controlled-closed-owner",
+              "Immutable original CLOSED for protected abort");
+      var closed = pointers.prepareInitialClosed(closeRequest);
+      harness.transactions().executeWithoutResult(status -> pointers.createInitialClosed(closed));
+      var origin =
+          pointers
+              .readOriginalClosedOrigin(catalog.targetNamespace(), closeRequest.requestId())
+              .orElseThrow();
+      Prepared prepared = prepare(target, "protected-writer-closed-abort", 1181, true);
+      var repository =
+          new CanonicalInitialAdmissionRepository(
+              harness.dsl(),
+              new GameSessionCanonicalRealmCatalogRepository(harness.dsl()),
+              pointers);
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status -> repository.reserveProtected(prepared.request(), prepared.protection()));
+      assertThat(currentOriginReads).hasValue(1);
+      String pointerBefore =
+          harness.dsl().fetch("SELECT * FROM gameplay_admission_pointer").formatJSON();
+      String auditBefore =
+          harness
+              .dsl()
+              .fetch("SELECT * FROM gameplay_admission_pointer_event ORDER BY id")
+              .formatJSON();
+      // Current-origin refusal is controlled; this does not produce an independently OPEN route.
+      rejectCurrentOrigin.set(true);
+      assertThatThrownBy(
+              () ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(
+                          status ->
+                              repository.commitProtected(
+                                  prepared.request(),
+                                  prepared.protection(),
+                                  prepared.worldProof())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled current-origin refusal");
+      assertThat(currentOriginReads).hasValue(2);
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+      Record aborted = terminal(harness, prepared.request());
+      assertThat(aborted.get("status", String.class)).isEqualTo("ABORTED");
+      assertThat(aborted.get("prior_pointer_request_id", UUID.class)).isEqualTo(origin.requestId());
+      assertThat(aborted.get("prior_pointer_request_digest", String.class))
+          .isEqualTo(origin.requestDigest());
+      assertThat(aborted.get("prior_pointer_audit_event_id", Long.class))
+          .isEqualTo(origin.auditEventId());
+      assertThat(aborted.get("pointer_id")).isNull();
+      assertThat(aborted.get("audit_event_id")).isNull();
+      var proof =
+          repository
+              .read(
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId())
+              .orElseThrow();
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(aborted.formatJSON());
+      assertThat(
+              repository.read(
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId()))
+          .contains(proof);
+      assertThat(currentOriginReads).hasValue(2);
+      assertThat(harness.dsl().fetch("SELECT * FROM gameplay_admission_pointer").formatJSON())
+          .isEqualTo(pointerBefore);
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch("SELECT * FROM gameplay_admission_pointer_event ORDER BY id")
+                  .formatJSON())
+          .isEqualTo(auditBefore);
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
   void commitsOneProtectionBoundPointerAuditAttemptAndIntentWithExactReplay() throws Exception {
     var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
     try {
@@ -1034,8 +1160,52 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       String requestId,
       int idBase)
       throws Exception {
+    return prepare(target, requestId, idBase, false);
+  }
+
+  private static Prepared prepare(
+      CanonicalInitialAdmissionIntentRepositoryIntegrationTest.OwnerTarget target,
+      String requestId,
+      int idBase,
+      boolean expectedClosed)
+      throws Exception {
     WorldCanonicalInitialAdmissionHold.Request holdRequest =
         CanonicalInitialAdmissionIntentRepositoryIntegrationTest.holdRequest(target, requestId);
+    if (expectedClosed) {
+      var original = holdRequest;
+      String digest =
+          CanonicalInitialAdmissionRequest.computeRequestDigest(
+              original.targetNamespace(),
+              original.canonicalTenantId(),
+              original.worldSlug(),
+              original.realmId(),
+              original.playableStateNamespaceId(),
+              original.playableStateScope(),
+              original.canonicalGameInstanceId(),
+              original.canonicalVersionId(),
+              original.activeLifecycleEpoch(),
+              original.expectedCatalogRevision(),
+              CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
+              1L,
+              original.initialAdmissionRequestId());
+      holdRequest =
+          new WorldCanonicalInitialAdmissionHold.Request(
+              original.targetNamespace(),
+              original.canonicalTenantId(),
+              original.worldSlug(),
+              original.realmId(),
+              original.playableStateNamespaceId(),
+              original.playableStateScope(),
+              original.canonicalGameInstanceId(),
+              original.canonicalVersionId(),
+              original.activeLifecycleEpoch(),
+              original.initialAdmissionRequestId(),
+              digest,
+              WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.EXPECT_CLOSED,
+              original.expectedCatalogRevision(),
+              1L);
+    }
+    var retainedHoldRequest = holdRequest;
     WorldCanonicalInitialAdmissionHold.HoldIdentity hold =
         new WorldCanonicalInitialAdmissionHold.HoldIdentity(
             holdRequest, uuid(idBase), uuid(idBase + 1));
@@ -1044,11 +1214,13 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
         .transactions()
         .executeWithoutResult(
             status ->
-                target.intents().reserve(holdRequest, target.lifecycleRequest(uuid(idBase + 2))));
+                target
+                    .intents()
+                    .reserve(retainedHoldRequest, target.lifecycleRequest(uuid(idBase + 2))));
     target
         .harness()
         .transactions()
-        .executeWithoutResult(status -> target.intents().attach(holdRequest, hold));
+        .executeWithoutResult(status -> target.intents().attach(retainedHoldRequest, hold));
     CanonicalInitialAdmissionRequest request = request(hold);
     Original original = original(target);
     return new Prepared(
