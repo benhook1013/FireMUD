@@ -16,7 +16,6 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
-import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,10 +36,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDeci
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
@@ -783,6 +778,7 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       establishActualLegacyDisposition(dsl);
       var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
       var provisional = prepareActualProvisionalFirstNew(testSchema);
+      var unrelatedProvisional = prepareActualProvisionalFirstNew(testSchema, UUID.randomUUID());
       var owner = new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl);
       var layout = descriptor(LAYOUT_VERSION, PARTITION_COUNT, PARTITION_CAPACITY);
       var source = sourceCheckpoint(BigInteger.valueOf(7));
@@ -923,19 +919,49 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       List<String> retainedRelation =
           rowImages(dsl, "game_session_canonical_issuer_bootstrap_supersession");
       assertThat(retainedRelation).hasSize(1);
+      List<String> replacementIntent =
+          rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_intent");
+      List<String> replacementCohort =
+          rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_cohort_row");
+      var unrelatedAbort =
+          inventory.recordFirstNewAccountAbort(unrelatedProvisional, UUID.randomUUID());
+      assertThat(unrelatedAbort.isAccountAborted()).isTrue();
+      assertThat(unrelatedAbort.transition().inventoryRevision())
+          .isGreaterThan(replacement.inventorySnapshotRevision());
+      var restartedAfterProgress = new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl);
+      var replayAfterProgress =
+          restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
+              original.operationId(), replacementRequest, newerLayout, source);
+      assertThat(replayAfterProgress).usingRecursiveComparison().isEqualTo(replacement);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_intent"))
+          .isEqualTo(replacementIntent);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_cohort_row"))
+          .isEqualTo(replacementCohort);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_layout_bootstrap_control"))
+          .isEqualTo(replacementControl);
+      assertThat(rowImages(dsl, "game_session_canonical_issuer_bootstrap_supersession"))
+          .isEqualTo(retainedRelation);
       assertThatThrownBy(
               () ->
-                  restarted.supersedeStaleInitialBootstrapIntent(
+                  restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
                       original.operationId(), UUID.randomUUID(), newerLayout, source))
           .hasMessageContaining("no longer current");
       assertThatThrownBy(
               () ->
-                  restarted.supersedeStaleInitialBootstrapIntent(
+                  restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
                       original.operationId(),
                       replacementRequest,
                       descriptor(
                           LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
                       source))
+          .hasMessageContaining("changed its original trusted inputs");
+      assertThatThrownBy(
+              () ->
+                  restartedAfterProgress.supersedeStaleInitialBootstrapIntent(
+                      original.operationId(),
+                      replacementRequest,
+                      newerLayout,
+                      sourceCheckpoint(BigInteger.valueOf(8))))
           .hasMessageContaining("changed its original trusted inputs");
       assertThatThrownBy(
               () ->
@@ -1110,6 +1136,18 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
                           LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
                       source))
           .hasMessageContaining("installed issuer anchor forbids");
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+                      .supersedeStaleInitialBootstrapIntent(
+                          original.operationId(),
+                          replacement.requestId(),
+                          descriptor(
+                              LAYOUT_VERSION.add(BigInteger.ONE),
+                              PARTITION_COUNT,
+                              PARTITION_CAPACITY),
+                          source))
+          .hasMessageContaining("installed issuer anchor forbids");
       assertMalformedSupersessionRefusesOrdinaryNew(dsl, local, request, state);
     } finally {
       ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
@@ -1255,9 +1293,14 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
 
   private static CanonicalGameplayAdmissionAbortSource prepareActualProvisionalFirstNew(
       TestSchema testSchema) {
+    return prepareActualProvisionalFirstNew(testSchema, TENANT_ID);
+  }
+
+  private static CanonicalGameplayAdmissionAbortSource prepareActualProvisionalFirstNew(
+      TestSchema testSchema, UUID tenantId) {
     var runtimeTarget =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
-            testSchema.dataSource(), TENANT_ID);
+            testSchema.dataSource(), tenantId);
     CanonicalGameplayBindingIdentity candidate =
         new CanonicalGameplayBindingIdentity(
             ACCOUNT_ID,
@@ -1558,87 +1601,7 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
   }
 
   private static void establishActualLegacyDisposition(DSLContext dsl) {
-    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
-    var migration = new CanonicalGameplayLegacyMigrationRepository(dsl, inventory);
-    UUID cohortId = UUID.randomUUID();
-    UUID writerFence = UUID.randomUUID();
-    var storageIdentity =
-        new CanonicalGameplayLegacyMigrationStorageIdentity(
-            "controlled-cluster-uid",
-            "controlled-namespace-uid",
-            "controlled-producer-pod-uid",
-            "controlled-container-id",
-            "controlled-node-uid",
-            "123456789",
-            42L,
-            "controlled-postgres-volume-uid",
-            "controlled-redis-run-id",
-            "controlled-redis-volume-uid");
-    var fencedCohort =
-        new CanonicalGameplayLegacyMigrationOwner.FencedCohort() {
-          @Override
-          public UUID cohortId() {
-            return cohortId;
-          }
-
-          @Override
-          public UUID legacyWriterFence() {
-            return writerFence;
-          }
-
-          @Override
-          public CanonicalGameplayLegacyMigrationStorageIdentity storageIdentity() {
-            return storageIdentity;
-          }
-
-          @Override
-          public void requireStillFenced(
-              CanonicalGameplayLegacyMigrationStorageIdentity expectedIdentity) {
-            if (!storageIdentity.equals(expectedIdentity)) {
-              throw new IllegalStateException("Controlled fixture storage identity changed");
-            }
-          }
-        };
-    var owner =
-        new CanonicalGameplayLegacyMigrationOwner(
-            migration,
-            inventory,
-            () -> fencedCohort,
-            ignored ->
-                new CanonicalGameplayLegacyMigrationSourceSnapshot(
-                    EnumSet.of(
-                        Family.TENANT_SESSION_CONTEXT,
-                        Family.SESSION_ALIAS_CONTEXT,
-                        Family.GAMEPLAY_IDENTITY_CONTEXT,
-                        Family.GAMEPLAY_NAME_CONTEXT,
-                        Family.MOVEMENT_EFFECT,
-                        Family.DURABLE_EFFECT),
-                    List.of()),
-            new CanonicalGameplayLegacyMigrationOwner.NamespaceIndexOwner() {
-              @Override
-              public void rebuildExact(
-                  CanonicalGameplayLegacyMigrationOwner.FencedCohort ignoredCohort,
-                  CanonicalGameplayLegacyMigrationSourceSnapshot source,
-                  net.firedevops.firemud.gamesession.binding
-                          .CanonicalGameplayBindingInventorySnapshot
-                      canonical) {
-                assertThat(canonical.bindings()).isEmpty();
-                assertThat(canonical.reservations()).isEmpty();
-              }
-
-              @Override
-              public CanonicalGameplayLegacyMigrationReadback readBackExact(
-                  CanonicalGameplayLegacyMigrationOwner.FencedCohort ignoredCohort,
-                  net.firedevops.firemud.gamesession.binding
-                          .CanonicalGameplayBindingInventorySnapshot
-                      canonical) {
-                assertThat(canonical.bindings()).isEmpty();
-                return new CanonicalGameplayLegacyMigrationReadback(
-                    List.of(), List.of(), List.of(), List.of());
-              }
-            });
-    assertThat(owner.migrate().state())
-        .isEqualTo(CanonicalGameplayLegacyMigrationOperation.State.VERIFIED);
+    CanonicalGameplayIssuerTestFixtures.establishActualLegacyDisposition(dsl);
   }
 
   private static TestSchema newTestSchema(String prefix) {
