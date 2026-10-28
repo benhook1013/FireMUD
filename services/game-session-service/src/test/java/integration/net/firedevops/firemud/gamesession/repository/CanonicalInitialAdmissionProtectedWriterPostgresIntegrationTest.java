@@ -49,6 +49,148 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void closedCreationCompletesWhileProtectedNoPriorReservationWaitsForItsCatalog()
+      throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    var executor = Executors.newFixedThreadPool(2);
+    var releaseClosed = new CountDownLatch(1);
+    try {
+      var target = harness.seed();
+      var prepared = prepare(target, "protected-reservation-closed-catalog-race", 1251);
+      var closedCatalogLocked = new CountDownLatch(1);
+      var protectedEntered = new CountDownLatch(1);
+      var closedPid = new AtomicInteger();
+      var protectedPid = new AtomicInteger();
+      var closedCatalog =
+          new GameSessionCanonicalRealmCatalogRepository(harness.dsl()) {
+            @Override
+            public net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot
+                lockExactInitialPublicProduction(
+                    String namespace,
+                    UUID tenant,
+                    UUID realm,
+                    UUID creationRequest,
+                    long revision) {
+              var catalog =
+                  super.lockExactInitialPublicProduction(
+                      namespace, tenant, realm, creationRequest, revision);
+              closedCatalogLocked.countDown();
+              await(releaseClosed, "release CLOSED catalog owner");
+              return catalog;
+            }
+          };
+      var pointers =
+          new GameSessionCanonicalAdmissionPointerRepository(
+              harness.dsl(),
+              closedCatalog,
+              new GameplayAdmissionPointerEventRepository(harness.dsl()));
+      var catalog = target.catalog();
+      var closeRequest =
+          new net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest(
+              uuid(1259),
+              catalog.targetNamespace(),
+              catalog.tenantId(),
+              catalog.realmId(),
+              catalog.creationRequestId(),
+              catalog.catalogRevision(),
+              "controlled-closed-owner",
+              "CLOSED creation racing a protected NO_PRIOR reservation");
+      var closed = pointers.prepareInitialClosed(closeRequest);
+      var repository = repository(harness);
+      String intentBefore =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_canonical_initial_admission_intent "
+                      + "WHERE target_namespace=? AND initial_admission_request_id=?",
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId())
+              .formatJSON();
+      Future<Throwable> closedResult =
+          executor.submit(
+              () ->
+                  captureFailure(
+                      () ->
+                          harness
+                              .transactions()
+                              .executeWithoutResult(
+                                  status -> {
+                                    closedPid.set(postgresBackendPid(harness));
+                                    pointers.createInitialClosed(closed);
+                                  })));
+      assertThat(closedCatalogLocked.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<Throwable> protectedResult =
+          executor.submit(
+              () ->
+                  captureFailure(
+                      () ->
+                          harness
+                              .transactions()
+                              .executeWithoutResult(
+                                  status -> {
+                                    protectedPid.set(postgresBackendPid(harness));
+                                    protectedEntered.countDown();
+                                    repository.reserveProtected(
+                                        prepared.request(), prepared.protection());
+                                  })));
+      assertThat(protectedEntered.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(protectedPid.get()).isNotEqualTo(closedPid.get());
+      awaitBlockingEdge(harness, protectedPid.get(), closedPid.get());
+      // Observe the actual wait before releasing CLOSED; no table fence may precede its catalog.
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_locks WHERE pid=? AND locktype='relation' "
+                          + "AND mode='ShareRowExclusiveLock' AND granted "
+                          + "AND relation IN ('gameplay_admission_pointer'::regclass, "
+                          + "'gameplay_admission_pointer_event'::regclass, "
+                          + "'game_session_canonical_closed_admission_pointer_request'::regclass, "
+                          + "'gameplay_initial_admission_bind_catalog'::regclass, "
+                          + "'gameplay_initial_admission_bind_attempt'::regclass)",
+                      protectedPid.get())
+                  .get(0, Long.class))
+          .isZero();
+      releaseClosed.countDown();
+      assertThat(closedResult.get(10, TimeUnit.SECONDS)).isNull();
+      assertThat(protectedResult.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(
+              GameSessionCanonicalAdmissionPointerRepository.CanonicalClosedPointerConflictException
+                  .class)
+          .hasMessageContaining("representation");
+      var retained =
+          pointers
+              .readByRequest(closeRequest.targetNamespace(), closeRequest.requestId())
+              .orElseThrow();
+      assertThat(retained.admissionState()).isEqualTo("CLOSED");
+      assertThat(retained.requestId()).isEqualTo(closeRequest.requestId());
+      assertThat(
+              repository.read(
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId()))
+          .isEmpty();
+      assertThat(ownerRowCount(harness, "gameplay_admission_pointer", prepared.request())).isZero();
+      assertThat(ownerRowCount(harness, "gameplay_admission_pointer_event", prepared.request()))
+          .isZero();
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT * FROM game_session_canonical_initial_admission_intent "
+                          + "WHERE target_namespace=? AND initial_admission_request_id=?",
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId())
+                  .formatJSON())
+          .isEqualTo(intentBefore);
+    } finally {
+      releaseClosed.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      harness.close();
+    }
+  }
+
+  @Test
   void protectedClosedAbortUsesImmutableOriginWhilePositiveCommitStillRequiresCurrentOrigin()
       throws Exception {
     var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
