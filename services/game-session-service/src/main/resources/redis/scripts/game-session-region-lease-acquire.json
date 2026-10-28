@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.region-lease-acquire.v1",
   "resourcePath": "redis/lua/game-session-region-lease-acquire.lua",
-  "sha256": "f13d30294753b98b715b9652749d6e25285a847f98d57677c3b193d1cc7aee93",
+  "sha256": "eca9c386644d6cb518db2849e2c4dcf8b19dd0fcd2ac53dd7ebe7a7152e543d8",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",

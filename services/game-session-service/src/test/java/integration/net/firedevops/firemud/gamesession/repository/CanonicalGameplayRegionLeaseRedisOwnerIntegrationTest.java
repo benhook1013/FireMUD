@@ -128,7 +128,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
   }
 
   @Test
-  void missingCurrentTickIdMakesLeaseReadAndRenewStaleWithoutChangingLeaseOrMeta() {
+  void missingCurrentTickIdMakesLeaseAcquireReadAndRenewStaleWithoutChangingLeaseOrMeta() {
     try (RedisFixture redis = RedisFixture.open()) {
       var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
       var source = source(GAME_INSTANCE_ID_A);
@@ -143,6 +143,13 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       assertThat(redis.admin().hdel(metaKey, ascii("current_tick_id"))).isEqualTo(1L);
       long ttlBeforeRejectedRenewal = redis.admin().pttl(leaseKey);
 
+      assertThatThrownBy(
+              () ->
+                  owner.acquire(
+                      source, 7L, Duration.ofMinutes(2), identity("after-missing-tick-id")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
       assertThatThrownBy(() -> owner.requireCurrent(grant))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")

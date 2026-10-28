@@ -106,6 +106,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             grant,
             ttlMillis,
             true);
+    if (outcome == 0L) throw unavailable();
     if (outcome != 1L && outcome != 2L) {
       throw unavailable(new IllegalStateException("Region lease acquire outcome was " + outcome));
     }
@@ -179,7 +180,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
     requireNoAmbientTransaction();
-    if (!grant.source.equals(preparation.source())
+    if (!CanonicalGameplayRegionRuntimeStatusRepository.sameRegionSource(
+            grant.source, preparation.source())
         || grant.regionEpoch != preparation.regionEpoch()) {
       throw unavailable();
     }
@@ -425,7 +427,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         || !status.regionId().equals(grant.source.regionId())
         || status.lifecycleEpoch() != grant.source.lifecycleEpoch()
         || status.lifecycleRowVersion() != grant.source.lifecycleRowVersion()
-        || !status.lifecycleRequest().equals(grant.source.lifecycleRequest())
+        || !CanonicalGameplayRegionRuntimeStatusRepository.sameLifecycleRequestExceptReadRequestId(
+            status.lifecycleRequest(), grant.source.lifecycleRequest())
         || !status.captureId().equals(grant.source.captureId())
         || !status.graphSha256().equals(grant.source.graphSha256())
         || !status.preparationInputDigest().equals(grant.source.preparationInputDigest())
