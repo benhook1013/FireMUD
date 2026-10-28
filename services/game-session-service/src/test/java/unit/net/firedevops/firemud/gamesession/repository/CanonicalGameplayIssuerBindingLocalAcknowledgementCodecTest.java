@@ -44,7 +44,8 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
     byte[] encoded = CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.encode(fixture(LARGE));
     var decoded = CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(encoded);
 
-    assertThat(JSON.readTree(encoded).path("issuerBindingLocalAcknowledgementGeneration").textValue())
+    assertThat(
+            JSON.readTree(encoded).path("issuerBindingLocalAcknowledgementGeneration").textValue())
         .isEqualTo(LARGE.toString());
     assertThat(decoded.issuerBindingLocalAcknowledgementGeneration()).isEqualTo(LARGE);
     assertThat(CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.encode(decoded))

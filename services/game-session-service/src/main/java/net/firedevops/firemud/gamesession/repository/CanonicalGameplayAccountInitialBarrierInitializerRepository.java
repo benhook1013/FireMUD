@@ -332,7 +332,8 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
               || now >= readback.beforeIncarnation().expiresAtEpochMillis()
               || now < readback.afterIncarnation().issuedAtEpochMillis()
               || now >= readback.afterIncarnation().expiresAtEpochMillis()) {
-            throw conflict("INITIAL protected incarnation observation expired before SQL completion");
+            throw conflict(
+                "INITIAL protected incarnation observation expired before SQL completion");
           }
           if (current.state() == State.OPEN_INSTALLED) {
             if (!fieldsDigest.equals(current.installedFieldsDigest())) {
