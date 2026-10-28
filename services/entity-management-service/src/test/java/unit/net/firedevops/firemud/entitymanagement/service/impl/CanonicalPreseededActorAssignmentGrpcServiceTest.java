@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -585,6 +586,60 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void runtimeReferenceMapsOnlyExplicitAvailabilityFailuresWithoutDisclosingOwnerDetails() {
+    var receiptService = mock(PreseededActorAssignmentReceiptService.class);
+    var handler =
+        new CanonicalPreseededActorAssignmentGrpcService(
+            NAMESPACE, mock(PreseededActorAssignmentService.class), receiptService);
+    var wire =
+        ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(ASSIGNMENT_UUID.toString())
+            .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+            .setCharacterUuid(CHARACTER_UUID.toString())
+            .setIntentDigest(receiptRequest().intentDigest())
+            .setExpectedTarget(request().getExpectedTarget())
+            .build();
+    var selector = PreseededActorAssignmentGrpcCodec.fromRuntimeReferenceRequest(wire);
+    for (RuntimeException unavailable :
+        List.of(
+            new org.springframework.dao.TransientDataAccessResourceException(
+                "private connection detail"),
+            new org.springframework.dao.QueryTimeoutException("private query detail"),
+            new org.springframework.dao.CannotAcquireLockException("private lock detail"),
+            new org.springframework.dao.DataAccessResourceFailureException(
+                "private resource detail"),
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "private transaction detail"),
+            new org.springframework.transaction.TransactionTimedOutException(
+                "private timeout detail"))) {
+      doThrow(unavailable).when(receiptService).readRuntimeReference(selector);
+      var observer = invokeRuntimeRead(handler, wire);
+      assertThat(observer.errorCode).isEqualTo(Status.Code.UNAVAILABLE);
+      assertThat(observer.errorDescription).isEqualTo("Runtime reference owner is unavailable");
+      assertThat(observer.errorHasCause).isFalse();
+      assertThat(observer.value).isNull();
+      assertThat(observer.terminalCount).isEqualTo(1);
+    }
+    for (RuntimeException unexpected :
+        List.of(
+            new IllegalStateException("private unexpected detail"),
+            new org.jooq.exception.DataAccessException("private SQL detail"),
+            new org.springframework.jdbc.BadSqlGrammarException(
+                "private task", "private SQL", new java.sql.SQLException("private syntax detail")),
+            new org.springframework.transaction.TransactionSystemException(
+                "private transaction system detail"))) {
+      doThrow(unexpected).when(receiptService).readRuntimeReference(selector);
+      var observer = invokeRuntimeRead(handler, wire);
+      assertThat(observer.errorCode).isEqualTo(Status.Code.INTERNAL);
+      assertThat(observer.errorDescription).isEqualTo("Runtime reference read failed");
+      assertThat(observer.errorHasCause).isFalse();
+      assertThat(observer.value).isNull();
+      assertThat(observer.terminalCount).isEqualTo(1);
+    }
+  }
+
   private static RuntimeObserver invokeRuntimeRead(
       CanonicalPreseededActorAssignmentGrpcService handler,
       ReadPreseededActorRuntimeReferenceRequest request) {
@@ -612,6 +667,8 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
   private static final class RuntimeObserver
       implements StreamObserver<ReadPreseededActorRuntimeReferenceResponse> {
     private ReadPreseededActorRuntimeReferenceResponse value;
+    private String errorDescription;
+    private boolean errorHasCause;
     private Status.Code errorCode;
     private int terminalCount;
 
@@ -622,7 +679,10 @@ class CanonicalPreseededActorAssignmentGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      errorCode = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      errorDescription = status.getDescription();
+      errorHasCause = failure.getCause() != null;
+      errorCode = status.getCode();
       terminalCount++;
     }
 
