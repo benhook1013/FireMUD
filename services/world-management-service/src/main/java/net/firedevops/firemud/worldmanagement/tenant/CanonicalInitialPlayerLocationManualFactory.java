@@ -6,8 +6,8 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.worldmanagement.client.EntityPreseededActorAssignmentReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClient;
+import net.firedevops.firemud.worldmanagement.client.EntityPreseededActorAssignmentReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
 import org.jooq.DSLContext;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -64,7 +64,8 @@ public final class CanonicalInitialPlayerLocationManualFactory {
               createdClient);
       var grpcService = new CanonicalInitialPlayerLocationGrpcService(trustedNamespace, service);
       var interceptor = new CanonicalInitialPlayerLocationPeerInterceptor(trustedNamespace);
-      return new Components(grpcService, interceptor, entityClient, gameSessionClient, createdClient);
+      return new Components(
+          grpcService, interceptor, entityClient, gameSessionClient, createdClient);
     } catch (IOException | RuntimeException failure) {
       try {
         createdClient.close();

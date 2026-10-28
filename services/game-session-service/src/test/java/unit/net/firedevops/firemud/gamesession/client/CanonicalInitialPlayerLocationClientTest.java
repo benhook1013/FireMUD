@@ -90,14 +90,26 @@ class CanonicalInitialPlayerLocationClientTest {
 
   @Test
   void keepsCreatedPlacementPurposeInsideSchemaOneRegionEnvelope() throws Exception {
-    var origin = net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin.newBuilder()
-        .setTargetNamespace(NAMESPACE).setCreationOperationUuid(OPERATION_UUID)
-        .setMutationDigest("6".repeat(64)).setTerminalUuid(ASSIGNMENT_UUID)
-        .setTerminalSha256("7".repeat(64)).build();
-    var created = request().toBuilder().setSchemaVersion(2).clearAssignmentUuid()
-        .clearAssignmentIntentDigest().setPlayerCreatedOrigin(origin).build();
-    var applied = appliedResponse(created).toBuilder().setSchemaVersion(2)
-        .setPlayerCreatedOrigin(origin).build();
+    var origin =
+        net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin.newBuilder()
+            .setTargetNamespace(NAMESPACE)
+            .setCreationOperationUuid(OPERATION_UUID)
+            .setMutationDigest("6".repeat(64))
+            .setTerminalUuid(ASSIGNMENT_UUID)
+            .setTerminalSha256("7".repeat(64))
+            .build();
+    var created =
+        request().toBuilder()
+            .setSchemaVersion(2)
+            .clearAssignmentUuid()
+            .clearAssignmentIntentDigest()
+            .setPlayerCreatedOrigin(origin)
+            .build();
+    var applied =
+        appliedResponse(created).toBuilder()
+            .setSchemaVersion(2)
+            .setPlayerCreatedOrigin(origin)
+            .build();
     var region = regionResponse(created).toBuilder().setPlacementResult(applied).build();
     var stub = mockStub();
     when(stub.placeInitialPlayer(created)).thenReturn(applied);
@@ -109,22 +121,33 @@ class CanonicalInitialPlayerLocationClientTest {
     assertThat(client.readInitialPlayerLocationRegion(created)).isEqualTo(region);
     assertThat(region.getSchemaVersion()).isOne();
     assertThat(region.getPlacementResult().getSchemaVersion()).isEqualTo(2);
-    var changed = applied.toBuilder().setPlayerCreatedOrigin(origin.toBuilder()
-        .setMutationDigest("8".repeat(64))).build();
-    for (var invalid : List.of(changed, applied.toBuilder().setAssignmentUuid(ASSIGNMENT_UUID).build(),
-        applied.toBuilder().setSchemaVersion(1).build())) {
+    var changed =
+        applied.toBuilder()
+            .setPlayerCreatedOrigin(origin.toBuilder().setMutationDigest("8".repeat(64)))
+            .build();
+    for (var invalid :
+        List.of(
+            changed,
+            applied.toBuilder().setAssignmentUuid(ASSIGNMENT_UUID).build(),
+            applied.toBuilder().setSchemaVersion(1).build())) {
       when(stub.placeInitialPlayer(created)).thenReturn(invalid);
       when(stub.readInitialPlayerLocation(created)).thenReturn(invalid);
       when(stub.readInitialPlayerLocationRegion(created))
           .thenReturn(region.toBuilder().setPlacementResult(invalid).build());
-      assertThatThrownBy(() -> client.placeInitialPlayer(created)).isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(() -> client.readInitialPlayerLocation(created)).isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(created)).isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> client.placeInitialPlayer(created))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> client.readInitialPlayerLocation(created))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(created))
+          .isInstanceOf(IllegalStateException.class);
     }
     var mixed = created.toBuilder().setAssignmentUuid(ASSIGNMENT_UUID).build();
-    assertThatThrownBy(() -> client.placeInitialPlayer(mixed)).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> client.readInitialPlayerLocation(mixed)).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(mixed)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> client.placeInitialPlayer(mixed))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> client.readInitialPlayerLocation(mixed))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(mixed))
+        .isInstanceOf(IllegalArgumentException.class);
     verify(stub, never()).placeInitialPlayer(mixed);
     verify(stub, never()).readInitialPlayerLocation(mixed);
     verify(stub, never()).readInitialPlayerLocationRegion(mixed);

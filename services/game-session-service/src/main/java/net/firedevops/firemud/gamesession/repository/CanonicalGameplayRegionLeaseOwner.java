@@ -8,14 +8,13 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
@@ -499,8 +498,9 @@ final class CanonicalGameplayRegionLeaseOwner {
         || reference.runtimeEntityId().value() != acknowledgement.runtimeEntityId()
         || !reference.origin().equals(acknowledgement.actorOrigin())
         || !reference.matchesWorldRequest(installation.worldRequest)
-        || !acknowledgement.actorOrigin().equals(
-            CanonicalGameplayActorOrigins.fromWorldRequest(installation.worldRequest))
+        || !acknowledgement
+            .actorOrigin()
+            .equals(CanonicalGameplayActorOrigins.fromWorldRequest(installation.worldRequest))
         || !reference.canonicalAccountUuid().equals(identity.accountId())
         || !reference.characterUuid().equals(identity.characterId())
         || !reference.playableStateNamespaceId().equals(identity.playableStateNamespaceId())
@@ -551,8 +551,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   }
 
   RegionBridgePreimage probeRegionSessionBinding(
-      Installation installation,
-      CanonicalGameplayRuntimeActorReference reference) {
+      Installation installation, CanonicalGameplayRuntimeActorReference reference) {
     BridgeContext context = currentBridgeContext(installation);
     CanonicalGameplayRegionLeaseRedisOwner.BindingPreimage redisPreimage =
         redisOwner.probeSessionBinding(
@@ -565,8 +564,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   }
 
   void applyRegionSessionBinding(
-      Installation installation,
-      CanonicalGameplayRuntimeActorReference reference) {
+      Installation installation, CanonicalGameplayRuntimeActorReference reference) {
     BridgeContext context = currentBridgeContext(installation);
     redisOwner.applySessionBinding(
         installation.grant,
@@ -832,8 +830,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       this.readback = readback;
     }
 
-    boolean matchesCurrentEntityReference(
-        CanonicalGameplayRuntimeActorReference reference) {
+    boolean matchesCurrentEntityReference(CanonicalGameplayRuntimeActorReference reference) {
       return reference != null
           && entityReferenceDigest.equals(
               CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference));

@@ -9,10 +9,10 @@ import java.nio.file.Path;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.FileBackedGrpcMtlsPolicy;
@@ -60,22 +60,24 @@ public final class EntityPlayerCreatedActorPlacementReceiptClient
 
   /** Reads and validates the actual immutable Entity receipt outside any ambient World SQL. */
   @Override
-  public VerifiedReceipt read(
-      PlayerCreatedActorRuntimeReferenceRequest request) {
+  public VerifiedReceipt read(PlayerCreatedActorRuntimeReferenceRequest request) {
     requireNoAmbientOwnerTransaction();
     CanonicalPlayerCreatedRuntimeReferenceEvidence.requireRequest(request);
     if (!workloadNamespace.equals(request.getOrigin().getTargetNamespace())) {
       throw new IllegalArgumentException("Creation origin must use the World workload namespace");
     }
     PlayerCreatedActorRuntimeReferenceResponse response =
-        requireInitializedStub("Entity created-placement-receipt client is not initialized and available")
+        requireInitializedStub(
+                "Entity created-placement-receipt client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readPlayerCreatedActorPlacementReceipt(request);
     try {
       CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(request, response);
     } catch (IllegalArgumentException invalid) {
-      throw Status.FAILED_PRECONDITION.withDescription("Entity returned no exact creation receipt")
-          .withCause(invalid).asRuntimeException();
+      throw Status.FAILED_PRECONDITION
+          .withDescription("Entity returned no exact creation receipt")
+          .withCause(invalid)
+          .asRuntimeException();
     }
     return new VerifiedReceipt(response);
   }
@@ -155,7 +157,8 @@ public final class EntityPlayerCreatedActorPlacementReceiptClient
     }
 
     @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-        value = "EI_EXPOSE_REP", justification = "Generated protobuf responses are immutable values")
+        value = "EI_EXPOSE_REP",
+        justification = "Generated protobuf responses are immutable values")
     public PlayerCreatedActorRuntimeReferenceResponse response() {
       return response;
     }
@@ -164,7 +167,8 @@ public final class EntityPlayerCreatedActorPlacementReceiptClient
   private void requireNoAmbientOwnerTransaction() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new IllegalStateException("Entity created-placement-receipt reads must run outside World SQL");
+      throw new IllegalStateException(
+          "Entity created-placement-receipt reads must run outside World SQL");
     }
   }
 }

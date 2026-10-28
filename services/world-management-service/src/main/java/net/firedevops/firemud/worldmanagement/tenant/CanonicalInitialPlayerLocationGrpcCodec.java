@@ -5,10 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
-import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.RegionResult;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
@@ -19,7 +19,9 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRoom;
 
-/** Closed disjoint-origin codec for the unregistered World initial-player-location owner boundary. */
+/**
+ * Closed disjoint-origin codec for the unregistered World initial-player-location owner boundary.
+ */
 final class CanonicalInitialPlayerLocationGrpcCodec {
   static final int SCHEMA_VERSION = 1;
   static final int MAX_REQUEST_BYTES = 16 * 1024;
@@ -80,13 +82,17 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
     if (request.getSchemaVersion() == 1) {
       if (request.hasPlayerCreatedOrigin()) throw invalid("schema 1 prohibits creation origin");
       assignmentId = uuid(request.getAssignmentUuid(), "assignment_uuid");
-      assignmentIntentDigest = rawDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");
+      assignmentIntentDigest =
+          rawDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");
     } else {
-      if (!request.hasPlayerCreatedOrigin() || !request.getAssignmentUuid().isEmpty()
+      if (!request.hasPlayerCreatedOrigin()
+          || !request.getAssignmentUuid().isEmpty()
           || !request.getAssignmentIntentDigest().isEmpty()) {
         throw invalid("schema 2 requires only the original creation origin");
       }
-      createdOrigin = CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(request.getPlayerCreatedOrigin());
+      createdOrigin =
+          CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(
+              request.getPlayerCreatedOrigin());
     }
     String admissionRequestDigest =
         rawDigest(request.getInitialAdmissionRequestDigest(), "initial_admission_request_digest");
@@ -149,7 +155,8 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
             .setCharacterUuid(selection.characterId().toString())
             .setResultDigest(result.resultDigest());
     if (selection.playerCreatedOrigin() == null) {
-      response.setAssignmentUuid(selection.assignmentId().toString())
+      response
+          .setAssignmentUuid(selection.assignmentId().toString())
           .setAssignmentIntentDigest(selection.assignmentIntentDigest());
     } else {
       response.setPlayerCreatedOrigin(selection.playerCreatedOrigin());
@@ -354,7 +361,8 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
         Objects.requireNonNull(assignmentIntentDigest, "assignmentIntentDigest");
       } else {
         CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(playerCreatedOrigin);
-        if (assignmentId != null || assignmentIntentDigest != null) throw invalid("mixed actor origins");
+        if (assignmentId != null || assignmentIntentDigest != null)
+          throw invalid("mixed actor origins");
       }
       Objects.requireNonNull(initialAdmissionHoldId, "initialAdmissionHoldId");
       Objects.requireNonNull(initialAdmissionHoldFence, "initialAdmissionHoldFence");

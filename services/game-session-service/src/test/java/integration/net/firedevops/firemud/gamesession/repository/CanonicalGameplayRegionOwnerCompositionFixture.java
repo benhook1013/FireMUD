@@ -41,8 +41,8 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
@@ -136,7 +136,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
 
   /**
    * Controlled World/Entity source proof for PLAYER_CREATED. The native SQL/Redis owner executes
-   * unchanged; no World placement, activation, live hold, or production registration is established.
+   * unchanged; no World placement, activation, live hold, or production registration is
+   * established.
    */
   static Proof installCreatedAndBridgeThenCheckSources(
       DSLContext dsl,
@@ -150,19 +151,29 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       java.util.function.Consumer<ExistingBinding> checkSources)
       throws Exception {
     return installAndBridgeInternal(
-            dsl, redisHost, redisPort, worldRequest, currentTarget, worldRegionResolver,
-            entityReferenceClient, null, null, createdReferenceClient,
+            dsl,
+            redisHost,
+            redisPort,
+            worldRequest,
+            currentTarget,
+            worldRegionResolver,
+            entityReferenceClient,
+            null,
+            null,
+            createdReferenceClient,
             binding -> {
               try (var redis = RegionRedis.open(redisHost, redisPort)) {
                 var before = createdBridgeState(dsl, redis, binding);
                 var retry = binding.owner().bridge(binding.installation());
                 if (!binding.acknowledgement().obligation().equals(retry.obligation())
                     || !before.equals(createdBridgeState(dsl, redis, binding))) {
-                  throw new IllegalStateException("Created-origin exact retry changed SQL/Redis evidence");
+                  throw new IllegalStateException(
+                      "Created-origin exact retry changed SQL/Redis evidence");
                 }
                 checkSources.accept(binding);
                 if (!before.equals(createdBridgeState(dsl, redis, binding))) {
-                  throw new IllegalStateException("Rejected created-origin source changed SQL/Redis evidence");
+                  throw new IllegalStateException(
+                      "Rejected created-origin source changed SQL/Redis evidence");
                 }
               }
             })
@@ -172,16 +183,21 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private static List<Object> createdBridgeState(
       DSLContext dsl, RegionRedis redis, ExistingBinding binding) {
     var obligation = binding.acknowledgement().obligation();
-    var physical = snapshotRegionBridgeRedisState(
-        redis,
-        dsl.fetchSingle(
-            "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
-                + " WHERE transition_id = ?", obligation.transitionId()),
-        obligation.runtimeEntityId());
+    var physical =
+        snapshotRegionBridgeRedisState(
+            redis,
+            dsl.fetchSingle(
+                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                    + " WHERE transition_id = ?",
+                obligation.transitionId()),
+            obligation.runtimeEntityId());
     if (physical.leaseValue() == null
-        || !physical.sessionBindingValue().equals(Map.of(
-            "session_id", obligation.sessionId(),
-            "binding_generation", obligation.bindingGeneration().toString()))
+        || !physical
+            .sessionBindingValue()
+            .equals(
+                Map.of(
+                    "session_id", obligation.sessionId(),
+                    "binding_generation", obligation.bindingGeneration().toString()))
         || !"1".equals(physical.metadata().get("region_epoch"))
         || !"-1".equals(physical.metadata().get("current_tick_id"))
         || !"APPLIED".equals(physical.metadata().get("current_tick_state"))) {
@@ -555,8 +571,17 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       AtomicReference<ChangedGrantProof> changedGrantProofCapture)
       throws Exception {
     return installAndBridgeInternal(
-        dsl, redisHost, redisPort, worldRequest, currentTarget, worldRegionResolver,
-        entityReferenceClient, secondBinding, changedGrantProofCapture, null, null);
+        dsl,
+        redisHost,
+        redisPort,
+        worldRequest,
+        currentTarget,
+        worldRegionResolver,
+        entityReferenceClient,
+        secondBinding,
+        changedGrantProofCapture,
+        null,
+        null);
   }
 
   private static TwoBindingProof installAndBridgeInternal(
@@ -725,9 +750,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       AccountAbortProof firstAbort = abortAfterBridge(dsl, firstProof);
       Record firstTimelineBefore =
           dsl.fetchOne(
-              "SELECT initialization_operation_id, transition_id, lifecycle_request_bytes,"
-                  + " preparation_digest, world_source_digest"
-                  + " FROM game_session_region_timeline_preparation"
+              "SELECT * FROM game_session_region_timeline_preparation"
                   + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
               identity.tenantId(),
               identity.gameInstanceId(),
@@ -833,15 +856,20 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .equals(secondLostReplyRetry.inventoryRevision())) {
         throw new IllegalStateException("Second binding did not retain its independent exact ACK");
       }
+      var secondOrigin =
+          net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins.fromWorldRequest(
+              secondBinding.worldRequest());
+      if (!secondAcknowledgement.actorOrigin().equals(secondOrigin)
+          || secondAcknowledgement.actorOrigin().equals(acknowledged.actorOrigin())) {
+        throw new IllegalStateException("Later actor bridge did not retain its distinct original origin");
+      }
       var secondStatus =
           new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
               .find(secondInstallation.source)
               .orElseThrow();
       Record firstTimelineAfter =
           dsl.fetchOne(
-              "SELECT initialization_operation_id, transition_id, lifecycle_request_bytes,"
-                  + " preparation_digest, world_source_digest"
-                  + " FROM game_session_region_timeline_preparation"
+              "SELECT * FROM game_session_region_timeline_preparation"
                   + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
               identity.tenantId(),
               identity.gameInstanceId(),
@@ -857,7 +885,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       Objects.requireNonNull(firstTimelineAfter, "retained timeline source row");
       boolean unchangedTimeline =
-          firstTimelineOperationId.equals(
+          firstTimelineBefore.formatJSON().equals(firstTimelineAfter.formatJSON())
+              && firstTimelineOperationId.equals(
                   Objects.requireNonNull(
                           firstTimelineAfter.get("initialization_operation_id", UUID.class),
                           "retained initialization operation")

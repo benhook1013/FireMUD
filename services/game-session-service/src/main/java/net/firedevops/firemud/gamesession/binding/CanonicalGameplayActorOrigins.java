@@ -17,8 +17,10 @@ public final class CanonicalGameplayActorOrigins {
       if (!operation.toString().equals(request.getAssignmentUuid())) throw invalid();
       return new AssignmentOrigin(operation, request.getAssignmentIntentDigest());
     }
-    if (request.getSchemaVersion() == 2 && request.hasPlayerCreatedOrigin()
-        && request.getAssignmentUuid().isEmpty() && request.getAssignmentIntentDigest().isEmpty()) {
+    if (request.getSchemaVersion() == 2
+        && request.hasPlayerCreatedOrigin()
+        && request.getAssignmentUuid().isEmpty()
+        && request.getAssignmentIntentDigest().isEmpty()) {
       return new CreationOrigin(request.getPlayerCreatedOrigin());
     }
     throw invalid();
@@ -47,7 +49,8 @@ public final class CanonicalGameplayActorOrigins {
 
   public static String creationJson(ActorOrigin origin) {
     return origin instanceof CreationOrigin created
-        ? CanonicalPlayerCreatedRuntimeReferenceEvidence.storedOriginJson(created.original()) : null;
+        ? CanonicalPlayerCreatedRuntimeReferenceEvidence.storedOriginJson(created.original())
+        : null;
   }
 
   private static IllegalArgumentException invalid() {

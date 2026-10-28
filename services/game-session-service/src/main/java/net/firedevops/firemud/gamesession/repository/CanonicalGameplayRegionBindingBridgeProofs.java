@@ -5,11 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
-import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
-import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
@@ -18,8 +15,7 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 final class CanonicalGameplayRegionBindingBridgeProofs {
   private CanonicalGameplayRegionBindingBridgeProofs() {}
 
-  static String entityReferenceDigest(
-      CanonicalGameplayRuntimeActorReference reference) {
+  static String entityReferenceDigest(CanonicalGameplayRuntimeActorReference reference) {
     return sha256(
         reference.workloadNamespace().getBytes(StandardCharsets.UTF_8),
         reference.canonicalEvidenceBytes());

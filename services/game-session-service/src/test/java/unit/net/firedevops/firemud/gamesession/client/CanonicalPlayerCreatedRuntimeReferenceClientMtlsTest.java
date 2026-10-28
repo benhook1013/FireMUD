@@ -9,7 +9,9 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.TlsServerCredentials;
 import io.grpc.stub.StreamObserver;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.security.cert.CertificateEncodingException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,8 +73,10 @@ class CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest {
       client.init();
       var reference = client.read(request);
       assertThat(reference.workloadNamespace()).isEqualTo(NAMESPACE);
-      assertThat(reference.runtimeEntityId().tenantId().toString()).isEqualTo(request.getTenantUuid());
-      assertThat(reference.runtimeEntityId().gameInstanceId()).isEqualTo(request.getGameInstanceUuid());
+      assertThat(reference.runtimeEntityId().tenantId().toString())
+          .isEqualTo(request.getTenantUuid());
+      assertThat(reference.runtimeEntityId().gameInstanceId())
+          .isEqualTo(request.getGameInstanceUuid());
       assertThat(reference.runtimeEntityId().value()).isEqualTo(response.getRuntimeEntityId());
       assertThat(reference.canonicalAccountUuid().toString()).isEqualTo(request.getAccountUuid());
       assertThat(reference.characterUuid().toString()).isEqualTo(request.getCharacterUuid());
@@ -80,14 +84,26 @@ class CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest {
           .isEqualTo(request.getPlayableStateNamespaceUuid());
       assertThat(reference.projectionGeneration()).isEqualTo(4L);
       assertThat(reference.projectionFence()).isEqualTo(9L);
-      assertThat(reference.origin()).isEqualTo(new CanonicalGameplayRuntimeActorReference.CreationOrigin(request.getOrigin()));
+      assertThat(reference.origin())
+          .isEqualTo(
+              new CanonicalGameplayRuntimeActorReference.CreationOrigin(request.getOrigin()));
       assertThat(reference.canonicalEvidenceBytes()).containsExactly(response.toByteArray());
       assertThat(reference.matchesWorldRequest(worldRequest(request))).isTrue();
-      assertThat(reference.matchesWorldRequest(worldRequest(request).toBuilder().setPlayerCreatedOrigin(
-          request.getOrigin().toBuilder().setMutationDigest("f".repeat(64))).build())).isFalse();
-      assertThat(reference.matchesWorldRequest(worldRequest(request).toBuilder().setExpectedTarget(
-          worldRequest(request).getExpectedTarget().toBuilder().setCanonicalVersionUuid(
-              "88888888-8888-4888-8888-888888888888")).build())).isFalse();
+      assertThat(
+              reference.matchesWorldRequest(
+                  worldRequest(request).toBuilder()
+                      .setPlayerCreatedOrigin(
+                          request.getOrigin().toBuilder().setMutationDigest("f".repeat(64)))
+                      .build()))
+          .isFalse();
+      assertThat(
+              reference.matchesWorldRequest(
+                  worldRequest(request).toBuilder()
+                      .setExpectedTarget(
+                          worldRequest(request).getExpectedTarget().toBuilder()
+                              .setCanonicalVersionUuid("88888888-8888-4888-8888-888888888888"))
+                      .build()))
+          .isFalse();
       assertThat(invocations).hasValue(1);
     } finally {
       stop(server);
@@ -101,10 +117,12 @@ class CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest {
       var changedSelector = request.toBuilder();
       if (changeOrigin) {
         changedSelector.setOrigin(
-            request.getOrigin().toBuilder().setTerminalUuid("99999999-9999-4999-8999-999999999999"));
+            request.getOrigin().toBuilder()
+                .setTerminalUuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
       } else {
         changedSelector.setCanonicalVersionUuid("88888888-8888-4888-8888-888888888888");
       }
+      assertThat(changedSelector.build()).isNotEqualTo(request);
       var response = response(request).toBuilder().setSelector(changedSelector).build();
       Server server = server("entity-server", service(new AtomicInteger(), response));
       try (var client = client(endpoints(server))) {
@@ -125,7 +143,8 @@ class CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest {
       assertThatThrownBy(() -> client.read(request()))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
-              failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(invocations).hasValue(0);
     } finally {
       stop(server);
@@ -136,10 +155,14 @@ class CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest {
   void requestOriginNamespaceMustMatchFixedWorkloadNamespaceBeforeRpc() throws Exception {
     var invocations = new AtomicInteger();
     Server server = server("entity-server", service(invocations, response(request())));
-    var wrongNamespace = request().toBuilder().setOrigin(request().getOrigin().toBuilder().setTargetNamespace("other")).build();
+    var wrongNamespace =
+        request().toBuilder()
+            .setOrigin(request().getOrigin().toBuilder().setTargetNamespace("other"))
+            .build();
     try (var client = client(endpoints(server))) {
       client.init();
-      assertThatThrownBy(() -> client.read(wrongNamespace)).isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> client.read(wrongNamespace))
+          .isInstanceOf(IllegalArgumentException.class);
       assertThat(invocations).hasValue(0);
     } finally {
       stop(server);
@@ -188,7 +211,7 @@ class CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest {
   }
 
   private static CanonicalPlayerCreatedRuntimeReferenceClient client(
-      ServiceEndpointsProperties endpoints) {
+      ServiceEndpointsProperties endpoints) throws IOException, CertificateEncodingException {
     return new CanonicalPlayerCreatedRuntimeReferenceClient(
         endpoints,
         pki.clientProperties(directory, pki.identity("client")),

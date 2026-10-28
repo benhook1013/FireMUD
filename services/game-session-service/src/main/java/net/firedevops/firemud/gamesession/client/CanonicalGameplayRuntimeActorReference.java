@@ -36,7 +36,8 @@ public sealed interface CanonicalGameplayRuntimeActorReference
     public AssignmentOrigin {
       Objects.requireNonNull(assignmentId, "assignmentId");
       if (assignmentId.equals(new UUID(0L, 0L))
-          || intentDigest == null || !intentDigest.matches("[0-9a-f]{64}")) {
+          || intentDigest == null
+          || !intentDigest.matches("[0-9a-f]{64}")) {
         throw new IllegalArgumentException("Exact original assignment identity required");
       }
     }

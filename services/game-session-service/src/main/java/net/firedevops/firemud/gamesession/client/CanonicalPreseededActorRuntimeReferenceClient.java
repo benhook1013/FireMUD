@@ -173,7 +173,8 @@ public final class CanonicalPreseededActorRuntimeReferenceClient
   }
 
   /** Constructible only after an authenticated, exact, closed Entity response passes validation. */
-  public static final class RuntimeActorReference implements CanonicalGameplayRuntimeActorReference {
+  public static final class RuntimeActorReference
+      implements CanonicalGameplayRuntimeActorReference {
     private final String workloadNamespace;
     private final ReadPreseededActorRuntimeReferenceResponse receipt;
     private final CanonicalRuntimeEntityId runtimeEntityId;
@@ -213,7 +214,8 @@ public final class CanonicalPreseededActorRuntimeReferenceClient
     @Override
     public boolean matchesWorldRequest(
         net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
-      return request != null && request.getSchemaVersion() == 1
+      return request != null
+          && request.getSchemaVersion() == 1
           && !request.hasPlayerCreatedOrigin()
           && receipt.getAssignmentUuid().equals(request.getAssignmentUuid())
           && receipt.getIntentDigest().equals(request.getAssignmentIntentDigest())

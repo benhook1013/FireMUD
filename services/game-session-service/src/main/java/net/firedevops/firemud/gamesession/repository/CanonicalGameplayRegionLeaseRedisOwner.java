@@ -22,7 +22,6 @@ import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
@@ -712,7 +711,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   /** Private-construction proof that a second region Lua call read the exact live tuple. */
   static final class BindingReadback {
-    private final net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId;
+    private final net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId
+        runtimeEntityId;
     private final String sessionId;
     private final BigInteger bindingGeneration;
     private final long regionEpoch;
@@ -768,7 +768,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   /** Private-construction result of a lease/epoch-checked read of the exact key preimage. */
   static final class BindingPreimage {
-    private final net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId;
+    private final net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId
+        runtimeEntityId;
     private final String sessionId;
     private final BigInteger bindingGeneration;
     private final long regionEpoch;

@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -19,6 +18,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;

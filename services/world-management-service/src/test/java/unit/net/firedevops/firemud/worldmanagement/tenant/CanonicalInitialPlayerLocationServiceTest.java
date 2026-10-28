@@ -55,11 +55,13 @@ class CanonicalInitialPlayerLocationServiceTest {
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     var preseeded = mock(CanonicalInitialPlayerLocationService.EntityReceiptReader.class);
-    var service = new CanonicalInitialPlayerLocationService(NAMESPACE, association, holds,
-        location, gameSession, preseeded);
+    var service =
+        new CanonicalInitialPlayerLocationService(
+            NAMESPACE, association, holds, location, gameSession, preseeded);
     assertThatThrownBy(() -> service.place(selection)).isInstanceOf(StatusRuntimeException.class);
     assertThatThrownBy(() -> service.read(selection)).isInstanceOf(StatusRuntimeException.class);
-    assertThatThrownBy(() -> service.readRegion(selection)).isInstanceOf(StatusRuntimeException.class);
+    assertThatThrownBy(() -> service.readRegion(selection))
+        .isInstanceOf(StatusRuntimeException.class);
     verifyNoInteractions(association, location, holds, gameSession, preseeded);
   }
 
@@ -72,25 +74,45 @@ class CanonicalInitialPlayerLocationServiceTest {
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     var preseeded = mock(CanonicalInitialPlayerLocationService.EntityReceiptReader.class);
     var created = mock(CanonicalInitialPlayerLocationService.EntityCreatedReceiptReader.class);
-    when(created.read(any())).thenAnswer(call -> {
-      verifyNoInteractions(location);
-      var selector = (net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest) call.getArgument(0);
-      assertThat(selector.getAccountUuid()).isEqualTo(selection.canonicalAccountId().toString());
-      assertThat(selector.getOrigin()).isEqualTo(selection.playerCreatedOrigin());
-      // Explicit controlled authenticated-response input; no genuine Entity producer claim.
-      var verified = mock(net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClient.VerifiedReceipt.class);
-      when(verified.response()).thenReturn(net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
-          .setSchemaVersion(1).setSelector(selector).setRuntimeEntityId(23L)
-          .setProjectionGeneration(1L).setProjectionFence(1L)
-          .setOriginalCatalogRevision(1L).setOriginalPointerVersion(1L).setOriginalActiveLifecycleEpoch(1L)
-          .setOriginalDescriptorDigest("sha256:" + "a".repeat(64))
-          .setOriginalAuthoredBindingDigest("sha256:" + "b".repeat(64))
-          .setOriginalPolicyContentDigest("sha256:" + "c".repeat(64)).build());
-      return verified;
-    });
-    when(location.readByOperationId(eq(selection.placementOperationId()), any())).thenReturn(Optional.empty());
-    var service = new CanonicalInitialPlayerLocationService(NAMESPACE, association, holds,
-        location, gameSession, preseeded, created);
+    when(created.read(any()))
+        .thenAnswer(
+            call -> {
+              verifyNoInteractions(location);
+              var selector =
+                  (net.firedevops.firemud.entitymanagement.v1
+                          .PlayerCreatedActorRuntimeReferenceRequest)
+                      call.getArgument(0);
+              assertThat(selector.getAccountUuid())
+                  .isEqualTo(selection.canonicalAccountId().toString());
+              assertThat(selector.getOrigin()).isEqualTo(selection.playerCreatedOrigin());
+              // Explicit controlled authenticated-response input; no genuine Entity producer claim.
+              var verified =
+                  mock(
+                      net.firedevops.firemud.worldmanagement.client
+                          .EntityPlayerCreatedActorPlacementReceiptClient.VerifiedReceipt.class);
+              when(verified.response())
+                  .thenReturn(
+                      net.firedevops.firemud.entitymanagement.v1
+                          .PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
+                          .setSchemaVersion(1)
+                          .setSelector(selector)
+                          .setRuntimeEntityId(23L)
+                          .setProjectionGeneration(1L)
+                          .setProjectionFence(1L)
+                          .setOriginalCatalogRevision(1L)
+                          .setOriginalPointerVersion(1L)
+                          .setOriginalActiveLifecycleEpoch(1L)
+                          .setOriginalDescriptorDigest("sha256:" + "a".repeat(64))
+                          .setOriginalAuthoredBindingDigest("sha256:" + "b".repeat(64))
+                          .setOriginalPolicyContentDigest("sha256:" + "c".repeat(64))
+                          .build());
+              return verified;
+            });
+    when(location.readByOperationId(eq(selection.placementOperationId()), any()))
+        .thenReturn(Optional.empty());
+    var service =
+        new CanonicalInitialPlayerLocationService(
+            NAMESPACE, association, holds, location, gameSession, preseeded, created);
     assertThat(service.read(selection)).isEmpty();
     verifyNoInteractions(association, holds, gameSession, preseeded);
   }
@@ -103,18 +125,34 @@ class CanonicalInitialPlayerLocationServiceTest {
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
     var preseeded = mock(CanonicalInitialPlayerLocationService.EntityReceiptReader.class);
-    var service = new CanonicalInitialPlayerLocationService(NAMESPACE, association, holds,
-        location, gameSession, preseeded, ignored -> { throw Status.UNAVAILABLE.asRuntimeException(); });
+    var service =
+        new CanonicalInitialPlayerLocationService(
+            NAMESPACE,
+            association,
+            holds,
+            location,
+            gameSession,
+            preseeded,
+            ignored -> {
+              throw Status.UNAVAILABLE.asRuntimeException();
+            });
     assertThatThrownBy(() -> service.place(selection)).isInstanceOf(StatusRuntimeException.class);
     verifyNoInteractions(association, location, holds, gameSession, preseeded);
   }
 
   private static CanonicalInitialPlayerLocationRequest createdRequest() {
-    return request().toBuilder().setSchemaVersion(2).clearAssignmentUuid().clearAssignmentIntentDigest()
-        .setPlayerCreatedOrigin(net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin.newBuilder()
-            .setTargetNamespace(NAMESPACE).setCreationOperationUuid("12121212-1212-4212-8212-121212121212")
-            .setMutationDigest("d".repeat(64)).setTerminalUuid("13131313-1313-4313-8313-131313131313")
-            .setTerminalSha256("e".repeat(64))).build();
+    return request().toBuilder()
+        .setSchemaVersion(2)
+        .clearAssignmentUuid()
+        .clearAssignmentIntentDigest()
+        .setPlayerCreatedOrigin(
+            net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin.newBuilder()
+                .setTargetNamespace(NAMESPACE)
+                .setCreationOperationUuid("12121212-1212-4212-8212-121212121212")
+                .setMutationDigest("d".repeat(64))
+                .setTerminalUuid("13131313-1313-4313-8313-131313131313")
+                .setTerminalSha256("e".repeat(64)))
+        .build();
   }
 
   @Test

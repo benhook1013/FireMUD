@@ -10,17 +10,17 @@ import java.sql.Connection;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
-import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
-import java.util.Map;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -72,10 +72,16 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
           "realmId",
           "schema",
           "worldSlug");
-  private static final String CREATED_REQUEST_SCHEMA = "world-canonical-initial-player-location-request/v2";
+  private static final String CREATED_REQUEST_SCHEMA =
+      "world-canonical-initial-player-location-request/v2";
   private static final Set<String> CREATED_REQUEST_FIELDS = createdRequestFields();
-  private static final Set<String> CREATED_ORIGIN_FIELDS = Set.of(
-      "targetNamespace", "creationOperationId", "mutationDigest", "terminalId", "terminalSha256");
+  private static final Set<String> CREATED_ORIGIN_FIELDS =
+      Set.of(
+          "targetNamespace",
+          "creationOperationId",
+          "mutationDigest",
+          "terminalId",
+          "terminalSha256");
 
   private static Set<String> createdRequestFields() {
     var fields = new java.util.HashSet<>(REQUEST_FIELDS);
@@ -87,10 +93,17 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
 
   static Map<String, String> createdOriginJson(PlayerCreatedActorOrigin origin) {
     CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(origin);
-    return Map.of("targetNamespace", origin.getTargetNamespace(),
-        "creationOperationId", origin.getCreationOperationUuid(),
-        "mutationDigest", origin.getMutationDigest(), "terminalId", origin.getTerminalUuid(),
-        "terminalSha256", origin.getTerminalSha256());
+    return Map.of(
+        "targetNamespace",
+        origin.getTargetNamespace(),
+        "creationOperationId",
+        origin.getCreationOperationUuid(),
+        "mutationDigest",
+        origin.getMutationDigest(),
+        "terminalId",
+        origin.getTerminalUuid(),
+        "terminalSha256",
+        origin.getTerminalSha256());
   }
 
   private static PlayerCreatedActorOrigin parseCreatedOrigin(JsonNode node) {
@@ -101,12 +114,17 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
             .setCreationOperationUuid(text(node, "creationOperationId"))
             .setMutationDigest(text(node, "mutationDigest"))
             .setTerminalUuid(text(node, "terminalId"))
-            .setTerminalSha256(text(node, "terminalSha256")).build());
+            .setTerminalSha256(text(node, "terminalSha256"))
+            .build());
   }
 
   private static boolean exactStoredOrigin(Record row, ParsedRequest parsed) {
-    if (!Objects.equals(row.get("entity_assignment_operation_id", UUID.class), parsed.entityAssignmentOperationId())
-        || !Objects.equals(row.get("entity_assignment_digest", String.class), parsed.entityAssignmentDigest())) return false;
+    if (!Objects.equals(
+            row.get("entity_assignment_operation_id", UUID.class),
+            parsed.entityAssignmentOperationId())
+        || !Objects.equals(
+            row.get("entity_assignment_digest", String.class), parsed.entityAssignmentDigest()))
+      return false;
     org.jooq.JSONB stored = row.get("entity_created_origin", org.jooq.JSONB.class);
     if (parsed.entityCreatedOrigin() == null) return stored == null;
     if (stored == null) return false;
@@ -847,7 +865,10 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
         parsed.request().requestDigest(),
         parsed.request().originalLifecycleEvidenceBytes(),
         prefixedDigest(parsed.request().originalLifecycleEvidenceBytes()),
-        parsed.entityCreatedOrigin() == null ? null : org.jooq.JSONB.valueOf(JSON.writeValueAsString(createdOriginJson(parsed.entityCreatedOrigin()))));
+        parsed.entityCreatedOrigin() == null
+            ? null
+            : org.jooq.JSONB.valueOf(
+                JSON.writeValueAsString(createdOriginJson(parsed.entityCreatedOrigin()))));
   }
 
   private void requireExactLocationReadback(
@@ -959,7 +980,10 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
       String requestJson = strictUtf8(request.requestBytes());
       JsonNode root = JSON.readTree(requestJson);
       boolean created = CREATED_REQUEST_SCHEMA.equals(text(root, "schema"));
-      requireExactFields(root, created ? CREATED_REQUEST_FIELDS : REQUEST_FIELDS, "World initial-location request");
+      requireExactFields(
+          root,
+          created ? CREATED_REQUEST_FIELDS : REQUEST_FIELDS,
+          "World initial-location request");
       if (!created && !REQUEST_SCHEMA.equals(text(root, "schema"))) {
         throw invalidEvidence("Unsupported World canonical initial-location request schema");
       }
@@ -996,7 +1020,8 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
       UUID characterId = uuid(root, "characterId");
       UUID assignmentOperationId = created ? null : uuid(root, "entityAssignmentOperationId");
       String assignmentDigest = created ? null : bareDigest(text(root, "entityAssignmentDigest"));
-      PlayerCreatedActorOrigin createdOrigin = created ? parseCreatedOrigin(root.get("entityCreatedOrigin")) : null;
+      PlayerCreatedActorOrigin createdOrigin =
+          created ? parseCreatedOrigin(root.get("entityCreatedOrigin")) : null;
       UUID realmId = uuid(root, "realmId");
       String worldSlug = text(root, "worldSlug");
       String playableStateScope = text(root, "playableStateScope");
@@ -1010,7 +1035,8 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
       long catalogRevision = positiveLong(root, "catalogRevision");
       long pointerVersion = positiveLong(root, "pointerVersion");
       WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest = activeEvidence.request();
-      if ((createdOrigin != null && !createdOrigin.getTargetNamespace().equals(lifecycleRequest.targetNamespace()))
+      if ((createdOrigin != null
+              && !createdOrigin.getTargetNamespace().equals(lifecycleRequest.targetNamespace()))
           || !canonicalTenantId.equals(lifecycleRequest.canonicalTenantId())
           || !namespaceId.equals(lifecycleRequest.playableStateNamespaceId())
           || !gameInstanceId.equals(lifecycleRequest.canonicalGameInstanceId())

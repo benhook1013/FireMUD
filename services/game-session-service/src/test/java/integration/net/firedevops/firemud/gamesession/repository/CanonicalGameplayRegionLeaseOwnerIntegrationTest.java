@@ -47,9 +47,9 @@ import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRuntimeReferenceServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRuntimeReferenceServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceResponse;
@@ -63,8 +63,8 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvis
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
@@ -644,15 +644,21 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
               testSchema.dataSource(), UUID.randomUUID(), "firemud");
       var originalWorld = WorldFixture.open(runtimeTarget);
-      var origin = PlayerCreatedActorOrigin.newBuilder()
-          .setTargetNamespace("firemud")
-          .setCreationOperationUuid(UUID.randomUUID().toString())
-          .setMutationDigest("2".repeat(64))
-          .setTerminalUuid(UUID.randomUUID().toString())
-          .setTerminalSha256("3".repeat(64)).build();
-      var request = originalWorld.request().toBuilder().setSchemaVersion(2)
-          .clearAssignmentUuid().clearAssignmentIntentDigest()
-          .setPlayerCreatedOrigin(origin).build();
+      var origin =
+          PlayerCreatedActorOrigin.newBuilder()
+              .setTargetNamespace("firemud")
+              .setCreationOperationUuid(UUID.randomUUID().toString())
+              .setMutationDigest("2".repeat(64))
+              .setTerminalUuid(UUID.randomUUID().toString())
+              .setTerminalSha256("3".repeat(64))
+              .build();
+      var request =
+          originalWorld.request().toBuilder()
+              .setSchemaVersion(2)
+              .clearAssignmentUuid()
+              .clearAssignmentIntentDigest()
+              .setPlayerCreatedOrigin(origin)
+              .build();
       var world = new WorldFixture(originalWorld.originalEvidence(), request);
       // Echo changed selectors as a controlled World transport would; refusal must come from the
       // receiving owner's original-source checks, rather than an unstubbed mock returning null.
@@ -664,62 +670,112 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(origin.getAllFields()).hasSize(5);
       try (var preseeded = EntityReferenceFixture.open();
           var created = CreatedEntityReferenceFixture.open(request)) {
-        var proof = CanonicalGameplayRegionOwnerCompositionFixture.installCreatedAndBridgeThenCheckSources(
-            testSchema.dsl(), REDIS.getHost(), REDIS.getMappedPort(REDIS_PORT), request,
-            runtimeTarget.playableTarget(), world.resolver(), preseeded.client(), created.client,
-            binding -> {
-              var preparation = testSchema.dsl().fetchSingle(
-                  "SELECT * FROM game_session_region_timeline_preparation WHERE transition_id = ?",
-                  binding.acknowledgement().obligation().transitionId());
-              var obligation = testSchema.dsl().fetchSingle(
-                  "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
-                      + " WHERE transition_id = ?", binding.acknowledgement().obligation().transitionId());
-              for (Record row : List.of(preparation, obligation)) {
-                assertThat(row.get("assignment_uuid")).isNull();
-                assertThat(row.get("assignment_intent_digest")).isNull();
-                assertThat(CanonicalPlayerCreatedRuntimeReferenceEvidence.originFromStoredJson(
-                    row.get("entity_created_origin", String.class))).isEqualTo(origin);
-              }
-              assertThat(preparation.get("initialization_operation_id", UUID.class))
-                  .isNotEqualTo(UUID.fromString(origin.getCreationOperationUuid()))
-                  .isNotEqualTo(UUID.fromString(request.getPlacementOperationUuid()))
-                  .isNotEqualTo(obligation.get("bridge_operation_id", UUID.class));
-              assertThat(obligation.get("bridge_operation_id", UUID.class))
-                  .isNotEqualTo(UUID.fromString(origin.getCreationOperationUuid()))
-                  .isNotEqualTo(UUID.fromString(request.getPlacementOperationUuid()));
-              assertThat(request.getPlacementOperationUuid()).isNotEqualTo(origin.getCreationOperationUuid());
-              assertThat(obligation.get("status", String.class)).isEqualTo("ACKNOWLEDGED");
-              assertThat(obligation.get("redis_readback_digest", String.class)).isNotBlank();
-              assertThat(binding.acknowledgement().obligation().actorOrigin())
-                  .isEqualTo(new net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference
-                      .CreationOrigin(origin));
-              var changed = request.toBuilder().setPlayerCreatedOrigin(
-                  origin.toBuilder().setMutationDigest("4".repeat(64))).build();
-              assertThatThrownBy(() -> binding.owner().installForTransition(
-                  binding.installation(), binding.acknowledgement().obligation().transitionId(), changed))
-                  .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
-              var substituted = request.toBuilder()
-                  .setAssignmentUuid(origin.getCreationOperationUuid())
-                  .setAssignmentIntentDigest(origin.getMutationDigest()).build();
-              assertThatThrownBy(() -> binding.owner().installForTransition(
-                  binding.installation(), binding.acknowledgement().obligation().transitionId(), substituted))
-                  .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
-              var unknownOrigin = origin.toBuilder().setUnknownFields(
-                  com.google.protobuf.UnknownFieldSet.newBuilder().addField(99,
-                      com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                      .build()).build();
-              var extended = request.toBuilder().setPlayerCreatedOrigin(unknownOrigin).build();
-              assertThatThrownBy(() -> binding.owner().installForTransition(
-                  binding.installation(), binding.acknowledgement().obligation().transitionId(), extended))
-                  .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
-              // Still structurally valid authenticated response, but no longer the original projection.
-              created.projectionFence.incrementAndGet();
-              assertThatThrownBy(() -> binding.owner().bridge(binding.installation()))
-                  .isInstanceOf(IllegalStateException.class);
-              created.projectionFence.decrementAndGet();
-              assertThat(binding.owner().bridge(binding.installation()).obligation())
-                  .isEqualTo(binding.acknowledgement().obligation());
-            });
+        var proof =
+            CanonicalGameplayRegionOwnerCompositionFixture.installCreatedAndBridgeThenCheckSources(
+                testSchema.dsl(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(REDIS_PORT),
+                request,
+                runtimeTarget.playableTarget(),
+                world.resolver(),
+                preseeded.client(),
+                created.client,
+                binding -> {
+                  var preparation =
+                      testSchema
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT * FROM game_session_region_timeline_preparation WHERE transition_id = ?",
+                              binding.acknowledgement().obligation().transitionId());
+                  var obligation =
+                      testSchema
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                                  + " WHERE transition_id = ?",
+                              binding.acknowledgement().obligation().transitionId());
+                  for (Record row : List.of(preparation, obligation)) {
+                    assertThat(row.get("assignment_uuid")).isNull();
+                    assertThat(row.get("assignment_intent_digest")).isNull();
+                    assertThat(
+                            CanonicalPlayerCreatedRuntimeReferenceEvidence.originFromStoredJson(
+                                row.get("entity_created_origin", String.class)))
+                        .isEqualTo(origin);
+                  }
+                  assertThat(preparation.get("initialization_operation_id", UUID.class))
+                      .isNotEqualTo(UUID.fromString(origin.getCreationOperationUuid()))
+                      .isNotEqualTo(UUID.fromString(request.getPlacementOperationUuid()))
+                      .isNotEqualTo(obligation.get("bridge_operation_id", UUID.class));
+                  assertThat(obligation.get("bridge_operation_id", UUID.class))
+                      .isNotEqualTo(UUID.fromString(origin.getCreationOperationUuid()))
+                      .isNotEqualTo(UUID.fromString(request.getPlacementOperationUuid()));
+                  assertThat(request.getPlacementOperationUuid())
+                      .isNotEqualTo(origin.getCreationOperationUuid());
+                  assertThat(obligation.get("status", String.class)).isEqualTo("ACKNOWLEDGED");
+                  assertThat(obligation.get("redis_readback_digest", String.class)).isNotBlank();
+                  assertThat(binding.acknowledgement().obligation().actorOrigin())
+                      .isEqualTo(
+                          new net.firedevops.firemud.gamesession.client
+                              .CanonicalGameplayRuntimeActorReference.CreationOrigin(origin));
+                  var changed =
+                      request.toBuilder()
+                          .setPlayerCreatedOrigin(
+                              origin.toBuilder().setMutationDigest("4".repeat(64)))
+                          .build();
+                  assertThatThrownBy(
+                          () ->
+                              binding
+                                  .owner()
+                                  .installForTransition(
+                                      binding.installation(),
+                                      binding.acknowledgement().obligation().transitionId(),
+                                      changed))
+                      .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
+                  var substituted =
+                      request.toBuilder()
+                          .setAssignmentUuid(origin.getCreationOperationUuid())
+                          .setAssignmentIntentDigest(origin.getMutationDigest())
+                          .build();
+                  assertThatThrownBy(
+                          () ->
+                              binding
+                                  .owner()
+                                  .installForTransition(
+                                      binding.installation(),
+                                      binding.acknowledgement().obligation().transitionId(),
+                                      substituted))
+                      .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
+                  var unknownOrigin =
+                      origin.toBuilder()
+                          .setUnknownFields(
+                              com.google.protobuf.UnknownFieldSet.newBuilder()
+                                  .addField(
+                                      99,
+                                      com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                          .addVarint(1L)
+                                          .build())
+                                  .build())
+                          .build();
+                  var extended = request.toBuilder().setPlayerCreatedOrigin(unknownOrigin).build();
+                  assertThatThrownBy(
+                          () ->
+                              binding
+                                  .owner()
+                                  .installForTransition(
+                                      binding.installation(),
+                                      binding.acknowledgement().obligation().transitionId(),
+                                      extended))
+                      .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
+                  // Still structurally valid authenticated response, but no longer the original
+                  // projection.
+                  created.projectionFence.incrementAndGet();
+                  assertThatThrownBy(() -> binding.owner().bridge(binding.installation()))
+                      .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+                      .hasMessage("A retry changed the retained Entity or World bridge source");
+                  created.projectionFence.decrementAndGet();
+                  assertThat(binding.owner().bridge(binding.installation()).obligation())
+                      .isEqualTo(binding.acknowledgement().obligation());
+                });
         assertThat(proof.exactLostReplyRetry()).isTrue();
         assertThat(proof.runtimeEntityId()).isEqualTo(191L);
         assertThat(proof.entityProjectionGeneration()).isEqualTo(21L);
@@ -1218,8 +1274,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             .setPrivateRuntimeRoomKey("91")
             .build();
     if (request.hasPlayerCreatedOrigin()) {
-      placement = placement.toBuilder().setSchemaVersion(2)
-          .setPlayerCreatedOrigin(request.getPlayerCreatedOrigin()).build();
+      placement =
+          placement.toBuilder()
+              .setSchemaVersion(2)
+              .setPlayerCreatedOrigin(request.getPlayerCreatedOrigin())
+              .build();
     }
     var lifecycle =
         net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationLifecycleConsequence
@@ -1421,8 +1480,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     private final AtomicInteger projectionFence;
     private final AtomicInteger reads;
 
-    private CreatedEntityReferenceFixture(Server server,
-        CanonicalPlayerCreatedRuntimeReferenceClient client, AtomicInteger projectionFence,
+    private CreatedEntityReferenceFixture(
+        Server server,
+        CanonicalPlayerCreatedRuntimeReferenceClient client,
+        AtomicInteger projectionFence,
         AtomicInteger reads) {
       this.server = server;
       this.client = client;
@@ -1433,46 +1494,63 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     static CreatedEntityReferenceFixture open(CanonicalInitialPlayerLocationRequest worldRequest)
         throws Exception {
       var target = worldRequest.getExpectedTarget();
-      var expected = PlayerCreatedActorRuntimeReferenceRequest.newBuilder().setSchemaVersion(1)
-          .setOrigin(worldRequest.getPlayerCreatedOrigin())
-          .setTenantUuid(target.getCanonicalTenantUuid())
-          .setAccountUuid(worldRequest.getCanonicalAccountUuid())
-          .setPlayableStateNamespaceUuid(target.getPlayableStateNamespaceUuid())
-          .setGameInstanceUuid(target.getGameInstanceId())
-          .setCharacterUuid(worldRequest.getCharacterUuid())
-          .setCanonicalVersionUuid(target.getCanonicalVersionUuid())
-          .setRealmUuid(target.getRealmUuid()).setWorldSlug(target.getWorldSlug())
-          .setRealmSlug(target.getRealmSlug()).build();
+      var expected =
+          PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
+              .setSchemaVersion(1)
+              .setOrigin(worldRequest.getPlayerCreatedOrigin())
+              .setTenantUuid(target.getCanonicalTenantUuid())
+              .setAccountUuid(worldRequest.getCanonicalAccountUuid())
+              .setPlayableStateNamespaceUuid(target.getPlayableStateNamespaceUuid())
+              .setGameInstanceUuid(target.getGameInstanceId())
+              .setCharacterUuid(worldRequest.getCharacterUuid())
+              .setCanonicalVersionUuid(target.getCanonicalVersionUuid())
+              .setRealmUuid(target.getRealmUuid())
+              .setWorldSlug(target.getWorldSlug())
+              .setRealmSlug(target.getRealmSlug())
+              .build();
       var projectionFence = new AtomicInteger(22);
       var reads = new AtomicInteger();
-      var service = new CanonicalPlayerCreatedRuntimeReferenceServiceGrpc
-          .CanonicalPlayerCreatedRuntimeReferenceServiceImplBase() {
-        @Override
-        public void readPlayerCreatedActorRuntimeReference(
-            PlayerCreatedActorRuntimeReferenceRequest request,
-            StreamObserver<PlayerCreatedActorRuntimeReferenceResponse> observer) {
-          var peer = GrpcPeerIdentity.current();
-          if (peer == null || !ENTITY_CLIENT_PEER.equals(peer.uri()) || !expected.equals(request)) {
-            observer.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
-            return;
-          }
-          reads.incrementAndGet();
-          observer.onNext(PlayerCreatedActorRuntimeReferenceResponse.newBuilder().setSchemaVersion(1)
-              .setSelector(expected).setRuntimeEntityId(191L).setProjectionGeneration(21L)
-              .setProjectionFence(projectionFence.get())
-              .setOriginalCatalogRevision(1L).setOriginalPointerVersion(1L)
-              .setOriginalActiveLifecycleEpoch(1L)
-              .setOriginalDescriptorDigest("sha256:" + "5".repeat(64))
-              .setOriginalAuthoredBindingDigest("sha256:" + "6".repeat(64))
-              .setOriginalPolicyContentDigest("sha256:" + "7".repeat(64)).build());
-          observer.onCompleted();
-        }
-      };
+      var service =
+          new CanonicalPlayerCreatedRuntimeReferenceServiceGrpc
+              .CanonicalPlayerCreatedRuntimeReferenceServiceImplBase() {
+            @Override
+            public void readPlayerCreatedActorRuntimeReference(
+                PlayerCreatedActorRuntimeReferenceRequest request,
+                StreamObserver<PlayerCreatedActorRuntimeReferenceResponse> observer) {
+              var peer = GrpcPeerIdentity.current();
+              if (peer == null
+                  || !ENTITY_CLIENT_PEER.equals(peer.uri())
+                  || !expected.equals(request)) {
+                observer.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+                return;
+              }
+              reads.incrementAndGet();
+              observer.onNext(
+                  PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
+                      .setSchemaVersion(1)
+                      .setSelector(expected)
+                      .setRuntimeEntityId(191L)
+                      .setProjectionGeneration(21L)
+                      .setProjectionFence(projectionFence.get())
+                      .setOriginalCatalogRevision(1L)
+                      .setOriginalPointerVersion(1L)
+                      .setOriginalActiveLifecycleEpoch(1L)
+                      .setOriginalDescriptorDigest("sha256:" + "5".repeat(64))
+                      .setOriginalAuthoredBindingDigest("sha256:" + "6".repeat(64))
+                      .setOriginalPolicyContentDigest("sha256:" + "7".repeat(64))
+                      .build());
+              observer.onCompleted();
+            }
+          };
       Server server = entityReferenceServer(service);
       var endpoints = new ServiceEndpointsProperties();
       endpoints.setEntityManagementService("localhost:" + server.getPort());
-      var client = new CanonicalPlayerCreatedRuntimeReferenceClient(endpoints,
-          pki.clientProperties(pkiDirectory, pki.identity("client")), new GrpcChannelFactory(), "firemud");
+      var client =
+          new CanonicalPlayerCreatedRuntimeReferenceClient(
+              endpoints,
+              pki.clientProperties(pkiDirectory, pki.identity("client")),
+              new GrpcChannelFactory(),
+              "firemud");
       try {
         client.init();
         return new CreatedEntityReferenceFixture(server, client, projectionFence, reads);
@@ -1488,7 +1566,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       client.close();
       server.shutdownNow();
       if (!server.awaitTermination(5, TimeUnit.SECONDS)) {
-        throw new IllegalStateException("Controlled created Entity reference server did not terminate");
+        throw new IllegalStateException(
+            "Controlled created Entity reference server did not terminate");
       }
     }
   }

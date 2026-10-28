@@ -21,8 +21,10 @@ REVOKE ALL ON FUNCTION world_player_created_origin_valid(JSONB) FROM PUBLIC;
 -- [jooq ignore stop]
 
 ALTER TABLE character_location
-    ALTER COLUMN entity_assignment_operation_id DROP NOT NULL,
-    ALTER COLUMN entity_assignment_digest DROP NOT NULL,
+    ALTER COLUMN entity_assignment_operation_id DROP NOT NULL;
+ALTER TABLE character_location
+    ALTER COLUMN entity_assignment_digest DROP NOT NULL;
+ALTER TABLE character_location
     ADD COLUMN entity_created_origin JSONB;
 
 -- [jooq ignore start]

@@ -3,8 +3,10 @@
 ALTER TABLE game_session_canonical_binding_region_bridge_obligation
     ADD COLUMN entity_created_origin JSONB;
 ALTER TABLE game_session_region_timeline_preparation
-    ADD COLUMN entity_created_origin JSONB,
-    ALTER COLUMN assignment_uuid DROP NOT NULL,
+    ADD COLUMN entity_created_origin JSONB;
+ALTER TABLE game_session_region_timeline_preparation
+    ALTER COLUMN assignment_uuid DROP NOT NULL;
+ALTER TABLE game_session_region_timeline_preparation
     ALTER COLUMN assignment_intent_digest DROP NOT NULL;
 
 -- [jooq ignore start]
@@ -38,7 +40,7 @@ AS $$
                 AND assignment_digest IS NOT NULL
                 AND assignment_digest ~ '^[0-9a-f]{64}$')
         OR (assignment_id IS NULL AND assignment_digest IS NULL
-                AND "${serviceSchema}".gs_player_created_origin_valid(created_origin))) IS TRUE;
+                AND "${flyway:defaultSchema}".gs_player_created_origin_valid(created_origin))) IS TRUE;
 $$;
 REVOKE ALL ON FUNCTION gs_original_actor_origin_valid(UUID, TEXT, JSONB) FROM PUBLIC;
 
@@ -142,30 +144,32 @@ ALTER TABLE game_session_canonical_binding_region_bridge_obligation
         )
     );
 
--- The two operations are independently allocated. Pair only their retained exact transition,
--- binding and shared source; a creation operation is never an assignment operation.
--- A later bridge lease grant need not equal the original initialization grant.
+-- The first actor retains its exact preparation. Later distinct transitions retain their own
+-- closed actor origins against that same installed region source; they never initialize a second
+-- timeline or adopt the first actor's assignment/creation. A fresh bridge grant may differ from
+-- the initialization grant. Protected incarnation/readback remains checked by the owner at runtime.
 CREATE FUNCTION gs_region_bridge_original_preparation_matches(
     bridge game_session_canonical_binding_region_bridge_obligation)
 RETURNS BOOLEAN LANGUAGE SQL STABLE
 AS $$
     SELECT bridge.bridge_operation_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM "${serviceSchema}".game_session_region_timeline_preparation preparation
-        JOIN "${serviceSchema}".game_session_canonical_gameplay_binding_inventory candidate
+        SELECT 1 FROM "${flyway:defaultSchema}".game_session_region_timeline_preparation preparation
+        JOIN "${flyway:defaultSchema}".game_session_canonical_gameplay_binding_inventory candidate
           ON candidate.binding_ref = bridge.binding_ref
          AND candidate.transition_id = bridge.transition_id
          AND candidate.binding_generation = bridge.binding_generation
-        WHERE preparation.transition_id = bridge.transition_id
-          AND preparation.binding_ref = bridge.binding_ref
-          AND preparation.binding_generation = bridge.binding_generation
-          AND preparation.account_id = bridge.account_id
-          AND preparation.tenant_id = bridge.tenant_id
+         AND candidate.account_id = bridge.account_id
+         AND candidate.tenant_id = bridge.tenant_id
+         AND candidate.game_instance_id = bridge.game_instance_id
+         AND candidate.runtime_game_instance_id = bridge.runtime_game_instance_id
+         AND candidate.session_id = bridge.session_id
+         AND candidate.region_id = bridge.region_id
+         AND candidate.region_epoch = bridge.region_epoch
+        WHERE preparation.tenant_id = bridge.tenant_id
           AND preparation.playable_state_namespace_id = candidate.playable_state_namespace_id
-          AND preparation.character_id = candidate.character_id
           AND preparation.playable_state_scope = candidate.playable_state_scope
           AND preparation.game_instance_id = bridge.game_instance_id
           AND preparation.runtime_game_instance_id = bridge.runtime_game_instance_id
-          AND preparation.session_id = bridge.session_id
           AND preparation.canonical_region_id = bridge.canonical_region_id
           AND preparation.region_id = bridge.region_id
           AND preparation.region_epoch = bridge.region_epoch
@@ -174,13 +178,19 @@ AS $$
           AND preparation.capture_id = bridge.world_capture_id
           AND preparation.graph_sha256 = bridge.world_graph_sha256
           AND preparation.preparation_input_digest = bridge.world_preparation_input_digest
-          AND preparation.world_source_digest = bridge.world_source_digest
-          AND preparation.assignment_uuid IS NOT DISTINCT FROM bridge.assignment_uuid
-          AND preparation.assignment_intent_digest IS NOT DISTINCT FROM bridge.assignment_intent_digest
-          AND preparation.entity_created_origin IS NOT DISTINCT FROM bridge.entity_created_origin
-          AND "${serviceSchema}".gs_original_actor_origin_valid(
+          AND "${flyway:defaultSchema}".gs_original_actor_origin_valid(
               bridge.assignment_uuid, bridge.assignment_intent_digest, bridge.entity_created_origin)
-          AND preparation.phase = 'INSTALLED');
+          AND preparation.phase = 'INSTALLED'
+          AND (preparation.transition_id <> bridge.transition_id
+              OR (preparation.binding_ref = bridge.binding_ref
+                  AND preparation.binding_generation = bridge.binding_generation
+                  AND preparation.account_id = bridge.account_id
+                  AND preparation.character_id = candidate.character_id
+                  AND preparation.session_id = bridge.session_id
+                  AND preparation.world_source_digest = bridge.world_source_digest
+                  AND preparation.assignment_uuid IS NOT DISTINCT FROM bridge.assignment_uuid
+                  AND preparation.assignment_intent_digest IS NOT DISTINCT FROM bridge.assignment_intent_digest
+                  AND preparation.entity_created_origin IS NOT DISTINCT FROM bridge.entity_created_origin)));
 $$;
 REVOKE ALL ON FUNCTION gs_region_bridge_original_preparation_matches(
     game_session_canonical_binding_region_bridge_obligation) FROM PUBLIC;
@@ -251,12 +261,12 @@ DECLARE
                    AND region_obligation.assignment_uuid <>
                        '00000000-0000-0000-0000-000000000000'::uuid
                    AND region_obligation.assignment_intent_digest ~ '^[0-9a-f]{64}$'$anchor$;
-    replacement TEXT := $replacement$                   AND "${serviceSchema}".gs_original_actor_origin_valid(
+    replacement TEXT := $replacement$                   AND "${flyway:defaultSchema}".gs_original_actor_origin_valid(
                        region_obligation.assignment_uuid, region_obligation.assignment_intent_digest,
                        region_obligation.entity_created_origin)
-                   AND "${serviceSchema}".gs_region_bridge_original_preparation_matches(region_obligation)$replacement$;
+                   AND "${flyway:defaultSchema}".gs_region_bridge_original_preparation_matches(region_obligation)$replacement$;
 BEGIN
-    SELECT pg_get_functiondef('"${serviceSchema}".require_first_new_abort_source_complete()'::regprocedure)
+    SELECT pg_get_functiondef('"${flyway:defaultSchema}".require_first_new_abort_source_complete()'::regprocedure)
         INTO STRICT original;
     IF (length(original) - length(replace(original, anchor, ''))) / length(anchor) <> 1 THEN
         RAISE EXCEPTION 'Expected exact V1044.1 retained region bridge abort origin guard';
@@ -268,12 +278,14 @@ $migration$;
 DO $migration$
 DECLARE
     original TEXT;
-    anchor TEXT := $anchor$    -- This SELECT is in the same transaction as markProvisional's transition UPDATE.$anchor$;
+    anchor TEXT := $anchor$    -- Initial publication and approved original-NEW final commit both retain this full current
+    -- runtime/launch/Human/catalog guard. No final-receipt branch returns before the locking read.
+    -- Its row lock serializes the decision with stop/replacement/deletion through commit.$anchor$;
     replacement TEXT := $replacement$    -- Consume the same retained actor origin on acquisition, retry, abort and final commit.
     IF EXISTS (SELECT 1 FROM game_session_canonical_binding_region_bridge_obligation bridge
         WHERE bridge.transition_id = NEW.transition_id
           AND bridge.bridge_operation_id IS NOT NULL
-          AND (NOT "${serviceSchema}".gs_region_bridge_original_preparation_matches(bridge)
+          AND (NOT "${flyway:defaultSchema}".gs_region_bridge_original_preparation_matches(bridge)
               OR (bridge.entity_created_origin IS NOT NULL
                   AND bridge.entity_created_origin->>'targetNamespace'
                       IS DISTINCT FROM NEW.admission_target_namespace)))
@@ -283,14 +295,16 @@ DECLARE
               AND bridge.binding_ref = NEW.candidate_binding_ref
               AND bridge.binding_generation = NEW.candidate_binding_generation
               AND bridge.status = 'ACKNOWLEDGED'
-              AND "${serviceSchema}".gs_region_bridge_original_preparation_matches(bridge))) THEN
+              AND "${flyway:defaultSchema}".gs_region_bridge_original_preparation_matches(bridge))) THEN
         RAISE EXCEPTION 'Lease-bound decision requires the exact original region actor source'
             USING ERRCODE = '23514', CONSTRAINT = 'gs_binding_runtime_original_region_actor_source';
     END IF;
 
-    -- This SELECT is in the same transaction as markProvisional's transition UPDATE.$replacement$;
+    -- Initial publication and approved original-NEW final commit both retain this full current
+    -- runtime/launch/Human/catalog guard. No final-receipt branch returns before the locking read.
+    -- Its row lock serializes the decision with stop/replacement/deletion through commit.$replacement$;
 BEGIN
-    SELECT pg_get_functiondef('"${serviceSchema}".require_running_runtime_for_lease_bound_binding_decision()'::regprocedure)
+    SELECT pg_get_functiondef('"${flyway:defaultSchema}".require_running_runtime_for_lease_bound_binding_decision()'::regprocedure)
         INTO STRICT original;
     IF position('approved_original_new_final boolean := false;' IN original) = 0
         OR position('AND runtime.status = ''RUNNING''' IN original) = 0

@@ -145,7 +145,8 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
 
       // Closed creation origin reaches the same actual writer/read/region refusal boundary.
       // This fixture supplies no authenticated Entity receipt or protected ACTIVE/hold owner.
-      var createdRoot = (tools.jackson.databind.node.ObjectNode) JSON.readTree(request.requestBytes());
+      var createdRoot =
+          (tools.jackson.databind.node.ObjectNode) JSON.readTree(request.requestBytes());
       createdRoot.put("schema", "world-canonical-initial-player-location-request/v2");
       createdRoot.remove("entityAssignmentOperationId");
       createdRoot.remove("entityAssignmentDigest");
@@ -156,20 +157,33 @@ class WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest {
       origin.put("terminalId", "13131313-1313-4313-8313-131313131313");
       origin.put("terminalSha256", "e".repeat(64));
       createdRoot.set("entityCreatedOrigin", origin);
-      byte[] createdBytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(createdRoot));
-      var created = new WorldCanonicalInitialPlayerLocationRepository.Request(
-          request.operationId(), prefixedDigest(createdBytes), createdBytes, request.originalLifecycleEvidenceBytes());
+      byte[] createdBytes =
+          Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(createdRoot));
+      var created =
+          new WorldCanonicalInitialPlayerLocationRepository.Request(
+              request.operationId(),
+              prefixedDigest(createdBytes),
+              createdBytes,
+              request.originalLifecycleEvidenceBytes());
       assertThat(repository.store(created).outcome())
           .isEqualTo(WorldCanonicalInitialPlayerLocationRepository.Outcome.UNREGISTERED);
       assertThat(repository.store(created).retained()).isFalse();
       assertThat(repository.read(created)).isEmpty();
       createdRoot.put("entityAssignmentDigest", "a".repeat(64));
-      byte[] mixedBytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(createdRoot));
-      var mixed = new WorldCanonicalInitialPlayerLocationRepository.Request(
-          request.operationId(), prefixedDigest(mixedBytes), mixedBytes, request.originalLifecycleEvidenceBytes());
+      byte[] mixedBytes =
+          Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(createdRoot));
+      var mixed =
+          new WorldCanonicalInitialPlayerLocationRepository.Request(
+              request.operationId(),
+              prefixedDigest(mixedBytes),
+              mixedBytes,
+              request.originalLifecycleEvidenceBytes());
       assertThatThrownBy(() -> repository.store(mixed))
-          .isInstanceOf(WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationEvidenceException.class);
-      assertThat(rowCount(dsl, "world_canonical_initial_player_location_operation")).isEqualTo(operationsBefore);
+          .isInstanceOf(
+              WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationEvidenceException
+                  .class);
+      assertThat(rowCount(dsl, "world_canonical_initial_player_location_operation"))
+          .isEqualTo(operationsBefore);
       assertThat(rowCount(dsl, "character_location")).isEqualTo(locationsBefore);
 
       var wrongOrigin = withOrigin(request, "PRIOR_POINTER");

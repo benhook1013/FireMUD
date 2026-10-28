@@ -9,10 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
-import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
-import net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClient.VerifiedReceipt;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
@@ -21,8 +19,10 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Re
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
+import net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClient.VerifiedReceipt;
 import net.firedevops.firemud.worldmanagement.client.GameSessionCanonicalInitialAdmissionOwnerClient;
 import net.firedevops.firemud.worldmanagement.client.PreseededActorAssignmentReceiptShape;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
@@ -53,8 +53,14 @@ public final class CanonicalInitialPlayerLocationService {
       WorldCanonicalInitialPlayerLocationRepository locationRepository,
       GameSessionCanonicalInitialAdmissionOwnerClient gameSessionOwner,
       EntityReceiptReader entityReceiptReader) {
-    this(trustedNamespace, associationRepository, holdRepository, locationRepository,
-        gameSessionOwner, entityReceiptReader, null);
+    this(
+        trustedNamespace,
+        associationRepository,
+        holdRepository,
+        locationRepository,
+        gameSessionOwner,
+        entityReceiptReader,
+        null);
   }
 
   public CanonicalInitialPlayerLocationService(
@@ -177,20 +183,25 @@ public final class CanonicalInitialPlayerLocationService {
       if (!trustedNamespace.equals(selection.playerCreatedOrigin().getTargetNamespace())) {
         throw failedPrecondition("Creation origin differs from World workload namespace");
       }
-      var request = PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
-          .setSchemaVersion(1).setOrigin(selection.playerCreatedOrigin())
-          .setTenantUuid(selection.canonicalTenantId().toString())
-          .setAccountUuid(selection.canonicalAccountId().toString())
-          .setPlayableStateNamespaceUuid(selection.playableStateNamespaceId().toString())
-          .setGameInstanceUuid(selection.canonicalGameInstanceId().toString())
-          .setCharacterUuid(selection.characterId().toString())
-          .setCanonicalVersionUuid(selection.canonicalVersionId().toString())
-          .setRealmUuid(selection.realmId().toString())
-          .setWorldSlug(selection.worldSlug()).setRealmSlug(selection.realmSlug()).build();
+      var request =
+          PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
+              .setSchemaVersion(1)
+              .setOrigin(selection.playerCreatedOrigin())
+              .setTenantUuid(selection.canonicalTenantId().toString())
+              .setAccountUuid(selection.canonicalAccountId().toString())
+              .setPlayableStateNamespaceUuid(selection.playableStateNamespaceId().toString())
+              .setGameInstanceUuid(selection.canonicalGameInstanceId().toString())
+              .setCharacterUuid(selection.characterId().toString())
+              .setCanonicalVersionUuid(selection.canonicalVersionId().toString())
+              .setRealmUuid(selection.realmId().toString())
+              .setWorldSlug(selection.worldSlug())
+              .setRealmSlug(selection.realmSlug())
+              .build();
       VerifiedReceipt verified = entityCreatedReceiptReader.read(request);
       if (verified == null) throw failedPrecondition("Entity creation receipt is unavailable");
       try {
-        CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(request, verified.response());
+        CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(
+            request, verified.response());
       } catch (IllegalArgumentException invalid) {
         throw failedPrecondition("Entity creation receipt differs from original actor target");
       }
@@ -355,9 +366,11 @@ public final class CanonicalInitialPlayerLocationService {
       WorldCanonicalInstanceLifecycleEvidence activeLifecycle,
       GameSessionCanonicalInitialAdmissionOwnerProof terminal) {
     Map<String, Object> request = new LinkedHashMap<>();
-    request.put("schema", selection.playerCreatedOrigin() == null
-        ? "world-canonical-initial-player-location-request/v1"
-        : "world-canonical-initial-player-location-request/v2");
+    request.put(
+        "schema",
+        selection.playerCreatedOrigin() == null
+            ? "world-canonical-initial-player-location-request/v1"
+            : "world-canonical-initial-player-location-request/v2");
     request.put("operationId", selection.placementOperationId().toString());
     request.put("canonicalTenantId", selection.canonicalTenantId().toString());
     request.put("playableStateNamespaceId", selection.playableStateNamespaceId().toString());
@@ -368,7 +381,10 @@ public final class CanonicalInitialPlayerLocationService {
       request.put("entityAssignmentOperationId", selection.assignmentId().toString());
       request.put("entityAssignmentDigest", selection.assignmentIntentDigest());
     } else {
-      request.put("entityCreatedOrigin", WorldCanonicalInitialPlayerLocationRepository.createdOriginJson(selection.playerCreatedOrigin()));
+      request.put(
+          "entityCreatedOrigin",
+          WorldCanonicalInitialPlayerLocationRepository.createdOriginJson(
+              selection.playerCreatedOrigin()));
     }
     request.put("realmId", selection.realmId().toString());
     request.put("worldSlug", selection.worldSlug());

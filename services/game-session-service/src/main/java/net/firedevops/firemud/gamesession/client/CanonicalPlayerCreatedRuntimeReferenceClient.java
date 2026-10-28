@@ -80,8 +80,10 @@ public final class CanonicalPlayerCreatedRuntimeReferenceClient
     var response =
         requireInitializedStub("Entity PLAYER_CREATED runtime reference client is unavailable")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .withMaxInboundMessageSize(CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_RESPONSE_BYTES)
-            .withMaxOutboundMessageSize(CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_REQUEST_BYTES)
+            .withMaxInboundMessageSize(
+                CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_RESPONSE_BYTES)
+            .withMaxOutboundMessageSize(
+                CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_REQUEST_BYTES)
             .readPlayerCreatedActorRuntimeReference(request);
     try {
       CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(request, response);
@@ -103,7 +105,8 @@ public final class CanonicalPlayerCreatedRuntimeReferenceClient
   }
 
   /** Constructible only from the authenticated RPC's exact, closed Entity response. */
-  public static final class RuntimeActorReference implements CanonicalGameplayRuntimeActorReference {
+  public static final class RuntimeActorReference
+      implements CanonicalGameplayRuntimeActorReference {
     private final String workloadNamespace;
     private final PlayerCreatedActorRuntimeReferenceResponse evidence;
     private final CanonicalRuntimeEntityId runtimeEntityId;

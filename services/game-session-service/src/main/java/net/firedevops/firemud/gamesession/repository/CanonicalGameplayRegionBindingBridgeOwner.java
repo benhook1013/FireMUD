@@ -2,12 +2,12 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.util.Objects;
 import java.util.UUID;
-import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
-import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
-import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
+import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 
 /** Manual owner for the initial-NEW region binding mutation and its durable local ACK. */
@@ -73,8 +73,7 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
       throw unavailable();
     }
 
-    CanonicalGameplayRuntimeActorReference reference =
-        readReference(installation.worldRequest);
+    CanonicalGameplayRuntimeActorReference reference = readReference(installation.worldRequest);
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage initialPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, reference);
     regionLeaseOwner.prepareBridge(installation, initialPreimage, reference);
@@ -125,13 +124,11 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
               finalAdmissionSource) {
     Objects.requireNonNull(installation, "installation");
     Objects.requireNonNull(finalAdmissionSource, "finalAdmissionSource");
-    CanonicalGameplayRuntimeActorReference before =
-        readReference(installation.worldRequest);
+    CanonicalGameplayRuntimeActorReference before = readReference(installation.worldRequest);
     CanonicalGameplayRegionLeaseOwner.OriginalNewFinalBindingCurrentProof proof =
         regionLeaseOwner.revalidateOriginalNewFinalBinding(
             installation, finalAdmissionSource, before);
-    CanonicalGameplayRuntimeActorReference after =
-        readReference(installation.worldRequest);
+    CanonicalGameplayRuntimeActorReference after = readReference(installation.worldRequest);
     if (!sameReference(before, after) || !proof.matchesCurrentEntityReference(after)) {
       throw unavailable();
     }
@@ -144,16 +141,20 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     if (origin instanceof CanonicalGameplayRuntimeActorReference.CreationOrigin) {
       if (createdReferenceClient == null) throw unavailable();
       var target = request.getExpectedTarget();
-      return createdReferenceClient.read(PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
-          .setSchemaVersion(1).setOrigin(request.getPlayerCreatedOrigin())
-          .setTenantUuid(target.getCanonicalTenantUuid())
-          .setAccountUuid(request.getCanonicalAccountUuid())
-          .setPlayableStateNamespaceUuid(target.getPlayableStateNamespaceUuid())
-          .setGameInstanceUuid(target.getGameInstanceId())
-          .setCharacterUuid(request.getCharacterUuid())
-          .setCanonicalVersionUuid(target.getCanonicalVersionUuid())
-          .setRealmUuid(target.getRealmUuid()).setWorldSlug(target.getWorldSlug())
-          .setRealmSlug(target.getRealmSlug()).build());
+      return createdReferenceClient.read(
+          PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
+              .setSchemaVersion(1)
+              .setOrigin(request.getPlayerCreatedOrigin())
+              .setTenantUuid(target.getCanonicalTenantUuid())
+              .setAccountUuid(request.getCanonicalAccountUuid())
+              .setPlayableStateNamespaceUuid(target.getPlayableStateNamespaceUuid())
+              .setGameInstanceUuid(target.getGameInstanceId())
+              .setCharacterUuid(request.getCharacterUuid())
+              .setCanonicalVersionUuid(target.getCanonicalVersionUuid())
+              .setRealmUuid(target.getRealmUuid())
+              .setWorldSlug(target.getWorldSlug())
+              .setRealmSlug(target.getRealmSlug())
+              .build());
     }
     return entityReferenceClient.read(entityRequest(request));
   }

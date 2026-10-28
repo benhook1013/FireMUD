@@ -211,12 +211,24 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
                   locationFunctionMetadata(freshDsl, freshSchema).functionSource(), freshSchema))
           .isEqualTo(normalizeFunctionSource(atCurrentFrontier.functionSource(), upgradeSchema));
       // Copied deferred-guard probes only: these do not allocate production owner facts.
-      exerciseLocationOperationProbe(upgradeSource, upgradeSchema,
-          atCurrentFrontier.functionSource(), false, false);
-      exerciseLocationOperationProbe(upgradeSource, upgradeSchema,
-          atCurrentFrontier.functionSource(), false, false, true, false);
-      exerciseLocationOperationProbe(upgradeSource, upgradeSchema,
-          atCurrentFrontier.functionSource(), false, true, true, true);
+      exerciseLocationOperationProbe(
+          upgradeSource, upgradeSchema, atCurrentFrontier.functionSource(), false, false);
+      exerciseLocationOperationProbe(
+          upgradeSource,
+          upgradeSchema,
+          atCurrentFrontier.functionSource(),
+          false,
+          false,
+          true,
+          false);
+      exerciseLocationOperationProbe(
+          upgradeSource,
+          upgradeSchema,
+          atCurrentFrontier.functionSource(),
+          false,
+          true,
+          true,
+          true);
       TerminalFunctionMetadata freshTerminal = terminalFunctionMetadata(freshDsl, freshSchema);
       assertThat(freshTerminal.publicExecuteGrant()).isFalse();
       assertThat(freshTerminal.securityDefiner()).isTrue();
@@ -831,7 +843,8 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       boolean borrowedOperation,
       boolean shouldReject)
       throws SQLException {
-    exerciseLocationOperationProbe(source, schema, functionSource, borrowedOperation, shouldReject, false, false);
+    exerciseLocationOperationProbe(
+        source, schema, functionSource, borrowedOperation, shouldReject, false, false);
   }
 
   private static void exerciseLocationOperationProbe(
@@ -888,15 +901,24 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       insertPlacement(connection, evidence, locationOperationId);
       String operationOrigin = null;
       if (createdOrigin) {
-        String origin = "{\"targetNamespace\":\"firemud\",\"creationOperationId\":\"" + UUID.randomUUID()
-            + "\",\"mutationDigest\":\"" + "d".repeat(64) + "\",\"terminalId\":\"" + UUID.randomUUID()
-            + "\",\"terminalSha256\":\"" + "e".repeat(64) + "\"}";
-        try (PreparedStatement update = connection.prepareStatement(
-            "UPDATE pg_temp.initial_location_probe SET entity_assignment_operation_id=NULL, entity_assignment_digest=NULL, entity_created_origin=?::jsonb")) {
+        String origin =
+            "{\"targetNamespace\":\"firemud\",\"creationOperationId\":\""
+                + UUID.randomUUID()
+                + "\",\"mutationDigest\":\""
+                + "d".repeat(64)
+                + "\",\"terminalId\":\""
+                + UUID.randomUUID()
+                + "\",\"terminalSha256\":\""
+                + "e".repeat(64)
+                + "\"}";
+        try (PreparedStatement update =
+            connection.prepareStatement(
+                "UPDATE pg_temp.initial_location_probe SET entity_assignment_operation_id=NULL, entity_assignment_digest=NULL, entity_created_origin=?::jsonb")) {
           update.setString(1, origin);
           update.executeUpdate();
         }
-        operationOrigin = mismatchedOrigin ? origin.replace("e".repeat(64), "f".repeat(64)) : origin;
+        operationOrigin =
+            mismatchedOrigin ? origin.replace("e".repeat(64), "f".repeat(64)) : origin;
       }
       insertLocationOperation(connection, evidence, operationId, operationOrigin);
       try {

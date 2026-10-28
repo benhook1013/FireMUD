@@ -22,8 +22,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRuntimeReferenceServiceGrpc;
-import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceResponse;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
@@ -68,7 +68,9 @@ class EntityPlayerCreatedActorPlacementReceiptClientMtlsTest {
 
         expected.set(
             expected.get().toBuilder()
-                .setSelector(request().toBuilder().setAccountUuid(uuid("12121212-1212-4212-8212-121212121212").toString()))
+                .setSelector(
+                    request().toBuilder()
+                        .setAccountUuid(uuid("12121212-1212-4212-8212-121212121212").toString()))
                 .build());
         assertThatThrownBy(() -> client.read(request()))
             .isInstanceOf(StatusRuntimeException.class)
@@ -77,22 +79,47 @@ class EntityPlayerCreatedActorPlacementReceiptClientMtlsTest {
                     assertThat(Status.fromThrowable(failure).getCode())
                         .isEqualTo(Status.Code.FAILED_PRECONDITION));
         var exact = receipt(request());
-        for (var malformed : java.util.List.of(
-            exact.toBuilder().setSelector(request().toBuilder().setGameInstanceUuid(ACCOUNT.toString())).build(),
-            exact.toBuilder().setSelector(request().toBuilder().setOrigin(request().getOrigin().toBuilder().setMutationDigest("f".repeat(64)))).build(),
-            exact.toBuilder().setProjectionFence(0L).build(),
-            exact.toBuilder().mergeUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
-                .addField(99, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1L).build()).build()).build())) {
+        for (var malformed :
+            java.util.List.of(
+                exact.toBuilder()
+                    .setSelector(request().toBuilder().setGameInstanceUuid(ACCOUNT.toString()))
+                    .build(),
+                exact.toBuilder()
+                    .setSelector(
+                        request().toBuilder()
+                            .setOrigin(
+                                request().getOrigin().toBuilder()
+                                    .setMutationDigest("f".repeat(64))))
+                    .build(),
+                exact.toBuilder().setProjectionFence(0L).build(),
+                exact.toBuilder()
+                    .mergeUnknownFields(
+                        com.google.protobuf.UnknownFieldSet.newBuilder()
+                            .addField(
+                                99,
+                                com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                    .addVarint(1L)
+                                    .build())
+                            .build())
+                    .build())) {
           expected.set(malformed);
-          assertThatThrownBy(() -> client.read(request())).isInstanceOf(StatusRuntimeException.class)
-              .satisfies(failure -> assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          assertThatThrownBy(() -> client.read(request()))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(Status.fromThrowable(failure).getCode())
+                          .isEqualTo(Status.Code.FAILED_PRECONDITION));
         }
         int beforeInvalid = calls.get();
         assertThatThrownBy(() -> client.read(request().toBuilder().setSchemaVersion(2).build()))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> client.read(request().toBuilder().setOrigin(
-            request().getOrigin().toBuilder().setTargetNamespace("other")).build()))
+        assertThatThrownBy(
+                () ->
+                    client.read(
+                        request().toBuilder()
+                            .setOrigin(
+                                request().getOrigin().toBuilder().setTargetNamespace("other"))
+                            .build()))
             .isInstanceOf(IllegalArgumentException.class);
         assertThat(calls).hasValue(beforeInvalid);
       }
@@ -205,25 +232,40 @@ class EntityPlayerCreatedActorPlacementReceiptClientMtlsTest {
   private static PlayerCreatedActorRuntimeReferenceRequest request() {
     return PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
         .setSchemaVersion(1)
-        .setOrigin(PlayerCreatedActorOrigin.newBuilder().setTargetNamespace(NAMESPACE)
-            .setCreationOperationUuid(OPERATION.toString()).setMutationDigest("a".repeat(64))
-            .setTerminalUuid(ASSIGNMENT.toString()).setTerminalSha256("b".repeat(64)))
-        .setTenantUuid(TENANT.toString()).setAccountUuid(ACCOUNT.toString())
+        .setOrigin(
+            PlayerCreatedActorOrigin.newBuilder()
+                .setTargetNamespace(NAMESPACE)
+                .setCreationOperationUuid(OPERATION.toString())
+                .setMutationDigest("a".repeat(64))
+                .setTerminalUuid(ASSIGNMENT.toString())
+                .setTerminalSha256("b".repeat(64)))
+        .setTenantUuid(TENANT.toString())
+        .setAccountUuid(ACCOUNT.toString())
         .setPlayableStateNamespaceUuid(PLAYABLE_NAMESPACE.toString())
-        .setGameInstanceUuid(GAME_INSTANCE.toString()).setCharacterUuid(CHARACTER.toString())
-        .setCanonicalVersionUuid(VERSION.toString()).setRealmUuid(REALM.toString())
-        .setWorldSlug("green-hollow").setRealmSlug("sunvale").build();
+        .setGameInstanceUuid(GAME_INSTANCE.toString())
+        .setCharacterUuid(CHARACTER.toString())
+        .setCanonicalVersionUuid(VERSION.toString())
+        .setRealmUuid(REALM.toString())
+        .setWorldSlug("green-hollow")
+        .setRealmSlug("sunvale")
+        .build();
   }
 
   private static PlayerCreatedActorRuntimeReferenceResponse receipt(
       PlayerCreatedActorRuntimeReferenceRequest request) {
     return PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
-        .setSchemaVersion(1).setSelector(request)
-        .setRuntimeEntityId(23L).setProjectionGeneration(1L).setProjectionFence(1L)
-        .setOriginalCatalogRevision(3L).setOriginalPointerVersion(1L).setOriginalActiveLifecycleEpoch(2L)
+        .setSchemaVersion(1)
+        .setSelector(request)
+        .setRuntimeEntityId(23L)
+        .setProjectionGeneration(1L)
+        .setProjectionFence(1L)
+        .setOriginalCatalogRevision(3L)
+        .setOriginalPointerVersion(1L)
+        .setOriginalActiveLifecycleEpoch(2L)
         .setOriginalDescriptorDigest("sha256:" + "c".repeat(64))
         .setOriginalAuthoredBindingDigest("sha256:" + "d".repeat(64))
-        .setOriginalPolicyContentDigest("sha256:" + "e".repeat(64)).build();
+        .setOriginalPolicyContentDigest("sha256:" + "e".repeat(64))
+        .build();
   }
 
   private static IdentitySpec identity(
