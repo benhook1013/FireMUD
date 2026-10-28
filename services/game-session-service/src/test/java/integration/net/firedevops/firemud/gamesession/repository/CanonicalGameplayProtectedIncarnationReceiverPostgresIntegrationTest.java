@@ -10,6 +10,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.google.protobuf.ByteString;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.RedisClient;
@@ -55,6 +59,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -190,6 +195,12 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
   @Test
   void lostDispatchClaimReplyLeavesMissingAccountOpenUncertainWithoutAnotherCreate()
       throws Exception {
+    String sensitiveMessage = "secret-dispatch-claim-reply-token-and-source-93746";
+    Logger logger =
+        (Logger) LoggerFactory.getLogger(CanonicalGameplayAccountInitialBarrierRedisOwner.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
     try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
         InitialRedisFixture physical = InitialRedisFixture.open();
         var login = fixture.originalLogin()) {
@@ -197,7 +208,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       org.mockito.Mockito.doAnswer(
               invocation -> {
                 invocation.callRealMethod();
-                throw new IllegalStateException("controlled loss after dispatch claim committed");
+                throw new IllegalStateException(sensitiveMessage);
               })
           .when(repository)
           .recordDispatchPossible(any(), any());
@@ -223,6 +234,27 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
       assertThat(physical.connection.sync().exists(key)).isZero();
       org.mockito.Mockito.verify(repository).recordDispatchPossible(any(), any());
+      assertThat(appender.list).hasSize(1);
+      ILoggingEvent event = appender.list.getFirst();
+      assertThat(event.getLevel()).isEqualTo(Level.WARN);
+      assertThat(event.getFormattedMessage())
+          .isEqualTo(
+              "Initial Account OPEN create attempt did not complete originalRequestId="
+                  + snapshot.originalRequestId()
+                  + " initializerId="
+                  + snapshot.initializerId()
+                  + " failureType="
+                  + IllegalStateException.class.getName())
+          .doesNotContain(sensitiveMessage);
+      assertThat(event.getArgumentArray())
+          .containsExactly(
+              snapshot.originalRequestId(),
+              snapshot.initializerId(),
+              IllegalStateException.class.getName());
+      assertThat(event.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
     }
   }
 
@@ -1295,13 +1327,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
 
       private static InitialFixture open(BigInteger sourceControlEpoch) throws Exception {
         String schema = "gs_initial_incarnation_" + UUID.randomUUID().toString().replace("-", "");
-        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setDriverClassName("org.postgresql.Driver");
-        String jdbcUrl = postgres.getJdbcUrl();
-        String separator = jdbcUrl.contains("?") ? "&" : "?";
-        dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
-        dataSource.setUsername(postgres.getUsername());
-        dataSource.setPassword(postgres.getPassword());
+        DriverManagerDataSource dataSource = Fixture.dataSource(schema);
         Flyway.configure()
             .dataSource(dataSource)
             .schemas(schema)
