@@ -1,5 +1,5 @@
 # Build from the fixed MinIO Client source commit supplied as the build context.
-FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS build
+FROM golang:1.27.3-bookworm@sha256:05237276236793ebedaf0b87dab86add9ec9adc66ebef2dbc3107c18254cde1c AS build
 
 ENV CGO_ENABLED=0 \
     GOSUMDB=sum.golang.org \
