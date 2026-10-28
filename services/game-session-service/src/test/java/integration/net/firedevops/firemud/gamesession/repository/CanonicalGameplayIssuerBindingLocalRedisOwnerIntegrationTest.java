@@ -42,8 +42,10 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
@@ -112,6 +114,7 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
             .on()
             .addPassword(password)
             .keyPattern(ISSUER_KEY_PREFIX + "*")
+            .keyPattern("session:game:index:account:*")
             .addCommand(CommandType.HELLO)
             .addCommand(CommandType.PING)
             .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
@@ -123,7 +126,9 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
             .addCommand(CommandType.HGET)
             .addCommand(CommandType.HLEN)
             .addCommand(CommandType.HGETALL)
-            .addCommand(CommandType.HSET));
+            .addCommand(CommandType.HSET)
+            .addCommand(CommandType.SADD)
+            .addCommand(CommandType.SISMEMBER));
     ownerClient = createRedisClient(OWNER_PRINCIPAL, password);
     schema = newTestSchemaAtVersion("gs_issuer_local_new_");
   }
@@ -492,7 +497,9 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
             runtimeTarget.playableTarget());
     new CanonicalGameplayBindingInventoryRepository(dsl)
         .markProvisional(provisionalEvidence, firstDecision);
-    var firstWithBinding = projectionOwner.projectAndRead(first);
+    var resumedProvisional = reloadProgressedOperation(dsl, currentState::get, first);
+    var firstWithBinding =
+        projectionOwner(dsl, currentState::get).projectAndRead(resumedProvisional);
     assertThat(firstWithBinding.scriptOutcome()).isEqualTo(2L);
     var firstProjectedFields =
         CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
@@ -504,6 +511,33 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(firstProjectedFields)
         .containsEntry(firstCapacityField, first.exactMemberValueBytes());
     assertThat(projectionOwner.projectAndRead(first).scriptOutcome()).isEqualTo(3L);
+
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var currentProvisional = inventory.readProvisionalCasEvidence(firstRequest.transitionId());
+    String accountMember =
+        CanonicalGameplayAccountIndexMember.of(currentProvisional.candidate()).value();
+    inventory.markCandidateAccountIndexPresent(currentProvisional, accountMember);
+    var resumedPresent = reloadProgressedOperation(dsl, currentState::get, first);
+    assertThat(resumedPresent.preparedTransition().inventoryRevision())
+        .isGreaterThan(resumedProvisional.preparedTransition().inventoryRevision());
+    assertThat(
+            projectionOwner(dsl, currentState::get).projectAndRead(resumedPresent).scriptOutcome())
+        .isEqualTo(3L);
+
+    var memberRepair = inventory.beginAccountMemberRepair(firstRequest.transitionId());
+    var accountRedisOwner =
+        new CanonicalGameplayAccountMemberRepairRedisOwner(
+            ownerClient, RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
+    var memberReadback = accountRedisOwner.projectAndRead(memberRepair);
+    inventory.acknowledgeAccountMemberRepair(memberRepair, memberReadback);
+    var resumedAcknowledged = reloadProgressedOperation(dsl, currentState::get, first);
+    assertThat(resumedAcknowledged.preparedTransition().inventoryRevision())
+        .isGreaterThan(resumedPresent.preparedTransition().inventoryRevision());
+    assertThat(
+            projectionOwner(dsl, currentState::get)
+                .projectAndRead(resumedAcknowledged)
+                .scriptOutcome())
+        .isEqualTo(3L);
 
     String beforeCapacityRefusal = localRegistrationImage(dsl);
     assertThatThrownBy(
@@ -849,6 +883,33 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                 List.of(new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution())),
             source);
     return new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, source);
+  }
+
+  private static CanonicalGameplayIssuerBindingLocalOperation reloadProgressedOperation(
+      DSLContext dsl,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source,
+      CanonicalGameplayIssuerBindingLocalOperation original) {
+    // A replacement worker has only the caller request; its repository reloads the durable source.
+    var reloaded =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, source)
+            .beginOrResumeOrdinaryNew(original.request());
+    assertThat(reloaded.preparedTransition().status())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL);
+    assertThat(reloaded.preparedTransition().inventoryRevision())
+        .isGreaterThan(original.localInventorySnapshotRevision());
+    assertThat(reloaded.request()).isEqualTo(original.request());
+    assertThat(reloaded.reservation()).isEqualTo(original.reservation());
+    assertThat(reloaded.candidateAccountIndexFence())
+        .isEqualTo(original.candidateAccountIndexFence());
+    assertThat(reloaded.operationId()).isEqualTo(original.operationId());
+    assertThat(reloaded.operationFence()).isEqualTo(original.operationFence());
+    assertThat(reloaded.localMemberGeneration()).isEqualTo(original.localMemberGeneration());
+    assertThat(reloaded.localInventorySnapshotRevision())
+        .isEqualTo(original.localInventorySnapshotRevision());
+    assertThat(reloaded.memberValue()).isEqualTo(original.memberValue());
+    assertThat(reloaded.exactMemberValueBytes()).containsExactly(original.exactMemberValueBytes());
+    assertThat(reloaded.memberValueDigest()).isEqualTo(original.memberValueDigest());
+    return reloaded;
   }
 
   private CanonicalGameplayIssuerBindingLocalRedisOwner projectionOwner(
