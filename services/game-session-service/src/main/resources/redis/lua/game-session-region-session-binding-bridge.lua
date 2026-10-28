@@ -65,6 +65,7 @@ if metaType ~= 'hash'
 local currentTickId = redis.call('HGET', metaKey, 'current_tick_id')
 local currentTickState = redis.call('HGET', metaKey, 'current_tick_state')
 local currentTickTerminalAt = redis.call('HGET', metaKey, 'current_tick_terminal_at_ms')
+if not currentTickId then return 0 end
 if currentTickId == '-1' then
   if currentTickState ~= 'APPLIED' or currentTickTerminalAt then return 0 end
 elseif not nonnegativeInt64(currentTickId) then

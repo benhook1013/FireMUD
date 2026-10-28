@@ -152,15 +152,9 @@ public final class CanonicalInitialPlayerLocationGrpcService
           "A complete closed region-placement selector is required");
       return;
     }
-    final Optional<CanonicalInitialPlayerLocationRegionResponse> response;
+    final Optional<WorldCanonicalInitialPlayerLocationRepository.RegionResult> retainedRegion;
     try {
-      response =
-          service
-              .readRegion(selection)
-              .map(
-                  retained ->
-                      CanonicalInitialPlayerLocationGrpcCodec.toRegionResponse(
-                          selection, retained));
+      retainedRegion = service.readRegion(selection);
     } catch (StatusRuntimeException rejected) {
       reportOwnerFailure(
           responseObserver, rejected, "World initial-player region read is unavailable");
@@ -176,6 +170,20 @@ public final class CanonicalInitialPlayerLocationGrpcService
       return;
     } catch (RuntimeException failure) {
       fail(responseObserver, Status.UNAVAILABLE, "World initial-player region read is unavailable");
+      return;
+    }
+
+    final Optional<CanonicalInitialPlayerLocationRegionResponse> response;
+    try {
+      response =
+          retainedRegion.map(
+              retained ->
+                  CanonicalInitialPlayerLocationGrpcCodec.toRegionResponse(selection, retained));
+    } catch (IllegalStateException inconsistent) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Exact initial-placement region evidence is unavailable");
       return;
     }
 

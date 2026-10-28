@@ -9,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
@@ -273,7 +272,8 @@ public final class CanonicalInitialPlayerLocationService {
     var release = association.completeLaunchBinding().evidence().releaseAttestation();
     return new WorldCanonicalInstanceLifecycleEvidence.Request(
         WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
-        lifecycleReadRequestId(selection.placementOperationId()),
+        CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(
+            selection.placementOperationId()),
         trustedNamespace,
         identity.canonicalTenantId(),
         identity.worldSlug(),
@@ -460,13 +460,6 @@ public final class CanonicalInitialPlayerLocationService {
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
-  }
-
-  private static UUID lifecycleReadRequestId(UUID operationId) {
-    byte[] name =
-        ("firemud-world-initial-location-lifecycle-read/v1/" + operationId)
-            .getBytes(StandardCharsets.US_ASCII);
-    return UUID.nameUUIDFromBytes(name);
   }
 
   private static io.grpc.StatusRuntimeException failedPrecondition(String message) {

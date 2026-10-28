@@ -255,7 +255,7 @@ class CanonicalInitialPlayerLocationClientTest {
   }
 
   @Test
-  void rejectsOpenMalformedOrUnsupportedRequestsBeforeEitherRpc() throws Exception {
+  void rejectsOpenMalformedOrUnsupportedRequestsBeforeEveryRpc() throws Exception {
     var request = request();
     var stub = mockStub();
     var client = clientWithStub(stub);
@@ -342,9 +342,12 @@ class CanonicalInitialPlayerLocationClientTest {
           .isInstanceOf(IllegalArgumentException.class);
       assertThatThrownBy(() -> client.readInitialPlayerLocation(candidate))
           .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(candidate))
+          .isInstanceOf(IllegalArgumentException.class);
     }
     verify(stub, never()).placeInitialPlayer(any());
     verify(stub, never()).readInitialPlayerLocation(any());
+    verify(stub, never()).readInitialPlayerLocationRegion(any());
   }
 
   @Test
@@ -427,7 +430,7 @@ class CanonicalInitialPlayerLocationClientTest {
   }
 
   @Test
-  void refusesAmbientSqlDuringInitializationAndBothRpcsAndRejectsUseAfterClose() throws Exception {
+  void refusesAmbientSqlDuringInitializationAndEveryRpcAndRejectsUseAfterClose() throws Exception {
     var request = request();
     var initClient = newClient();
     TransactionSynchronizationManager.initSynchronization();
@@ -453,15 +456,22 @@ class CanonicalInitialPlayerLocationClientTest {
             .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> client.readInitialPlayerLocation(request))
             .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
+            .isInstanceOf(IllegalStateException.class);
       } finally {
         TransactionSynchronizationManager.clear();
       }
     }
     verify(stub, never()).placeInitialPlayer(any());
     verify(stub, never()).readInitialPlayerLocation(any());
+    verify(stub, never()).readInitialPlayerLocationRegion(any());
 
     client.close();
     assertThatThrownBy(() -> client.placeInitialPlayer(request))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> client.readInitialPlayerLocation(request))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
         .isInstanceOf(IllegalStateException.class);
   }
 

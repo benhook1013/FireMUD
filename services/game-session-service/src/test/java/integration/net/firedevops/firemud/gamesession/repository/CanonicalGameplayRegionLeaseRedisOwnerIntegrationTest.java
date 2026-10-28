@@ -127,6 +127,49 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
     }
   }
 
+  @Test
+  void missingCurrentTickIdMakesLeaseAcquireReadAndRenewStaleWithoutChangingLeaseOrMeta() {
+    try (RedisFixture redis = RedisFixture.open()) {
+      var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      var source = source(GAME_INSTANCE_ID_A);
+      seedMeta(redis.admin(), source);
+      var grant = owner.acquire(source, 7L, Duration.ofSeconds(30), identity("missing-tick-id"));
+      byte[] leaseKey = ascii(grant.key());
+      byte[] metaKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      byte[] leaseValue = redis.admin().get(leaseKey);
+      assertThat(redis.admin().hdel(metaKey, ascii("current_tick_id"))).isEqualTo(1L);
+      long ttlBeforeRejectedRenewal = redis.admin().pttl(leaseKey);
+
+      assertThatThrownBy(
+              () ->
+                  owner.acquire(
+                      source, 7L, Duration.ofMinutes(2), identity("after-missing-tick-id")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
+      assertThatThrownBy(() -> owner.requireCurrent(grant))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
+      assertThatThrownBy(() -> owner.renew(grant, Duration.ofMinutes(2)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Canonical Game Session region lease is unavailable")
+          .satisfies(failure -> assertThat(failure.getCause()).isNull());
+
+      assertThat(redis.admin().hget(metaKey, ascii("current_tick_id"))).isNull();
+      assertThat(redis.admin().hget(metaKey, ascii("region_epoch"))).containsExactly(ascii("7"));
+      assertThat(redis.admin().hget(metaKey, ascii("current_tick_state")))
+          .containsExactly(ascii("APPLIED"));
+      assertThat(redis.admin().get(leaseKey)).containsExactly(leaseValue);
+      assertThat(redis.admin().pttl(leaseKey))
+          .isPositive()
+          .isLessThanOrEqualTo(ttlBeforeRejectedRenewal);
+    }
+  }
+
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID GAME_INSTANCE_ID_A =
       UUID.fromString("22222222-2222-4222-8222-222222222222");

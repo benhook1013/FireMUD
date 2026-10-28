@@ -281,6 +281,14 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
         .isLessThanOrEqualTo(CanonicalInitialPlayerLocationGrpcCodec.MAX_REGION_RESPONSE_BYTES);
   }
 
+  @Test
+  void lifecycleReadRequestIdRetainsPublishedNameUuidVector() {
+    assertThat(
+            CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(
+                uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")))
+        .isEqualTo(uuid("5548bc3e-8d0e-3a87-9e7c-56a6647352c0"));
+  }
+
   private static void assertInvalid(CanonicalInitialPlayerLocationRequest request) {
     assertThatThrownBy(() -> CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request))
         .isInstanceOf(IllegalArgumentException.class);
