@@ -3513,11 +3513,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var runtimeReference =
         Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference.class);
     var runtimeEntityId =
-        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId.class);
-    when(runtimeEntityId.tenantId()).thenReturn(currentTarget.canonicalTenantId());
-    when(runtimeEntityId.gameInstanceId())
-        .thenReturn(currentTarget.canonicalGameInstanceId().toString());
-    when(runtimeEntityId.value()).thenReturn(900_002L);
+        new net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId(
+            currentTarget.canonicalTenantId(),
+            currentTarget.canonicalGameInstanceId().toString(),
+            900_002L);
     when(runtimeReference.workloadNamespace()).thenReturn(currentTarget.targetNamespace());
     when(runtimeReference.runtimeEntityId()).thenReturn(runtimeEntityId);
     when(runtimeReference.projectionGeneration()).thenReturn(2L);

@@ -1393,7 +1393,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
 
   /** Complete immutable source and target fields checked against a retained V1019 operation. */
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-      value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"},
+      value = "EI_EXPOSE_REP",
       justification = "Generated protobuf creation origins are immutable values")
   public record RequestSelector(
       UUID operationId,

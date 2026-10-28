@@ -43,6 +43,9 @@ public sealed interface CanonicalGameplayRuntimeActorReference
     }
   }
 
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Generated protobuf creation origins are immutable values")
   record CreationOrigin(PlayerCreatedActorOrigin original) implements ActorOrigin {
     public CreationOrigin {
       CanonicalPlayerCreatedRuntimeReferenceEvidence.requireOrigin(original);

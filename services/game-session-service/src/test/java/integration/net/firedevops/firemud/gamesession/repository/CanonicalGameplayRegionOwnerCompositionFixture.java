@@ -861,7 +861,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               secondBinding.worldRequest());
       if (!secondAcknowledgement.actorOrigin().equals(secondOrigin)
           || secondAcknowledgement.actorOrigin().equals(acknowledged.actorOrigin())) {
-        throw new IllegalStateException("Later actor bridge did not retain its distinct original origin");
+        throw new IllegalStateException(
+            "Later actor bridge did not retain its distinct original origin");
       }
       var secondStatus =
           new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
@@ -884,8 +885,28 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       byte[] secondMetaTickState =
           redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       Objects.requireNonNull(firstTimelineAfter, "retained timeline source row");
+      // Reinstallation refreshes only the current grant and update timestamp. Compare every
+      // other column, including the first actor/origin, source, phase and initial Redis digest.
+      Set<String> refreshedPreparationColumns =
+          Set.of("executor_fence", "lease_token_correlation", "updated_at");
+      List<String> changedImmutableColumns =
+          Arrays.stream(firstTimelineBefore.fields())
+              .map(field -> field.getName())
+              .filter(column -> !refreshedPreparationColumns.contains(column))
+              .filter(
+                  column ->
+                      !Objects.deepEquals(
+                          firstTimelineBefore.get(column), firstTimelineAfter.get(column)))
+              .toList();
+      boolean preparationGrantMatchesCurrent =
+          Objects.equals(
+                  firstTimelineAfter.get("executor_fence", Long.class),
+                  secondStatus.executorFence().longValueExact())
+              && Objects.equals(
+                  firstTimelineAfter.get("lease_token_correlation", String.class),
+                  secondStatus.leaseTokenCorrelation());
       boolean unchangedTimeline =
-          firstTimelineBefore.formatJSON().equals(firstTimelineAfter.formatJSON())
+          changedImmutableColumns.isEmpty()
               && firstTimelineOperationId.equals(
                   Objects.requireNonNull(
                           firstTimelineAfter.get("initialization_operation_id", UUID.class),
@@ -907,6 +928,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               && secondStatus.regionEpoch() == 1L
               && secondStatus.lastCommittedTickId() == -1L;
       if (!unchangedTimeline
+          || !preparationGrantMatchesCurrent
           || (secondBinding.freshGrant()
               ? status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
                   || secondStatus.executorFence().compareTo(status.executorFence()) <= 0
@@ -914,7 +936,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           || redis.admin().pttl(redisKey) <= 0L
           || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
         throw new IllegalStateException(
-            "Second binding changed first timeline provenance or lost the live region grant");
+            "Second binding changed first timeline provenance or lost the live region grant; "
+                + "changed immutable preparation columns="
+                + changedImmutableColumns
+                + ", preparation grant matches current="
+                + preparationGrantMatchesCurrent);
       }
       boolean regionLeaseStillLive = redis.admin().pttl(redisKey) > 0L;
       List<List<String>> sqlBeforeForeignOwner =
