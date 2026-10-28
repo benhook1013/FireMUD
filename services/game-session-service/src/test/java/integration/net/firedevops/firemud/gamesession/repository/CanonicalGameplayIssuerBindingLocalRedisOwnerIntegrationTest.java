@@ -562,10 +562,12 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
               return currentState.get();
             };
     var guardedAcknowledgementRepository =
-        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, acknowledgementSource);
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(
+            dsl, acknowledgementSource);
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertThatThrownBy(() -> guardedAcknowledgementRepository.acknowledge(acknowledgementReadback))
+      assertThatThrownBy(
+              () -> guardedAcknowledgementRepository.acknowledge(acknowledgementReadback))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join an ambient SQL transaction");
@@ -583,7 +585,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     TransactionSynchronizationManager.initSynchronization();
     try {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      assertThatThrownBy(() -> guardedAcknowledgementRepository.acknowledge(acknowledgementReadback))
+      assertThatThrownBy(
+              () -> guardedAcknowledgementRepository.acknowledge(acknowledgementReadback))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join an ambient SQL transaction");
@@ -604,7 +607,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
           var callerOwnedAcknowledgementRepository =
               new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(
                   callerTransaction, acknowledgementSource);
-          assertThatThrownBy(() -> callerOwnedAcknowledgementRepository.acknowledge(acknowledgementReadback))
+          assertThatThrownBy(
+                  () -> callerOwnedAcknowledgementRepository.acknowledge(acknowledgementReadback))
               .isInstanceOf(IllegalStateException.class)
               .hasMessage(
                   "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join a jOOQ transaction");
@@ -736,7 +740,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     currentState.set(
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             checkpointShape(BigInteger.valueOf(8)), incarnation));
-    assertThatThrownBy(() -> restartedAcknowledgementRepository.acknowledge(acknowledgementReadback))
+    assertThatThrownBy(
+            () -> restartedAcknowledgementRepository.acknowledge(acknowledgementReadback))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("differs from the installed anchor");
     assertThat(restartedAcknowledgementRepository.readHistorical(first.operationId()).exactBytes())
