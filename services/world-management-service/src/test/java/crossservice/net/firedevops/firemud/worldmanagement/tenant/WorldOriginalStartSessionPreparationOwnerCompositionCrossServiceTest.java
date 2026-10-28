@@ -3439,7 +3439,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var secondLifecycleRequest =
         new WorldCanonicalInstanceLifecycleEvidence.Request(
             originalLifecycleRequest.schemaVersion(),
-            worldInitialLocationLifecycleReadId(placementOperationId),
+            CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(placementOperationId),
             originalLifecycleRequest.targetNamespace(),
             originalLifecycleRequest.canonicalTenantId(),
             originalLifecycleRequest.worldSlug(),
@@ -3559,12 +3559,6 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         .read(Mockito.any(ReadPreseededActorRuntimeReferenceRequest.class));
     return new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
         secondRequest, currentTarget, secondWorldRegionResolver, entityReferenceClient);
-  }
-
-  private static UUID worldInitialLocationLifecycleReadId(UUID placementOperationId) {
-    return UUID.nameUUIDFromBytes(
-        ("firemud-world-initial-location-lifecycle-read/v1/" + placementOperationId)
-            .getBytes(StandardCharsets.US_ASCII));
   }
 
   private static AssignPreseededActorRequest toWire(PreseededActorAssignmentRequest request) {
