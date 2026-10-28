@@ -461,6 +461,13 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       migrate(schema, dataSource);
 
       assertThat(requiredRegionSourceImages(dsl)).isEqualTo(before);
+      // The later created-origin extension adds a nullable field without adopting preseeded rows.
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS count FROM game_session_canonical_binding_region_bridge_obligation"
+                          + " WHERE entity_created_origin IS NOT NULL")
+                  .get("count", Long.class))
+          .isZero();
       assertThat(regionExecutorFenceType(dsl, schema)).isEqualTo("bigint");
       assertThat(
               dsl.fetchSingle(
@@ -513,7 +520,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
   private static java.util.List<String> requiredRegionSourceImages(DSLContext dsl) {
     return dsl.fetch(
-            "SELECT to_jsonb(obligation)::text AS image"
+            "SELECT (to_jsonb(obligation) - 'entity_created_origin')::text AS image"
                 + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
                 + " ORDER BY transition_id")
         .getValues("image", String.class);
