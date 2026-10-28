@@ -123,13 +123,15 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
   /**
    * Reads and integrity-checks one immutable historical receipt without a current issuer source.
    * This verifies the retained receipt and its original operation/anchor rows only; it makes no
-   * claim about current issuer state, epoch, storage incarnation, or admission authority.
+   * claim about current issuer state, epoch, storage incarnation, or admission authority. This
+   * SQL-only query may join the final source owner's jOOQ transaction; it performs no external
+   * source read and publishes no durable acknowledgement.
    */
   static CanonicalGameplayIssuerBindingLocalAcknowledgement readHistorical(
       DSLContext dsl, UUID operationId) {
     Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(operationId, "operationId");
-    requireNoAmbientTransaction();
+    requireNoAmbientSpringTransaction();
     Record row =
         dsl.fetchOne("SELECT * FROM " + ACKNOWLEDGEMENT + " WHERE operation_id = ?", operationId);
     if (row == null) return null;
@@ -760,9 +762,30 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
     return "sha256:" + java.util.HexFormat.of().formatHex(digestBytes);
   }
 
-  private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+  private static void requireNoAmbientSpringTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw unavailable("Issuer acknowledgement owner cannot join an ambient SQL transaction");
+    }
+  }
+
+  private void requireNoAmbientTransaction() {
+    requireNoAmbientSpringTransaction();
+    try {
+      dsl.connectionResult(
+          connection -> {
+            if (!connection.getAutoCommit()) {
+              throw unavailable("Issuer acknowledgement owner cannot join a jOOQ transaction");
+            }
+            return Boolean.TRUE;
+          });
+    } catch (RuntimeException failure) {
+      if (failure instanceof IllegalStateException state
+          && state.getMessage() != null
+          && state.getMessage().contains("Issuer binding-local acknowledgement is unavailable")) {
+        throw state;
+      }
+      throw unavailable("Issuer acknowledgement SQL connection state is unavailable", failure);
     }
   }
 

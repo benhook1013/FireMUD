@@ -40,6 +40,18 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
   }
 
   @Test
+  void roundTripsGenerationBeyondJsonExactIntegerRange() throws Exception {
+    byte[] encoded = CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.encode(fixture(LARGE));
+    var decoded = CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(encoded);
+
+    assertThat(JSON.readTree(encoded).path("issuerBindingLocalAcknowledgementGeneration").textValue())
+        .isEqualTo(LARGE.toString());
+    assertThat(decoded.issuerBindingLocalAcknowledgementGeneration()).isEqualTo(LARGE);
+    assertThat(CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.encode(decoded))
+        .containsExactly(encoded);
+  }
+
+  @Test
   void rejectsUnknownFieldsAndAnAccountOrGlobalCoverageAlias() throws Exception {
     byte[] encoded = CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.encode(fixture());
     ObjectNode original = (ObjectNode) JSON.readTree(encoded);
@@ -110,6 +122,11 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
   }
 
   private static CanonicalGameplayIssuerBindingLocalAcknowledgement.Evidence fixture() {
+    return fixture(BigInteger.valueOf(83));
+  }
+
+  private static CanonicalGameplayIssuerBindingLocalAcknowledgement.Evidence fixture(
+      BigInteger acknowledgementGeneration) {
     var sourceMember = CanonicalGameplayIssuerMemberV2ValueCodecTest.fixture();
     var original = sourceMember.reservation();
     var reservation =
@@ -153,7 +170,7 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
             .multiply(member.layoutDescriptor().partitionCapacity());
     return new CanonicalGameplayIssuerBindingLocalAcknowledgement.Evidence(
         member.memberOperation().operationId(),
-        BigInteger.valueOf(83),
+        acknowledgementGeneration,
         uuid(41),
         member.reservation().transitionId(),
         uuid(42),
