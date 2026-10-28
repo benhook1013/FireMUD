@@ -59,6 +59,128 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void freshAbortRefusesUnsupportedRunningSourceBeforeAcquiringAccountProtection()
+      throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      // Existing controlled RUNNING storage fixture, without Human completion/admission history.
+      // It supplies no genuine Human STARTING-to-RUNNING or external admission authority.
+      var target = harness.seed();
+      var holdRequest =
+          CanonicalInitialAdmissionIntentRepositoryIntegrationTest.holdRequest(
+              target, "fresh-abort-unsupported-running");
+      var hold =
+          new WorldCanonicalInitialAdmissionHold.HoldIdentity(holdRequest, uuid(1301), uuid(1302));
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status -> target.intents().reserve(holdRequest, target.lifecycleRequest(uuid(1303))));
+      harness
+          .transactions()
+          .executeWithoutResult(status -> target.intents().attach(holdRequest, hold));
+      var request = request(hold);
+      var original = original(harness, target);
+      var accountRequest = protection(target, hold, uuid(1304), original).request();
+      var accountCalls = new AtomicInteger();
+      var coordinator =
+          coordinator(
+              harness,
+              admissionRepository(harness),
+              ignored -> {
+                accountCalls.incrementAndGet();
+                throw new AssertionError(
+                    "Unsupported fresh abort must not acquire Account protection");
+              },
+              ignored -> {
+                throw new AssertionError("Abort must not read World");
+              });
+      List<String> retainedTables =
+          List.of(
+              "game_instances",
+              "game_session_canonical_instance_launch",
+              "game_session_start_session_operator_attempt",
+              "game_session_canonical_initial_admission_intent",
+              "game_session_canonical_initial_admission_attempt",
+              "game_session_canonical_human_runtime_completion");
+      List<String> before =
+          retainedTables.stream()
+              .map(table -> harness.dsl().fetch("SELECT * FROM " + table).formatJSON())
+              .toList();
+      assertThatThrownBy(() -> coordinator.abort(request, accountRequest, "explicit fresh abort"))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("exact captured STARTING owner row");
+      assertThat(accountCalls).hasValue(0);
+      assertThat(
+              retainedTables.stream()
+                  .map(table -> harness.dsl().fetch("SELECT * FROM " + table).formatJSON())
+                  .toList())
+          .isEqualTo(before);
+      assertThat(
+              admissionRepository(harness)
+                  .read(request.targetNamespace(), request.initialAdmissionRequestId()))
+          .isEmpty();
+      assertThat(
+              new CanonicalHumanRuntimeCompletionRepository(
+                      harness.dsl(), request.targetNamespace())
+                  .read(request.targetNamespace(), request.initialAdmissionRequestId()))
+          .isEmpty();
+      assertNoAdmissionEffects(harness, request);
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
+  void freshStartingAbortAcquiresOnceAndReplaysWithoutCompletingRuntime() throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var prepared = prepareStarting(harness, "fresh-abort-supported-starting", 1311);
+      var accountCalls = new AtomicInteger();
+      var coordinator =
+          coordinator(
+              harness,
+              admissionRepository(harness),
+              accountRequest -> {
+                accountCalls.incrementAndGet();
+                assertThat(accountRequest.canonicalBytes())
+                    .containsExactly(prepared.protection().request().canonicalBytes());
+                return prepared.protection();
+              },
+              ignored -> {
+                throw new AssertionError("Abort must not read World");
+              });
+      String runtimeBefore = harness.dsl().fetch("SELECT * FROM game_instances").formatJSON();
+      var aborted =
+          coordinator.abort(
+              prepared.request(), prepared.protection().request(), "explicit fresh abort");
+      assertThat(aborted.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+      assertThat(aborted.positiveDurableAbort()).isTrue();
+      assertThat(
+              coordinator.abort(
+                  prepared.request(), prepared.protection().request(), "explicit fresh abort"))
+          .isEqualTo(aborted);
+      assertThat(accountCalls).hasValue(1);
+      assertThat(harness.dsl().fetch("SELECT * FROM game_instances").formatJSON())
+          .isEqualTo(runtimeBefore);
+      assertThat(
+              new CanonicalHumanRuntimeCompletionRepository(
+                      harness.dsl(), prepared.request().targetNamespace())
+                  .read(
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId()))
+          .isEmpty();
+      assertNoAdmissionEffects(harness, prepared.request());
+      assertThatThrownBy(
+              () -> coordinator.bind(prepared.request(), prepared.protection().request()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("aborted initial admission cannot later commit");
+      assertThat(accountCalls).hasValue(1);
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
   void independentAutocommitConnectionCannotBorrowAnAmbientSpringTransaction() throws Exception {
     var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
     try {
