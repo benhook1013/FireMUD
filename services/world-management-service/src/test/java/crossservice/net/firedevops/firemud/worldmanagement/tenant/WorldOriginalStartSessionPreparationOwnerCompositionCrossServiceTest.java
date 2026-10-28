@@ -3476,8 +3476,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .setCharacterUuid(secondRequest.getCharacterUuid())
             .setAssignmentUuid(secondRequest.getAssignmentUuid())
             .setAssignmentIntentDigest(secondRequest.getAssignmentIntentDigest())
-            .setRequestDigest("d".repeat(64))
-            .setResultDigest("e".repeat(64))
+            .setRequestDigest("sha256:" + "d".repeat(64))
+            .setResultDigest("sha256:" + "e".repeat(64))
             .build();
     var secondLifecycle =
         firstResolvedRegion.observation().getLifecycle().toBuilder()
