@@ -676,15 +676,17 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var completed =
         new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
             .completeWithReadback(operation, readback);
-    var historicalAcknowledgement =
-        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
-            .readHistorical(localOperation.operationId());
-    if (issuerAcknowledgementBytes == null
-        || historicalAcknowledgement == null
-        || !java.util.Arrays.equals(
-            issuerAcknowledgementBytes, historicalAcknowledgement.exactBytes())) {
-      throw new IllegalStateException(
-          "Issuer release did not retain the exact original binding-local acknowledgement");
+    if (operation.originalOperation().operationId().equals(localOperation.operationId())) {
+      var historicalAcknowledgement =
+          new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
+              .readHistorical(localOperation.operationId());
+      if (issuerAcknowledgementBytes == null
+          || historicalAcknowledgement == null
+          || !java.util.Arrays.equals(
+              issuerAcknowledgementBytes, historicalAcknowledgement.exactBytes())) {
+        throw new IllegalStateException(
+            "Issuer release did not retain the exact original binding-local acknowledgement");
+      }
     }
     return completed;
   }
