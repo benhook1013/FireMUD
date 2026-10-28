@@ -101,6 +101,51 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void historicalRealmOriginLookupRetainsExactClosedEvidenceAfterRetainedOpen() throws Exception {
+    // Existing controlled pre1006 owner history, migrated with all current guards enabled.
+    // This is not a live second OPEN producer alongside a protected PENDING reservation.
+    var retained = prepareRetainedV2Admission();
+    var fixture = retained.fixture();
+    var origin = retained.origin();
+    String before = pointerAndAuditProjection(fixture);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT admission_state FROM gameplay_admission_pointer WHERE target_namespace=? AND realm_id=?",
+                    origin.targetNamespace(),
+                    origin.realmId())
+                .get(0, String.class))
+        .isEqualTo("OPEN");
+    var lookup =
+        GameSessionCanonicalAdmissionPointerRepository.class.getDeclaredMethod(
+            "lockOriginalClosedOriginForRealm",
+            String.class,
+            UUID.class,
+            UUID.class,
+            long.class,
+            long.class);
+    lookup.setAccessible(true);
+    var historical =
+        fixture.transactions.execute(
+            status -> {
+              try {
+                return lookup.invoke(
+                    fixture.pointerRepository,
+                    origin.targetNamespace(),
+                    origin.canonicalTenantId(),
+                    origin.realmId(),
+                    origin.pointerVersion(),
+                    origin.catalogRevision());
+              } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException("Historical owner lookup failed", exception);
+              }
+            });
+    assertThat(historical).usingRecursiveComparison().isEqualTo(origin);
+    assertThat(pointerAndAuditProjection(fixture)).isEqualTo(before);
+  }
+
+  @Test
   void rosterRetirementUsesRealCommittedAdmissionReaderAndLocksCurrentPointerUnderRosterFence()
       throws Exception {
     // The current pointer is real CLOSED-v1 -> first-OPEN-v2 history, while this retained

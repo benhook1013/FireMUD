@@ -6,7 +6,9 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -39,8 +41,11 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
     requirePartition(partitionId);
     Record existing =
         transaction.fetchOne(
-            "SELECT * FROM " + HEAD + " WHERE issuer_id = ? AND partition_id = ? FOR UPDATE",
+            "SELECT * FROM "
+                + HEAD
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
             ISSUER,
+            bootstrapOperationId,
             partitionId);
     if (existing != null) {
       if (!bootstrapOperationId.equals(uuid(existing, "bootstrap_operation_id"))) {
@@ -103,8 +108,11 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
     }
     Record row =
         transaction.fetchOne(
-            "SELECT * FROM " + HEAD + " WHERE issuer_id = ? AND partition_id = ? FOR UPDATE",
+            "SELECT * FROM "
+                + HEAD
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
             ISSUER,
+            bootstrapOperationId,
             partitionId);
     if (row == null
         || !bootstrapOperationId.equals(uuid(row, "bootstrap_operation_id"))
@@ -151,14 +159,16 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
       throw conflict("Exact intended issuer partition mutation is missing or oversized");
     }
     String digest = CanonicalGameplayIssuerMemberV2Codec.sha256(exactIntendedChangeBytes);
-    Record current = lockCurrentHead(transaction, partitionId);
+    UUID bootstrapOperationId = installedBootstrapOperationId(transaction);
+    Record current = lockCurrentHead(transaction, bootstrapOperationId, partitionId);
     Record existing =
         transaction.fetchOne(
             "SELECT * FROM "
                 + MUTATION
-                + " WHERE issuer_id = ? AND partition_id = ? AND mutation_kind = ?"
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_kind = ?"
                 + " AND owner_operation_id = ? FOR UPDATE",
             ISSUER,
+            bootstrapOperationId,
             partitionId,
             kind.name(),
             ownerOperationId);
@@ -189,12 +199,13 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
         transaction.execute(
             "INSERT INTO "
                 + MUTATION
-                + " (mutation_id, issuer_id, partition_id, mutation_kind, owner_operation_id,"
+                + " (mutation_id, issuer_id, bootstrap_operation_id, partition_id, mutation_kind, owner_operation_id,"
                 + " expected_revision, successor_revision, exact_intended_change_bytes,"
                 + " exact_intended_change_digest, status)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
             mutationId,
             ISSUER,
+            bootstrapOperationId,
             partitionId,
             kind.name(),
             ownerOperationId,
@@ -207,16 +218,24 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
         transaction.execute(
             "UPDATE "
                 + HEAD
-                + " SET pending_mutation_id = ? WHERE issuer_id = ? AND partition_id = ?"
+                + " SET pending_mutation_id = ? WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ?"
                 + " AND state = 'CURRENT' AND current_revision = ? AND pending_mutation_id IS NULL",
             mutationId,
             ISSUER,
+            bootstrapOperationId,
             partitionId,
             expected);
     if (advanced != 1)
       throw conflict("Issuer partition mutation reservation compare-and-set refused");
     Record saved =
-        transaction.fetchOne("SELECT * FROM " + MUTATION + " WHERE mutation_id = ?", mutationId);
+        transaction.fetchOne(
+            "SELECT * FROM "
+                + MUTATION
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_id = ?",
+            ISSUER,
+            bootstrapOperationId,
+            partitionId,
+            mutationId);
     if (saved == null) throw conflict("Issuer partition mutation is unreadable after preparation");
     return readMutation(saved);
   }
@@ -274,12 +293,20 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
             exactReadbackFieldSetBytes);
     requireRevisionField(readbackFields, expected.successorRevision());
     String readbackDigest = CanonicalGameplayIssuerMemberV2Codec.sha256(exactReadbackFieldSetBytes);
-    Record head = lockCurrentHead(transaction, expected.partitionId());
+    UUID bootstrapOperationId = installedBootstrapOperationId(transaction);
+    Record head = lockCurrentHead(transaction, bootstrapOperationId, expected.partitionId());
     Record row =
         transaction.fetchOne(
-            "SELECT * FROM " + MUTATION + " WHERE mutation_id = ? FOR UPDATE",
+            "SELECT * FROM "
+                + MUTATION
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_id = ? FOR UPDATE",
+            ISSUER,
+            bootstrapOperationId,
+            expected.partitionId(),
             expected.mutationId());
-    if (row == null) throw conflict("Issuer partition mutation disappeared before completion");
+    if (row == null || !bootstrapOperationId.equals(uuid(row, "bootstrap_operation_id")))
+      throw conflict(
+          "Issuer partition mutation disappeared or changed bootstrap lineage before completion");
     CanonicalGameplayIssuerPartitionMutation current = readMutation(row);
     requireSameMutation(expected, current);
     if (current.status() == CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED) {
@@ -299,10 +326,14 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
                 + MUTATION
                 + " SET status = 'COMMITTED', exact_readback_field_set_bytes = ?,"
                 + " exact_readback_field_set_digest = ?, completed_at = CURRENT_TIMESTAMP"
-                + " WHERE mutation_id = ? AND status = 'PENDING_PHYSICAL_PROOF'"
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ?"
+                + " AND mutation_id = ? AND status = 'PENDING_PHYSICAL_PROOF'"
                 + " AND expected_revision = ? AND successor_revision = ?",
             exactReadbackFieldSetBytes,
             readbackDigest,
+            ISSUER,
+            bootstrapOperationId,
+            current.partitionId(),
             current.mutationId(),
             current.expectedRevision(),
             current.successorRevision());
@@ -313,10 +344,11 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
             "UPDATE "
                 + HEAD
                 + " SET current_revision = ?, pending_mutation_id = NULL"
-                + " WHERE issuer_id = ? AND partition_id = ? AND state = 'CURRENT'"
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND state = 'CURRENT'"
                 + " AND current_revision = ? AND pending_mutation_id = ?",
             current.successorRevision(),
             ISSUER,
+            bootstrapOperationId,
             current.partitionId(),
             current.expectedRevision(),
             current.mutationId());
@@ -324,7 +356,13 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
       throw conflict("Issuer partition mutation head completion compare-and-set refused");
     Record completed =
         transaction.fetchOne(
-            "SELECT * FROM " + MUTATION + " WHERE mutation_id = ?", current.mutationId());
+            "SELECT * FROM "
+                + MUTATION
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_id = ?",
+            ISSUER,
+            bootstrapOperationId,
+            current.partitionId(),
+            current.mutationId());
     if (completed == null) throw conflict("Committed issuer partition mutation is unreadable");
     return readMutation(completed);
   }
@@ -338,9 +376,10 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
         transaction.fetchOne(
             "SELECT * FROM "
                 + MUTATION
-                + " WHERE issuer_id = ? AND partition_id = ? AND mutation_kind = ?"
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_kind = ?"
                 + " AND owner_operation_id = ?",
             ISSUER,
+            installedBootstrapOperationId(transaction),
             partitionId,
             kind.name(),
             ownerOperationId);
@@ -357,17 +396,49 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
         transaction.fetchOne(
             "SELECT * FROM "
                 + MUTATION
-                + " WHERE issuer_id = ? AND partition_id = ? AND mutation_kind = ?"
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_kind = ?"
                 + " AND owner_operation_id = ?",
             ISSUER,
+            installedBootstrapOperationId(transaction),
             partitionId,
             kind.name(),
             ownerOperationId);
     return row == null ? null : readMutation(row);
   }
 
-  static UUID readCurrentRevisionInTransaction(DSLContext transaction, BigInteger partitionId) {
-    Record head = lockCurrentHead(transaction, partitionId);
+  static List<CanonicalGameplayIssuerPartitionMutation> readPartitionInTransaction(
+      DSLContext transaction, UUID bootstrapOperationId, BigInteger partitionId) {
+    if (!bootstrapOperationId.equals(installedBootstrapOperationId(transaction))) {
+      throw conflict(
+          "Issuer partition mutation history belongs to a different installed bootstrap");
+    }
+    List<CanonicalGameplayIssuerPartitionMutation> mutations = new ArrayList<>();
+    for (Record row :
+        transaction.fetch(
+            "SELECT * FROM "
+                + MUTATION
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ?"
+                + " AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')"
+                + " AND owner_operation_id IN (SELECT operation.operation_id"
+                + " FROM game_session_canonical_issuer_binding_local_operation operation"
+                + " WHERE operation.issuer_id = ? AND operation.partition_id = ?"
+                + " AND NOT EXISTS (SELECT 1 FROM game_session_canonical_issuer_binding_local_retirement retirement"
+                + " WHERE retirement.original_local_operation_id = operation.operation_id"
+                + " AND retirement.status = 'RETIRED'))"
+                + " ORDER BY mutation_id",
+            ISSUER,
+            bootstrapOperationId,
+            partitionId,
+            ISSUER,
+            partitionId)) {
+      mutations.add(readMutation(row));
+    }
+    return List.copyOf(mutations);
+  }
+
+  static UUID readCurrentRevisionInTransaction(
+      DSLContext transaction, UUID bootstrapOperationId, BigInteger partitionId) {
+    Record head = lockCurrentHead(transaction, bootstrapOperationId, partitionId);
     if (nullableUuid(head, "pending_mutation_id") != null) {
       throw conflict("A same-partition physical mutation is still unresolved");
     }
@@ -375,16 +446,23 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
   }
 
   static PartitionMutationHead readHeadInTransaction(
-      DSLContext transaction, BigInteger partitionId) {
-    Record head = lockCurrentHead(transaction, partitionId);
+      DSLContext transaction, UUID bootstrapOperationId, BigInteger partitionId) {
+    Record head = lockCurrentHead(transaction, bootstrapOperationId, partitionId);
     UUID pendingMutationId = nullableUuid(head, "pending_mutation_id");
     UUID currentRevision = uuid(head, "current_revision");
     if (pendingMutationId != null) {
       Record pending =
           transaction.fetchOne(
-              "SELECT * FROM " + MUTATION + " WHERE mutation_id = ? FOR UPDATE", pendingMutationId);
+              "SELECT * FROM "
+                  + MUTATION
+                  + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? AND mutation_id = ? FOR UPDATE",
+              ISSUER,
+              bootstrapOperationId,
+              partitionId,
+              pendingMutationId);
       if (pending == null
           || !ISSUER.equals(text(pending, "issuer_id"))
+          || !bootstrapOperationId.equals(uuid(pending, "bootstrap_operation_id"))
           || !partitionId.equals(nonnegative(pending, "partition_id"))
           || !currentRevision.equals(uuid(pending, "expected_revision"))
           || !"PENDING_PHYSICAL_PROOF".equals(text(pending, "status"))) {
@@ -402,11 +480,27 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
     }
   }
 
-  private static Record lockCurrentHead(DSLContext transaction, BigInteger partitionId) {
+  private static UUID installedBootstrapOperationId(DSLContext transaction) {
+    Record anchor =
+        transaction.fetchOne(
+            "SELECT bootstrap_operation_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
+    if (anchor == null)
+      throw conflict("Issuer partition mutation requires its installed bootstrap anchor");
+    return uuid(anchor, "bootstrap_operation_id");
+  }
+
+  private static Record lockCurrentHead(
+      DSLContext transaction, UUID bootstrapOperationId, BigInteger partitionId) {
+    if (!bootstrapOperationId.equals(installedBootstrapOperationId(transaction))) {
+      throw conflict("Issuer partition mutation head belongs to a different installed bootstrap");
+    }
     Record head =
         transaction.fetchOne(
-            "SELECT * FROM " + HEAD + " WHERE issuer_id = ? AND partition_id = ? FOR UPDATE",
+            "SELECT * FROM "
+                + HEAD
+                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
             ISSUER,
+            bootstrapOperationId,
             partitionId);
     if (head == null || !"CURRENT".equals(text(head, "state"))) {
       throw conflict("Issuer partition has no positively installed current mutation revision");

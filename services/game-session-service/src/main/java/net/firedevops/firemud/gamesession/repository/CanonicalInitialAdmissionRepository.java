@@ -345,7 +345,15 @@ public class CanonicalInitialAdmissionRepository {
         .requireExactPendingReservation(
             request.targetNamespace(), request.initialAdmissionRequestId(), accountProtection);
 
-    ExpectedClosedEvidence closedOrigin = lockExpectedClosedOrigin(request);
+    CanonicalClosedAdmissionPointerSnapshot closedOrigin =
+        request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER
+            ? null
+            : pointerRepository.lockOriginalClosedOriginForRealm(
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.realmId(),
+                request.expectedPriorPointerVersion(),
+                request.expectedCatalogRevision());
     // A negative terminal retains its original origin; it never claims or rewrites a pointer
     // independently created after this reservation. The positive commit still proves absence.
     Instant terminalAt = nextTerminalTimestamp(request, attempt.updatedAt());
@@ -359,7 +367,7 @@ public class CanonicalInitialAdmissionRepository {
                 + "updated_at = CAST(? AS TIMESTAMPTZ), terminal_at = CAST(? AS TIMESTAMPTZ) "
                 + "WHERE target_namespace = ? AND initial_admission_request_id = ? "
                 + "AND status = 'PENDING'",
-            closedOrigin == null ? null : closedOrigin.originalRequestId(),
+            closedOrigin == null ? null : closedOrigin.requestId(),
             closedOrigin == null ? null : closedOrigin.requestDigest(),
             closedOrigin == null ? null : closedOrigin.auditEventId(),
             reason,

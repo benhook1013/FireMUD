@@ -347,7 +347,7 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
         readAndRequireReservation(transaction, transitionRequest, prepared, null);
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead mutationHead =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-            transaction, reservation.partitionId());
+            transaction, actualAnchor.bootstrapOperationId(), reservation.partitionId());
     if (mutationHead.pendingMutationId() != null) {
       throw conflict(
           "A same-partition physical mutation is unresolved; new issuer admission remains excluded");

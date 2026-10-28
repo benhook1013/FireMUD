@@ -77,7 +77,9 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
 
               CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead head =
                   CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-                      transaction, partitionId);
+                      transaction,
+                      release.originalOperation().anchor().bootstrapOperationId(),
+                      partitionId);
               if (head.pendingMutationId() != null) {
                 throw conflict("Another same-partition mutation is unresolved before retirement");
               }
@@ -579,7 +581,9 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
             release.releasedMemberValue().reservation().partitionId());
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead head =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-            transaction, release.releasedMemberValue().reservation().partitionId());
+            transaction,
+            release.originalOperation().anchor().bootstrapOperationId(),
+            release.releasedMemberValue().reservation().partitionId());
     if ((mutation.status() == CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF
             && (!mutation.mutationId().equals(head.pendingMutationId())
                 || !mutation.expectedRevision().equals(head.currentRevision())))

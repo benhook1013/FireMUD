@@ -44,6 +44,8 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -55,6 +57,57 @@ class CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void manualCompletionRequiresActiveWritableReadCommittedTransaction() throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var prepared = prepareStarting(harness, "human-runtime-transaction-guard", 1191);
+      var completion =
+          new CanonicalHumanRuntimeCompletionRepository(harness.dsl(), "canonical-intent-it");
+      Record before = runtime(harness, prepared);
+      assertThatThrownBy(
+              () ->
+                  completion.completeProtected(
+                      prepared.request(), prepared.protection(), prepared.worldProof()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("writable READ COMMITTED transaction");
+      var readOnly = new TransactionTemplate(harness.transactionManager());
+      readOnly.setReadOnly(true);
+      assertThatThrownBy(
+              () ->
+                  readOnly.executeWithoutResult(
+                      status ->
+                          completion.completeProtected(
+                              prepared.request(), prepared.protection(), prepared.worldProof())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("writable READ COMMITTED transaction");
+      for (int isolation :
+          List.of(
+              TransactionDefinition.ISOLATION_REPEATABLE_READ,
+              TransactionDefinition.ISOLATION_SERIALIZABLE)) {
+        var transaction = new TransactionTemplate(harness.transactionManager());
+        transaction.setIsolationLevel(isolation);
+        assertThatThrownBy(
+                () ->
+                    transaction.executeWithoutResult(
+                        status ->
+                            completion.completeProtected(
+                                prepared.request(), prepared.protection(), prepared.worldProof())))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("writable READ COMMITTED transaction");
+      }
+      assertThat(runtime(harness, prepared).formatJSON()).isEqualTo(before.formatJSON());
+      assertThat(
+              completion.read(
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId()))
+          .isEmpty();
+      assertNoAdmissionEffects(harness, prepared.request());
+    } finally {
+      harness.close();
+    }
+  }
 
   @Test
   void coordinatorResumesCompletedRuntimeFromRetainedProtectionAndReplaysTerminalExactly()
