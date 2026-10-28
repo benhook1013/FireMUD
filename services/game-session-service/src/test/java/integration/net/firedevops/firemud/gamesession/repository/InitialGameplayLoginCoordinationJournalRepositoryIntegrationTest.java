@@ -457,7 +457,13 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
             + " SET disposal_disposition = 'PENDING', disposal_proof_kind = 'NONE' WHERE request_id = ?",
         original.requestId());
     rejectedSql("DELETE FROM " + TABLE + " WHERE request_id = ?", original.requestId());
-    rejectedSql("TRUNCATE " + TABLE);
+    // Include references in this disposable schema so the journal guard, rather than the
+    // foreign-key precheck, rejects truncation before any retained evidence can be removed.
+    assertThatThrownBy(() -> dsl.execute("TRUNCATE " + TABLE + " CASCADE"))
+        .hasMessageContaining("Initial gameplay LOGIN journal retention is held")
+        .isInstanceOfSatisfying(
+            DataAccessException.class,
+            failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
     assertThat(journal.readCommitted(original).orElseThrow().retainedReceipt()).contains(terminal);
   }
 

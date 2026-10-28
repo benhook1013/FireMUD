@@ -375,7 +375,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         null,
         null,
         context.inventorySnapshotRevision().toString(),
-        context.sourceControlDigest(),
+        null,
         context.targetDigest(),
         0L,
         context.tenantId(),

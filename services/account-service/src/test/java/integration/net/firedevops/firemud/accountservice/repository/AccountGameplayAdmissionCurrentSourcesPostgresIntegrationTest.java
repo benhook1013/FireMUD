@@ -161,9 +161,9 @@ import org.testcontainers.containers.Network;
  * signer performs real RSA/JWS operations with its exact test JWKS, while protected
  * signer/materializer evidence and Game Session published/provisional reads remain controlled
  * boundaries. The fresh Account finalization path uses physical PostgreSQL 18 COMMIT and durable
- * ACK insertion; PG18 retained-receipt replay remains intentionally unavailable. This proves
- * neither production custody, real Game Session owner authority, runtime registration, nor an
- * admitted Game Session binding.
+ * ACK insertion; exact retained-receipt recovery uses the V1013 historical reader and preserves the
+ * original receipt. This proves neither production custody, real Game Session owner authority,
+ * runtime registration, nor an admitted Game Session binding.
  */
 class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "gameplay_admission_current_";
@@ -655,45 +655,60 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                     originalAck.committedBeforeMs(),
                     originalAck.receiptXid()));
         var durableReceiptImage = fixture.originalAckReceiptImage(accountRequestId);
+        var durableCommittedOperation = fixture.readLeaseOperation(originalLease);
 
-        // PostgreSQL 18 supports the fresh receipt COMMIT above. Retained receipt reads
-        // intentionally
-        // remain on their PG16 contract, so these genuine owner calls must fail closed without
-        // restamping or replacing the committed operation and its durable original receipt.
-        assertThatThrownBy(
-                () ->
-                    stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .finalizeGameplayAdmissionLease(finalizeWire))
-            .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.UNAVAILABLE));
+        // V1013 permits an exact historical receipt read on PostgreSQL 18 after the private owner
+        // proves coverage of its unchanged WAL fence. A retry returns the original acknowledgement;
+        // it does not repeat the original physical COMMIT or restamp the receipt.
+        var finalizedRetryResponse =
+            stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                .finalizeGameplayAdmissionLease(finalizeWire);
+        var finalizedRetry =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(
+                parsedFinalize, finalizedRetryResponse);
+        assertThat(finalizedRetry.state()).isEqualTo(State.COMMITTED);
+        assertThat(finalizedRetry.bindingDecisionId()).isEqualTo(decisionId);
+        assertThat(finalizedRetry.originalLeaseEvidence().canonicalJson())
+            .isEqualTo(originalLease.canonicalJson());
+        assertThat(finalizedRetry.originalAckReceipt())
+            .usingRecursiveComparison()
+            .isEqualTo(originalAck);
         var readCommittedWire =
             AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(originalJwt, originalLeaseBytes);
-        assertThatThrownBy(
-                () ->
-                    stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .readGameplayAdmissionLease(readCommittedWire))
-            .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.UNAVAILABLE));
+        var parsedReadCommitted =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(readCommittedWire);
+        var readCommittedResponse =
+            stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                .readGameplayAdmissionLease(readCommittedWire);
+        var readCommitted =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(
+                parsedReadCommitted, readCommittedResponse);
+        assertThat(readCommitted.state()).isEqualTo(State.COMMITTED);
+        assertThat(readCommitted.bindingDecisionId()).isEqualTo(decisionId);
+        assertThat(readCommitted.originalLeaseEvidence().canonicalJson())
+            .isEqualTo(originalLease.canonicalJson());
+        assertThat(readCommitted.originalAckReceipt())
+            .usingRecursiveComparison()
+            .isEqualTo(originalAck);
         var abortCommittedWire =
             AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
                 originalJwt, originalLeaseBytes, decisionId);
-        assertThatThrownBy(
-                () ->
-                    stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .abortGameplayAdmissionLease(abortCommittedWire))
-            .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.UNAVAILABLE));
-        assertThat(fixture.readLeaseOperation(originalLease).state())
-            .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.COMMITTED);
+        var parsedAbortCommitted =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(abortCommittedWire);
+        var abortCommittedResponse =
+            stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                .abortGameplayAdmissionLease(abortCommittedWire);
+        var abortCommitted =
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(
+                parsedAbortCommitted, abortCommittedResponse);
+        assertThat(abortCommitted.state()).isEqualTo(State.COMMITTED);
+        assertThat(abortCommitted.bindingDecisionId()).isEqualTo(decisionId);
+        assertThat(abortCommitted.originalLeaseEvidence().canonicalJson())
+            .isEqualTo(originalLease.canonicalJson());
+        assertThat(abortCommitted.originalAckReceipt())
+            .usingRecursiveComparison()
+            .isEqualTo(originalAck);
+        assertThat(fixture.readLeaseOperation(originalLease)).isEqualTo(durableCommittedOperation);
         assertThat(fixture.originalAckReceiptImage(accountRequestId))
             .isEqualTo(durableReceiptImage);
         assertThat(fixture.leaseAllocationState(originalLeaseRequestId, accountId))
