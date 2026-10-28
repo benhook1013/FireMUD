@@ -8,7 +8,6 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,10 +23,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInvent
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationStorageIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -795,86 +790,7 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
   }
 
   private static void establishActualLegacyDisposition(DSLContext dsl) {
-    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
-    var migration = new CanonicalGameplayLegacyMigrationRepository(dsl, inventory);
-    UUID cohortId = UUID.randomUUID();
-    UUID writerFence = UUID.randomUUID();
-    var storageIdentity =
-        new CanonicalGameplayLegacyMigrationStorageIdentity(
-            "controlled-cluster-uid",
-            "controlled-namespace-uid",
-            "controlled-producer-pod-uid",
-            "controlled-container-id",
-            "controlled-node-uid",
-            "123456789",
-            42L,
-            "controlled-postgres-volume-uid",
-            "controlled-redis-run-id",
-            "controlled-redis-volume-uid");
-    var fencedCohort =
-        new CanonicalGameplayLegacyMigrationOwner.FencedCohort() {
-          @Override
-          public UUID cohortId() {
-            return cohortId;
-          }
-
-          @Override
-          public UUID legacyWriterFence() {
-            return writerFence;
-          }
-
-          @Override
-          public CanonicalGameplayLegacyMigrationStorageIdentity storageIdentity() {
-            return storageIdentity;
-          }
-
-          @Override
-          public void requireStillFenced(CanonicalGameplayLegacyMigrationStorageIdentity expected) {
-            if (!storageIdentity.equals(expected)) {
-              throw new IllegalStateException("Controlled fixture storage identity changed");
-            }
-          }
-        };
-    var owner =
-        new CanonicalGameplayLegacyMigrationOwner(
-            migration,
-            inventory,
-            () -> fencedCohort,
-            ignored ->
-                new CanonicalGameplayLegacyMigrationSourceSnapshot(
-                    EnumSet.of(
-                        Family.TENANT_SESSION_CONTEXT,
-                        Family.SESSION_ALIAS_CONTEXT,
-                        Family.GAMEPLAY_IDENTITY_CONTEXT,
-                        Family.GAMEPLAY_NAME_CONTEXT,
-                        Family.MOVEMENT_EFFECT,
-                        Family.DURABLE_EFFECT),
-                    List.of()),
-            new CanonicalGameplayLegacyMigrationOwner.NamespaceIndexOwner() {
-              @Override
-              public void rebuildExact(
-                  CanonicalGameplayLegacyMigrationOwner.FencedCohort ignored,
-                  CanonicalGameplayLegacyMigrationSourceSnapshot source,
-                  net.firedevops.firemud.gamesession.binding
-                          .CanonicalGameplayBindingInventorySnapshot
-                      canonical) {
-                assertThat(canonical.bindings()).isEmpty();
-                assertThat(canonical.reservations()).isEmpty();
-              }
-
-              @Override
-              public CanonicalGameplayLegacyMigrationReadback readBackExact(
-                  CanonicalGameplayLegacyMigrationOwner.FencedCohort ignored,
-                  net.firedevops.firemud.gamesession.binding
-                          .CanonicalGameplayBindingInventorySnapshot
-                      canonical) {
-                assertThat(canonical.bindings()).isEmpty();
-                return new CanonicalGameplayLegacyMigrationReadback(
-                    List.of(), List.of(), List.of(), List.of());
-              }
-            });
-    assertThat(owner.migrate().state())
-        .isEqualTo(CanonicalGameplayLegacyMigrationOperation.State.VERIFIED);
+    CanonicalGameplayIssuerTestFixtures.establishActualLegacyDisposition(dsl);
   }
 
   private static void migrateThrough1031(TestSchema testSchema) {
