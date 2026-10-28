@@ -510,3 +510,8 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: #3320 added production/test anchors and a link from a capability proof cell to its own proof-summary paragraph.
   - Observation: links and Markdown passed locally, but CI architecture-doc-contracts rejected the proof-cell documentation path; that column permits executable tests or canonical validation/smoke tooling. The test links were valid and remain retained.
   - Expected pattern: run the existing architecture-doc-contracts check when changing capability anchors; keep summary/gap links outside proof cells and retain direct executable proof links inside them. This is a selection correction, not a new validation tool.
+
+- 2026-10-29: Explicit source recovery does not diagnose an older failed observation
+  - Context: The preceding #3310 observation records a provider-response failure whose raw payload was unavailable; that historical failure remains unproven.
+  - Observation: A later explicit controller refresh (`review_refresh_6f0041f16c925a9298f9ecafd0341d81`) independently recovered the correct current head/base comparison, five required checks and zero unresolved threads. Controller release `be29e458` also fixed a reproduced overlapping check-page response when provider totals change, but that reproduction does not establish the cause of the older failure.
+  - Expected pattern: Retain the failed observation, its uncertainty and the independently passing recovery separately. Use the controller owner's actionable diagnostics and a fresh supported source observation rather than retroactively assigning a cause or treating separate green CI as native readiness.
