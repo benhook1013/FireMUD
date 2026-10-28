@@ -35,6 +35,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -51,6 +53,8 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -438,6 +442,109 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
         assertThat(physical.connection().sync().exists(opened.key())).isZero();
         assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
       }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"INVENTORY", "CONTROL"})
+  void initialOpenReadbackExpiredDuringSqlLockWaitCannotCompleteOriginal(String heldLock)
+      throws Exception {
+    AtomicLong trustedMillis = new AtomicLong(NOW.toEpochMilli());
+    Clock trustedClock = mock(Clock.class);
+    when(trustedClock.millis()).thenAnswer(ignored -> trustedMillis.get());
+    try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
+        InitialRedisFixture physical = InitialRedisFixture.open();
+        var login = fixture.originalLogin();
+        var holder = Fixture.dataSource(fixture.schema).getConnection();
+        var acceptanceConnection = Fixture.dataSource(fixture.schema).getConnection()) {
+      var repository =
+          spy(
+              new CanonicalGameplayAccountInitialBarrierInitializerRepository(
+                  fixture.dsl, trustedClock));
+      AtomicReference<CanonicalGameplayAccountInitialBarrierRedisOwner.Readback> captured =
+          new AtomicReference<>();
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                captured.set(invocation.getArgument(1));
+                throw new IllegalStateException("controlled capture before SQL completion");
+              })
+          .when(repository)
+          .acceptOpenReadback(eq(fixture.original.requestId()), any());
+      var owner =
+          fixture.initialOwner(
+              physical.ownerClient(),
+              repository,
+              RedisScriptCatalog.fromContributions(
+                  List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution())),
+              trustedClock);
+      assertThat(
+              owner.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+      var readback = java.util.Objects.requireNonNull(captured.get());
+      assertThat(trustedMillis.get())
+          .isGreaterThanOrEqualTo(
+              Math.max(
+                  readback.beforeIncarnation().issuedAtEpochMillis(),
+                  readback.afterIncarnation().issuedAtEpochMillis()))
+          .isLessThan(
+              Math.min(
+                  readback.beforeIncarnation().expiresAtEpochMillis(),
+                  readback.afterIncarnation().expiresAtEpochMillis()));
+      assertThat(fixture.initialRepository.readCurrent(fixture.original.requestId()).state())
+          .isEqualTo(
+              CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE);
+      String retainedTarget = fixture.initialTargetPostimage();
+      Map<String, String> retainedPhysical = physical.connection().sync().hgetall(readback.key());
+      assertThat(retainedPhysical).isEqualTo(readback.barrierFields());
+      DSLContext holderDsl = DSL.using(holder, SQLDialect.POSTGRES);
+      DSLContext acceptanceDsl = DSL.using(acceptanceConnection, SQLDialect.POSTGRES);
+      int holderPid =
+          java.util.Objects.requireNonNull(
+              holderDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+      int acceptancePid =
+          java.util.Objects.requireNonNull(
+              acceptanceDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+      var acceptanceRepository =
+          new CanonicalGameplayAccountInitialBarrierInitializerRepository(
+              acceptanceDsl, trustedClock);
+      holder.setAutoCommit(false);
+      if ("INVENTORY".equals(heldLock)) {
+        holderDsl.fetchSingle(
+            "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                + " WHERE singleton_id = 1 FOR UPDATE");
+      } else {
+        holderDsl.fetchSingle(
+            "SELECT account_id FROM game_session_canonical_account_coverage_control"
+                + " WHERE account_id = ? FOR UPDATE",
+            fixture.accountId);
+      }
+      try (var executor = Executors.newSingleThreadExecutor()) {
+        try {
+          var acceptance =
+              executor.submit(
+                  () ->
+                      acceptanceRepository.acceptOpenReadback(
+                          fixture.original.requestId(), readback));
+          awaitInitialBackendBlockedBy(fixture.dsl, acceptancePid, holderPid);
+          trustedMillis.set(
+              Math.max(
+                      readback.beforeIncarnation().expiresAtEpochMillis(),
+                      readback.afterIncarnation().expiresAtEpochMillis())
+                  + 1L);
+          holder.rollback();
+          assertThatThrownBy(() -> acceptance.get(5L, TimeUnit.SECONDS))
+              .hasStackTraceContaining(
+                  "INITIAL protected incarnation observation expired before SQL completion");
+        } finally {
+          holder.rollback();
+        }
+      }
+      assertThat(fixture.initialRepository.readCurrent(fixture.original.requestId()).state())
+          .isEqualTo(
+              CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE);
+      assertThat(fixture.initialTargetPostimage()).isEqualTo(retainedTarget);
+      assertThat(physical.connection().sync().hgetall(readback.key())).isEqualTo(retainedPhysical);
+      physical.connection().sync().del(readback.key());
     }
   }
 
@@ -1353,6 +1460,14 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
           RedisClient client,
           CanonicalGameplayAccountInitialBarrierInitializerRepository repository,
           RedisScriptCatalog catalog) {
+        return initialOwner(client, repository, catalog, Clock.systemUTC());
+      }
+
+      private CanonicalGameplayAccountInitialBarrierRedisOwner initialOwner(
+          RedisClient client,
+          CanonicalGameplayAccountInitialBarrierInitializerRepository repository,
+          RedisScriptCatalog catalog,
+          Clock trustedClock) {
         var configuration =
             new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
                 ATTESTOR_BINDING,
@@ -1366,11 +1481,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
                 Duration.ofSeconds(30));
         var receiver =
             new CanonicalGameplayProtectedIncarnationReceiver(
-                repository,
-                tenantTags,
-                new ControlledSigner(keyPair),
-                configuration,
-                Clock.systemUTC());
+                repository, tenantTags, new ControlledSigner(keyPair), configuration, trustedClock);
         return new CanonicalGameplayAccountInitialBarrierRedisOwner(
             client, catalog, repository, tenantTags, receiver);
       }

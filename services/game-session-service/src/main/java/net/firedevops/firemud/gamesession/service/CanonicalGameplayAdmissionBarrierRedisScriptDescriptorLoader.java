@@ -37,7 +37,7 @@ final class CanonicalGameplayAdmissionBarrierRedisScriptDescriptorLoader {
       }
       return descriptor;
     } catch (IOException | RuntimeException failure) {
-      throw new IllegalStateException(unavailableMessage);
+      throw new IllegalStateException(unavailableMessage, failure);
     }
   }
 }

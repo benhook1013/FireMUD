@@ -320,7 +320,7 @@ services:
       <<: *service-health
 
   postgres:
-    image: postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
     command: ["postgres", "-c", "max_connections=200"]
     entrypoint: ["/usr/local/bin/firemud-postgres-data-layout-entrypoint.sh"]
     mem_limit: 1g
@@ -343,7 +343,7 @@ services:
       retries: 5
 
   redis-coord:
-    image: redis:8.10.3@sha256:0c257ce8b2f31f9f7595f587edf8ac259a248ba3ced82badc8c7aa826a85224f
+    image: redis:8.10.3@sha256:298641b35ac51aa999f9bb85707d6681fe635ce59cda51886a0b6adc1da37b8e
     mem_limit: 512m
     restart: unless-stopped
     env_file: *service-env-file
@@ -360,7 +360,7 @@ services:
       retries: 5
 
   redis-cache:
-    image: redis:8.10.3@sha256:0c257ce8b2f31f9f7595f587edf8ac259a248ba3ced82badc8c7aa826a85224f
+    image: redis:8.10.3@sha256:298641b35ac51aa999f9bb85707d6681fe635ce59cda51886a0b6adc1da37b8e
     mem_limit: 256m
     restart: unless-stopped
     env_file: *service-env-file

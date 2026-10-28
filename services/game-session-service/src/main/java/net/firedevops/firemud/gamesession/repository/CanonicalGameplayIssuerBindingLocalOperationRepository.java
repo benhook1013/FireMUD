@@ -337,7 +337,8 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
           proof,
           currentState,
           accountControl,
-          operationRow);
+          operationRow,
+          true);
     }
     if (operationRow != null) {
       throw conflict("A local issuer operation already exists for a newly prepared transition");
@@ -397,7 +398,15 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
             transitionRequest.transitionId());
     if (saved == null) throw conflict("Local issuer operation is unreadable after persistence");
     return returnOperation(
-        request, prepared, reservation, actualAnchor, proof, currentState, accountControl, saved);
+        request,
+        prepared,
+        reservation,
+        actualAnchor,
+        proof,
+        currentState,
+        accountControl,
+        saved,
+        false);
   }
 
   private CanonicalGameplayIssuerBindingLocalOperation returnOperation(
@@ -408,9 +417,18 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
       CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof proof,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState,
       AccountControlSnapshot accountControl,
-      Record row) {
+      Record row,
+      boolean exactRetry) {
     requireSameStoredOperation(
-        row, request, prepared, reservation, anchor, proof, currentState, accountControl, false);
+        row,
+        request,
+        prepared,
+        reservation,
+        anchor,
+        proof,
+        currentState,
+        accountControl,
+        exactRetry);
     UUID operationId = requireUuid(row, "operation_id");
     BigInteger operationFence = readPositive(row, "operation_fence");
     BigInteger localMemberGeneration = readPositive(row, "local_member_generation");
@@ -535,6 +553,8 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
         CanonicalGameplayIssuerMemberV2Value stored =
             CanonicalGameplayIssuerMemberV2Codec.decode(
                 requireBytes(operationRow, "member_value_bytes"));
+        // The physical member retains its original revision while owner transitions advance SQL.
+        // Exact retry must return those frozen bytes without accepting a regressed current source.
         reservation = stored.reservation();
         requireIdentityMatchesReservation(request.candidate(), row);
         if (!reservation.reservationId().equals(requireUuid(row, "reservation_id"))
@@ -553,7 +573,8 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
             || !reservation
                 .inventorySnapshotRevision()
                 .equals(readPositive(row, "inventory_snapshot_revision"))
-            || !reservation.inventoryRevision().equals(readPositive(row, "inventory_revision"))) {
+            || readPositive(row, "inventory_revision").compareTo(reservation.inventoryRevision())
+                < 0) {
           throw conflict(
               "Current reservation no longer matches its immutable local operation source");
         }
