@@ -495,3 +495,8 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: #3320 CLI reported that a later issuer cutoff could strand an older CLOSED barrier because the SQL operation schema permits positive prior epochs.
   - Observation: Gameplay initially accepted and escalated that claim before reading the actual owner. `beginCutoff` already requires current OPEN control and the original anchor-install operation, rejecting INSTALLED before allocation. The source claim was corrected in native review history and the unnecessary decision request withdrawn.
   - Expected pattern: Verify the concrete owner guards and supported lifecycle before accepting a finding or escalating a design choice; a table admitting a representation does not establish a reachable supported transition. Preserve the original adjudication audit and correction without expanding fail-closed behavior.
+
+- `2026-10-29`: Tracker proof-cell links need the architecture contract check
+  - Context: #3320 added production/test anchors and a link from a capability proof cell to its own proof-summary paragraph.
+  - Observation: links and Markdown passed locally, but CI architecture-doc-contracts rejected the proof-cell documentation path; that column permits executable tests or canonical validation/smoke tooling. The test links were valid and remain retained.
+  - Expected pattern: run the existing architecture-doc-contracts check when changing capability anchors; keep summary/gap links outside proof cells and retain direct executable proof links inside them. This is a selection correction, not a new validation tool.
