@@ -765,6 +765,117 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
   }
 
   @Test
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "VA_PRIMITIVE_ARRAY_PASSED_TO_OBJECT_VARARG",
+      justification =
+          "RedisCommands<byte[], byte[]> takes binary field keys; byte[][] supplies one field. Native deletion and readback verify the exact semantics.")
+  void completedAddRetryReadsReleasedZeroCapacityStateWithoutWritesAndRejectsPhysicalDrift() {
+    try (var fixture = newFixture(BigInteger.valueOf(16), BigInteger.ONE, 0)) {
+      String capacityAddSql =
+          "SELECT to_jsonb(mutation)::text FROM game_session_canonical_issuer_partition_mutation mutation"
+              + " WHERE mutation_kind = 'ADD_CAPACITY' AND owner_operation_id = ?";
+      String originalCapacityAddReceipt =
+          fixture
+              .dsl()
+              .fetchSingle(capacityAddSql, fixture.originalOperationId())
+              .get(0, String.class);
+      fixture.publishOriginalWithControlledAccountLease();
+      assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+      var pendingRelease = fixture.prepareIssuerRelease();
+      var released =
+          fixture.completeIssuerRelease(
+              pendingRelease, fixture.projectIssuerRelease(pendingRelease));
+      assertThat(released.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      var originalMember =
+          CanonicalGameplayIssuerMemberV2Codec.decode(fixture.originalMemberValueBytes());
+      var current =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+              originalMember.sourceCheckpoint(), originalMember.incarnation());
+      var projectionRepository =
+          new CanonicalGameplayIssuerBindingLocalProjectionRepository(fixture.dsl(), () -> current);
+      var originalOperation = released.originalOperation();
+      var work = projectionRepository.readPreparedPartitionWork(originalOperation);
+      assertThat(work.baselineProof().physicalCountedCapacityCount()).isZero();
+      assertThat(work.targetEntry().countsTowardCapacity()).isFalse();
+      assertThat(work.partitionCapacity()).isZero();
+      assertThat(work.aggregateCapacity()).isZero();
+      var owner =
+          new CanonicalGameplayIssuerBindingLocalRedisOwner(
+              issuerOwner,
+              RedisScriptCatalog.fromContributions(
+                  List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution())),
+              projectionRepository,
+              () -> current);
+      byte[] partitionKey = fixture.issuerPartitionKey();
+      byte[] releasedFields = physicalFieldSet(partitionKey);
+      assertThat(capacityFieldCount(releasedFields)).isEqualTo(1L);
+      String releasedCapacityName =
+          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+              released.releasedMemberValue().reservation().reservationId());
+      assertThat(decodeFields(releasedFields))
+          .containsEntry(releasedCapacityName, released.exactReleasedMemberValueBytes());
+      String historyBefore = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      String headBefore = partitionHeadImage(fixture.dsl(), fixture.originalPartitionId());
+      String anchorBefore = anchorAndPartitionProofImage(fixture.dsl());
+      String retainedBefore = fixture.retainedFirstNewAbortRowsImage();
+      Runnable assertSqlUnchanged =
+          () -> {
+            assertThat(
+                    fixture
+                        .dsl()
+                        .fetchSingle(capacityAddSql, fixture.originalOperationId())
+                        .get(0, String.class))
+                .isEqualTo(originalCapacityAddReceipt);
+            assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(historyBefore);
+            assertThat(partitionHeadImage(fixture.dsl(), fixture.originalPartitionId()))
+                .isEqualTo(headBefore);
+            assertThat(anchorAndPartitionProofImage(fixture.dsl())).isEqualTo(anchorBefore);
+            assertThat(fixture.retainedFirstNewAbortRowsImage()).isEqualTo(retainedBefore);
+          };
+      var retry = owner.projectAndRead(originalOperation);
+      assertThat(retry.scriptOutcome()).isEqualTo(3L);
+      assertThat(retry.exactReadbackBytes()).containsExactly(releasedFields);
+      assertThat(physicalFieldSet(partitionKey)).containsExactly(releasedFields);
+      assertSqlUnchanged.run();
+
+      byte[] capacityField = releasedCapacityName.getBytes(StandardCharsets.US_ASCII);
+      byte[] revisionField =
+          CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD.getBytes(
+              StandardCharsets.US_ASCII);
+      // Administrator-injected absence and conflicting bytes remain non-admitting on read-only
+      // retry.
+      for (byte[] field : List.of(capacityField, revisionField)) {
+        byte[] originalValue =
+            java.util.Objects.requireNonNull(
+                administratorCommands.hget(partitionKey, field),
+                "Expected original released field");
+        for (boolean missing : List.of(true, false)) {
+          if (missing) administratorCommands.hdel(partitionKey, new byte[][] {field});
+          else
+            administratorCommands.hset(
+                partitionKey,
+                field,
+                (Arrays.equals(field, revisionField)
+                        ? UUID.randomUUID().toString()
+                        : "changed-release-field")
+                    .getBytes(StandardCharsets.US_ASCII));
+          byte[] injectedFields = physicalFieldSet(partitionKey);
+          assertThatThrownBy(() -> owner.projectAndRead(originalOperation))
+              .isInstanceOf(IllegalStateException.class);
+          assertThat(physicalFieldSet(partitionKey)).containsExactly(injectedFields);
+          assertSqlUnchanged.run();
+          administratorCommands.hset(partitionKey, field, originalValue);
+          assertThat(physicalFieldSet(partitionKey)).containsExactly(releasedFields);
+        }
+      }
+      assertThat(owner.projectAndRead(originalOperation).scriptOutcome()).isEqualTo(3L);
+      assertThat(physicalFieldSet(partitionKey)).containsExactly(releasedFields);
+      assertSqlUnchanged.run();
+    }
+  }
+
+  @Test
   void ordinaryAddRefusesMissingPartitionRevisionWithoutRedisOrSqlWrites() throws Exception {
     try (var fixture = newFixture(BigInteger.valueOf(4), BigInteger.ONE, 0)) {
       String seed = "missing-revision-add";

@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadInput;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.gamesession.service.AccountInitialAdmissionSettlementReadService;
 import net.firedevops.firemud.gamesession.v1.AccountInitialAdmissionSettlementReadServiceGrpc;
@@ -26,6 +27,9 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
   public AccountInitialAdmissionSettlementReadGrpcService(
       AccountInitialAdmissionSettlementReadService owner, String namespace) {
     this.owner = Objects.requireNonNull(owner, "owner");
+    if (!GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Valid settlement workload namespace required");
+    }
     this.namespace = namespace;
     this.guard = new AccountInitialAdmissionSettlementReadWorkloadGuard(namespace);
   }
