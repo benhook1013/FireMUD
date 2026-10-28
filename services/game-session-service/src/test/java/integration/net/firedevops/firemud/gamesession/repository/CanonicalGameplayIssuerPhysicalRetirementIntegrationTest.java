@@ -29,8 +29,11 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
+import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution;
@@ -506,6 +509,113 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
                       accountA.accountId())
                   .get(0, String.class))
           .isEqualTo("ACQUISITION_INTENT");
+
+      var inventoryRepository = new CanonicalGameplayBindingInventoryRepository(fixture.dsl());
+      String historyBeforeAbortRetry = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      String retainedRowsBeforeAbortRetry = fixture.retainedFirstNewAbortRowsImage();
+      byte[] fieldsBeforeAbortRetry = physicalFieldSet(partitionKey);
+      String controlRowsSql =
+          "SELECT jsonb_build_object("
+              + "'clock', (SELECT to_jsonb(clock) FROM game_session_canonical_binding_inventory_clock clock WHERE singleton_id = 1),"
+              + " 'accountControl', (SELECT to_jsonb(control) FROM game_session_canonical_account_coverage_control control WHERE account_id = ?),"
+              + " 'issuerControl', (SELECT to_jsonb(control) FROM game_session_canonical_issuer_layout_bootstrap_control control WHERE issuer_id = ?))::text";
+      String controlRowsBeforeAbortRetry =
+          fixture
+              .dsl()
+              .fetchSingle(controlRowsSql, accountA.accountId(), accountA.issuerId())
+              .get(0, String.class);
+      Runnable assertAbortRetryUnchanged =
+          () -> {
+            assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID))
+                .isEqualTo(historyBeforeAbortRetry);
+            assertThat(fixture.retainedFirstNewAbortRowsImage())
+                .isEqualTo(retainedRowsBeforeAbortRetry);
+            assertThat(physicalFieldSet(partitionKey)).isEqualTo(fieldsBeforeAbortRetry);
+            assertThat(
+                    fixture
+                        .dsl()
+                        .fetchSingle(controlRowsSql, accountA.accountId(), accountA.issuerId())
+                        .get(0, String.class))
+                .isEqualTo(controlRowsBeforeAbortRetry);
+          };
+
+      // Exact terminal retries retain their original provenance after the real Account intent.
+      var abortRetry =
+          inventoryRepository.recordFirstNewAccountAbort(abort, abort.orphanCleanupId());
+      assertThat(abortRetry.transition()).isEqualTo(abort.transition());
+      assertThat(abortRetry.candidate()).isEqualTo(abort.candidate());
+      assertThat(abortRetry.reservation()).isEqualTo(abort.reservation());
+      assertThat(abortRetry.originalDecision().leaseEvidenceJson())
+          .isEqualTo(abort.originalDecision().leaseEvidenceJson());
+      assertThat(abortRetry.orphanCleanupId()).isEqualTo(abort.orphanCleanupId());
+      assertAbortRetryUnchanged.run();
+
+      var candidate = abort.candidate();
+      var changedCandidate =
+          new CanonicalGameplayBindingInventoryEntry(
+              candidate.identity(),
+              candidate.bindingRef(),
+              candidate.bindingGeneration(),
+              candidate.accountIndexFence(),
+              candidate.issuerReservationId(),
+              candidate.transitionId(),
+              candidate.lifecycle(),
+              candidate.accountIndexState(),
+              candidate.issuerIndexState()
+                      == CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED
+                  ? CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED
+                  : CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED,
+              candidate.inventoryRevision());
+      var reservation = abort.reservation();
+      var changedReservation =
+          new CanonicalIssuerPartitionReservation(
+              reservation.reservationId(),
+              reservation.owner(),
+              reservation.bindingGeneration(),
+              reservation.transitionId(),
+              reservation.partitionId(),
+              reservation.lifecycle(),
+              reservation.reservationFence(),
+              reservation.issuerCoverageOperationId(),
+              reservation.issuerCoverageOperationFence(),
+              reservation.coverageFence().add(BigInteger.ONE),
+              reservation.inventorySnapshotRevision(),
+              reservation.inventoryRevision());
+      // Shape-valid caller objects exercise the SQL comparison; no stored evidence is changed.
+      for (var changedSource :
+          List.of(
+              new CanonicalGameplayAdmissionAbortSource(
+                  abort.transition(),
+                  abort.candidate(),
+                  abort.reservation(),
+                  abort.originalDecision(),
+                  UUID.randomUUID()),
+              new CanonicalGameplayAdmissionAbortSource(
+                  abort.transition(),
+                  changedCandidate,
+                  abort.reservation(),
+                  abort.originalDecision(),
+                  abort.orphanCleanupId()),
+              new CanonicalGameplayAdmissionAbortSource(
+                  abort.transition(),
+                  abort.candidate(),
+                  changedReservation,
+                  abort.originalDecision(),
+                  abort.orphanCleanupId()))) {
+        assertThatThrownBy(
+                () ->
+                    inventoryRepository.recordFirstNewAccountAbort(
+                        changedSource, changedSource.orphanCleanupId()))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+            .hasMessageContaining("Retained first-NEW abort source changed during exact retry");
+        assertAbortRetryUnchanged.run();
+      }
+      assertThat(
+              inventoryRepository
+                  .recordFirstNewAccountAbort(abort, abort.orphanCleanupId())
+                  .orphanCleanupId())
+          .isEqualTo(abort.orphanCleanupId());
+      assertAbortRetryUnchanged.run();
 
       byte[] beforeStaleAdd = physicalFieldSet(partitionKey);
       long mutationsBeforeStaleAdd = partitionMutationCount(fixture.dsl());
