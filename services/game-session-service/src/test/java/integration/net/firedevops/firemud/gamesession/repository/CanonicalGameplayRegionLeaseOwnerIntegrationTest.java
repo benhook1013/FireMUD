@@ -533,6 +533,103 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void initializingBeforeRedisExecutionRetainsEvidenceAndRefusesRepeatedOwnerRetry()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      // World, provisional binding and stable-incarnation authority are controlled inputs;
+      // PostgreSQL preparation, the Redis absence probe and subsequent region owner are actual.
+      WorldFixture world = WorldFixture.open();
+      var bindingEvidence = provisionalEvidence(world.request());
+      var bindingInventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(bindingInventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(bindingEvidence);
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var qualifiedSource = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(qualifiedSource));
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  qualifiedSource.tenantId(),
+                  qualifiedSource.gameInstanceId(),
+                  qualifiedSource.regionId()));
+      byte[] metaKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  qualifiedSource.tenantId(),
+                  qualifiedSource.gameInstanceId(),
+                  qualifiedSource.regionId()));
+      var preparation =
+          statusRepository.prepareInitialTimeline(
+              bindingEvidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              qualifiedSource,
+              incarnation,
+              redisOwner.requireTimelineAbsent(qualifiedSource, incarnation),
+              NOW);
+      assertThat(preparation.phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.PREPARED);
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      assertThat(redis.admin().type(metaKey)).isEqualTo("none");
+
+      // Model process loss after the SQL commit but before any INITIALIZE Redis call:
+      // discard the sole returned creation permit, without changing SQL or deleting keys.
+      assertThat(statusRepository.beginInitialTimeline(preparation, NOW)).isPresent();
+      var initializing = statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow();
+      assertThat(initializing.phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
+      assertThat(initializing.operationId()).isEqualTo(preparation.operationId());
+      assertThat(initializing.sourceDigest()).isEqualTo(preparation.sourceDigest());
+      assertThat(initializing.source()).isEqualTo(qualifiedSource);
+      String retainedSqlImage =
+          testSchema
+              .dsl()
+              .fetch(
+                  "SELECT * FROM game_session_region_timeline_preparation WHERE transition_id = ?",
+                  TRANSITION_ID)
+              .formatJSON();
+      var retryOwner =
+          owner(
+              bindingInventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "retry-after-initializing-commit",
+              incarnationSource);
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+        assertThat(redis.admin().type(metaKey)).isEqualTo("none");
+        assertThat(statusRepository.beginInitialTimeline(initializing, NOW)).isEmpty();
+        assertThatThrownBy(() -> retryOwner.installForTransition(TRANSITION_ID, world.request()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Canonical Game Session region lease is unavailable")
+            .satisfies(failure -> assertThat(failure.getCause()).isNull());
+        assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+        assertThat(redis.admin().type(metaKey)).isEqualTo("none");
+        assertThat(statusRepository.find(qualifiedSource)).isEmpty();
+        assertThat(
+                testSchema
+                    .dsl()
+                    .fetch(
+                        "SELECT * FROM game_session_region_timeline_preparation WHERE transition_id = ?",
+                        TRANSITION_ID)
+                    .formatJSON())
+            .isEqualTo(retainedSqlImage);
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void accountMemberAcknowledgementAfterRegionBridgePreservesOriginalBridgeEvidence()
       throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
