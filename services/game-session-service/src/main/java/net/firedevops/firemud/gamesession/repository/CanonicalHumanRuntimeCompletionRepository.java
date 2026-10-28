@@ -256,7 +256,8 @@ public final class CanonicalHumanRuntimeCompletionRepository {
         || dsl.connectionResult(
             connection -> {
               try {
-                return connection.isReadOnly()
+                return connection.getAutoCommit()
+                    || connection.isReadOnly()
                     || connection.getTransactionIsolation()
                         != Connection.TRANSACTION_READ_COMMITTED;
               } catch (java.sql.SQLException exception) {
