@@ -669,11 +669,32 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               secondPrepared.bindingGeneration(),
               null,
               secondBinding.currentTarget()));
-      var secondInstallation =
-          bridgeOwner.installForTransition(
-              installation, secondTransitionId, secondBinding.worldRequest());
-      var secondAcknowledgement = bridgeOwner.bridge(secondInstallation).obligation();
-      var secondLostReplyRetry = bridgeOwner.bridge(secondInstallation).obligation();
+      CanonicalGameplayRegionLeaseOwner.Installation secondInstallation;
+      CanonicalGameplayRegionBindingBridgeOwner secondBridgeOwner = bridgeOwner;
+      if (secondBinding.freshGrant()) {
+        // The first private handle is deliberately not reused. Expire only this test-owned lease.
+        redis.admin().pexpire(redisKey, 0L);
+        secondBridgeOwner =
+            CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
+                dsl,
+                redis.ownerClient(),
+                scriptCatalog,
+                stableSource,
+                secondBinding.worldRegionResolver(),
+                secondBinding.entityReferenceClient(),
+                runtimeIdentity,
+                Duration.ofSeconds(30),
+                Clock.systemUTC());
+        secondInstallation =
+            secondBridgeOwner.installForTransition(
+                secondTransitionId, secondBinding.worldRequest());
+      } else {
+        secondInstallation =
+            bridgeOwner.installForTransition(
+                installation, secondTransitionId, secondBinding.worldRequest());
+      }
+      var secondAcknowledgement = secondBridgeOwner.bridge(secondInstallation).obligation();
+      var secondLostReplyRetry = secondBridgeOwner.bridge(secondInstallation).obligation();
       requireMaterializedBridgeCaptured(dsl, secondTransitionId);
       if (!secondAcknowledgement.equals(secondLostReplyRetry)
           || secondAcknowledgement.status()
@@ -730,7 +751,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               && secondStatus.regionEpoch() == 1L
               && secondStatus.lastCommittedTickId() == -1L;
       if (!unchangedTimeline
-          || !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
+          || (secondBinding.freshGrant()
+              ? status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
+                  || secondStatus.executorFence().compareTo(status.executorFence()) <= 0
+              : !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation()))
           || redis.admin().pttl(redisKey) <= 0L
           || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
         throw new IllegalStateException(
@@ -784,7 +808,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           snapshotRegionRedisState(redis, redisKey, initialMetaKey);
       boolean expiredGrantInstallationRejected;
       try {
-        bridgeOwner.installForTransition(
+        secondBridgeOwner.installForTransition(
             secondInstallation, secondTransitionId, secondBinding.worldRequest());
         expiredGrantInstallationRejected = false;
       } catch (IllegalStateException expected) {
@@ -1523,7 +1547,16 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalPlayableTarget currentTarget,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
-      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {}
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      boolean freshGrant) {
+    public SecondBinding(
+        CanonicalInitialPlayerLocationRequest worldRequest,
+        CanonicalPlayableTarget currentTarget,
+        CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+        CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
+      this(worldRequest, currentTarget, worldRegionResolver, entityReferenceClient, false);
+    }
+  }
 
   public record TwoBindingProof(
       Proof first,

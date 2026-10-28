@@ -195,7 +195,9 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
         || !"ACTIVE".equals(lifecycle.lifecycleStatus())
         || lifecycle.lifecycleEpoch() != selection.activeLifecycleEpoch()
         || !lifecycleRequest.canonicalTenantId().equals(selection.canonicalTenantId())
-        || !lifecycleRequest.readRequestId().equals(lifecycleReadRequestId(selection))
+        || !lifecycleRequest
+            .readRequestId()
+            .equals(lifecycleReadRequestId(selection.placementOperationId()))
         || !lifecycleRequest.canonicalGameInstanceId().equals(selection.canonicalGameInstanceId())
         || !lifecycleRequest.playableStateNamespaceId().equals(selection.playableStateNamespaceId())
         || !lifecycleRequest.playableStateScope().equals(selection.playableStateScope())
@@ -233,9 +235,6 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
             .setObservedRuntimeRoomKey(result.runtimeRoomInstanceKey())
             .setLifecycle(consequence)
             .build();
-    if (response.getSerializedSize() > MAX_REGION_RESPONSE_BYTES) {
-      throw new IllegalStateException("World initial-location region response exceeds its bound");
-    }
     return response;
   }
 
@@ -251,9 +250,9 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
     }
   }
 
-  private static UUID lifecycleReadRequestId(Selection selection) {
+  static UUID lifecycleReadRequestId(UUID placementOperationId) {
     byte[] name =
-        ("firemud-world-initial-location-lifecycle-read/v1/" + selection.placementOperationId())
+        ("firemud-world-initial-location-lifecycle-read/v1/" + placementOperationId)
             .getBytes(StandardCharsets.US_ASCII);
     return UUID.nameUUIDFromBytes(name);
   }
