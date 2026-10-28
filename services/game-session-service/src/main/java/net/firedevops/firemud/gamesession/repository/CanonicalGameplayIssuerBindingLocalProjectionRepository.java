@@ -293,21 +293,32 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
           targetEntry.bindingPresent()
               ? CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING
               : CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY;
-      byte[] intent =
-          CanonicalGameplayIssuerPartitionMutationRepository.encodeIntendedChange(
-              kind,
-              target.operationId(),
-              targetPartition,
-              targetEntry.memberValue().owner().bindingRef().bytes(),
-              CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
-                      targetEntry.memberValue().reservation().reservationId())
-                  .getBytes(StandardCharsets.US_ASCII),
-              targetEntry.exactMemberValueBytes(),
-              (targetEntry.bindingPresent() ? "1" : "0").getBytes(StandardCharsets.US_ASCII),
-              (targetEntry.countsTowardCapacity() ? "1" : "0").getBytes(StandardCharsets.US_ASCII));
-      physicalMutation =
-          CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
-              transaction, kind, target.operationId(), targetPartition, intent);
+      physicalMutation = sources.mutations().get(new MutationKey(kind, target.operationId()));
+      // A completed ADD is a historical receipt. Later release changes the current projection,
+      // not the frozen intended change; its replay performs independent current readback only.
+      if (physicalMutation == null
+          || physicalMutation.status()
+              != CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED) {
+        if (!targetEntry.operationId().equals(target.operationId())) {
+          throw unavailable("A changed terminal projection cannot issue or resume an ADD mutation");
+        }
+        byte[] intent =
+            CanonicalGameplayIssuerPartitionMutationRepository.encodeIntendedChange(
+                kind,
+                target.operationId(),
+                targetPartition,
+                targetEntry.memberValue().owner().bindingRef().bytes(),
+                CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                        targetEntry.memberValue().reservation().reservationId())
+                    .getBytes(StandardCharsets.US_ASCII),
+                targetEntry.exactMemberValueBytes(),
+                (targetEntry.bindingPresent() ? "1" : "0").getBytes(StandardCharsets.US_ASCII),
+                (targetEntry.countsTowardCapacity() ? "1" : "0")
+                    .getBytes(StandardCharsets.US_ASCII));
+        physicalMutation =
+            CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
+                transaction, kind, target.operationId(), targetPartition, intent);
+      }
       mutationHead =
           CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
               transaction, anchor.bootstrapOperationId(), targetPartition);
