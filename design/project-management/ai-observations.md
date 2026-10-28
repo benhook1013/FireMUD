@@ -498,3 +498,8 @@ Entry format:
 ## 2026-10-29 — Hosted completion parsing and capture diagnostics
 
 Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was recorded at 04:30:37, a 39-minute 19-second capture delay. FireController identified an optional `review_info_content` marker that broke standing-result parsing and unrelated CI-bot edits that masked the useful capture diagnostic. The owner deployed parser/diagnostic regression fixes in `2f1e5da5` and recovered the original zero-finding evidence without another trigger or spent reservation. Retain optional-marker and unrelated-comment cases in completion recovery tests; provider check success alone cannot establish a zero-finding native review.
+
+- `2026-10-29`: Check owner reachability before adjudicating a schema-level review claim
+  - Context: #3320 CLI reported that a later issuer cutoff could strand an older CLOSED barrier because the SQL operation schema permits positive prior epochs.
+  - Observation: Gameplay initially accepted and escalated that claim before reading the actual owner. `beginCutoff` already requires current OPEN control and the original anchor-install operation, rejecting INSTALLED before allocation. The source claim was corrected in native review history and the unnecessary decision request withdrawn.
+  - Expected pattern: Verify the concrete owner guards and supported lifecycle before accepting a finding or escalating a design choice; a table admitting a representation does not establish a reachable supported transition. Preserve the original adjudication audit and correction without expanding fail-closed behavior.
