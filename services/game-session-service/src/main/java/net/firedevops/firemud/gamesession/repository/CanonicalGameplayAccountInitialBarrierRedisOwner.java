@@ -24,9 +24,13 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountInitialBarrierRedisScriptContribution;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Explicit manual owner for a create-once INITIAL OPEN barrier and exact current readback. */
 final class CanonicalGameplayAccountInitialBarrierRedisOwner {
+  private static final Logger logger =
+      LoggerFactory.getLogger(CanonicalGameplayAccountInitialBarrierRedisOwner.class);
   private static final String PRINCIPAL = "gamesession_coord_app";
   private static final String KEY_PREFIX = "session:game:account-admission:";
   private static final int MAX_SCRIPT_BYTES = 32 * 1024;
@@ -133,6 +137,11 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
         tryCreateOnce(prepared, commands, sha);
       }
     } catch (RuntimeException possibleDispatchOrSourceFailure) {
+      logger.warn(
+          "Initial Account OPEN create attempt did not complete originalRequestId={} initializerId={} failureType={}",
+          snapshot.originalRequestId(),
+          snapshot.initializerId(),
+          possibleDispatchOrSourceFailure.getClass().getName());
       // Never create a replacement initializer or repeat a possibly dispatched write. A positive
       // exact readback can still finish the original receipt; absence remains explicit uncertainty.
     }
