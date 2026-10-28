@@ -111,6 +111,18 @@ public class CanonicalInitialAdmissionRepository {
     throw unavailableHumanAdmissionProtection();
   }
 
+  /** Point-in-time fresh-abort eligibility only; reserves nothing across the Account call. */
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public void requireStartingTargetForFreshProtectedAbort(
+      CanonicalInitialAdmissionRequest request) {
+    Objects.requireNonNull(request, "request");
+    requireWritableReadCommittedOwnerTransaction();
+    lockTarget(request);
+    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
+    CanonicalInitialAdmissionLaunchTarget launch = lockStartingLaunchTarget(request);
+    requireRequestMatchesCatalogAndLaunch(request, catalog, launch);
+  }
+
   /**
    * Lower-level owner reservation for an already acquired, fully retained Account protection. This
    * method is intentionally not used by the public Human path.

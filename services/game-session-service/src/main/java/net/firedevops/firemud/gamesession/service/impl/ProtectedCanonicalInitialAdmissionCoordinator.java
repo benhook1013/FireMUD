@@ -150,6 +150,7 @@ public final class ProtectedCanonicalInitialAdmissionCoordinator {
     } else if (existing.isPresent()) {
       protection = protectionBindings.readPendingProtection(request, accountRequest);
     } else {
+      write(() -> admissions.requireStartingTargetForFreshProtectedAbort(request));
       protection = acquireExactProtection(accountRequest);
       write(() -> admissions.reserveProtectedStartingForRuntimeCompletion(request, protection));
     }
