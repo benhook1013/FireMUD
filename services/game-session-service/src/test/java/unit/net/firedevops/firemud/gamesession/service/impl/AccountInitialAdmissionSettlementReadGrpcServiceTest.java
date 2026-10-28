@@ -60,6 +60,19 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
   }
 
   @Test
+  void constructionRejectsMissingOrInvalidWorkloadNamespaceBeforeOwnerAccess() {
+    for (String namespace :
+        java.util.Arrays.asList(
+            null, "", " ", "Owner-Namespace", "invalid_namespace", "x".repeat(64))) {
+      assertThatThrownBy(
+              () -> new AccountInitialAdmissionSettlementReadGrpcService(owner, namespace))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Valid settlement workload namespace required");
+    }
+    verifyNoInteractions(owner);
+  }
+
+  @Test
   void authenticatedAccountGetsExactBytesOverRealMtlsAndWrongPeersNeverReachOwner()
       throws Exception {
     var pki =
