@@ -693,12 +693,20 @@ class CanonicalInitialPlayerLocationClientTest {
 
   private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
       CanonicalInitialPlayerLocationRequest request) {
-    return regionResponse(request, NAMESPACE, lifecycleReadRequestId(request));
+    return regionResponse(
+        request,
+        NAMESPACE,
+        WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+            java.util.UUID.fromString(request.getPlacementOperationUuid())));
   }
 
   private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
       CanonicalInitialPlayerLocationRequest request, String lifecycleTargetNamespace) {
-    return regionResponse(request, lifecycleTargetNamespace, lifecycleReadRequestId(request));
+    return regionResponse(
+        request,
+        lifecycleTargetNamespace,
+        WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+            java.util.UUID.fromString(request.getPlacementOperationUuid())));
   }
 
   private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
@@ -743,12 +751,5 @@ class CanonicalInitialPlayerLocationClientTest {
         .setObservedRuntimeRoomKey(9182L)
         .setLifecycle(lifecycle)
         .build();
-  }
-
-  private static java.util.UUID lifecycleReadRequestId(
-      CanonicalInitialPlayerLocationRequest request) {
-    return java.util.UUID.nameUUIDFromBytes(
-        ("firemud-world-initial-location-lifecycle-read/v1/" + request.getPlacementOperationUuid())
-            .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
   }
 }

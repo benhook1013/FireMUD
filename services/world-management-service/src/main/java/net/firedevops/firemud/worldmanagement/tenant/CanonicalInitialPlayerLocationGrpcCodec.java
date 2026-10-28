@@ -1,7 +1,6 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import com.google.protobuf.ByteString;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -223,7 +222,9 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
         || !lifecycleRequest.canonicalTenantId().equals(selection.canonicalTenantId())
         || !lifecycleRequest
             .readRequestId()
-            .equals(lifecycleReadRequestId(selection.placementOperationId()))
+            .equals(
+                WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                    selection.placementOperationId()))
         || !lifecycleRequest.canonicalGameInstanceId().equals(selection.canonicalGameInstanceId())
         || !lifecycleRequest.playableStateNamespaceId().equals(selection.playableStateNamespaceId())
         || !lifecycleRequest.playableStateScope().equals(selection.playableStateScope())
@@ -274,13 +275,6 @@ final class CanonicalInitialPlayerLocationGrpcCodec {
     } catch (IllegalArgumentException invalid) {
       throw invalid(field + " must be canonical non-nil UUID text", invalid);
     }
-  }
-
-  static UUID lifecycleReadRequestId(UUID placementOperationId) {
-    byte[] name =
-        ("firemud-world-initial-location-lifecycle-read/v1/" + placementOperationId)
-            .getBytes(StandardCharsets.US_ASCII);
-    return UUID.nameUUIDFromBytes(name);
   }
 
   private static String rawDigest(String value, String field) {

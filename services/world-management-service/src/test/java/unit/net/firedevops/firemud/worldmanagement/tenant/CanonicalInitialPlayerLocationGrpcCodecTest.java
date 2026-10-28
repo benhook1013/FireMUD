@@ -261,10 +261,8 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
     var lifecycleRequest =
         new WorldCanonicalInstanceLifecycleEvidence.Request(
             WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
-            UUID.nameUUIDFromBytes(
-                ("firemud-world-initial-location-lifecycle-read/v1/"
-                        + selection.placementOperationId())
-                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII)),
+            WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                selection.placementOperationId()),
             "world-management",
             TENANT,
             selection.worldSlug(),
@@ -307,14 +305,6 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
         .containsExactly(lifecycleRequest.canonicalBytes());
     assertThat(response.getSerializedSize())
         .isLessThanOrEqualTo(CanonicalInitialPlayerLocationGrpcCodec.MAX_REGION_RESPONSE_BYTES);
-  }
-
-  @Test
-  void lifecycleReadRequestIdRetainsPublishedNameUuidVector() {
-    assertThat(
-            CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(
-                uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")))
-        .isEqualTo(uuid("5548bc3e-8d0e-3a87-9e7c-56a6647352c0"));
   }
 
   private static void assertInvalid(CanonicalInitialPlayerLocationRequest request) {

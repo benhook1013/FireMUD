@@ -3439,7 +3439,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var secondLifecycleRequest =
         new WorldCanonicalInstanceLifecycleEvidence.Request(
             originalLifecycleRequest.schemaVersion(),
-            CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(placementOperationId),
+            WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                placementOperationId),
             originalLifecycleRequest.targetNamespace(),
             originalLifecycleRequest.canonicalTenantId(),
             originalLifecycleRequest.worldSlug(),

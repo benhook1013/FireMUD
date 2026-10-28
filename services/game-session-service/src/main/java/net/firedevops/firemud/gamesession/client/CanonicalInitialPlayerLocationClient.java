@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.client;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -319,7 +318,11 @@ public final class CanonicalInitialPlayerLocationClient
     var target = request.getExpectedTarget();
     if (!lifecycleRequest.canonicalTenantId().toString().equals(target.getCanonicalTenantUuid())
         || !namespace.equals(lifecycleRequest.targetNamespace())
-        || !lifecycleRequest.readRequestId().equals(lifecycleReadRequestId(request))
+        || !lifecycleRequest
+            .readRequestId()
+            .equals(
+                WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                    UUID.fromString(request.getPlacementOperationUuid())))
         || !lifecycleRequest.canonicalGameInstanceId().toString().equals(target.getGameInstanceId())
         || !lifecycleRequest
             .playableStateNamespaceId()
@@ -417,13 +420,6 @@ public final class CanonicalInitialPlayerLocationClient
     } catch (IllegalArgumentException invalid) {
       throw invalidResponse(field + " is not a canonical non-nil UUID", invalid);
     }
-  }
-
-  private static UUID lifecycleReadRequestId(CanonicalInitialPlayerLocationRequest request) {
-    byte[] name =
-        ("firemud-world-initial-location-lifecycle-read/v1/" + request.getPlacementOperationUuid())
-            .getBytes(StandardCharsets.US_ASCII);
-    return UUID.nameUUIDFromBytes(name);
   }
 
   private static IllegalStateException invalidResponse(String message) {

@@ -283,7 +283,7 @@ public final class CanonicalInitialPlayerLocationService {
     var release = association.completeLaunchBinding().evidence().releaseAttestation();
     return new WorldCanonicalInstanceLifecycleEvidence.Request(
         WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
-        CanonicalInitialPlayerLocationGrpcCodec.lifecycleReadRequestId(
+        WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
             selection.placementOperationId()),
         trustedNamespace,
         identity.canonicalTenantId(),
