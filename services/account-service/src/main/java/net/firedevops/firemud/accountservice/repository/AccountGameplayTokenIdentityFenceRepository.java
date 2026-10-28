@@ -8,7 +8,6 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence;
-import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.SourceKind;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.State;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
 import org.jooq.DSLContext;
@@ -29,7 +28,7 @@ public class AccountGameplayTokenIdentityFenceRepository {
   private static final String TABLE = "account_gameplay_token_identity_fences";
   private static final String COLUMNS =
       "account_uuid, operation_id, issuance_request_id, token_hash, token_jti, "
-          + "not_before_epoch_second, token_generation, issuance_fence, source_kind, token_identity_fence, "
+          + "not_before_epoch_second, token_generation, issuance_fence, token_identity_fence, "
           + "state, revocation_request_id, revocation_digest";
   private final DSLContext dsl;
 
@@ -66,44 +65,14 @@ public class AccountGameplayTokenIdentityFenceRepository {
   AccountGameplayTokenIdentityFence registerCommittedIssuance(TokenIdentity identity) {
     requireTransaction();
     lockAccountForUpdate(identity.accountId());
-    if (identity.sourceKind() != SourceKind.LOGIN) throw new TokenFenceUnavailableException();
     dsl.execute(
         "INSERT INTO "
             + TABLE
             + " (account_uuid, operation_id, issuance_request_id, token_hash, "
-            + "token_jti, not_before_epoch_second, token_generation, issuance_fence, source_kind) "
+            + "token_jti, not_before_epoch_second, token_generation, issuance_fence) "
             + "SELECT account_uuid, operation_id, request_id, token_hash, token_jti, "
-            + "not_before_epoch_second, token_generation, issuance_fence, 'LOGIN' "
+            + "not_before_epoch_second, token_generation, issuance_fence "
             + "FROM account_gameplay_delegation_issuance_operations "
-            + "WHERE operation_id = ? AND request_id = ? AND account_uuid = ? "
-            + "AND token_hash = ? AND token_jti = ? AND not_before_epoch_second = ? "
-            + "AND token_generation = ? AND issuance_fence = ? AND status = 'COMMITTED' "
-            + "ON CONFLICT (operation_id) DO NOTHING",
-        identity.operationId(),
-        identity.issuanceRequestId(),
-        identity.accountId(),
-        identity.tokenSha256(),
-        identity.tokenJti(),
-        identity.notBeforeEpochSecond(),
-        identity.tokenGeneration(),
-        identity.issuanceFence());
-    return requireActiveForUpdate(identity);
-  }
-
-  /** Registers a committed ORIGINAL-NEW lineage in the same Account token-identity fence owner. */
-  AccountGameplayTokenIdentityFence registerCommittedOriginalNewIssuance(TokenIdentity identity) {
-    requireTransaction();
-    if (identity.sourceKind() != SourceKind.ORIGINAL_NEW)
-      throw new TokenFenceUnavailableException();
-    lockAccountForUpdate(identity.accountId());
-    dsl.execute(
-        "INSERT INTO "
-            + TABLE
-            + " (account_uuid, operation_id, issuance_request_id, token_hash, token_jti, "
-            + "not_before_epoch_second, token_generation, issuance_fence, source_kind) "
-            + "SELECT account_uuid, operation_id, request_id, token_hash, token_jti, "
-            + "not_before_epoch_second, token_generation, issuance_fence, 'ORIGINAL_NEW' "
-            + "FROM account_original_new_bound_gameplay_issuances "
             + "WHERE operation_id = ? AND request_id = ? AND account_uuid = ? "
             + "AND token_hash = ? AND token_jti = ? AND not_before_epoch_second = ? "
             + "AND token_generation = ? AND issuance_fence = ? AND status = 'COMMITTED' "
@@ -175,10 +144,7 @@ public class AccountGameplayTokenIdentityFenceRepository {
     }
     // All fields have fixed/canonical syntax, so the domain-separated framing is unambiguous.
     String input =
-        (identity.sourceKind() == SourceKind.LOGIN
-                ? "account-gameplay-token-revocation-intent/v1"
-                : "account-original-new-bound-gameplay-token-revocation-intent/v1")
-            + "\n"
+        "account-gameplay-token-revocation-intent/v1\n"
             + requestId
             + "\n"
             + identity.accountId()
@@ -208,11 +174,10 @@ public class AccountGameplayTokenIdentityFenceRepository {
   }
 
   private AccountGameplayTokenIdentityFence requireExact(TokenIdentity identity, boolean lock) {
-    if (identity.sourceKind() == SourceKind.LOGIN
-        && dsl.fetchOne(
-                "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
-                identity.issuanceRequestId())
-            != null) throw new TokenRevokedException();
+    if (dsl.fetchOne(
+            "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
+            identity.issuanceRequestId())
+        != null) throw new TokenRevokedException();
     return requireExactStoredIdentity(identity, lock);
   }
 
@@ -231,15 +196,10 @@ public class AccountGameplayTokenIdentityFenceRepository {
     if (row == null) throw new TokenFenceUnavailableException();
     AccountGameplayTokenIdentityFence fence = decode(row);
     if (!identity.equals(fence.identity())) throw new TokenFenceUnavailableException();
-    String sourceTable =
-        identity.sourceKind() == SourceKind.LOGIN
-            ? "account_gameplay_delegation_issuance_operations"
-            : "account_original_new_bound_gameplay_issuances";
     Record source =
         dsl.fetchOne(
-            "SELECT operation_id FROM "
-                + sourceTable
-                + " WHERE operation_id = ? AND request_id = ? AND account_uuid = ? AND token_hash = ? "
+            "SELECT operation_id FROM account_gameplay_delegation_issuance_operations "
+                + "WHERE operation_id = ? AND request_id = ? AND account_uuid = ? AND token_hash = ? "
                 + "AND token_jti = ? AND not_before_epoch_second = ? AND token_generation = ? "
                 + "AND issuance_fence = ? AND status = 'COMMITTED'",
             identity.operationId(),
@@ -258,15 +218,10 @@ public class AccountGameplayTokenIdentityFenceRepository {
     try {
       return new AccountGameplayTokenIdentityFence(
           new TokenIdentity(
-              row.get("account_uuid", UUID.class),
-              row.get("operation_id", UUID.class),
-              row.get("issuance_request_id", UUID.class),
-              row.get("token_hash", String.class),
-              row.get("token_jti", UUID.class),
-              row.get("not_before_epoch_second", Long.class),
-              row.get("token_generation", Long.class),
-              row.get("issuance_fence", Long.class),
-              SourceKind.valueOf(row.get("source_kind", String.class))),
+              row.get("account_uuid", UUID.class), row.get("operation_id", UUID.class),
+              row.get("issuance_request_id", UUID.class), row.get("token_hash", String.class),
+              row.get("token_jti", UUID.class), row.get("not_before_epoch_second", Long.class),
+              row.get("token_generation", Long.class), row.get("issuance_fence", Long.class)),
           row.get("token_identity_fence", Long.class),
           State.valueOf(row.get("state", String.class)),
           row.get("revocation_request_id", UUID.class),

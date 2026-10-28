@@ -8,7 +8,6 @@ import java.util.Objects;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseOwner;
-import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwner;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
@@ -22,18 +21,6 @@ public final class AccountGameplayAdmissionLeaseManualFactory {
       AccountGameplayAdmissionLeaseOwner owner, String workloadNamespace) {
     return new AccountGameplayAdmissionLeaseGrpcService(
         Objects.requireNonNull(owner, "Account gameplay admission lease owner required"),
-        new AccountGameplayAdmissionLeaseWorkloadGuard(workloadNamespace));
-  }
-
-  /** Explicit receiver composition that enables only the exact post-COMMITTED credential method. */
-  public static AccountGameplayAdmissionLeaseGrpcService createUnregisteredReceiver(
-      AccountGameplayAdmissionLeaseOwner owner,
-      AccountOriginalNewBoundGameplayCredentialOwner originalNewCredentialOwner,
-      String workloadNamespace) {
-    return new AccountGameplayAdmissionLeaseGrpcService(
-        Objects.requireNonNull(owner, "Account gameplay admission lease owner required"),
-        Objects.requireNonNull(
-            originalNewCredentialOwner, "Account original-new credential owner required"),
         new AccountGameplayAdmissionLeaseWorkloadGuard(workloadNamespace));
   }
 
@@ -63,38 +50,6 @@ public final class AccountGameplayAdmissionLeaseManualFactory {
     factory.addService(
         ServerInterceptors.interceptForward(
             createUnregisteredReceiver(owner, workloadNamespace),
-            new GrpcPeerIdentityInterceptor(),
-            new AccountGameplayAdmissionLeaseWorkloadGuard(workloadNamespace)));
-    return factory.createServer();
-  }
-
-  /** Creates an unstarted, method-guarded receiver with the ORIGINAL-NEW credential owner wired. */
-  public static Server createUnregisteredServer(
-      String address,
-      KeyManagerFactory keys,
-      TrustManagerFactory trust,
-      AccountGameplayAdmissionLeaseOwner owner,
-      AccountOriginalNewBoundGameplayCredentialOwner originalNewCredentialOwner,
-      String workloadNamespace) {
-    Objects.requireNonNull(address, "gRPC server address required");
-    Objects.requireNonNull(keys, "gRPC server key manager required");
-    Objects.requireNonNull(trust, "gRPC server trust manager required");
-    int transportMaximum =
-        Math.max(
-            AccountGameplayAdmissionLeaseGrpcCodec.MAX_ACQUIRE_REQUEST_WIRE_BYTES,
-            AccountGameplayAdmissionLeaseGrpcCodec.MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES);
-    var factory =
-        new BoundedGrpcServerFactory(
-            address,
-            List.of(),
-            keys,
-            trust,
-            TlsServerCredentials.ClientAuth.REQUIRE,
-            GrpcRequestBytePolicy.ordinary(),
-            transportMaximum);
-    factory.addService(
-        ServerInterceptors.interceptForward(
-            createUnregisteredReceiver(owner, originalNewCredentialOwner, workloadNamespace),
             new GrpcPeerIdentityInterceptor(),
             new AccountGameplayAdmissionLeaseWorkloadGuard(workloadNamespace)));
     return factory.createServer();

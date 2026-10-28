@@ -14,7 +14,6 @@ import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Modifier;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.SourceKind;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.State;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
@@ -93,7 +92,7 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
         .verify(dsl)
         .fetchOne(
             "SELECT account_uuid, operation_id, issuance_request_id, token_hash, token_jti, "
-                + "not_before_epoch_second, token_generation, issuance_fence, source_kind, token_identity_fence, "
+                + "not_before_epoch_second, token_generation, issuance_fence, token_identity_fence, "
                 + "state, revocation_request_id, revocation_digest "
                 + "FROM account_gameplay_token_identity_fences WHERE operation_id = ? FOR UPDATE",
             IDENTITY.operationId());
@@ -126,52 +125,6 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
                 new AccountGameplayTokenIdentityFenceRepository(dsl)
                     .requireActiveForUpdate(IDENTITY))
         .isInstanceOf(TokenFenceUnavailableException.class);
-  }
-
-  @Test
-  void originalNewFenceReadsOnlyItsSeparateCommittedLineageAndIgnoresLoginDisposal() {
-    DSLContext dsl = mock(DSLContext.class);
-    TokenIdentity originalNew =
-        new TokenIdentity(
-            IDENTITY.accountId(),
-            IDENTITY.operationId(),
-            IDENTITY.issuanceRequestId(),
-            IDENTITY.tokenSha256(),
-            IDENTITY.tokenJti(),
-            IDENTITY.notBeforeEpochSecond(),
-            1L,
-            IDENTITY.issuanceFence(),
-            SourceKind.ORIGINAL_NEW);
-    Record account = mock(Record.class);
-    Record token = tokenRow(State.ACTIVE, originalNew);
-    Record source = mock(Record.class);
-    when(dsl.fetchOne(
-            "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-            originalNew.accountId()))
-        .thenReturn(account);
-    when(dsl.fetchOne(
-            "SELECT account_uuid, operation_id, issuance_request_id, token_hash, token_jti, "
-                + "not_before_epoch_second, token_generation, issuance_fence, source_kind, token_identity_fence, "
-                + "state, revocation_request_id, revocation_digest "
-                + "FROM account_gameplay_token_identity_fences WHERE operation_id = ? FOR UPDATE",
-            originalNew.operationId()))
-        .thenReturn(token);
-    when(dsl.fetchOne(
-            startsWith("SELECT operation_id FROM account_original_new_bound_gameplay_issuances "),
-            any(Object[].class)))
-        .thenReturn(source);
-    transaction();
-
-    var fence =
-        new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveForUpdate(originalNew);
-
-    assertThat(fence.identity().sourceKind()).isEqualTo(SourceKind.ORIGINAL_NEW);
-    assertThat(fence.tokenIdentityFence()).isEqualTo(1L);
-    verify(dsl, never()).fetchOne(DISPOSAL_GUARD_SELECT, originalNew.issuanceRequestId());
-    verify(dsl, never())
-        .fetchOne(
-            startsWith("SELECT operation_id FROM account_gameplay_delegation_issuance_operations "),
-            any(Object[].class));
   }
 
   @Test
@@ -421,21 +374,16 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
   }
 
   private static Record tokenRow(State state) {
-    return tokenRow(state, IDENTITY);
-  }
-
-  private static Record tokenRow(State state, TokenIdentity identity) {
     Record row = mock(Record.class);
-    when(row.get("account_uuid", UUID.class)).thenReturn(identity.accountId());
-    when(row.get("operation_id", UUID.class)).thenReturn(identity.operationId());
-    when(row.get("issuance_request_id", UUID.class)).thenReturn(identity.issuanceRequestId());
-    when(row.get("token_hash", String.class)).thenReturn(identity.tokenSha256());
-    when(row.get("token_jti", UUID.class)).thenReturn(identity.tokenJti());
+    when(row.get("account_uuid", UUID.class)).thenReturn(IDENTITY.accountId());
+    when(row.get("operation_id", UUID.class)).thenReturn(IDENTITY.operationId());
+    when(row.get("issuance_request_id", UUID.class)).thenReturn(IDENTITY.issuanceRequestId());
+    when(row.get("token_hash", String.class)).thenReturn(IDENTITY.tokenSha256());
+    when(row.get("token_jti", UUID.class)).thenReturn(IDENTITY.tokenJti());
     when(row.get("not_before_epoch_second", Long.class))
-        .thenReturn(identity.notBeforeEpochSecond());
-    when(row.get("token_generation", Long.class)).thenReturn(identity.tokenGeneration());
-    when(row.get("issuance_fence", Long.class)).thenReturn(identity.issuanceFence());
-    when(row.get("source_kind", String.class)).thenReturn(identity.sourceKind().name());
+        .thenReturn(IDENTITY.notBeforeEpochSecond());
+    when(row.get("token_generation", Long.class)).thenReturn(IDENTITY.tokenGeneration());
+    when(row.get("issuance_fence", Long.class)).thenReturn(IDENTITY.issuanceFence());
     when(row.get("state", String.class)).thenReturn(state.name());
     when(row.get("token_identity_fence", Long.class))
         .thenReturn(state == State.ACTIVE ? 1L : state == State.PENDING ? 2L : 3L);

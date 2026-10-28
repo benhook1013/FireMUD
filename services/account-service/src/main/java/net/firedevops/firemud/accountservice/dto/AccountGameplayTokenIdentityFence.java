@@ -43,36 +43,13 @@ public record AccountGameplayTokenIdentityFence(
       UUID tokenJti,
       long notBeforeEpochSecond,
       long tokenGeneration,
-      long issuanceFence,
-      SourceKind sourceKind) {
-    public TokenIdentity(
-        UUID accountId,
-        UUID operationId,
-        UUID issuanceRequestId,
-        String tokenSha256,
-        UUID tokenJti,
-        long notBeforeEpochSecond,
-        long tokenGeneration,
-        long issuanceFence) {
-      this(
-          accountId,
-          operationId,
-          issuanceRequestId,
-          tokenSha256,
-          tokenJti,
-          notBeforeEpochSecond,
-          tokenGeneration,
-          issuanceFence,
-          SourceKind.LOGIN);
-    }
-
+      long issuanceFence) {
     public TokenIdentity {
       requireUuid(accountId);
       requireUuid(operationId);
       requireUuid(issuanceRequestId);
       requireUuid(tokenJti);
       requireDigest(tokenSha256);
-      Objects.requireNonNull(sourceKind);
       if (notBeforeEpochSecond <= 0L || tokenGeneration <= 0L || issuanceFence <= 0L) {
         throw new IllegalArgumentException("Positive exact token identity metadata required");
       }
@@ -82,12 +59,6 @@ public record AccountGameplayTokenIdentityFence(
     public String toString() {
       return "TokenIdentity[redacted]";
     }
-  }
-
-  /** Distinguishes original unscoped LOGIN rows from fresh tenant-bound ORIGINAL-NEW lineages. */
-  public enum SourceKind {
-    LOGIN,
-    ORIGINAL_NEW
   }
 
   private static void requireUuid(UUID value) {

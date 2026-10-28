@@ -28,7 +28,6 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
-import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayIssuanceRepository.Genesis;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRedisContract;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
@@ -1109,161 +1108,6 @@ public final class AccountGameplayDelegationRedisClient {
     return descriptor;
   }
 
-  /**
-   * Applies the original-new pending-to-active CAS after Account obtains an authenticated ORIGINAL
-   * final-admission readback. Exact retries retain the same record and expiry.
-   */
-  public OriginalNewActivationReadback activateOriginalNewCommittedPending(
-      Genesis committedOriginalNew, long absoluteExpiryMillis) {
-    Objects.requireNonNull(committedOriginalNew, "Committed ORIGINAL-NEW Account row required");
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || committedOriginalNew.status()
-            != net.firedevops.firemud.accountservice.repository
-                .AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED
-        || committedOriginalNew.committedRegistryReceiptSha256() == null
-        || absoluteExpiryMillis <= 0L) throw unavailable();
-    byte[] exactPendingBytes = null;
-    byte[] activeBytes = null;
-    byte[] scriptSource = null;
-    byte[] key = null;
-    byte[] deadline = null;
-    byte[] currentBytes = null;
-    byte[] activeReadback = null;
-    StatefulRedisConnection<byte[], byte[]> connection = null;
-
-    try {
-      exactPendingBytes = committedOriginalNew.pendingRegistryRecordBytes();
-      GameSessionAccountDelegationRegistryRecord pendingRecord =
-          GameSessionAccountDelegationRegistryRecord.decode(exactPendingBytes, maxRecordBytes);
-      requireOriginalNewPendingMatches(committedOriginalNew, pendingRecord, exactPendingBytes);
-      activeBytes = activeRecordBytes(pendingRecord);
-      String tokenHash = committedOriginalNew.tokenHash();
-      if (tokenHash == null) throw unavailable();
-      RedisScriptDescriptor descriptor = requireActiveTransitionDescriptor();
-      scriptSource = readScriptSource(descriptor);
-      if (!descriptor.sha256().equals(sha256(scriptSource))) throw unavailable();
-      key = ascii(TOKEN_KEY_PREFIX + tokenHash);
-      deadline = Long.toString(absoluteExpiryMillis).getBytes(StandardCharsets.US_ASCII);
-      connection = connectionProvider.openPinnedConnection();
-      if (connection == null) throw unavailable();
-      RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
-      requireAccountAclIdentity(commands);
-      String loadedSha = commands.scriptLoad(scriptSource);
-      if (loadedSha == null
-          || !SHA1.matcher(loadedSha).matches()
-          || !sha1(scriptSource).equals(loadedSha)) throw unavailable();
-      currentBytes = commands.get(key);
-      Long currentExpiry = commands.pexpiretime(key);
-      if (currentBytes == null || currentExpiry == null || currentExpiry != absoluteExpiryMillis) {
-        throw unavailable();
-      }
-      GameSessionAccountDelegationRegistryRecord currentRecord =
-          GameSessionAccountDelegationRegistryRecord.decode(currentBytes, maxRecordBytes);
-      byte[] expectedCurrent;
-      if ("pending".equals(currentRecord.state()) && currentRecord.registryVersion() == 1L) {
-        expectedCurrent = exactPendingBytes;
-      } else if ("active".equals(currentRecord.state()) && currentRecord.registryVersion() == 2L) {
-        expectedCurrent = activeBytes;
-      } else {
-        throw unavailable();
-      }
-      if (!Arrays.equals(expectedCurrent, currentBytes)) throw unavailable();
-      Long transition =
-          commands.evalsha(
-              loadedSha,
-              ScriptOutputType.INTEGER,
-              new byte[][] {key},
-              exactPendingBytes,
-              activeBytes,
-              deadline);
-      if (transition == null || (transition != 0L && transition != 1L)) throw unavailable();
-      Acknowledgement acknowledgement = requireDurabilityAcknowledgement(commands);
-      activeReadback = commands.get(key);
-      Long activeExpiry = commands.pexpiretime(key);
-      if (!Arrays.equals(activeBytes, activeReadback)
-          || activeExpiry == null
-          || activeExpiry != absoluteExpiryMillis) throw unavailable();
-      GameSessionAccountDelegationRegistryRecord active =
-          GameSessionAccountDelegationRegistryRecord.decode(activeReadback, maxRecordBytes);
-      if (!"active".equals(active.state())
-          || active.registryVersion() != 2L
-          || !active.tokenHash().equals(tokenHash)) throw unavailable();
-      return new OriginalNewActivationReadback(
-          tokenHash,
-          committedOriginalNew.accountId().toString(),
-          committedOriginalNew.lineageId().toString(),
-          committedOriginalNew.tokenJti().toString(),
-          sha256(activeReadback),
-          absoluteExpiryMillis,
-          acknowledgement.localAofCount(),
-          acknowledgement.replicaAofCount());
-    } catch (RuntimeException failure) {
-      if (failure instanceof AccountCoordinationRedisException) throw failure;
-      throw unavailable();
-    } finally {
-      wipe(exactPendingBytes);
-      wipe(activeBytes);
-      wipe(currentBytes);
-      wipe(activeReadback);
-      wipe(scriptSource);
-      wipe(key);
-      wipe(deadline);
-      if (connection != null) {
-        try {
-          connection.close();
-        } catch (RuntimeException failure) {
-          throw unavailable();
-        }
-      }
-    }
-  }
-
-  /** Exact read-only ACTIVE check for a retained original-new lineage after confirmation. */
-  public ActiveRegistryReadback requireExactOriginalNewActiveRecord(
-      Genesis committedOriginalNew, long absoluteExpiryMillis) {
-    Objects.requireNonNull(committedOriginalNew);
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || committedOriginalNew.status()
-            != net.firedevops.firemud.accountservice.repository
-                .AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED
-        || absoluteExpiryMillis <= 0L) throw unavailable();
-    ActiveRegistryReadback active = readActiveRecord(committedOriginalNew.tokenHash());
-    byte[] pendingRecordBytes = committedOriginalNew.pendingRegistryRecordBytes();
-    try {
-      if (!active.tokenHash().equals(committedOriginalNew.tokenHash())
-          || !active.accountId().equals(committedOriginalNew.accountId().toString())
-          || !active.jti().equals(committedOriginalNew.tokenJti().toString())
-          || active.tokenExpiryEpochSecond() != committedOriginalNew.expiresAtEpochSecond()
-          || active.absoluteExpiryMillis() != absoluteExpiryMillis
-          || !active.canonicalPendingRecordSha256().equals(sha256(pendingRecordBytes))) {
-        throw unavailable();
-      }
-      return active;
-    } finally {
-      wipe(pendingRecordBytes);
-    }
-  }
-
-  private void requireOriginalNewPendingMatches(
-      Genesis genesis, GameSessionAccountDelegationRegistryRecord record, byte[] recordBytes) {
-    if (!"pending".equals(record.state())
-        || record.registryVersion() != 1L
-        || !record.tokenHash().equals(genesis.tokenHash())
-        || !record.kid().equals(genesis.signerKid())
-        || !record.signerGeneration().equals(genesis.signerGeneration())
-        || !record.operationId().equals(genesis.lineageId().toString())
-        || !record.requestId().equals(genesis.requestId().toString())
-        || !record.requestDigest().equals(genesis.requestDigest())
-        || !record.accountId().equals(genesis.accountId().toString())
-        || !record.jti().equals(genesis.tokenJti().toString())
-        || record.issuedAtEpochSecond() != genesis.issuedAtEpochSecond()
-        || record.notBeforeEpochSecond() != genesis.notBeforeEpochSecond()
-        || record.expiresAtEpochSecond() != genesis.expiresAtEpochSecond()
-        || !Long.toString(genesis.tokenGeneration()).equals(record.fields().get("tokenGeneration"))
-        || record.issuanceFence() != genesis.issuanceFence()
-        || !Arrays.equals(recordBytes, genesis.pendingRegistryRecordBytes())) throw unavailable();
-  }
-
   private RedisScriptDescriptor requireActiveTransitionDescriptor() {
     RedisScriptDescriptor descriptor = scriptCatalog.require(ACTIVE_TRANSITION_SCRIPT_ID);
     if (!ACTIVE_TRANSITION_SCRIPT_ID.equals(descriptor.scriptId())
@@ -1425,10 +1269,6 @@ public final class AccountGameplayDelegationRedisClient {
     } catch (RuntimeException ex) {
       return false;
     }
-  }
-
-  private static void wipe(byte[] value) {
-    if (value != null) Arrays.fill(value, (byte) 0);
   }
 
   private static byte[] canonicalJson(Object value) {
@@ -1827,86 +1667,6 @@ public final class AccountGameplayDelegationRedisClient {
   public enum ActiveRegistrationOutcome {
     ACTIVATED,
     EXACT_RETRY
-  }
-
-  /** Redacted pinned-Redis/AOF result for one original-new active transition or exact retry. */
-  public static final class OriginalNewActivationReadback {
-    private final String tokenHash;
-    private final String accountId;
-    private final String lineageId;
-    private final String tokenJti;
-    private final String activeRecordSha256;
-    private final long absoluteExpiryMillis;
-    private final long localAofCount;
-    private final long replicaAofCount;
-
-    private OriginalNewActivationReadback(
-        String tokenHash,
-        String accountId,
-        String lineageId,
-        String tokenJti,
-        String activeRecordSha256,
-        long absoluteExpiryMillis,
-        long localAofCount,
-        long replicaAofCount) {
-      if (tokenHash == null
-          || !SHA256.matcher(tokenHash).matches()
-          || accountId == null
-          || lineageId == null
-          || tokenJti == null
-          || activeRecordSha256 == null
-          || !SHA256.matcher(activeRecordSha256).matches()
-          || absoluteExpiryMillis <= 0L
-          || localAofCount < 1L
-          || replicaAofCount < 1L) {
-        throw unavailable();
-      }
-      this.tokenHash = tokenHash;
-      this.accountId = accountId;
-      this.lineageId = lineageId;
-      this.tokenJti = tokenJti;
-      this.activeRecordSha256 = activeRecordSha256;
-      this.absoluteExpiryMillis = absoluteExpiryMillis;
-      this.localAofCount = localAofCount;
-      this.replicaAofCount = replicaAofCount;
-    }
-
-    public String tokenHash() {
-      return tokenHash;
-    }
-
-    public String accountId() {
-      return accountId;
-    }
-
-    public String lineageId() {
-      return lineageId;
-    }
-
-    public String tokenJti() {
-      return tokenJti;
-    }
-
-    public String activeRecordSha256() {
-      return activeRecordSha256;
-    }
-
-    public long absoluteExpiryMillis() {
-      return absoluteExpiryMillis;
-    }
-
-    public long localAofCount() {
-      return localAofCount;
-    }
-
-    public long replicaAofCount() {
-      return replicaAofCount;
-    }
-
-    @Override
-    public String toString() {
-      return "OriginalNewActivationReadback[redacted]";
-    }
   }
 
   /**

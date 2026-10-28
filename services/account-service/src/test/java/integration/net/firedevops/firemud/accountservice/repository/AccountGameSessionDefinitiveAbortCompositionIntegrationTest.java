@@ -640,7 +640,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   @Test
   void actualAcknowledgedAbortCleanupSurvivesLaterAccountIntentAndRetiresExactIssuerMember()
       throws Exception {
-    try (var session = open(MigrationVersion.fromVersion("1038"))) {
+    try (var session = open(true)) {
       var acknowledgement = session.gs.repairAccountMember();
       assertThat(acknowledgement.transitionId()).isEqualTo(session.gs.transitionId());
       assertThat(session.gs.hasExactAccountMember()).isTrue();
@@ -681,40 +681,10 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
       assertThat(session.gs.hasExactAccountMember()).isTrue();
 
-      var retainedRowsBeforeUpgrade = session.gs.retainedFirstNewAbortRowsImage();
-      var migrationHistoryBeforeUpgrade = session.gs.migrationHistoryImage();
-      assertThat(migrationHistoryBeforeUpgrade)
-          .anyMatch(row -> row.contains("V1000__create_saga_schema.sql"))
-          .anyMatch(row -> row.contains("V1001__saga_instance_table.sql"))
-          .anyMatch(row -> row.contains("V1002__saga_step_table.sql"));
-      var issuerFieldsBeforeUpgrade = session.gs.issuerPartitionFieldSetBytes();
-      assertThat(
-              session
-                  .gs
-                  .dsl()
-                  .fetchSingle(
-                      "SELECT state FROM game_session_canonical_account_coverage_control"
-                          + " WHERE account_id = ?",
-                      session.gs.candidate().accountId())
-                  .get(0, String.class))
-          .isEqualTo("ACQUISITION_INTENT");
-      assertThat(
-              session.gs.upgradeWithDefaultGameSessionMigrations(
-                  MigrationVersion.fromVersion("1038.1")))
-          .isEqualTo(1);
-      var migrationHistoryAfterUpgrade = session.gs.migrationHistoryImage();
-      assertThat(migrationHistoryAfterUpgrade).hasSize(migrationHistoryBeforeUpgrade.size() + 1);
-      for (int index = 0; index < migrationHistoryBeforeUpgrade.size(); index++) {
-        assertThat(migrationHistoryAfterUpgrade.get(index))
-            .isEqualTo(migrationHistoryBeforeUpgrade.get(index));
-      }
-      assertThat(migrationHistoryAfterUpgrade.get(migrationHistoryAfterUpgrade.size() - 1))
-          .contains("1038.1", "V1038.1__retained_first_new_abort_cleanup_account_control.sql");
-      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(retainedRowsBeforeUpgrade);
+      var retainedRowsBeforeRetry = session.gs.retainedFirstNewAbortRowsImage();
+      var issuerFieldsBeforeRetry = session.gs.issuerPartitionFieldSetBytes();
       assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
       assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
-      assertThat(session.gs.issuerPartitionFieldSetBytes())
-          .containsExactly(issuerFieldsBeforeUpgrade);
       assertThat(session.gs.hasExactAccountMember()).isTrue();
       assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
 
@@ -729,11 +699,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(abortRetry.accountOperation().originalLeaseEvidence().canonicalJson())
           .isEqualTo(session.lease.canonicalJson());
       assertThat(session.image()).isEqualTo(imageBeforeAbortRetry);
-      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(retainedRowsBeforeUpgrade);
+      assertThat(session.gs.retainedFirstNewAbortRowsImage()).isEqualTo(retainedRowsBeforeRetry);
       assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);
       assertThat(session.gs.accountObligationPhaseImage()).isEqualTo(originalPhase);
       assertThat(session.gs.issuerPartitionFieldSetBytes())
-          .containsExactly(issuerFieldsBeforeUpgrade);
+          .containsExactly(issuerFieldsBeforeRetry);
 
       var pendingRelease = session.gs.prepareIssuerRelease();
       var releaseReadback = session.gs.projectIssuerRelease(pendingRelease);
@@ -838,11 +808,6 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   private Session open(boolean prepareMemberRepair) throws Exception {
     accountFixtures.temporaryDirectory = temporaryDirectory;
     return new Session(prepareMemberRepair);
-  }
-
-  private Session open(MigrationVersion migrationTarget) throws Exception {
-    accountFixtures.temporaryDirectory = temporaryDirectory;
-    return new Session(true, migrationTarget);
   }
 
   private final class Session implements AutoCloseable {

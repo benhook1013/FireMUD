@@ -1,14 +1,12 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import java.time.Clock;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingRegistryCandidate;
-import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayIssuanceRepository.Genesis;
 import net.firedevops.firemud.common.security.AccountJwtExactValues;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord;
@@ -133,123 +131,6 @@ public final class AccountGameplayDelegationTokenRegistry {
         coordinationRedis.registerPending(candidate.tokenHash(), recordBytes, expiryMillis);
     requireExactReceipt(receipt, candidate, recordBytes, expiryMillis);
     return receipt;
-  }
-
-  /**
-   * Registers the exact immutable Account-owned ORIGINAL-NEW pending projection. Its lineage row
-   * was already committed with the signed token hash and record bytes; this method only repeats
-   * that record under the same fixed expiry and requires the real pinned-Redis WAITAOF receipt.
-   */
-  public AccountGameplayDelegationRedisClient.PendingRegistrationReceipt registerOriginalNewPending(
-      Genesis genesis) {
-    Objects.requireNonNull(genesis, "Account-owned ORIGINAL-NEW genesis is required");
-    requireNoAccountTransaction(
-        "ORIGINAL-NEW pending registry work must not join an Account transaction");
-    byte[] recordBytes = genesis.pendingRegistryRecordBytes();
-    if (recordBytes == null || recordBytes.length == 0 || recordBytes.length > maxEncodedBytes) {
-      throw new IllegalStateException("Durable ORIGINAL-NEW registry record is unavailable");
-    }
-    try {
-      GameSessionAccountDelegationRegistryRecord record =
-          GameSessionAccountDelegationRegistryRecord.decode(recordBytes, maxEncodedBytes);
-      if (!"pending".equals(record.state())
-          || record.registryVersion() != 1L
-          || !genesis.tokenHash().equals(record.tokenHash())
-          || !genesis.signerKid().equals(record.kid())
-          || !genesis.signerGeneration().equals(record.signerGeneration())
-          || !genesis.lineageId().toString().equals(record.operationId())
-          || !genesis.requestId().toString().equals(record.requestId())
-          || !genesis.requestDigest().equals(record.requestDigest())
-          || !genesis.accountId().toString().equals(record.accountId())
-          || !genesis.tokenJti().toString().equals(record.jti())
-          || genesis.issuedAtEpochSecond() != record.issuedAtEpochSecond()
-          || genesis.notBeforeEpochSecond() != record.notBeforeEpochSecond()
-          || genesis.expiresAtEpochSecond() != record.expiresAtEpochSecond()
-          || !Long.toString(genesis.tokenGeneration())
-              .equals(record.fields().get("tokenGeneration"))
-          || genesis.issuanceFence() != record.issuanceFence()) {
-        throw new IllegalStateException(
-            "Persisted ORIGINAL-NEW registry record differs from the frozen lineage");
-      }
-
-      long nowMillis = clock.millis();
-      if (nowMillis <= 0L) throw new IllegalStateException("Clock returned an invalid instant");
-      long absoluteExpiryMillis;
-      try {
-        absoluteExpiryMillis = Math.multiplyExact(genesis.expiresAtEpochSecond(), 1_000L);
-        absoluteExpiryMillis = Math.addExact(absoluteExpiryMillis, cleanupMarginMillis);
-        if (absoluteExpiryMillis <= nowMillis) {
-          throw new IllegalStateException("Original-new registry deadline has elapsed");
-        }
-      } catch (ArithmeticException malformed) {
-        throw new IllegalStateException("Original-new registry deadline is unavailable");
-      }
-
-      AccountGameplayDelegationRedisClient.PendingRegistrationReceipt receipt =
-          coordinationRedis.registerPending(genesis.tokenHash(), recordBytes, absoluteExpiryMillis);
-      if (receipt == null
-          || !receipt
-              .tokenKey()
-              .equals(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX + genesis.tokenHash())
-          || !AccountGameplayDelegationRedisClient.REQUIRED_ACL_IDENTITY.equals(
-              receipt.aclIdentity())
-          || !receipt.canonicalRecordSha256().equals(sha256(recordBytes))
-          || !receipt.operationId().equals(genesis.lineageId().toString())
-          || !receipt.requestId().equals(genesis.requestId().toString())
-          || !receipt.requestDigest().equals(genesis.requestDigest())
-          || !receipt.accountId().equals(genesis.accountId().toString())
-          || !receipt.tokenJti().equals(genesis.tokenJti().toString())
-          || !receipt.tokenHash().equals(genesis.tokenHash())
-          || !receipt.kid().equals(genesis.signerKid())
-          || !receipt.signerGeneration().equals(genesis.signerGeneration())
-          || receipt.issuedAtEpochSecond() != genesis.issuedAtEpochSecond()
-          || receipt.notBeforeEpochSecond() != genesis.notBeforeEpochSecond()
-          || receipt.expiresAtEpochSecond() != genesis.expiresAtEpochSecond()
-          || receipt.issuanceFence() != genesis.issuanceFence()
-          || receipt.registryVersion() != 1L
-          || receipt.absoluteExpiryMillis() != absoluteExpiryMillis
-          || receipt.localAofCount() < 1L
-          || receipt.replicaAofCount() < 1L) {
-        throw new IllegalStateException("ORIGINAL-NEW pending registry receipt is inconsistent");
-      }
-      return receipt;
-    } finally {
-      Arrays.fill(recordBytes, (byte) 0);
-    }
-  }
-
-  /**
-   * Activates one exact committed ORIGINAL-NEW projection after Account's authenticated GS read.
-   */
-  public AccountGameplayDelegationRedisClient.OriginalNewActivationReadback
-      activateOriginalNewCommittedPending(Genesis genesis) {
-    Objects.requireNonNull(genesis, "Committed Account ORIGINAL-NEW source required");
-    requireNoAccountTransaction("ORIGINAL-NEW activation must not hold Account SQL locks");
-    long absoluteExpiryMillis = originalNewAbsoluteExpiry(genesis);
-    long nowMillis = clock.millis();
-    if (nowMillis <= 0L || absoluteExpiryMillis <= nowMillis) throw unavailable();
-    return coordinationRedis.activateOriginalNewCommittedPending(genesis, absoluteExpiryMillis);
-  }
-
-  /** Requires the exact already-active ORIGINAL-NEW projection and its original absolute expiry. */
-  public AccountGameplayDelegationRedisClient.ActiveRegistryReadback
-      requireExactOriginalNewActiveRecord(Genesis genesis) {
-    Objects.requireNonNull(genesis, "Committed Account ORIGINAL-NEW source required");
-    requireNoAccountTransaction("ORIGINAL-NEW registry reads must not hold Account SQL locks");
-    if (clock.millis() <= 0L) throw unavailable();
-    return coordinationRedis.requireExactOriginalNewActiveRecord(
-        genesis, originalNewAbsoluteExpiry(genesis));
-  }
-
-  private long originalNewAbsoluteExpiry(Genesis genesis) {
-    try {
-      long tokenExpiryMillis = Math.multiplyExact(genesis.expiresAtEpochSecond(), 1_000L);
-      long absoluteExpiryMillis = Math.addExact(tokenExpiryMillis, cleanupMarginMillis);
-      if (absoluteExpiryMillis <= 0L) throw unavailable();
-      return absoluteExpiryMillis;
-    } catch (ArithmeticException malformed) {
-      throw unavailable();
-    }
   }
 
   /**
@@ -381,9 +262,5 @@ public final class AccountGameplayDelegationTokenRegistry {
     } catch (java.security.NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 is unavailable");
     }
-  }
-
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException("Original-new Account token registry is unavailable");
   }
 }

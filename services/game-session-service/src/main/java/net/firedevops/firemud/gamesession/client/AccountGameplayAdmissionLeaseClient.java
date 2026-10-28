@@ -14,11 +14,7 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OperationEvidence;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmationRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalLeaseRequest;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredentialRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
@@ -29,9 +25,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 
-/**
- * Manual Game Session to Account transport for NEW lease and ORIGINAL-NEW credential operations.
- */
+/** Manual Game Session to Account transport for the four exact NEW-binding lease operations. */
 public final class AccountGameplayAdmissionLeaseClient
     extends AbstractReloadingBlockingGrpcClient<
         AccountGameplayAdmissionLeaseServiceGrpc.AccountGameplayAdmissionLeaseServiceBlockingStub> {
@@ -199,72 +193,6 @@ public final class AccountGameplayAdmissionLeaseClient
     } catch (IllegalArgumentException malformed) {
       throw invalidEvidence(
           "Account returned invalid gameplay admission lease evidence", malformed);
-    }
-  }
-
-  /**
-   * Requests the first bound ORIGINAL-NEW credential after Account's actual COMMITTED lease/ACK
-   * readback. The returned handle is an internal opaque value; callers must not log it or forward
-   * it to any player-facing response.
-   */
-  public OriginalNewCredential issueOriginalNewBoundGameplayCredential(
-      String presentedInitialGsACompactJwt, byte[] originalLeaseEvidenceUtf8) {
-    requireNoAmbientSql("Original-new credential issuance requires no ambient SQL");
-    var wireRequest =
-        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
-            presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8);
-    OriginalNewCredentialRequest expected =
-        AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(wireRequest);
-    requireLeaseCorrelation(expected.originalLeaseEvidence());
-    try {
-      OriginalNewCredential credential =
-          AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
-              expected,
-              requireInitializedStub("Account lease service is not initialized")
-                  .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                  .issueOriginalNewGameplayCredential(wireRequest));
-      if (!credential
-              .originalLeaseId()
-              .equals(
-                  UUID.fromString(
-                      (String) expected.originalLeaseEvidence().carrier().get("leaseId")))
-          || credential.originalLeaseFence()
-              != expected.originalLeaseEvidence().leaseFence().longValueExact()) {
-        throw new IllegalArgumentException("Account credential result changed its original lease");
-      }
-      return credential;
-    } catch (StatusRuntimeException failure) {
-      throw statusFailure("Account original-new credential issuance failed", failure);
-    } catch (IllegalArgumentException malformed) {
-      throw invalidEvidence("Account returned invalid original-new credential evidence", malformed);
-    }
-  }
-
-  /**
-   * Requests Account's durable confirmation after it fetches the authenticated actual GS result.
-   */
-  public OriginalFinalAdmissionConfirmation confirmOriginalNewGameplayAdmission(
-      String presentedInitialGsACompactJwt, byte[] originalLeaseEvidenceUtf8) {
-    requireNoAmbientSql("Original-new admission confirmation requires no ambient SQL");
-    var wireRequest =
-        AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
-            presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8);
-    OriginalFinalAdmissionConfirmationRequest expected =
-        AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionRequest(
-            wireRequest);
-    requireLeaseCorrelation(expected.originalLeaseEvidence());
-    try {
-      return AccountGameplayAdmissionLeaseGrpcCodec
-          .parseConfirmOriginalNewGameplayAdmissionResponse(
-              expected,
-              requireInitializedStub("Account lease service is not initialized")
-                  .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                  .confirmOriginalNewGameplayAdmission(wireRequest));
-    } catch (StatusRuntimeException failure) {
-      throw statusFailure("Account original-new admission confirmation failed", failure);
-    } catch (IllegalArgumentException malformed) {
-      throw invalidEvidence(
-          "Account returned invalid original-new admission confirmation", malformed);
     }
   }
 
