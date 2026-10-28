@@ -10,7 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -20,15 +22,18 @@ import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseState;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.v1.CanonicalPlayableTargetEvidence;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Shape and tuple checks only; these carriers grant no Account or gameplay authority. */
 class AccountGameplayAdmissionLeaseGrpcCodecTest {
@@ -43,6 +48,7 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
   private static final UUID VERSION_ID = UUID.fromString("99999999-9999-4999-8999-999999999999");
   private static final UUID HOLD_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID HOLD_FENCE = UUID.fromString("66666666-6666-4666-8666-666666666666");
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
   void roundTripsExactAcquireLeaseBytesAndCompleteAckWithoutClaimingAuthority() {
@@ -200,6 +206,110 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
     var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
 
     assertRejected(request, pendingResponse(changedLease));
+  }
+
+  @Test
+  void originalNewCredentialCarrierKeepsHandleOpaqueAndRejectsUnboundClaims() throws Exception {
+    var lease = lease();
+    byte[] leaseBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var request =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(
+            AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+                JWT, leaseBytes));
+    Map<?, ?> carrier = lease.carrier();
+    Map<?, ?> scope = object(carrier, "bindingScope");
+    UUID requestId = UUID.fromString((String) carrier.get("requestId"));
+    UUID accountId = UUID.fromString((String) scope.get("accountId"));
+    UUID leaseId = UUID.fromString((String) carrier.get("leaseId"));
+    long leaseFence = lease.leaseFence().longValueExact();
+    UUID lineageId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+    while (tokenJti.equals(lineageId)
+        || tokenJti
+            .toString()
+            .equals(String.valueOf(object(carrier, "tokenIdentityEvidence").get("tokenJti")))) {
+      tokenJti = UUID.randomUUID();
+    }
+    long issuedAt = Instant.now().getEpochSecond();
+    Map<String, Object> claims = boundClaims(lease, tokenJti, issuedAt);
+    String boundJwt = compactJwt(claims);
+    byte[] handle = new byte[32];
+    java.util.Arrays.fill(handle, (byte) 0x2a);
+    String checkpointsSha256 = checkpointsSha256(carrier.get("outboxCheckpoints"));
+    OriginalNewCredential credential =
+        AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+            boundJwt,
+            handle,
+            lineageId,
+            tokenJti,
+            jwtSha256(boundJwt),
+            Long.parseLong((String) carrier.get("issuanceFence")),
+            leaseId,
+            leaseFence,
+            "102",
+            checkpointsSha256);
+    var ack =
+        OriginalAckReceiptEvidence.fromFields(
+            1,
+            requestId,
+            accountId,
+            leaseId,
+            leaseFence,
+            lease.sha256(),
+            DECISION_ID,
+            1_015_000L,
+            "101",
+            1_014_999L,
+            "102");
+
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+            request, lease, State.COMMITTED, DECISION_ID, ack, credential);
+    OriginalNewCredential parsed =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+            request, response);
+    byte[] firstHandleRead = parsed.opaqueRebindHandle();
+    String handleHex = HexFormat.of().formatHex(handle);
+    assertThat(parsed.lineageId()).isEqualTo(lineageId);
+    assertThat(parsed.signedBoundGsACompactJwt()).isEqualTo(boundJwt);
+    assertThat(firstHandleRead).containsExactly(handle);
+    assertThat(parsed.toString()).doesNotContain(boundJwt, handleHex);
+    assertThat(request.toString()).doesNotContain(JWT, handleHex);
+    java.util.Arrays.fill(firstHandleRead, (byte) 0);
+    byte[] secondHandleRead = parsed.opaqueRebindHandle();
+    assertThat(secondHandleRead).containsExactly(handle);
+    java.util.Arrays.fill(secondHandleRead, (byte) 0);
+    parsed.close();
+    assertThatThrownBy(parsed::opaqueRebindHandle)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Credential result is closed");
+
+    Map<String, Object> unboundClaims = new LinkedHashMap<>(claims);
+    unboundClaims.remove("tenantId");
+    unboundClaims.put("membershipVersion", Map.of());
+    unboundClaims.put("authorityTuple", GameSessionAccountDelegationProfile.authorityTuple(1L, 1L));
+    String unboundJwt = compactJwt(unboundClaims);
+    OriginalNewCredential unboundCredential =
+        AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+            unboundJwt,
+            handle,
+            lineageId,
+            tokenJti,
+            jwtSha256(unboundJwt),
+            Long.parseLong((String) carrier.get("issuanceFence")),
+            leaseId,
+            leaseFence,
+            "102",
+            checkpointsSha256);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+                    request, lease, State.COMMITTED, DECISION_ID, ack, unboundCredential))
+        .isInstanceOf(IllegalArgumentException.class);
+    credential.close();
+    unboundCredential.close();
+    java.util.Arrays.fill(handle, (byte) 0);
+    java.util.Arrays.fill(leaseBytes, (byte) 0);
   }
 
   @Test
@@ -777,6 +887,48 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
               MessageDigest.getInstance("SHA-256").digest(jwt.getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    }
+  }
+
+  private static Map<String, Object> boundClaims(
+      AccountGameplayAdmissionLeaseEvidence lease, UUID tokenJti, long issuedAt) {
+    Map<?, ?> carrier = lease.carrier();
+    Map<?, ?> scope = object(carrier, "bindingScope");
+    Map<?, ?> baseline = object(carrier, "membershipBaseline");
+    Map<String, Object> claims = new LinkedHashMap<>();
+    claims.put("iss", GameSessionAccountDelegationProfile.ISSUER);
+    claims.put("sub", scope.get("accountId"));
+    claims.put("accountId", scope.get("accountId"));
+    claims.put("jti", tokenJti.toString());
+    claims.put("aud", GameSessionAccountDelegationProfile.AUDIENCE);
+    claims.put("iat", issuedAt);
+    claims.put("nbf", issuedAt);
+    claims.put("exp", issuedAt + 120L);
+    claims.put("tokenGeneration", "1");
+    claims.put("authorityTuple", carrier.get("authorityTuple"));
+    claims.put("membershipVersion", baseline.get("membershipVersion"));
+    claims.put("issuanceFence", carrier.get("issuanceFence"));
+    claims.put("tenantId", scope.get("tenantId"));
+    return claims;
+  }
+
+  private static String compactJwt(Map<String, Object> claims) throws Exception {
+    String header =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(
+                "{\"alg\":\"RS256\",\"kid\":\"controlled-test\"}".getBytes(StandardCharsets.UTF_8));
+    String payload =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.writeValueAsBytes(claims));
+    return header + "." + payload + ".c2ln";
+  }
+
+  private static String checkpointsSha256(Object checkpoints) throws Exception {
+    byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(checkpoints));
+    try {
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+    } finally {
+      java.util.Arrays.fill(canonical, (byte) 0);
     }
   }
 

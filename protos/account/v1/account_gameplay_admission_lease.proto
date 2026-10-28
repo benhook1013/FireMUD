@@ -19,6 +19,15 @@ service AccountGameplayAdmissionLeaseService {
       returns (AccountGameplayAdmissionLeaseResponse);
   rpc AbortGameplayAdmissionLease(AbortGameplayAdmissionLeaseRequest)
       returns (AccountGameplayAdmissionLeaseResponse);
+  // Issues the first purpose-bound credential only after Account's original COMMITTED lease and
+  // independent original-ACK receipt have been re-read. The returned handle is internal to
+  // Game Session and is never forwarded to a player client.
+  rpc IssueOriginalNewGameplayCredential(IssueOriginalNewGameplayCredentialRequest)
+      returns (AccountGameplayAdmissionLeaseResponse);
+  // Requests exact recovery of the final Account confirmation. Account performs the protected
+  // original-final-admission read itself; this request carries no proof or timestamps.
+  rpc ConfirmOriginalNewGameplayAdmission(ConfirmOriginalNewGameplayAdmissionRequest)
+      returns (OriginalNewAdmissionConfirmationResponse);
 }
 
 // A new operation selector and expected current values only; Account still resolves and checks
@@ -59,6 +68,30 @@ message AbortGameplayAdmissionLeaseRequest {
   repeated string binding_decision_uuid = 4;
 }
 
+// Exact recovery or first issuance for one unchanged original NEW lease. The unscoped LOGIN GSA is
+// only the authenticated caller; it is not the credential this operation produces.
+message IssueOriginalNewGameplayCredentialRequest {
+  repeated uint32 schema_version = 1;
+  repeated string presented_initial_gsa_compact_jwt = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+}
+
+message ConfirmOriginalNewGameplayAdmissionRequest {
+  repeated uint32 schema_version = 1;
+  repeated string presented_initial_gsa_compact_jwt = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+}
+
+message OriginalNewAdmissionConfirmationResponse {
+  repeated uint32 schema_version = 1;
+  repeated string lineage_uuid = 2;
+  repeated string original_lease_uuid = 3;
+  repeated string original_lease_fence = 4;
+  repeated string admission_at_ms = 5;
+  repeated string continuity_expires_at_ms = 6;
+  repeated string confirmation_readback_sha256 = 7;
+}
+
 enum AccountGameplayAdmissionLeaseState {
   ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_UNSPECIFIED = 0;
   ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_PENDING = 1;
@@ -66,7 +99,7 @@ enum AccountGameplayAdmissionLeaseState {
   ACCOUNT_GAMEPLAY_ADMISSION_LEASE_STATE_ABORTED = 3;
 }
 
-// All four methods return the same closed original-operation readback. Repeated fields preserve
+// Lease operations return the same closed original-operation readback. Repeated fields preserve
 // absence and duplicates for receiver validation. The lease bytes remain unchanged and complete.
 message AccountGameplayAdmissionLeaseResponse {
   repeated uint32 schema_version = 1;
@@ -76,6 +109,25 @@ message AccountGameplayAdmissionLeaseResponse {
   // ABORTED-only pending cleanup obligation; this never reports cleanup completion.
   repeated string orphan_cleanup_uuid = 5;
   repeated AccountGameplayAdmissionOriginalAckReceiptEvidence original_ack_receipt = 6;
+  // Present only on IssueOriginalNewGameplayCredential. Kept separate so closed original lease
+  // evidence and its committed receipt remain byte-for-byte unchanged.
+  repeated OriginalNewGameplayCredentialResult original_new_credential = 7;
+}
+
+// Protected Account result transported only to the authenticated Game Session service. The
+// codec and recipient keep diagnostics redacted; the opaque handle is never client-visible.
+message OriginalNewGameplayCredentialResult {
+  repeated uint32 schema_version = 1;
+  repeated string signed_bound_gsa_compact_jwt = 2;
+  repeated bytes opaque_rebind_handle = 3;
+  repeated string lineage_uuid = 4;
+  repeated string token_jti_uuid = 5;
+  repeated string token_sha256 = 6;
+  repeated string issuance_fence = 7;
+  repeated string original_lease_uuid = 8;
+  repeated string original_lease_fence = 9;
+  repeated string original_ack_receipt_xid = 10;
+  repeated string checkpoints_sha256 = 11;
 }
 
 // Complete durable AccountGameplayAdmissionOriginalAckReceipt shape. The operation identity and

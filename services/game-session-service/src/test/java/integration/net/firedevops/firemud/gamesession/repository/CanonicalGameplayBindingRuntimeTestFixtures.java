@@ -278,7 +278,7 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         SHA256,
         1L,
         SHA256,
-        Instant.now(),
+        Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS),
         catalog.characterCreationPolicy(),
         sourceEvidence.sourceGameRowId(),
         sourceEvidence.sourceGameTenantKey(),

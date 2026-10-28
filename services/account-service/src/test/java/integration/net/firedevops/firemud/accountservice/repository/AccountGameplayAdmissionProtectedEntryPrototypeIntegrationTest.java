@@ -5,9 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +19,9 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.SourceKind;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalCommitExecutor.OriginalCommitAcknowledgement;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
@@ -34,13 +41,14 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * PostgreSQL 18 proof for fresh original-ACK storage only.
+ * PostgreSQL 18 proof for fresh and historical original-ACK and bounded ORIGINAL-NEW storage.
  *
  * <p>Tests exercise the original operation's physical COMMIT, its opaque pre-expiry
- * acknowledgement, and a separate physical receipt COMMIT. PostgreSQL 18 does not enable the
- * retained historical durability reader or lost-acknowledgement recovery. SQL and JVM storage proof
- * establish no authentication, current ownership, admission, production privilege adoption, or
- * gameplay.
+ * acknowledgement, and a separate physical receipt COMMIT. The lineage test uses controlled token,
+ * registry and encrypted-envelope artifacts to prove immutable generation and one-use storage; it
+ * does not claim production signing, Redis acknowledgement, current caller authority, final
+ * admission, production privilege adoption, or gameplay. Historical recovery observes WAL coverage
+ * without reconstructing the original acknowledgement or changing its clock bound.
  */
 @Execution(ExecutionMode.SAME_THREAD)
 class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
@@ -313,7 +321,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
-  void historicalDurableReadRemainsDeniedOnPostgres18AfterReceiptInsert() {
+  void ownReceiptAndReleasedSubtransactionCannotSupplyHistoricalDurability() {
     for (boolean subtransaction : List.of(false, true)) {
       var context = context();
       var ack = finalized(context, 15000);
@@ -329,9 +337,170 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                               context.dsl().execute("RELEASE SAVEPOINT receipt_creation");
                             repository(context).readDurably(ack.evidence(), ack.decisionId());
                           }))
-          .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
+          .hasMessageContaining("requires independent commit");
       assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
     }
+  }
+
+  @Test
+  void historicalCaptureFreezesItsFenceBeforeLocksAndObservesCoverageAfterCompletion() {
+    var context = context();
+    var ack = finalized(context, 15000);
+    var expected =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    var storageBefore = ackStorageSnapshot(context);
+    var sourcesBefore = sourceSnapshot(context);
+    var pending =
+        java.util.Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(
+                    status -> {
+                      var captured =
+                          repository(context).captureHistorical(ack.evidence(), ack.decisionId());
+                      assertThat(captured.receipt()).isEqualTo(expected);
+                      // Actual capture locks append WAL after the original frozen upper fence.
+                      // That later insert position must never replace the SQL-issued proof fence.
+                      assertThat(
+                              context
+                                  .dsl()
+                                  .fetchSingle(
+                                      "SELECT pg_current_wal_insert_lsn() > ?::pg_lsn",
+                                      captured.walUpperFence())
+                                  .get(0, Boolean.class))
+                          .isTrue();
+                      return captured;
+                    }));
+    String exactFrozenFence = pending.walUpperFence();
+    // No SQL transaction/row lock remains open. Completion itself is not accepted as proof;
+    // positively observe durable WAL coverage of precisely the captured fence.
+    assertThat(
+            context
+                .dsl()
+                .fetchSingle("SELECT pg_current_wal_flush_lsn() >= ?::pg_lsn", exactFrozenFence)
+                .get(0, Boolean.class))
+        .isTrue();
+    assertThat(pending.walUpperFence()).isEqualTo(exactFrozenFence);
+    AccountGameplayAdmissionOriginalAckReceipt independentReadback =
+        context
+            .transaction()
+            .execute(status -> repository(context).readExact(ack.evidence(), ack.decisionId()));
+    assertThat(independentReadback).isEqualTo(pending.receipt());
+    assertThat(
+            new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                .read(ack.evidence(), ack.decisionId()))
+        .isEqualTo(expected);
+    assertThat(ackStorageSnapshot(context)).isEqualTo(storageBefore);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
+  }
+
+  @Test
+  void historicalRecoveryRefusesChangedDigestDecisionAndMissingOperationWithoutChangingRows() {
+    var context = context();
+    var ack = finalized(context, 15000);
+    var expected =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    var storageBefore = ackStorageSnapshot(context);
+    var sourcesBefore = sourceSnapshot(context);
+    for (boolean changedDigest : List.of(false, true)) {
+      assertThatThrownBy(
+              () ->
+                  context
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              context
+                                  .dsl()
+                                  .fetch(
+                                      "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                                      request(ack.evidence()),
+                                      changedDigest ? "0".repeat(64) : ack.evidence().sha256(),
+                                      changedDigest ? ack.decisionId() : UUID.randomUUID())))
+          .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    }
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .fetch(
+                                    "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                                    UUID.randomUUID(),
+                                    ack.evidence().sha256(),
+                                    ack.decisionId())))
+        .hasMessageContaining("Original Account acknowledgement operation missing");
+    assertThat(
+            new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                .read(ack.evidence(), ack.decisionId()))
+        .isEqualTo(expected);
+    assertThat(ackStorageSnapshot(context)).isEqualTo(storageBefore);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
+  }
+
+  @Test
+  void historicalRecoveryCannotSeeReceiptCommittedAfterItsFixedSnapshot() throws Exception {
+    var context = context();
+    var ack = finalized(context, 15000);
+    try (var stale = context.admin().getConnection()) {
+      stale.setAutoCommit(false);
+      stale.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+      DSL.using(stale).fetchSingle("SELECT pg_current_snapshot()");
+      var expected =
+          new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+              .confirm(ack);
+      var storageBefore = ackStorageSnapshot(context);
+      assertThatThrownBy(
+              () ->
+                  DSL.using(stale)
+                      .fetch(
+                          "SELECT * FROM account_gameplay_admission_read_original_ack_receipt_durably(?, ?, ?)",
+                          request(ack.evidence()),
+                          ack.evidence().sha256(),
+                          ack.decisionId()))
+          .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+      stale.rollback();
+      assertThat(
+              new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                  .read(ack.evidence(), ack.decisionId()))
+          .isEqualTo(expected);
+      assertThat(ackStorageSnapshot(context)).isEqualTo(storageBefore);
+    }
+  }
+
+  @Test
+  void v1013QualifiesRetainedPg18ReceiptWithoutChangingHistoricalStorage() {
+    var context = context("1012");
+    var ack = finalized(context, 15000);
+    var expected =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    var storageBefore = ackStorageSnapshot(context);
+    var sourcesBefore = sourceSnapshot(context);
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            repository(context).readDurably(ack.evidence(), ack.decisionId())))
+        .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
+    Flyway.configure()
+        .dataSource(context.admin())
+        .schemas(context.schema())
+        .defaultSchema(context.schema())
+        .placeholders(Map.of("serviceSchema", context.schema()))
+        .locations("classpath:db/migration")
+        .target("1013")
+        .load()
+        .migrate();
+    assertThat(
+            new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                .read(ack.evidence(), ack.decisionId()))
+        .isEqualTo(expected);
+    assertThat(ackStorageSnapshot(context)).isEqualTo(storageBefore);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
   }
 
   @Test
@@ -654,7 +823,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
-  void lostReceiptCommitAcknowledgementDoesNotReconstructFreshReceiptDurability() {
+  void lostReceiptCommitAcknowledgementRecoversHistoricallyWithoutReconstructingOriginal() {
     var context = context();
     var evidence = pending(context, 15000);
     UUID decision = UUID.randomUUID();
@@ -690,10 +859,17 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     assertThat(retained.get("receipt_xid")).isNotEqualTo(ack.finalizationXid());
     assertThat(operation(context, evidence)).isEqualTo(operationBefore);
 
-    // PostgreSQL 18 deliberately cannot recover a retained receipt from its retry COMMIT.
-    assertThatThrownBy(
-            () -> new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(source).confirm(ack))
-        .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
+    var storageBefore = ackStorageSnapshot(context);
+    // A replacement executor proves the retained receipt through the canonical historical reader;
+    // it never reruns the original finalizer or substitutes its later COMMIT for original timing.
+    var replacement = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin());
+    var recovered = replacement.read(evidence, decision);
+    assertThat(recovered.receiptXid()).isEqualTo(retained.get("receipt_xid"));
+    assertThat(recovered.committedBeforeMs()).isEqualTo(ack.committedBeforeMs());
+    assertThat(recovered.finalizationXid()).isEqualTo(ack.finalizationXid());
+    assertThat(new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(source).confirm(ack))
+        .isEqualTo(recovered);
+    assertThat(ackStorageSnapshot(context)).isEqualTo(storageBefore);
     assertThat(receipt(context)).isEqualTo(retained);
     assertThat(operation(context, evidence)).isEqualTo(operationBefore);
     assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
@@ -712,7 +888,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
-  void retainedCommittedRetryCannotMintFreshAckAndHistoricalReceiptRecoveryStaysDenied() {
+  void retainedCommittedRetryCannotMintFreshAckAndHistoricalReceiptRecoveryPreservesOriginal() {
     var context = context();
     var ack = finalized(context, 15000);
     var receiptExecutor =
@@ -720,6 +896,8 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     var receipt = receiptExecutor.confirm(ack);
     var operationBefore = operation(context, ack.evidence());
     var receiptBefore = receipt(context);
+    var storageBefore = ackStorageSnapshot(context);
+    var sourcesBefore = sourceSnapshot(context);
 
     assertThat(receipt.finalizationXid()).isEqualTo(ack.finalizationXid());
     assertThat(receipt.receiptXid()).isNotEqualTo(ack.finalizationXid());
@@ -728,12 +906,17 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                 new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
                     .execute(ack.evidence(), ack.decisionId()))
         .hasMessageContaining("Fresh owned Account original COMMIT required");
-    assertThatThrownBy(() -> receiptExecutor.read(ack.evidence(), ack.decisionId()))
-        .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
-    // A retained receipt's retry COMMIT is not historical durability proof on PostgreSQL 18.
-    assertThatThrownBy(() -> receiptExecutor.confirm(ack))
-        .hasMessageContaining("Supported durable PostgreSQL 16 primary required");
-
+    assertThat(receiptExecutor.read(ack.evidence(), ack.decisionId())).isEqualTo(receipt);
+    assertThat(receiptExecutor.confirm(ack)).isEqualTo(receipt);
+    // A new executor, after the original lease expires, observes the same historical evidence.
+    // This supplies neither renewed admission authority nor a fresh original acknowledgement.
+    waitPastExpiry(context, ack);
+    assertThat(
+            new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                .read(ack.evidence(), ack.decisionId()))
+        .isEqualTo(receipt);
+    assertThat(ackStorageSnapshot(context)).isEqualTo(storageBefore);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
     assertThat(operation(context, ack.evidence())).isEqualTo(operationBefore);
     assertThat(receipt(context)).isEqualTo(receiptBefore);
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isOne();
@@ -846,7 +1029,241 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
 
+  @Test
+  void originalNewLineageFreezesGenerationAndHandleUntilAuthenticatedAdmissionConfirmation() {
+    var context = context();
+    var ack = finalized(context, 15000, 1L);
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin()).confirm(ack);
+    var repository = new AccountOriginalNewBoundGameplayIssuanceRepository(context.dsl());
+    long nowSeconds = Instant.now().getEpochSecond();
+    UUID lineageId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+
+    var created =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.beginGenesis(
+                        ack.evidence(),
+                        receipt,
+                        lineageId,
+                        tokenJti,
+                        nowSeconds,
+                        nowSeconds,
+                        nowSeconds + 300L));
+    assertThat(created.tokenGeneration()).isEqualTo(1L);
+    assertThat(created.status())
+        .isEqualTo(AccountOriginalNewBoundGameplayIssuanceRepository.Status.PENDING);
+    assertThat(created.lineageId()).isEqualTo(lineageId);
+    assertThat(created.tokenJti()).isEqualTo(tokenJti);
+    assertThat(new String(created.membershipBaselineCanonicalBytes(), StandardCharsets.UTF_8))
+        .contains("\"membershipLifecycleState\":\"ACTIVE\"");
+    assertThat(new String(created.outboxCheckpointsCanonicalBytes(), StandardCharsets.UTF_8))
+        .contains("account:auth-authority:v1:account/");
+    assertThat(created.tokenHash()).isNull();
+    assertThat(created.rebindHandleSha256()).isNull();
+    assertThat(created.confirmedAdmissionAtMillis()).isNull();
+
+    // A lost reply supplies fresh proposed IDs and times; the durable owner returns the original
+    // lineage and frozen claims rather than opening another generation or signing identity.
+    var retry =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.beginGenesis(
+                        ack.evidence(),
+                        receipt,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        nowSeconds + 1L,
+                        nowSeconds + 1L,
+                        nowSeconds + 301L));
+    assertThat(retry.lineageId()).isEqualTo(created.lineageId());
+    assertThat(retry.tokenJti()).isEqualTo(created.tokenJti());
+    assertThat(retry.issuedAtEpochSecond()).isEqualTo(created.issuedAtEpochSecond());
+    assertThat(retry.notBeforeEpochSecond()).isEqualTo(created.notBeforeEpochSecond());
+    assertThat(retry.expiresAtEpochSecond()).isEqualTo(created.expiresAtEpochSecond());
+    assertThat(retry.membershipBaselineCanonicalBytes())
+        .containsExactly(created.membershipBaselineCanonicalBytes());
+    assertThat(retry.membershipVersionCanonicalBytes())
+        .containsExactly(created.membershipVersionCanonicalBytes());
+    assertThat(retry.outboxCheckpointsCanonicalBytes())
+        .containsExactly(created.outboxCheckpointsCanonicalBytes());
+    assertThat(context.dsl().fetchCount(DSL.table("account_original_new_bound_gameplay_issuances")))
+        .isOne();
+
+    byte[] registryRecord = "controlled-pending-record".getBytes(StandardCharsets.UTF_8);
+    byte[] protectedEnvelope = "controlled-encrypted-result".getBytes(StandardCharsets.UTF_8);
+    byte[] opaqueHandle = new byte[32];
+    java.util.Arrays.fill(opaqueHandle, (byte) 0x2a);
+    String tokenHash = "a".repeat(64);
+    String handleHash = sha256(opaqueHandle);
+    var bound =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.bindSignedResult(
+                        retry,
+                        tokenHash,
+                        "controlled-test-kid",
+                        "1",
+                        registryRecord,
+                        handleHash,
+                        protectedEnvelope));
+    assertThat(bound.status())
+        .isEqualTo(AccountOriginalNewBoundGameplayIssuanceRepository.Status.PENDING);
+    assertThat(bound.rebindHandleSha256()).isEqualTo(handleHash);
+    assertThat(bound.confirmedAdmissionAtMillis()).isNull();
+    assertThat(bound.handleConsumedAtMillis()).isNull();
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            repository.bindSignedResult(
+                                bound,
+                                "c".repeat(64),
+                                "controlled-test-kid",
+                                "1",
+                                registryRecord,
+                                handleHash,
+                                protectedEnvelope)))
+        .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
+    assertThat(repositoryRead(context, repository, ack.evidence()).tokenHash())
+        .isEqualTo(tokenHash);
+
+    String pendingRegistryReceipt = "d".repeat(64);
+    var committed =
+        context.transaction().execute(status -> repository.commit(bound, pendingRegistryReceipt));
+    assertThat(committed.status())
+        .isEqualTo(AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED);
+    assertThat(committed.committedRegistryReceiptSha256()).isEqualTo(pendingRegistryReceipt);
+    TokenIdentity tokenIdentity =
+        new TokenIdentity(
+            committed.accountId(),
+            committed.lineageId(),
+            committed.requestId(),
+            committed.tokenHash(),
+            committed.tokenJti(),
+            committed.notBeforeEpochSecond(),
+            committed.tokenGeneration(),
+            committed.issuanceFence(),
+            SourceKind.ORIGINAL_NEW);
+    var activeTokenFence =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    new AccountGameplayTokenIdentityFenceRepository(context.dsl())
+                        .registerCommittedOriginalNewIssuance(tokenIdentity));
+    assertThat(activeTokenFence.identity().sourceKind()).isEqualTo(SourceKind.ORIGINAL_NEW);
+    assertThat(activeTokenFence.tokenIdentityFence()).isEqualTo(1L);
+    var recoveredActiveTokenFence =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    new AccountGameplayTokenIdentityFenceRepository(context.dsl())
+                        .requireActiveForUpdate(tokenIdentity));
+    assertThat(recoveredActiveTokenFence).isEqualTo(activeTokenFence);
+    UUID consumeRequest = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            repository.consumeOneUseHandle(
+                                committed, handleHash, consumeRequest, 1L)))
+        .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
+
+    long databaseNow =
+        context
+            .dsl()
+            .fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    long actualAdmissionAt = databaseNow - 1L;
+    long continuityExpiresAt = actualAdmissionAt + 300000L;
+    String authenticatedReadback =
+        sha256("authenticated-final-readback".getBytes(StandardCharsets.UTF_8));
+    var confirmed =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.confirmFinalAdmission(
+                        committed, actualAdmissionAt, continuityExpiresAt, authenticatedReadback));
+    assertThat(confirmed.confirmedAdmissionAtMillis()).isEqualTo(actualAdmissionAt);
+    assertThat(confirmed.confirmedContinuityExpiresAtMillis()).isEqualTo(continuityExpiresAt);
+    assertThat(confirmed.confirmationReadbackSha256()).isEqualTo(authenticatedReadback);
+    var sameConfirmationRetry =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.confirmFinalAdmission(
+                        confirmed, actualAdmissionAt, continuityExpiresAt, authenticatedReadback));
+    assertThat(sameConfirmationRetry.confirmedAdmissionAtMillis()).isEqualTo(actualAdmissionAt);
+    assertThat(sameConfirmationRetry.confirmationReadbackSha256()).isEqualTo(authenticatedReadback);
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            repository.confirmFinalAdmission(
+                                confirmed,
+                                actualAdmissionAt + 1L,
+                                continuityExpiresAt + 1L,
+                                authenticatedReadback)))
+        .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
+
+    var consumed =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.consumeOneUseHandle(
+                        confirmed, handleHash, consumeRequest, actualAdmissionAt));
+    assertThat(consumed.handleConsumptionRequestId()).isEqualTo(consumeRequest);
+    assertThat(consumed.handleConsumedAtMillis()).isBetween(actualAdmissionAt, continuityExpiresAt);
+    var sameConsumeRetry =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    repository.consumeOneUseHandle(
+                        consumed, handleHash, consumeRequest, actualAdmissionAt));
+    assertThat(sameConsumeRetry.handleConsumedAtMillis())
+        .isEqualTo(consumed.handleConsumedAtMillis());
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            repository.consumeOneUseHandle(
+                                sameConsumeRetry,
+                                handleHash,
+                                UUID.randomUUID(),
+                                actualAdmissionAt)))
+        .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
+
+    java.util.Arrays.fill(registryRecord, (byte) 0);
+    java.util.Arrays.fill(protectedEnvelope, (byte) 0);
+    java.util.Arrays.fill(opaqueHandle, (byte) 0);
+  }
+
   private static Context context() {
+    return context("latest");
+  }
+
+  private static Context context(String target) {
     String schema = "protected_" + UUID.randomUUID().toString().replace("-", "");
     var admin = POSTGRES.dataSource(schema);
     Flyway.configure()
@@ -855,6 +1272,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(target)
         .load()
         .migrate();
     var transaction = new TransactionTemplate(new DataSourceTransactionManager(admin));
@@ -864,6 +1282,26 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         admin,
         DSL.using(new TransactionAwareDataSourceProxy(admin), SQLDialect.POSTGRES),
         transaction);
+  }
+
+  private static AccountOriginalNewBoundGameplayIssuanceRepository.Genesis repositoryRead(
+      Context context,
+      AccountOriginalNewBoundGameplayIssuanceRepository repository,
+      AccountGameplayAdmissionLeaseEvidence evidence) {
+    return context
+        .transaction()
+        .execute(
+            status ->
+                repository.readByLease(
+                    UUID.fromString((String) evidence.carrier().get("leaseId"))));
+  }
+
+  private static String sha256(byte[] value) {
+    try {
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new AssertionError(impossible);
+    }
   }
 
   private static javax.sql.DataSource loseCommitAcknowledgementAfter(
@@ -915,7 +1353,12 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {
-    var evidence = pending(context, lifetime);
+    return finalized(context, lifetime, 7L);
+  }
+
+  private static OriginalCommitAcknowledgement finalized(
+      Context context, long lifetime, long issuanceFence) {
+    var evidence = pending(context, lifetime, issuanceFence);
     long startedAtNanos = System.nanoTime();
     try {
       return new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
@@ -962,6 +1405,11 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   private static AccountGameplayAdmissionLeaseEvidence pending(Context context, long lifetime) {
+    return pending(context, lifetime, 7L);
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence pending(
+      Context context, long lifetime, long issuanceFence) {
     return context
         .transaction()
         .execute(
@@ -988,14 +1436,17 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                       .fetchSingle(
                           "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
                       .get(0, Long.class);
-              var evidence = evidence(allocation, lifetime, databaseNow);
+              var evidence = evidence(allocation, lifetime, databaseNow, issuanceFence);
               repository.beginPending(evidence);
               return evidence;
             });
   }
 
   private static AccountGameplayAdmissionLeaseEvidence evidence(
-      AccountGameplayAdmissionLeaseRepository.Allocation allocation, long lifetime, long now) {
+      AccountGameplayAdmissionLeaseRepository.Allocation allocation,
+      long lifetime,
+      long now,
+      long issuanceFence) {
     String account = allocation.accountId().toString();
     Map<String, Object> carrier = new LinkedHashMap<>();
     carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
@@ -1038,7 +1489,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
             Map.of(TENANT, "1"),
             "privateRealmGrantVersions",
             List.of()));
-    carrier.put("issuanceFence", "7");
+    carrier.put("issuanceFence", Long.toString(issuanceFence));
     carrier.put(
         "membershipBaseline",
         Map.of(
@@ -1071,7 +1522,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     token.put("tokenSHA256", "a".repeat(64));
     token.put("tokenProfile", "game-session-account-delegation");
     token.put("tokenGeneration", "1");
-    token.put("issuanceFence", "7");
+    token.put("issuanceFence", Long.toString(issuanceFence));
     token.put("tokenIdentityFence", "9");
     token.put("issuedAt", Long.toString(now / 1000 - 1));
     token.put("notBefore", Long.toString(now / 1000 - 1));
@@ -1124,6 +1575,21 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       snapshot.put(table, context.dsl().fetch("SELECT * FROM " + table + " ORDER BY 1").intoMaps());
     }
     return snapshot;
+  }
+
+  private static Map<String, Object> ackStorageSnapshot(Context context) {
+    return Map.of(
+        "operation",
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT *, xmin::text AS original_xmin FROM account_gameplay_admission_lease_operations")
+            .intoMap(),
+        "receipt",
+        context
+            .dsl()
+            .fetchSingle("SELECT *, xmin::text AS original_xmin FROM " + RECEIPTS)
+            .intoMap());
   }
 
   private static Map<String, Object> receipt(Context context) {
