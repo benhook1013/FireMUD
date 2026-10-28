@@ -1039,12 +1039,14 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
             f.tx(() -> repository.settle(operation, terminal, phase, terminal.canonicalBytes()));
         int predecessorHistoryRank =
             java.util.Objects.requireNonNull(
-                f.dsl.fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+                f.dsl
+                    .fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
                     .get(0, Integer.class));
         var before = publicationRetentionRows(f.dsl, predecessorHistoryRank);
         f.upgradeToCurrent();
         assertThat(
-                f.dsl.fetchSingle(
+                f.dsl
+                    .fetchSingle(
                         "SELECT count(*) FROM flyway_schema_history"
                             + " WHERE installed_rank > ? AND success",
                         predecessorHistoryRank)
@@ -1072,8 +1074,7 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
             "account_selected_publication_settlements",
             "account_control_ui_issuance_operations",
             "flyway_schema_history")) {
-      String filter =
-          table.equals("flyway_schema_history") ? " WHERE installed_rank <= ?" : "";
+      String filter = table.equals("flyway_schema_history") ? " WHERE installed_rank <= ?" : "";
       Object[] bindings =
           table.equals("flyway_schema_history")
               ? new Object[] {predecessorHistoryRank}

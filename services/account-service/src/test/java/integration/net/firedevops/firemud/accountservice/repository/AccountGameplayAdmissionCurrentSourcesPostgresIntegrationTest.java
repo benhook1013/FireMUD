@@ -161,8 +161,8 @@ import org.testcontainers.containers.Network;
  * signer performs real RSA/JWS operations with its exact test JWKS, while protected
  * signer/materializer evidence and Game Session published/provisional reads remain controlled
  * boundaries. The fresh Account finalization path uses physical PostgreSQL 18 COMMIT and durable
- * ACK insertion; exact retained-receipt recovery uses the V1013 historical reader and preserves
- * the original receipt. This proves neither production custody, real Game Session owner authority,
+ * ACK insertion; exact retained-receipt recovery uses the V1013 historical reader and preserves the
+ * original receipt. This proves neither production custody, real Game Session owner authority,
  * runtime registration, nor an admitted Game Session binding.
  */
 class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
@@ -670,7 +670,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         assertThat(finalizedRetry.bindingDecisionId()).isEqualTo(decisionId);
         assertThat(finalizedRetry.originalLeaseEvidence().canonicalJson())
             .isEqualTo(originalLease.canonicalJson());
-        assertThat(finalizedRetry.originalAckReceipt()).isEqualTo(originalAck);
+        assertThat(finalizedRetry.originalAckReceipt())
+            .usingRecursiveComparison()
+            .isEqualTo(originalAck);
         var readCommittedWire =
             AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(originalJwt, originalLeaseBytes);
         var parsedReadCommitted =
@@ -685,7 +687,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         assertThat(readCommitted.bindingDecisionId()).isEqualTo(decisionId);
         assertThat(readCommitted.originalLeaseEvidence().canonicalJson())
             .isEqualTo(originalLease.canonicalJson());
-        assertThat(readCommitted.originalAckReceipt()).isEqualTo(originalAck);
+        assertThat(readCommitted.originalAckReceipt())
+            .usingRecursiveComparison()
+            .isEqualTo(originalAck);
         var abortCommittedWire =
             AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
                 originalJwt, originalLeaseBytes, decisionId);
@@ -701,7 +705,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         assertThat(abortCommitted.bindingDecisionId()).isEqualTo(decisionId);
         assertThat(abortCommitted.originalLeaseEvidence().canonicalJson())
             .isEqualTo(originalLease.canonicalJson());
-        assertThat(abortCommitted.originalAckReceipt()).isEqualTo(originalAck);
+        assertThat(abortCommitted.originalAckReceipt())
+            .usingRecursiveComparison()
+            .isEqualTo(originalAck);
         assertThat(fixture.readLeaseOperation(originalLease)).isEqualTo(durableCommittedOperation);
         assertThat(fixture.originalAckReceiptImage(accountRequestId))
             .isEqualTo(durableReceiptImage);
