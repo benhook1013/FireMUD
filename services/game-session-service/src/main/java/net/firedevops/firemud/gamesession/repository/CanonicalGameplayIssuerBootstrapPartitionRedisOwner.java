@@ -117,8 +117,11 @@ public final class CanonicalGameplayIssuerBootstrapPartitionRedisOwner {
   }
 
   /**
-   * Reads and verifies the exact current physical field set for an installed-anchor retry or
-   * reader. This method never creates, repairs, or rebuilds a missing partition.
+   * Verifies only the original bootstrap field set and initial revision, before any local
+   * post-anchor mutation. It deliberately refuses a later ADD, release or retirement projection.
+   * Completed-original bootstrap retries use retained installation evidence instead; ordinary
+   * current-state readers use the binding-local projection owner. This method never creates,
+   * repairs or rebuilds a missing partition.
    */
   public Readback readExistingAndRead(CanonicalGameplayIssuerBootstrapPartitionWork work) {
     Objects.requireNonNull(work, "Prepared issuer partition work is required");
