@@ -311,14 +311,6 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
       throw conflict("INITIAL readback belongs to a different original request");
     }
     requireReadback(readback);
-    long now = clock.millis();
-    if (now <= 0
-        || now < readback.beforeIncarnation().issuedAtEpochMillis()
-        || now >= readback.beforeIncarnation().expiresAtEpochMillis()
-        || now < readback.afterIncarnation().issuedAtEpochMillis()
-        || now >= readback.afterIncarnation().expiresAtEpochMillis()) {
-      throw conflict("INITIAL protected incarnation observation expired before SQL completion");
-    }
     String fieldsDigest = digestFields(readback.value().fields());
 
     return dsl.transactionResult(
@@ -334,6 +326,14 @@ final class CanonicalGameplayAccountInitialBarrierInitializerRepository {
           requireSameCurrentSource(current, source);
           requireOriginalJournalStillCurrent(transaction, current);
           requireSameReadbackContext(current, readback);
+          long now = clock.millis();
+          if (now <= 0
+              || now < readback.beforeIncarnation().issuedAtEpochMillis()
+              || now >= readback.beforeIncarnation().expiresAtEpochMillis()
+              || now < readback.afterIncarnation().issuedAtEpochMillis()
+              || now >= readback.afterIncarnation().expiresAtEpochMillis()) {
+            throw conflict("INITIAL protected incarnation observation expired before SQL completion");
+          }
           if (current.state() == State.OPEN_INSTALLED) {
             if (!fieldsDigest.equals(current.installedFieldsDigest())) {
               throw conflict("An installed INITIAL OPEN value cannot be replaced");

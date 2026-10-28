@@ -62,6 +62,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -515,6 +516,82 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(firstProjectedFields)
         .containsEntry(firstCapacityField, first.exactMemberValueBytes());
     assertThat(projectionOwner.projectAndRead(first).scriptOutcome()).isEqualTo(3L);
+
+    String acknowledgementImageBeforeAmbientRefusals =
+        dsl.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON();
+    String acknowledgementCounterImageBeforeAmbientRefusals =
+        dsl.fetch("SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
+            .formatJSON();
+    AtomicInteger acknowledgementSourceReads = new AtomicInteger();
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+        acknowledgementSource =
+            () -> {
+              acknowledgementSourceReads.incrementAndGet();
+              return currentState.get();
+            };
+    var guardedAcknowledgementRepository =
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, acknowledgementSource);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(() -> guardedAcknowledgementRepository.acknowledge(firstWithBinding))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join an ambient SQL transaction");
+      assertThat(acknowledgementSourceReads).hasValue(0);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+    assertThat(dsl.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
+        .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
+    assertThat(
+            dsl.fetch("SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
+                .formatJSON())
+        .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThatThrownBy(() -> guardedAcknowledgementRepository.acknowledge(firstWithBinding))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join an ambient SQL transaction");
+      assertThat(acknowledgementSourceReads).hasValue(0);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+    assertThat(dsl.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
+        .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
+    assertThat(
+            dsl.fetch("SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
+                .formatJSON())
+        .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
+
+    dsl.transaction(
+        configuration -> {
+          DSLContext callerTransaction = DSL.using(configuration);
+          var callerOwnedAcknowledgementRepository =
+              new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(
+                  callerTransaction, acknowledgementSource);
+          assertThatThrownBy(() -> callerOwnedAcknowledgementRepository.acknowledge(firstWithBinding))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage(
+                  "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join a jOOQ transaction");
+          assertThat(acknowledgementSourceReads).hasValue(0);
+          assertThat(callerTransaction.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
+              .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
+          assertThat(
+                  callerTransaction
+                      .fetch(
+                          "SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
+                      .formatJSON())
+              .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
+        });
+    assertThat(dsl.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
+        .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
+    assertThat(
+            dsl.fetch("SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
+                .formatJSON())
+        .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
 
     var issuerAcknowledgement = acknowledgementRepository.acknowledge(firstWithBinding);
     assertThat(issuerAcknowledgement.evidence().operationId()).isEqualTo(first.operationId());
