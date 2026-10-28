@@ -26,10 +26,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
@@ -130,6 +132,40 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             worldRegionResolver,
             entityReferenceClient,
             null)
+        .first();
+  }
+
+  enum BridgeSqlPhase {
+    PREPARE,
+    ACKNOWLEDGE
+  }
+
+  @FunctionalInterface
+  interface BridgeSqlPhaseRunner {
+    <T> T run(BridgeSqlPhase phase, Supplier<T> action);
+  }
+
+  static Proof installAndBridgeWithSqlPhaseRunner(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      BridgeSqlPhaseRunner phaseRunner)
+      throws Exception {
+    return installAndBridgeInternal(
+            dsl,
+            redisHost,
+            redisPort,
+            worldRequest,
+            currentTarget,
+            worldRegionResolver,
+            entityReferenceClient,
+            null,
+            null,
+            Objects.requireNonNull(phaseRunner, "phaseRunner"))
         .first();
   }
 
@@ -493,6 +529,31 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       SecondBinding secondBinding,
       AtomicReference<ChangedGrantProof> changedGrantProofCapture)
       throws Exception {
+    return installAndBridgeInternal(
+        dsl,
+        redisHost,
+        redisPort,
+        worldRequest,
+        currentTarget,
+        worldRegionResolver,
+        entityReferenceClient,
+        secondBinding,
+        changedGrantProofCapture,
+        null);
+  }
+
+  private static TwoBindingProof installAndBridgeInternal(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      SecondBinding secondBinding,
+      AtomicReference<ChangedGrantProof> changedGrantProofCapture,
+      BridgeSqlPhaseRunner phaseRunner)
+      throws Exception {
     UUID transitionId = UUID.randomUUID();
     UUID sessionId = UUID.randomUUID();
     var resolved = worldRegionResolver.resolve(worldRequest);
@@ -557,19 +618,24 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               "controlled-test-image");
       CanonicalPreseededActorRuntimeReferenceClient bridgeEntityReferenceClient =
           secondBinding == null ? entityReferenceClient : secondBinding.entityReferenceClient();
-      var bridgeOwner =
-          CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
+      var leaseOwner =
+          CanonicalGameplayRegionLeaseOwnerFactory.compose(
               dsl,
               redis.ownerClient(),
               scriptCatalog,
               stableSource,
               worldRegionResolver,
-              bridgeEntityReferenceClient,
               runtimeIdentity,
               Duration.ofSeconds(30),
               Clock.systemUTC());
+      var bridgeOwner =
+          new CanonicalGameplayRegionBindingBridgeOwner(leaseOwner, bridgeEntityReferenceClient);
       var installation = bridgeOwner.installForTransition(transitionId, worldRequest);
-      var firstAcknowledgement = bridgeOwner.bridge(installation);
+      var firstAcknowledgement =
+          phaseRunner == null
+              ? bridgeOwner.bridge(installation)
+              : bridgeWithSqlPhaseRunner(
+                  leaseOwner, installation, bridgeEntityReferenceClient, phaseRunner);
       var lostReplyRetry = bridgeOwner.bridge(installation);
       var acknowledged = firstAcknowledgement.obligation();
       var replayed = lostReplyRetry.obligation();
@@ -903,6 +969,76 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           regionLeaseStillLive,
           foreignOwnerCapabilityRejectedWithoutStateChange,
           expiredGrantRejectedWithoutStateChange);
+    }
+  }
+
+  private static CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement
+      bridgeWithSqlPhaseRunner(
+          CanonicalGameplayRegionLeaseOwner leaseOwner,
+          CanonicalGameplayRegionLeaseOwner.Installation installation,
+          CanonicalPreseededActorRuntimeReferenceClient entityClient,
+          BridgeSqlPhaseRunner phaseRunner) {
+    var request = installation.worldRequest;
+    var initial = leaseOwner.currentBridgeContext(installation);
+    if (initial.evidence().expectedPrior() != null
+        || initial.evidence().transition().status()
+            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
+                .Status.PROVISIONAL) {
+      throw new IllegalStateException("Region bridge requires an exact first-NEW transition");
+    }
+    var entityRequest =
+        ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(request.getAssignmentUuid())
+            .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+            .setExpectedTarget(request.getExpectedTarget())
+            .setCharacterUuid(request.getCharacterUuid())
+            .setIntentDigest(request.getAssignmentIntentDigest())
+            .build();
+    var reference = entityClient.read(entityRequest);
+    var preimage = leaseOwner.probeRegionSessionBinding(installation, reference);
+    phaseRunner.run(
+        BridgeSqlPhase.PREPARE, () -> leaseOwner.prepareBridge(installation, preimage, reference));
+    var beforeWriteReference = entityClient.read(entityRequest);
+    requireSameBridgeReference(reference, beforeWriteReference);
+    var beforeWritePreimage =
+        leaseOwner.probeRegionSessionBinding(installation, beforeWriteReference);
+    leaseOwner.prepareBridge(installation, beforeWritePreimage, beforeWriteReference);
+    leaseOwner.applyRegionSessionBinding(installation, beforeWriteReference);
+    var currentReference = entityClient.read(entityRequest);
+    requireSameBridgeReference(reference, currentReference);
+    var beforeReadbackPreimage =
+        leaseOwner.probeRegionSessionBinding(installation, currentReference);
+    leaseOwner.prepareBridge(installation, beforeReadbackPreimage, currentReference);
+    var readback =
+        leaseOwner.readBackRegionSessionBinding(
+            installation, beforeReadbackPreimage.context().status(), currentReference);
+    var afterReadbackReference = entityClient.read(entityRequest);
+    requireSameBridgeReference(reference, afterReadbackReference);
+    var beforeAckPreimage =
+        leaseOwner.probeRegionSessionBinding(installation, afterReadbackReference);
+    if (!beforeReadbackPreimage.context().status().equals(beforeAckPreimage.context().status())) {
+      throw new IllegalStateException("Region bridge owner changed before acknowledgement");
+    }
+    var prepared =
+        leaseOwner.prepareBridge(installation, beforeAckPreimage, afterReadbackReference);
+    return phaseRunner.run(
+        BridgeSqlPhase.ACKNOWLEDGE,
+        () ->
+            leaseOwner.acknowledgeBridge(
+                installation,
+                prepared,
+                beforeAckPreimage.context(),
+                afterReadbackReference,
+                readback));
+  }
+
+  private static void requireSameBridgeReference(
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference expected,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference actual) {
+    if (!CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(expected)
+        .equals(CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(actual))) {
+      throw new IllegalStateException("Region bridge Entity source changed");
     }
   }
 

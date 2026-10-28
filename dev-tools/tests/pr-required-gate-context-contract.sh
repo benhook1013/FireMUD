@@ -500,6 +500,14 @@ if fingerprint is None or fingerprint[1] != expected:
         f"canonicalRuntimeWorkflowSha256 in smoke.yml to {expected} and rerun this contract."
     )
 producer_job = producer["jobs"]["pr-local-smoke"]
+cancelled_inventory = re.search(
+    r"const preExecutionCancelledJobNames = new Set\(\[([\s\S]*?)\]\);", script
+)
+if cancelled_inventory is None:
+    raise SystemExit("Smoke Gate must declare its bounded pre-execution cancellation inventory")
+import json
+producer_job_names = [job["name"] for job in producer["jobs"].values()]
+Path(sys.argv[2] + ".cancelled-job-names.json").write_text(json.dumps(producer_job_names))
 if producer_job["name"] != "PR Full-Stack Smoke (runtime-required=${{ needs.image-meta.outputs.runtime_smoke_required }})":
     raise SystemExit("Native producer name must affirm runtime smoke scope")
 steps = producer_job["steps"]
@@ -527,23 +535,53 @@ const assert = require("node:assert/strict");
 const script = require("node:fs").readFileSync(process.argv[2], "utf8");
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+const cancellationInventoryBody = script.match(/const preExecutionCancelledJobNames = new Set\(\[([\s\S]*?)\]\);/)[1];
+const cancellationInventory = new Function(`return [${cancellationInventoryBody}];`)();
+const canonicalCancellationInventory = JSON.parse(require("node:fs").readFileSync(process.argv[2] + ".cancelled-job-names.json", "utf8"));
+assert.equal(cancellationInventory.length, 13);
+assert.deepEqual([...cancellationInventory].sort(), canonicalCancellationInventory.sort(),
+  "bounded cancellation inventory must match all canonical runtime workflow job names");
 const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
-  payload: { pull_request: { number: 42, head: { sha: head }, base: { ref: "develop", sha: base }, created_at: "2026-09-01T00:00:00Z" } } };
+  payload: { pull_request: { number: 42, head: { sha: head, repo: {full_name: "example/firemud"}},
+    base: { ref: "develop", sha: base }, created_at: "2026-09-01T00:00:00Z" } } };
 const execute = new Function("github", "context", "core", "Date", "setTimeout", `return (async () => {\n${script}\n})()`);
-async function scenario(outcome, completedAtMinutes) {
+async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   let now = 1000;
   const start = now;
   const failures = [];
   const listRuns = async () => {}, listJobs = async () => {};
+  const cancelledSource = runId => ({id: runId, workflow_id: 7, run_attempt: 1, event: "pull_request",
+    status: "completed", conclusion: "cancelled", path: ".github/workflows/runtime-images.yml",
+    repository: {full_name: "example/firemud"}, head_repository: {full_name: "example/firemud"},
+    head_sha: head, display_title: title});
+  const cancellationJobs = runId => {
+    if (selectionCase === "cancelled-empty-inventory") return [];
+    const names = selectionCase === "cancelled-partial-inventory" ? cancellationInventory.slice(1) : cancellationInventory;
+    return names.map((name, index) => ({id: runId * 100 + index + 1, run_id: runId,
+      name,
+      status: "completed", conclusion: selectionCase === "cancelled-unknown-outcome" && index === 0
+        ? "failure" : index % 2 === 0 ? "cancelled" : "skipped",
+      steps: selectionCase === "cancelled-executed" && index === 0 ? [{name: "executed"}] : []}));
+  };
   const github = { rest: {
     pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: base }, merge_commit_sha: merge } }) },
     repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
-    actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs },
+    actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
+      getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
+      getWorkflowRun: async ({run_id}) => ({data: {id: run_id,
+        run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
+        status: "completed", conclusion: "cancelled"}}) },
+  }, request: async (route, input) => {
+    assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
+    assert.equal(input.attempt_number, 1);
+    return {data: cancelledSource(input.run_id)};
   }, paginate: async (method, input) => {
-    assert.equal(method, listJobs);
-    assert.equal(input.run_id, 42);
-    return [{ name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
-      steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
+    if (method === listJobs) {
+      return [{ id: input.run_id + 100, run_id: input.run_id, name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
+        steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
+    }
+    assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    return cancellationJobs(input.run_id);
   } };
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
@@ -551,8 +589,49 @@ async function scenario(outcome, completedAtMinutes) {
     if (input.event === "repository_dispatch") { yield { data: [] }; return; }
     assert.equal(input.head_sha, head);
     const complete = now - start >= completedAtMinutes * 60 * 1000;
-    yield { data: [{ id: 42, event: "pull_request", head_sha: head, display_title: title, pull_requests: [],
-      status: complete ? "completed" : "in_progress", conclusion: complete ? outcome : null }] };
+    const makeRun = (id, createdAt, status, conclusion) => ({id, workflow_id: 7, run_attempt: 1,
+      event: "pull_request", head_sha: head, display_title: title, created_at: createdAt,
+      pull_requests: [{number: 42, head: {sha: head}}], status, conclusion});
+    const active = makeRun(42, "2026-09-01T00:00:00Z", complete ? "completed" : "in_progress", complete ? outcome : null);
+    const cancelled = makeRun(43, "2026-09-01T00:00:00Z", "completed", "cancelled");
+    if (selectionCase === "duplicate" || selectionCase === "cancelled-higher-id") {
+      yield { data: selectionCase === "duplicate" ? [
+        {...active, status: "completed", conclusion: "cancelled"}, {...active, id: 43},
+      ] : [cancelled, active] };
+      return;
+    }
+    if (selectionCase === "newer-failure-over-success") {
+      yield {data: [
+        makeRun(42, "2026-09-01T00:00:00Z", "completed", "success"),
+        makeRun(43, "2026-09-01T00:00:01Z", "completed", "failure"),
+      ]};
+      return;
+    }
+    if (selectionCase === "newer-pending-over-success") {
+      yield {data: [
+        makeRun(42, "2026-09-01T00:00:00Z", "completed", "success"),
+        makeRun(43, "2026-09-01T00:00:01Z", complete ? "completed" : "in_progress", complete ? outcome : null),
+      ]};
+      return;
+    }
+    if (["cancelled-executed", "cancelled-partial-inventory", "cancelled-empty-inventory",
+      "cancelled-unknown-outcome", "cancelled-changed-attempt", "cancelled-older-success"].includes(selectionCase)) {
+      yield {data: [
+        makeRun(42, "2026-09-01T00:00:00Z", "completed", "success"),
+        makeRun(43, "2026-09-01T00:00:01Z", "completed", "cancelled"),
+      ]};
+      return;
+    }
+    if (selectionCase === "wrong-tuple-event") {
+      yield { data: [
+        {...active, id: 99, event: "push", status: "completed", conclusion: "failure"},
+        {...active, id: 98, head_sha: "f".repeat(40), status: "completed", conclusion: "failure"},
+        active,
+      ] };
+      return;
+    }
+    yield { data: [makeRun(42, "2026-09-01T00:00:00Z",
+      complete ? "completed" : "in_progress", complete ? outcome : null)] };
   };
   const core = { info: () => {}, warning: () => {}, setFailed: message => failures.push(message) };
   const clock = { now: () => now, parse: Date.parse };
@@ -568,6 +647,28 @@ async function scenario(outcome, completedAtMinutes) {
   assert.equal(failed.failures.length, 1);
   assert.match(failed.failures[0], /did not complete successfully/);
   assert.equal(failed.minutes, 30, "terminal failure must stop polling promptly");
+  const replacement = await scenario("success", 1, "duplicate");
+  assert.deepEqual(replacement.failures, [], "newer same-time exact run must replace older cancelled run despite API order");
+  assert.equal(replacement.minutes, 1, "newer in-progress run must be tracked until it succeeds");
+  const oppositeIdOrdering = await scenario("success", 0, "cancelled-higher-id");
+  assert.deepEqual(oppositeIdOrdering.failures, [], "pre-execution cancellation must not hide a same-time lower-ID active run");
+  const newerPending = await scenario("success", 1, "newer-pending-over-success");
+  assert.deepEqual(newerPending.failures, [], "newer pending run must remain authoritative over older success until it completes");
+  assert.equal(newerPending.minutes, 1);
+  const newerFailure = await scenario("failure", 0, "newer-failure-over-success");
+  assert.equal(newerFailure.failures.length, 1);
+  assert.match(newerFailure.failures[0], /did not complete successfully/,
+    "newer exact failure must remain authoritative over older success");
+  for (const kind of ["cancelled-executed", "cancelled-partial-inventory", "cancelled-empty-inventory",
+    "cancelled-unknown-outcome", "cancelled-changed-attempt"]) {
+    const unsafeCancellation = await scenario("success", 0, kind);
+    assert.equal(unsafeCancellation.failures.length, 1, `${kind} cannot be excluded to reveal older success`);
+    assert.ok(unsafeCancellation.minutes <= 5.25, `${kind} remains bounded while replacement is absent`);
+  }
+  const olderSuccess = await scenario("success", 0, "cancelled-older-success");
+  assert.deepEqual(olderSuccess.failures, [], "only a complete no-step cancellation may be excluded from authority");
+  const ignoredDistractors = await scenario("success", 0, "wrong-tuple-event");
+  assert.deepEqual(ignoredDistractors.failures, [], "wrong-event and wrong-head runs must not displace the exact run");
   const cancelled = await scenario("cancelled", 0);
   assert.equal(cancelled.failures.length, 1);
   assert.match(cancelled.failures[0], /cancelled/i);
@@ -612,6 +713,7 @@ async function scenario(kind, event = "pull_request") {
       base: {ref: "develop", sha: base}, created_at: "2026-09-01T00:00:00Z"},
   }};
   const source = {id: 42, workflow_id: 7, run_attempt: 1, repository: {full_name: repository},
+    created_at: "2026-09-01T00:00:00Z",
     head_repository: {full_name: repository}, path: ".github/workflows/runtime-images.yml",
     event, head_sha: event === "pull_request" ? head : defaultSha, head_branch: "develop", display_title: title,
     status: "completed", conclusion: "success", pull_requests: []};

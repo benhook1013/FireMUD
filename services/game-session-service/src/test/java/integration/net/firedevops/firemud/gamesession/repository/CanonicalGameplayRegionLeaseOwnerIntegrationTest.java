@@ -30,9 +30,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
@@ -626,6 +628,105 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       }
     } finally {
       dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void bridgeSqlPhasesWaitForRuntimeBeforeLockingTransition() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        redis.admin().flushdb();
+      }
+      var target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              schema.dataSource(), UUID.randomUUID(), "firemud");
+      WorldFixture world = WorldFixture.open(target);
+      var observed =
+          new java.util.EnumMap<
+              CanonicalGameplayRegionOwnerCompositionFixture.BridgeSqlPhase, Boolean>(
+              CanonicalGameplayRegionOwnerCompositionFixture.BridgeSqlPhase.class);
+      try (var entity = EntityReferenceFixture.open()) {
+        var proof =
+            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeWithSqlPhaseRunner(
+                schema.dsl(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(REDIS_PORT),
+                world.request(),
+                target.playableTarget(),
+                world.resolver(),
+                entity.client(),
+                new CanonicalGameplayRegionOwnerCompositionFixture.BridgeSqlPhaseRunner() {
+                  @Override
+                  public <T> T run(
+                      CanonicalGameplayRegionOwnerCompositionFixture.BridgeSqlPhase phase,
+                      Supplier<T> action) {
+                    T result = runBridgePhaseAgainstRuntimeHolder(schema, target, action);
+                    observed.put(phase, true);
+                    return result;
+                  }
+                });
+        assertThat(proof.exactLostReplyRetry()).isTrue();
+      }
+      assertThat(observed.keySet())
+          .containsExactlyInAnyOrder(
+              CanonicalGameplayRegionOwnerCompositionFixture.BridgeSqlPhase.PREPARE,
+              CanonicalGameplayRegionOwnerCompositionFixture.BridgeSqlPhase.ACKNOWLEDGE);
+    } finally {
+      dropSchema(schema.schema());
+    }
+  }
+
+  private static <T> T runBridgePhaseAgainstRuntimeHolder(
+      TestSchema schema,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target,
+      Supplier<T> action) {
+    CompletableFuture<T> bridge = null;
+    try (Connection holder = schema.dataSource().getConnection()) {
+      holder.setAutoCommit(false);
+      DSLContext held = DSL.using(holder, SQLDialect.POSTGRES);
+      held.execute("SET LOCAL lock_timeout = '3s'");
+      int holderPid = held.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+      assertThat(
+              held.fetchOne(
+                  "SELECT id FROM game_instances WHERE tenant_id = ? AND id = ?"
+                      + " AND game_instance_uuid = ? FOR UPDATE",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId(),
+                  target.gameInstanceUuid()))
+          .isNotNull();
+      bridge = CompletableFuture.supplyAsync(action);
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      Integer waitingPid = null;
+      while (System.nanoTime() < deadline && waitingPid == null) {
+        Record waiter =
+            schema
+                .dsl()
+                .fetchOne(
+                    "SELECT pid FROM pg_stat_activity WHERE pid <> pg_backend_pid()"
+                        + " AND ? = ANY(pg_blocking_pids(pid))"
+                        + " AND query LIKE '%game_instances%' LIMIT 1",
+                    holderPid);
+        if (waiter != null) waitingPid = waiter.get("pid", Integer.class);
+      }
+      assertThat(waitingPid).as("bridge waits on exact runtime holder").isNotNull();
+      assertThat(bridge.isDone()).isFalse();
+      // V34.2 takes the transition row in this runtime UPDATE trigger. It must complete while
+      // the bridge is blocked on our runtime row, before the holder releases that row.
+      assertThat(
+              held.execute(
+                  "UPDATE game_instances SET status = status WHERE tenant_id = ? AND id = ?"
+                      + " AND game_instance_uuid = ?",
+                  target.gameSessionTenantId(),
+                  target.gameInstanceId(),
+                  target.gameInstanceUuid()))
+          .isEqualTo(1);
+      holder.commit();
+      return bridge.get(10, TimeUnit.SECONDS);
+    } catch (Exception | AssertionError failure) {
+      if (bridge != null) bridge.cancel(true);
+      throw new AssertionError("Bridge/runtime lock-order proof failed", failure);
     }
   }
 
