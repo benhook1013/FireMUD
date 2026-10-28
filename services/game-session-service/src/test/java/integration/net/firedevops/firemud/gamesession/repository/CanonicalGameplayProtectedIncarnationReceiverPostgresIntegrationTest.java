@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -14,6 +15,8 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
+import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.math.BigInteger;
@@ -124,6 +127,98 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
               fixture.initialRepository.readCurrent(fixture.original.requestId()).initializerId())
           .isEqualTo(snapshot.initializerId());
       physical.connection.sync().del(key);
+    }
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void remotePreflightFailuresRetainNeverDispatchedOriginalForValidRetry() throws Exception {
+    try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
+        InitialRedisFixture physical = InitialRedisFixture.open();
+        var login = fixture.originalLogin();
+        var loadConnection = physical.ownerClient.connect(ByteArrayCodec.INSTANCE)) {
+      var snapshot = fixture.initialRepository.readCurrent(fixture.original.requestId());
+      String retained = fixture.initialTargetPostimage();
+      String key =
+          CanonicalGameplayAccountInitialBarrierKey.forTarget(
+              fixture.tenantTags.assignmentForInitialBarrierTarget(fixture.original.requestId()),
+              snapshot.initializerId(),
+              fixture.original.requestId());
+      RedisClient connectFailure = mock(RedisClient.class);
+      when(connectFailure.connect(any(ByteArrayCodec.class)))
+          .thenThrow(new IllegalStateException("controlled connect failure"));
+      RedisClient loadFailure = mock(RedisClient.class);
+      StatefulRedisConnection<byte[], byte[]> connection = spy(loadConnection);
+      RedisAsyncCommands<byte[], byte[]> commands = spy(loadConnection.async());
+      doReturn(commands).when(connection).async();
+      doThrow(new IllegalStateException("controlled SCRIPT LOAD failure"))
+          .when(commands)
+          .scriptLoad(any(byte[].class));
+      when(loadFailure.connect(any(ByteArrayCodec.class))).thenReturn(connection);
+      // The actual administrator connection reports principal 'default', which must be refused.
+      for (RedisClient failingClient :
+          List.of(connectFailure, physical.administrator, loadFailure)) {
+        var owner = fixture.initialOwner(failingClient, fixture.initialRepository);
+        assertThat(
+                owner.initializeOnce(
+                    fixture.original, login, fixture.tenantId, fixture.namespaceId))
+            .isEqualTo(
+                new CanonicalGameplayAccountInitialOpenProof.Refused(
+                    CanonicalGameplayAccountInitialOpenProof.Reason.TARGET_NEVER_DISPATCHED));
+        assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+        assertThat(fixture.initialRepository.readCurrent(fixture.original.requestId()).state())
+            .isEqualTo(
+                CanonicalGameplayAccountInitialBarrierInitializerRepository.State.NEVER_DISPATCHED);
+        assertThat(physical.connection.sync().exists(key)).isZero();
+      }
+      assertThat(
+              fixture
+                  .initialOwner(physical.ownerClient, fixture.initialRepository)
+                  .initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.CurrentOpen.class);
+      assertThat(
+              fixture.initialRepository.readCurrent(fixture.original.requestId()).initializerId())
+          .isEqualTo(snapshot.initializerId());
+      physical.connection.sync().del(key);
+    }
+  }
+
+  @Test
+  void lostDispatchClaimReplyLeavesMissingAccountOpenUncertainWithoutAnotherCreate()
+      throws Exception {
+    try (Fixture.InitialFixture fixture = Fixture.InitialFixture.open();
+        InitialRedisFixture physical = InitialRedisFixture.open();
+        var login = fixture.originalLogin()) {
+      var repository = spy(fixture.initialRepository);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                invocation.callRealMethod();
+                throw new IllegalStateException("controlled loss after dispatch claim committed");
+              })
+          .when(repository)
+          .recordDispatchPossible(any(), any());
+      var owner = fixture.initialOwner(physical.ownerClient, repository);
+      assertThat(
+              owner.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+      var snapshot = fixture.initialRepository.readCurrent(fixture.original.requestId());
+      assertThat(snapshot.state())
+          .isEqualTo(
+              CanonicalGameplayAccountInitialBarrierInitializerRepository.State.DISPATCH_POSSIBLE);
+      String retained = fixture.initialTargetPostimage();
+      String key =
+          CanonicalGameplayAccountInitialBarrierKey.forTarget(
+              fixture.tenantTags.assignmentForInitialBarrierTarget(fixture.original.requestId()),
+              snapshot.initializerId(),
+              fixture.original.requestId());
+      assertThat(physical.connection.sync().exists(key)).isZero();
+      var retry = fixture.initialOwner(physical.ownerClient, fixture.initialRepository);
+      assertThat(
+              retry.initializeOnce(fixture.original, login, fixture.tenantId, fixture.namespaceId))
+          .isInstanceOf(CanonicalGameplayAccountInitialOpenProof.Refused.class);
+      assertThat(fixture.initialTargetPostimage()).isEqualTo(retained);
+      assertThat(physical.connection.sync().exists(key)).isZero();
+      org.mockito.Mockito.verify(repository).recordDispatchPossible(any(), any());
     }
   }
 
@@ -607,6 +702,7 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
           .isEqualTo(fixture.original().callerContextId());
       assertThat(verified.originalAttemptFence()).isEqualTo(17L);
       assertThat(verified.accountId()).isEqualTo(fixture.accountId());
+      assertThat(verified.cohortDigest()).isNull();
       assertThat(verified.sourceControlState()).isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
       assertThat(verified.sourceControlEpoch()).isEqualTo("8");
       assertThat(verified.acceptedAttestationDigest()).isEqualTo(ACCEPTED_ATTESTATION_DIGEST);

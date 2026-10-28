@@ -130,7 +130,9 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
   }
 
   @Test
-  void possibleDispatchIsPersistedBeforeRedisAndMissingAfterwardNeverGetsAFreshCreate() {
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void possibleDispatchIsPersistedBeforeEvalAndMissingAfterwardNeverGetsAFreshCreate()
+      throws Exception {
     UUID requestId = UUID.randomUUID();
     UUID callerContextId = UUID.randomUUID();
     UUID initializerId = UUID.randomUUID();
@@ -189,14 +191,33 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     when(receiver.observeForInitialAccountBarrier(requestId)).thenReturn(before);
 
     RedisClient redis = mock(RedisClient.class);
+    StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
+    RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.async()).thenReturn(commands);
+    doReturn(future("gamesession_coord_app")).when(commands).aclWhoami();
+    when(commands.scriptLoad(any(byte[].class)))
+        .thenAnswer(
+            invocation -> {
+              verify(repository, org.mockito.Mockito.never()).recordDispatchPossible(any(), any());
+              return future(
+                  java.util.HexFormat.of()
+                      .formatHex(
+                          java.security.MessageDigest.getInstance("SHA-1")
+                              .digest(invocation.getArgument(0, byte[].class))));
+            });
+    when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenAnswer(
+            ignored -> {
+              verify(repository).recordDispatchPossible(requestId, before);
+              throw new IllegalStateException("controlled unknown EVAL outcome");
+            });
     AtomicInteger connectionAttempts = new AtomicInteger();
     when(redis.connect(any(ByteArrayCodec.class)))
         .thenAnswer(
             ignored -> {
-              if (connectionAttempts.getAndIncrement() == 0) {
-                verify(repository).recordDispatchPossible(requestId, before);
-              }
-              throw new IllegalStateException("controlled lost connection");
+              if (connectionAttempts.getAndIncrement() == 0) return connection;
+              throw new IllegalStateException("controlled lost readback connection");
             });
     RedisScriptCatalog catalog =
         RedisScriptCatalog.fromContributions(
@@ -215,6 +236,7 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
                 CanonicalGameplayAccountInitialOpenProof.Reason.REMOTE_OUTCOME_UNCERTAIN));
     assertThat(connectionAttempts.get()).isEqualTo(2);
     verify(repository).recordDispatchPossible(requestId, before);
+    verify(commands).evalsha(any(), any(), any(byte[][].class), any(byte[][].class));
   }
 
   @Test
@@ -310,7 +332,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
     verifyNoInteractions(catalog);
     verify(commands).hgetall(any(byte[].class));
-    verify(commands, org.mockito.Mockito.never()).evalsha(any(), any(), any(), any());
+    verify(commands, org.mockito.Mockito.never())
+        .evalsha(any(), any(), any(byte[][].class), any(byte[][].class));
   }
 
   @Test
@@ -403,7 +426,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
     verifyNoInteractions(catalog);
     verify(commands).hgetall(any(byte[].class));
-    verify(commands, org.mockito.Mockito.never()).evalsha(any(), any(), any(), any());
+    verify(commands, org.mockito.Mockito.never())
+        .evalsha(any(), any(), any(byte[][].class), any(byte[][].class));
   }
 
   @Test
@@ -593,7 +617,8 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     verify(receiver, org.mockito.Mockito.times(2)).observeForInitialAccountBarrier(requestId);
     verifyNoInteractions(catalog);
     verify(commands).hgetall(any(byte[].class));
-    verify(commands, org.mockito.Mockito.never()).evalsha(any(), any(), any(), any());
+    verify(commands, org.mockito.Mockito.never())
+        .evalsha(any(), any(), any(byte[][].class), any(byte[][].class));
   }
 
   private static CanonicalGameplayAccountInitialBarrierInitializerRepository.InitializerSnapshot
