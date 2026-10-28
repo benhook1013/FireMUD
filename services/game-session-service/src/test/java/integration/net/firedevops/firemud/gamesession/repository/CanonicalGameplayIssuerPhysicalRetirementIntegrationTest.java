@@ -1005,7 +1005,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
 
   @Test
   void seededReleaseCompletesWithoutPublishingTheOriginalAcknowledgement() {
-    try (var fixture = newFixture()) {
+    // This class retains prior physical partitions; keep this original in its own layout domain.
+    try (var fixture = newFixture(BigInteger.valueOf(10), BigInteger.ONE, 0)) {
       String seed = "release-without-original-acknowledgement";
       UUID seededOperationId = fixture.prepareOtherControllerNew(seed);
       fixture.projectOtherControllerNew(seed);

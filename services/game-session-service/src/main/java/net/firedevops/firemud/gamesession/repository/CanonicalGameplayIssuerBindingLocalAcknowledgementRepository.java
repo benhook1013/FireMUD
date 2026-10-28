@@ -749,9 +749,26 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
     return "sha256:" + java.util.HexFormat.of().formatHex(digestBytes);
   }
 
-  private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+  private void requireNoAmbientTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw unavailable("Issuer acknowledgement owner cannot join an ambient SQL transaction");
+    }
+    try {
+      dsl.connectionResult(
+          connection -> {
+            if (!connection.getAutoCommit()) {
+              throw unavailable("Issuer acknowledgement owner cannot join a jOOQ transaction");
+            }
+            return Boolean.TRUE;
+          });
+    } catch (RuntimeException failure) {
+      if (failure instanceof IllegalStateException state
+          && state.getMessage() != null
+          && state.getMessage().contains("Issuer binding-local acknowledgement is unavailable")) {
+        throw state;
+      }
+      throw unavailable("Issuer acknowledgement SQL connection state is unavailable", failure);
     }
   }
 
