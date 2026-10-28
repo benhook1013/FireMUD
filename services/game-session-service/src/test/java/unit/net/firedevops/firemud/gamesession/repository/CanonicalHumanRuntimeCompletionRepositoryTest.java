@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRe
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class CanonicalHumanRuntimeCompletionRepositoryTest {
   @Test
@@ -31,7 +33,10 @@ class CanonicalHumanRuntimeCompletionRepositoryTest {
             "reserveProtectedStartingForRuntimeCompletion",
             CanonicalInitialAdmissionRequest.class,
             AccountStartSessionAdmissionProtectionEvidence.class);
-    assertReadCommitted(completion);
+    assertThat(Modifier.isFinal(CanonicalHumanRuntimeCompletionRepository.class.getModifiers()))
+        .isTrue();
+    assertThat(completion.getAnnotation(Transactional.class)).isNull();
+    assertThat(CanonicalHumanRuntimeCompletionRepository.class.getAnnotations()).isEmpty();
     assertReadCommitted(reservation);
     assertThat(
             CanonicalInitialAdmissionIntentRepository.class.getMethod(
@@ -63,6 +68,29 @@ class CanonicalHumanRuntimeCompletionRepositoryTest {
     assertThatThrownBy(() -> repository.read("foreign-ns", "request"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("another workload namespace");
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void manuallyComposedCompletionRefusesMissingOrReadOnlyTransactionBeforeDatabaseAccess() {
+    var dsl = mock(org.jooq.DSLContext.class);
+    var repository = new CanonicalHumanRuntimeCompletionRepository(dsl, "owner-ns");
+    var request = mock(CanonicalInitialAdmissionRequest.class);
+    when(request.targetNamespace()).thenReturn("owner-ns");
+    var protection = mock(AccountStartSessionAdmissionProtectionEvidence.class);
+    var worldProof = mock(CanonicalInitialAdmissionWorldProof.class);
+    assertThatThrownBy(() -> repository.completeProtected(request, protection, worldProof))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("writable READ COMMITTED transaction");
+    try {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+      assertThatThrownBy(() -> repository.completeProtected(request, protection, worldProof))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("writable READ COMMITTED transaction");
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
     verifyNoInteractions(dsl);
   }
 

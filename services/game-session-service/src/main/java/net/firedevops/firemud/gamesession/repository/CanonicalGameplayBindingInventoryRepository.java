@@ -967,11 +967,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Objects.requireNonNull(expectedSource, "expectedSource");
     requireNonNil(orphanCleanupId, "orphanCleanupId");
     if (expectedSource.isAccountAborted()) {
-      if (!orphanCleanupId.equals(expectedSource.orphanCleanupId())) {
+      CanonicalGameplayAdmissionAbortSource retained =
+          readRetainedDefinitiveFirstNewAccountAbortSource(
+              expectedSource.transition().transitionId());
+      requireSameFirstNewAdmissionAbortSource(expectedSource, retained);
+      if (!orphanCleanupId.equals(retained.orphanCleanupId())) {
         throw conflict("Account abort retry changed the durable cleanup identity");
       }
-      return readRetainedDefinitiveFirstNewAccountAbortSource(
-          expectedSource.transition().transitionId());
+      return retained;
     }
 
     return dsl.transactionResult(
