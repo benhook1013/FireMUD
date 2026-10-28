@@ -323,6 +323,8 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
     CanonicalGameplayIssuerInstalledAnchor installed =
         owner(fixture, () -> current)
             .completeInitialBootstrap(fixture.intent().operationId(), fixture.requestId());
+    new CanonicalGameplayIssuerAdmissionControlRepository(fixture.dsl())
+        .installInitialOpen(installed, () -> current);
 
     var candidate = identity(PARTITION_COUNT, PARTITION_CAPACITY, "post-anchor-ordinary-new");
     new CanonicalGameplayIssuerBindingLocalOperationRepository(fixture.dsl(), () -> current)

@@ -107,6 +107,134 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   }
 
   @Test
+  void preparedReadsRetainTheSoleCreatePermitUntilTheRemoteBoundary() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var first = state.repository().readPreparedInitializer(operationId);
+    var second = state.repository().readPreparedInitializer(operationId);
+    assertThat(second.value().exactBytes()).containsExactly(first.value().exactBytes());
+    assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(first.key()))).isZero();
+
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(1L);
+    assertThat(state.repository().claimFirstCreatePermit(first)).isFalse();
+    assertThat(state.repository().claimFirstCreatePermit(second)).isFalse();
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(2L);
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"DESCRIPTOR", "SOURCE", "CURRENTNESS"})
+  void localPreflightFailureRetainsPreparedInitializerAndAllowsOneValidCreate(String failure) {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    var repository =
+        new ForwardingProjectionRepository(state.repository()) {
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer initializer) {
+            if ("CURRENTNESS".equals(failure)) {
+              throw new IllegalStateException("Controlled preclaim SQL currentness failure");
+            }
+            super.requireStillCurrent(initializer);
+          }
+        };
+    RedisScriptCatalog catalog =
+        RedisScriptCatalog.fromContributions(
+            "DESCRIPTOR".equals(failure)
+                ? List.of()
+                : List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
+    var failingOwner =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+            ownerClient,
+            catalog,
+            repository,
+            () -> {
+              if ("SOURCE".equals(failure)) {
+                throw new IllegalStateException("Controlled preclaim current source failure");
+              }
+              return state.sourceReader().readFreshCurrentState();
+            });
+
+    assertThatThrownBy(() -> failingOwner.initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(1L);
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(2L);
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @Test
+  void concurrentClaimsOfRetainedPreparedReadsHaveOnlyOneFirstCreateWinner() throws Exception {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var first = state.repository().readPreparedInitializer(operationId);
+    var second = state.repository().readPreparedInitializer(operationId);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      var firstClaim =
+          executor.submit(
+              () -> {
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Controlled claim start timed out");
+                }
+                return state.repository().claimFirstCreatePermit(first);
+              });
+      var secondClaim =
+          executor.submit(
+              () -> {
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Controlled claim start timed out");
+                }
+                return state.repository().claimFirstCreatePermit(second);
+              });
+      start.countDown();
+      assertThat(
+              List.of(firstClaim.get(10, TimeUnit.SECONDS), secondClaim.get(10, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(true, false);
+      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(countReceipt(state, operationId)).isZero();
+      assertThat(administratorCommands.exists(bytes(first.key()))).isZero();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void lostClaimReplyLeavesMissingOpenReplayOnlyWithoutRearmingThePermit() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    var lostClaimReply =
+        new ForwardingProjectionRepository(state.repository()) {
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer initializer) {
+            assertThat(super.claimFirstCreatePermit(initializer)).isTrue();
+            throw new IllegalStateException("Controlled loss after first-create claim committed");
+          }
+        };
+    assertThatThrownBy(() -> state.owner(lostClaimReply).initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+    assertThat(state.repository().claimFirstCreatePermit(prepared)).isFalse();
+    assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+  }
+
+  @Test
   void firstOpenIsPersistedExactRetryIsReplayOnlyAndCutoffPreservesNewerClosedState() {
     FixtureState state = fixtureState();
     UUID operationId = state.fixture().originalOperationId();
@@ -176,6 +304,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
           }
 
           @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            return delegate.claimFirstCreatePermit(prepared);
+          }
+
+          @Override
           public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
               readPreparedCutoffTarget(UUID id, UUID tenantId, UUID namespaceId) {
             return delegate.readPreparedCutoffTarget(id, tenantId, namespaceId);
@@ -238,6 +372,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
           }
 
           @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            return delegate.claimFirstCreatePermit(prepared);
+          }
+
+          @Override
           public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
               readPreparedCutoffTarget(UUID id, UUID tenantId, UUID namespaceId) {
             return delegate.readPreparedCutoffTarget(id, tenantId, namespaceId);
@@ -285,7 +425,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   }
 
   @Test
-  void cutoffCapturesAnInitializerWhoseCreatePermitWasClaimedButNotYetAttempted() throws Exception {
+  void cutoffCapturesAnInitializerPreparedBeforeItsCreatePermitIsClaimed() throws Exception {
     FixtureState state = fixtureState();
     UUID operationId = state.fixture().originalOperationId();
     UUID cutoffOperationId = UUID.randomUUID();
@@ -312,6 +452,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
                   "Controlled initializer gate was interrupted", interrupted);
             }
             return prepared;
+          }
+
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            return delegate.claimFirstCreatePermit(prepared);
           }
 
           @Override
@@ -351,7 +497,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
       var initializerAttempt =
           executor.submit(() -> state.owner(gatedRepository).initializeAndRead(operationId));
       assertThat(preparedForRedis.await(10, TimeUnit.SECONDS)).isTrue();
-      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
 
       state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
       allowRedisOwnerToContinue.countDown();
@@ -371,6 +517,80 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
                   targets.getFirst().closedValue().playableStateNamespaceId());
       assertThat(closed.scriptOutcome()).isEqualTo(1L);
       assertThat(countReceipt(state, operationId)).isZero();
+    } finally {
+      allowRedisOwnerToContinue.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void cutoffInstalledAfterCreateClaimCannotBeOverwrittenByTheDelayedOpen() throws Exception {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    UUID cutoffOperationId = UUID.randomUUID();
+    CountDownLatch claimCommitted = new CountDownLatch(1);
+    CountDownLatch allowRedisOwnerToContinue = new CountDownLatch(1);
+    AtomicReference<CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer>
+        observedInitializer = new AtomicReference<>();
+    var gatedRepository =
+        new ForwardingProjectionRepository(state.repository()) {
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            boolean claimed = super.claimFirstCreatePermit(prepared);
+            assertThat(claimed).isTrue();
+            observedInitializer.set(prepared);
+            claimCommitted.countDown();
+            try {
+              if (!allowRedisOwnerToContinue.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Controlled postclaim gate timed out");
+              }
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(
+                  "Controlled postclaim gate was interrupted", interrupted);
+            }
+            return claimed;
+          }
+        };
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      var initializerAttempt =
+          executor.submit(() -> state.owner(gatedRepository).initializeAndRead(operationId));
+      assertThat(claimCommitted.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      var prepared = observedInitializer.get();
+      assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+
+      var pending = state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+      var targets = state.repository().readPreparedCutoffTargets(cutoffOperationId);
+      assertThat(targets).hasSize(1);
+      var target = targets.getFirst();
+      assertThat(target.expectedOpenValue().exactBytes())
+          .containsExactly(prepared.value().exactBytes());
+      assertThat(target.closedValue().initializer().exactBytes())
+          .containsExactly(prepared.value().initializer().exactBytes());
+      var closed =
+          state
+              .owner()
+              .closeAndRead(
+                  cutoffOperationId,
+                  target.closedValue().tenantId(),
+                  target.closedValue().playableStateNamespaceId());
+      assertThat(closed.scriptOutcome()).isEqualTo(1L);
+
+      allowRedisOwnerToContinue.countDown();
+      assertThatThrownBy(() -> initializerAttempt.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
+      assertThat(administratorCommands.hget(bytes(prepared.key()), bytes("payload")))
+          .containsExactly(closed.exactPhysicalPayload());
+      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      assertThat(countReceipt(state, operationId)).isZero();
+      var installed = state.repository().completeCutoff(cutoffOperationId);
+      assertThat(installed.state())
+          .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+      assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
     } finally {
       allowRedisOwnerToContinue.countDown();
       executor.shutdownNow();
@@ -1000,6 +1220,60 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
 
   private static byte[] bytes(String value) {
     return value.getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static class ForwardingProjectionRepository
+      implements CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository {
+    private final CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository delegate;
+
+    ForwardingProjectionRepository(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer
+        readPreparedInitializer(UUID operationId) {
+      return delegate.readPreparedInitializer(operationId);
+    }
+
+    @Override
+    public boolean claimFirstCreatePermit(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+      return delegate.claimFirstCreatePermit(prepared);
+    }
+
+    @Override
+    public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
+        readPreparedCutoffTarget(UUID operationId, UUID tenantId, UUID namespaceId) {
+      return delegate.readPreparedCutoffTarget(operationId, tenantId, namespaceId);
+    }
+
+    @Override
+    public void requireStillCurrent(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+      delegate.requireStillCurrent(prepared);
+    }
+
+    @Override
+    public void requireStillCurrent(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared) {
+      delegate.requireStillCurrent(prepared);
+    }
+
+    @Override
+    public void recordOpenReadback(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared,
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+      delegate.recordOpenReadback(prepared, readback);
+    }
+
+    @Override
+    public void recordClosedReadback(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared,
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+      delegate.recordClosedReadback(prepared, readback);
+    }
   }
 
   private record FixtureState(
