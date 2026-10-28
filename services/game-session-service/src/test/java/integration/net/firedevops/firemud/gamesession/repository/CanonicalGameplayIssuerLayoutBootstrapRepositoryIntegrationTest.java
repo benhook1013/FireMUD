@@ -3,14 +3,22 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.lettuce.core.AclSetuserArgs;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.protocol.CommandKeyword;
+import io.lettuce.core.protocol.CommandType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +30,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
@@ -35,6 +44,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrati
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -42,6 +52,7 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -69,6 +80,10 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static GenericContainer<?> redis =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @Test
   void absenceAndRequiredLegacyDispositionCannotCreateAnIntent() {
@@ -941,6 +956,245 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
     } finally {
       dropSchema(testSchema.schema());
     }
+  }
+
+  @Test
+  void retainedPhysicalWorkDoesNotStrandSupersedingLayoutOrOrdinaryNew() {
+    TestSchema schema = newTestSchema("gs_issuer_physical_supersede_");
+    RedisClient administrator =
+        RedisClient.create(
+            RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379)).build());
+    String password = UUID.randomUUID().toString();
+    RedisClient ownerClient =
+        RedisClient.create(
+            RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
+                .withAuthentication("gamesession_coord_app", password)
+                .build());
+    try (var admin = administrator.connect(ByteArrayCodec.INSTANCE)) {
+      admin
+          .sync()
+          .aclSetuser(
+              "gamesession_coord_app",
+              new AclSetuserArgs()
+                  .reset()
+                  .on()
+                  .addPassword(password)
+                  .keyPattern("session:game:index:issuer:*")
+                  .addCommand(CommandType.HELLO)
+                  .addCommand(CommandType.PING)
+                  .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+                  .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+                  .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+                  .addCommand(CommandType.EVALSHA)
+                  .addCommand(CommandType.TYPE)
+                  .addCommand(CommandType.PTTL)
+                  .addCommand(CommandType.HLEN)
+                  .addCommand(CommandType.HGETALL)
+                  .addCommand(CommandType.HSET));
+      DSLContext dsl = schema.dsl();
+      establishActualLegacyDisposition(dsl);
+      var bootstrap = new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl);
+      var source = sourceCheckpoint(BigInteger.valueOf(7));
+      var original =
+          bootstrap.beginInitialBootstrapIntent(
+              UUID.randomUUID(),
+              descriptor(LAYOUT_VERSION, PARTITION_COUNT, PARTITION_CAPACITY),
+              source);
+      var incarnation = stableSupersessionIncarnation();
+      var state =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+              original.sourceCheckpoint(), incarnation);
+      var partitionOwner =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
+              ownerClient,
+              RedisScriptCatalog.fromContributions(
+                  List.of(new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution())),
+              () -> state);
+      var plans = new CanonicalGameplayIssuerPartitionBuildRepository(dsl);
+      plans.prepareInitialBuildPlan(original.operationId(), original.requestId());
+      var work =
+          new CanonicalGameplayIssuerBootstrapMemberOperationRepository(dsl)
+              .preparePartitionWork(
+                  original.operationId(),
+                  original.requestId(),
+                  BigInteger.ZERO,
+                  source,
+                  new CanonicalGameplayIssuerBootstrapMemberOperationRepository
+                      .TrustedStableIncarnation(
+                      incarnation.attestorBinding(),
+                      incarnation.acceptedAttestationDigest(),
+                      incarnation.targetDeploymentEvidence(),
+                      incarnation.coordOpsRoAclDigest(),
+                      incarnation.coordRedisConfigObservedDigest()));
+      partitionOwner.buildAndRead(work);
+      byte[] oldKey =
+          CanonicalGameplayIssuerRedisKeys.forPartition(
+                  original.layoutDescriptor(), BigInteger.ZERO)
+              .getBytes(StandardCharsets.UTF_8);
+      byte[] oldPhysical = physicalImage(admin.sync().hgetall(oldKey));
+      Map<String, List<String>> retained = new LinkedHashMap<>();
+      for (String table :
+          List.of(
+              "game_session_canonical_issuer_layout_bootstrap_intent",
+              "game_session_canonical_issuer_layout_bootstrap_cohort_row",
+              "game_session_canonical_issuer_partition_build_plan",
+              "game_session_canonical_issuer_partition_build_cohort_row",
+              "game_session_canonical_issuer_partition_build_member_work",
+              "game_session_canonical_issuer_bootstrap_member_operation",
+              "game_session_canonical_issuer_partition_mutation_head")) {
+        retained.put(table, rowImages(dsl, table));
+      }
+      // Controlled inventory-clock input isolates supersession from unrelated terminalization
+      // and old-layout reservation blockers. No binding, reservation or admission is fabricated.
+      assertThat(
+              dsl.execute(
+                  "UPDATE game_session_canonical_binding_inventory_clock"
+                      + " SET inventory_revision = inventory_revision + 1 WHERE singleton_id = 1"))
+          .isEqualTo(1);
+      var replacement =
+          bootstrap.supersedeStaleInitialBootstrapIntent(
+              original.operationId(),
+              UUID.randomUUID(),
+              descriptor(LAYOUT_VERSION.add(BigInteger.ONE), PARTITION_COUNT, PARTITION_CAPACITY),
+              source);
+      var coverage =
+          new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, () -> state);
+      var anchor =
+          coverage.completeInitialBootstrap(replacement.operationId(), replacement.requestId());
+      assertThat(anchor.bootstrapOperationId()).isEqualTo(replacement.operationId());
+      new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+          .installInitialOpen(anchor, () -> state);
+      var runtime =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              schema.dataSource(), TENANT_ID);
+      var candidate =
+          new CanonicalGameplayBindingIdentity(
+              ACCOUNT_ID,
+              runtime.canonicalTenantId(),
+              runtime.playableStateNamespaceId(),
+              UUID.randomUUID(),
+              runtime.playableStateScope(),
+              runtime.gameInstanceUuid(),
+              runtime.gameInstanceId(),
+              UUID.randomUUID().toString(),
+              REGION_ID,
+              BigInteger.valueOf(12),
+              ISSUER,
+              BigInteger.valueOf(7),
+              replacement.layoutDescriptor().layoutVersion(),
+              PARTITION_COUNT,
+              PARTITION_CAPACITY);
+      var request =
+          new CanonicalGameplayIssuerBindingLocalOperation.Request(
+              UUID.randomUUID(), UUID.randomUUID(), candidate, null, null);
+      var local = new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> state);
+      var ordinaryNew = local.beginOrResumeOrdinaryNew(request);
+      assertThat(ordinaryNew.anchor().bootstrapOperationId()).isEqualTo(replacement.operationId());
+      assertThat(local.beginOrResumeOrdinaryNew(request).operationId())
+          .isEqualTo(ordinaryNew.operationId());
+      retained.forEach((table, rows) -> assertThat(rowImages(dsl, table)).containsAll(rows));
+      assertThat(physicalImage(admin.sync().hgetall(oldKey))).containsExactly(oldPhysical);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) FROM game_session_canonical_issuer_partition_mutation_head"
+                          + " WHERE bootstrap_operation_id = ? AND state = 'INITIAL_INSTALL_PENDING'",
+                      original.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThatThrownBy(
+              () ->
+                  bootstrap.supersedeStaleInitialBootstrapIntent(
+                      replacement.operationId(),
+                      UUID.randomUUID(),
+                      descriptor(
+                          LAYOUT_VERSION.add(BigInteger.TWO), PARTITION_COUNT, PARTITION_CAPACITY),
+                      source))
+          .hasMessageContaining("installed issuer anchor forbids");
+      assertMalformedSupersessionRefusesOrdinaryNew(dsl, local, request, state);
+    } finally {
+      ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      dropSchema(schema.schema());
+    }
+  }
+
+  private static void assertMalformedSupersessionRefusesOrdinaryNew(
+      DSLContext dsl,
+      CanonicalGameplayIssuerBindingLocalOperationRepository local,
+      CanonicalGameplayIssuerBindingLocalOperation.Request request,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState state) {
+    // Rollback-only corruption fixtures test read-side refusal of unavailable or malformed lineage.
+    // They are never committed and confer no owner authority.
+    for (String corruption :
+        List.of(
+            "INSERT INTO game_session_canonical_issuer_layout_bootstrap_intent"
+                + " SELECT (jsonb_populate_record(NULL::game_session_canonical_issuer_layout_bootstrap_intent,"
+                + " to_jsonb(original) || jsonb_build_object('operation_id', gen_random_uuid(),"
+                + " 'request_id', gen_random_uuid(), 'operation_fence', operation_fence + 100,"
+                + " 'control_epoch', operation_fence + 100, 'coverage_fence', coverage_fence + 100))).*"
+                + " FROM game_session_canonical_issuer_layout_bootstrap_intent original"
+                + " ORDER BY operation_fence DESC LIMIT 1",
+            "UPDATE game_session_canonical_issuer_bootstrap_supersession SET old_operation_fence = old_operation_fence + 1")) {
+      assertThatThrownBy(
+              () ->
+                  dsl.transaction(
+                      configuration -> {
+                        DSLContext transaction = DSL.using(configuration);
+                        transaction.execute(
+                            "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession DISABLE TRIGGER USER");
+                        if (corruption.startsWith("UPDATE")) {
+                          transaction.execute(
+                              "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession"
+                                  + " DROP CONSTRAINT chk_gs_issuer_bootstrap_supersession");
+                          transaction.execute(
+                              "ALTER TABLE game_session_canonical_issuer_bootstrap_supersession"
+                                  + " DROP CONSTRAINT fk_gs_issuer_bootstrap_supersession_old");
+                        }
+                        transaction.execute(corruption);
+                        // Invoke the exact anchor gate in this same transaction, without opening
+                        // another connection.
+                        CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(
+                            transaction);
+                        CanonicalGameplayIssuerBootstrapCoverageRepository
+                            .readInstalledAnchorForBindingPreparationInTransaction(
+                                transaction, state);
+                      }))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining(
+              corruption.startsWith("UPDATE")
+                  ? "Malformed retained issuer bootstrap supersession lineage"
+                  : "conflicting or unpointed issuer layout intent");
+      assertThat(local.beginOrResumeOrdinaryNew(request).operationId()).isNotNull();
+    }
+  }
+
+  private static byte[] physicalImage(Map<byte[], byte[]> fields) {
+    Map<String, byte[]> named = new LinkedHashMap<>();
+    fields.forEach((key, value) -> named.put(new String(key, StandardCharsets.UTF_8), value));
+    return CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(named);
+  }
+
+  private static CanonicalGameplayIssuerMemberV2Value.Incarnation stableSupersessionIncarnation() {
+    String digest =
+        CanonicalGameplayIssuerMemberV2Codec.sha256(
+            "supersession".getBytes(StandardCharsets.US_ASCII));
+    var deployment =
+        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
+            "controlled-deployment",
+            "controlled-generation",
+            List.of("controlled-node"),
+            "controlled-build",
+            "controlled-registry",
+            digest,
+            "READY",
+            "boot",
+            "startup",
+            "storage",
+            "aof");
+    // Controlled Account source and incarnation collaborators; this is local owner proof, not an
+    // authenticated Account producer, protected attestor or operational reset-recovery proof.
+    return new CanonicalGameplayIssuerMemberV2Value.Incarnation(
+        "controlled-attestor", digest, deployment, digest, digest);
   }
 
   private static void assertRelationOnlySupersessionCannotCommit(
