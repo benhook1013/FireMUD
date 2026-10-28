@@ -119,9 +119,19 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
           incarnationReceiver.observeForInitialAccountBarrier(snapshot.originalRequestId());
       requireObservation(snapshot, before);
       PreparedWrite prepared = prepareWrite(snapshot, assignment, before);
-      repository.recordDispatchPossible(snapshot.originalRequestId(), before);
-      // The state transition above is durable before this one and only possible remote attempt.
-      tryCreateOnce(prepared);
+      requireNoAmbientTransaction();
+      try (StatefulRedisConnection<byte[], byte[]> connection =
+          redisClient.connect(ByteArrayCodec.INSTANCE)) {
+        RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
+        requirePrincipal(await(commands.aclWhoami()));
+        byte[] script = ascii(prepared.script());
+        String sha = await(commands.scriptLoad(script));
+        if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+        repository.recordDispatchPossible(snapshot.originalRequestId(), before);
+        // The claim commits before EVAL on this same preflighted connection. A lost SQL
+        // commit reply is still uncertain and must never authorize another create attempt.
+        tryCreateOnce(prepared, commands, sha);
+      }
     } catch (RuntimeException possibleDispatchOrSourceFailure) {
       // Never create a replacement initializer or repeat a possibly dispatched write. A positive
       // exact readback can still finish the original receipt; absence remains explicit uncertainty.
@@ -274,16 +284,19 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
     return new PreparedWrite(asciiString(script), key, arguments);
   }
 
-  private void tryCreateOnce(PreparedWrite prepared) {
+  private void tryCreateOnce(
+      PreparedWrite prepared, RedisAsyncCommands<byte[], byte[]> commands, String sha) {
     requireNoAmbientTransaction();
-    long outcome =
-        writeOneKey(
-            ascii(prepared.script()),
-            prepared.key(),
-            prepared.arguments().stream()
-                .map(CanonicalGameplayAccountInitialBarrierRedisOwner::ascii)
-                .toArray(byte[][]::new));
-    if (outcome < 0 || outcome > 1) throw unavailable();
+    Long outcome =
+        await(
+            commands.evalsha(
+                sha,
+                ScriptOutputType.INTEGER,
+                new byte[][] {ascii(prepared.key())},
+                prepared.arguments().stream()
+                    .map(CanonicalGameplayAccountInitialBarrierRedisOwner::ascii)
+                    .toArray(byte[][]::new)));
+    if (outcome == null || outcome < 0 || outcome > 1) throw unavailable();
   }
 
   private record PreparedWrite(String script, String key, List<String> arguments) {}
@@ -352,25 +365,6 @@ final class CanonicalGameplayAccountInitialBarrierRedisOwner {
       }
       if (!expected.fields().equals(actual)) throw unavailable();
       return Map.copyOf(actual);
-    } catch (RuntimeException failure) {
-      throw unavailable(failure);
-    }
-  }
-
-  private long writeOneKey(byte[] script, String key, byte[]... arguments) {
-    requireNoAmbientTransaction();
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
-      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-      requirePrincipal(await(commands.aclWhoami()));
-      String sha = await(commands.scriptLoad(script));
-      if (!digest("SHA-1", script).equals(sha)) throw unavailable();
-      Long reply =
-          await(
-              commands.evalsha(
-                  sha, ScriptOutputType.INTEGER, new byte[][] {ascii(key)}, arguments));
-      if (reply == null) throw unavailable();
-      return reply;
     } catch (RuntimeException failure) {
       throw unavailable(failure);
     }

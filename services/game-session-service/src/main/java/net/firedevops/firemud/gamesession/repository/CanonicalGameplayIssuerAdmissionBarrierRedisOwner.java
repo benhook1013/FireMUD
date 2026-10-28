@@ -98,8 +98,24 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
         ascii("REPLAY_ONLY")
       };
       byte[] createOnce = ascii("CREATE_ONCE");
-      if (repository.claimFirstCreatePermit(prepared)) arguments[10] = createOnce;
-      long result = writeOneKey(script, key, arguments);
+      long result;
+      requireNoAmbientTransaction();
+      try (StatefulRedisConnection<byte[], byte[]> connection =
+          redisClient.connect(ByteArrayCodec.INSTANCE)) {
+        RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
+        requirePrincipal(await(commands.aclWhoami()));
+        String sha = await(commands.scriptLoad(script));
+        if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+        requireNoAmbientTransaction();
+        if (repository.claimFirstCreatePermit(prepared)) arguments[10] = createOnce;
+        // The claim commits before EVAL on this same preflighted connection. A lost SQL
+        // commit reply remains uncertain; later attempts retain replay-only behavior.
+        requireNoAmbientTransaction();
+        Long reply =
+            await(commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments));
+        if (reply == null) throw unavailable();
+        result = reply;
+      }
       if (result < 1 || result > 2) throw unavailable();
       byte[] observed = readExactPhysicalState(prepared.key(), value);
       requireCurrentState(value.initializer());
