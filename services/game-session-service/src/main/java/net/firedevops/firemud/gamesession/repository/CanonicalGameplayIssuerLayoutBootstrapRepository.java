@@ -206,7 +206,9 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
                     currentId);
             if (replay == null
                 || !current.requestId().equals(newRequestId)
-                || !current.inventorySnapshotRevision().equals(snapshotRevision)) {
+                || !current
+                    .inventorySnapshotRevision()
+                    .equals(readBigInteger(replay, "new_inventory_revision"))) {
               throw conflict("Expected original initial bootstrap is no longer current");
             }
             requireSameTrustedInputs(
