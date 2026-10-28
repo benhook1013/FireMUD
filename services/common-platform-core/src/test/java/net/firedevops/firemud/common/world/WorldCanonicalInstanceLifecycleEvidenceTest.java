@@ -20,6 +20,26 @@ class WorldCanonicalInstanceLifecycleEvidenceTest {
   private static final UUID NIL = new UUID(0L, 0L);
 
   @Test
+  void initialLocationReadRequestIdRetainsPublishedNameUuidVector() {
+    assertThat(
+            WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")))
+        .isEqualTo(uuid("5548bc3e-8d0e-3a87-9e7c-56a6647352c0"));
+  }
+
+  @Test
+  void initialLocationReadRequestIdRejectsAbsentAndNilPlacementIdentity() {
+    assertThatThrownBy(
+            () -> WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("placementOperationId must be a non-nil UUID");
+    assertThatThrownBy(
+            () -> WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(NIL))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("placementOperationId must be a non-nil UUID");
+  }
+
+  @Test
   void completeOwnerCaptureAndExactRequestEchoRoundTrip() throws Exception {
     WorldCanonicalInstanceLifecycleEvidence expected = evidence();
     Request request = expected.request();

@@ -234,10 +234,8 @@ class CanonicalInitialPlayerLocationClientMtlsTest {
     var lifecycleRequest =
         new WorldCanonicalInstanceLifecycleEvidence.Request(
             WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
-            java.util.UUID.nameUUIDFromBytes(
-                ("firemud-world-initial-location-lifecycle-read/v1/"
-                        + request.getPlacementOperationUuid())
-                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII)),
+            WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                java.util.UUID.fromString(request.getPlacementOperationUuid())),
             NAMESPACE,
             java.util.UUID.fromString(target.getCanonicalTenantUuid()),
             target.getWorldSlug(),

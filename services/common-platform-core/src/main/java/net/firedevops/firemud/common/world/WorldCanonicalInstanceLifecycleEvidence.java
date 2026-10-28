@@ -117,6 +117,15 @@ public record WorldCanonicalInstanceLifecycleEvidence(
     requireExactBinding(request, launchBinding, startLocation, graphSha256);
   }
 
+  /** Stable lifecycle-read correlation for one initial placement; it grants no authority. */
+  public static UUID initialLocationReadRequestId(UUID placementOperationId) {
+    requireNonNil(placementOperationId, "placementOperationId");
+    byte[] name =
+        ("firemud-world-initial-location-lifecycle-read/v1/" + placementOperationId)
+            .getBytes(StandardCharsets.US_ASCII);
+    return UUID.nameUUIDFromBytes(name);
+  }
+
   /** Returns an immutable ordered copy without exposing the retained map representation. */
   @Override
   public Map<UUID, UUID> operationalRegionAssignments() {
