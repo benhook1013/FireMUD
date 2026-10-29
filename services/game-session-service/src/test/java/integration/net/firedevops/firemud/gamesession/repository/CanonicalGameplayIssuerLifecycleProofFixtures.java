@@ -31,14 +31,12 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdenti
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
-import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 
 /**
  * Shared PostgreSQL/Redis setup and owner helpers for the separate local-capacity and retirement
@@ -51,13 +49,9 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
   protected static final BigInteger PARTITION_CAPACITY = BigInteger.valueOf(256);
   protected static final UUID NIL_UUID = new UUID(0L, 0L);
 
-  @Container
-  protected static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+  protected abstract PostgreSQLContainer<?> postgres();
 
-  @Container
-  protected static final GenericContainer<?> REDIS =
-      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+  protected abstract GenericContainer<?> redis();
 
   protected RedisClient administrator;
   protected RedisClient issuerOwner;
@@ -101,7 +95,7 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
   }
 
   protected RedisClient createRedisClient(String username, String password) {
-    RedisURI.Builder builder = RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379));
+    RedisURI.Builder builder = RedisURI.Builder.redis(redis().getHost(), redis().getMappedPort(6379));
     if (username != null) builder.withAuthentication(username, password);
     RedisURI uri = builder.build();
     uri.setTimeout(Duration.ofSeconds(5));
@@ -137,11 +131,11 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
       Candidate candidate, int seedBootstrapMemberCount) {
     DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
     accountDataSource.setDriverClassName("org.postgresql.Driver");
-    String postgresJdbcUrl = POSTGRES.getJdbcUrl();
+    String postgresJdbcUrl = postgres().getJdbcUrl();
     accountDataSource.setUrl(
         postgresJdbcUrl + (postgresJdbcUrl.contains("?") ? "&" : "?") + "currentSchema=public");
-    accountDataSource.setUsername(POSTGRES.getUsername());
-    accountDataSource.setPassword(POSTGRES.getPassword());
+    accountDataSource.setUsername(postgres().getUsername());
+    accountDataSource.setPassword(postgres().getPassword());
     return new CanonicalGameplayAdmissionAbortCompositionFixture(
         accountDataSource, candidate, issuerOwner, seedBootstrapMemberCount);
   }

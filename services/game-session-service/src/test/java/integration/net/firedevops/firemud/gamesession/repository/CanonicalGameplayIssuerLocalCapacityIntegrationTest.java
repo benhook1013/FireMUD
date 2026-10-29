@@ -14,6 +14,10 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdenti
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
+import net.firedevops.firemud.test.TestContainerImages;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
@@ -29,6 +33,24 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Execution(ExecutionMode.SAME_THREAD)
 class CanonicalGameplayIssuerLocalCapacityIntegrationTest
     extends CanonicalGameplayIssuerLifecycleProofFixtures {
+  @Container
+  private static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  private static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Override
+  protected PostgreSQLContainer<?> postgres() {
+    return POSTGRES;
+  }
+
+  @Override
+  protected GenericContainer<?> redis() {
+    return REDIS;
+  }
+
   @Test
   void unrelatedAccountNewAndOriginalIssuerCleanupSurviveAccountControlAdvance() {
     try (var fixture = newFixture(BigInteger.valueOf(11), BigInteger.ONE, 0)) {
