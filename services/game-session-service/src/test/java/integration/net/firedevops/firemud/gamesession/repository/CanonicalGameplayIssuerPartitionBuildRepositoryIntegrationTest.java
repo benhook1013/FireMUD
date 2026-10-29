@@ -471,6 +471,9 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       List<String> inventoryClockBefore =
           rowImages(testSchema.dsl(), "game_session_canonical_binding_inventory_clock");
       List<String> migrationHistoryBefore = migrationHistorySnapshot(testSchema.dsl());
+      String retainedRegionBridgeTable = "game_session_canonical_binding_region_bridge_obligation";
+      List<String> regionBridgeRowsWithXminBefore =
+          rowImagesWithXmin(testSchema.dsl(), retainedRegionBridgeTable);
       List<String> retainedSourceTables =
           List.of(
               "game_session_canonical_gameplay_binding_inventory",
@@ -525,6 +528,44 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
                   .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
                   .toList())
           .isEqualTo(retainedRowsWithXminAt1031);
+
+      migrateThrough1044_1(testSchema);
+      List<String> migrationHistoryBeforeExecutorFenceConversion =
+          migrationHistorySnapshot(testSchema.dsl());
+      List<String> regionBridgeRowsBeforeExecutorFenceConversion =
+          rowImages(testSchema.dsl(), retainedRegionBridgeTable);
+      assertThat(rowImagesWithXmin(testSchema.dsl(), retainedRegionBridgeTable))
+          .containsExactlyElementsOf(regionBridgeRowsWithXminBefore);
+
+      migrateThrough1044_2(testSchema);
+      List<String> migrationHistoryAfterExecutorFenceConversion =
+          migrationHistorySnapshot(testSchema.dsl());
+      assertThat(migrationHistoryAfterExecutorFenceConversion)
+          .hasSize(migrationHistoryBeforeExecutorFenceConversion.size() + 1);
+      assertThat(
+              migrationHistoryAfterExecutorFenceConversion.subList(
+                  0, migrationHistoryBeforeExecutorFenceConversion.size()))
+          .containsExactlyElementsOf(migrationHistoryBeforeExecutorFenceConversion);
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1044.2'")
+                  .get(0, String.class))
+          .isEqualTo("V1044.2__region_executor_and_human_runtime_fence.sql");
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT data_type FROM information_schema.columns"
+                          + " WHERE table_schema = current_schema()"
+                          + " AND table_name = 'game_session_canonical_binding_region_bridge_obligation'"
+                          + " AND column_name = 'executor_fence'")
+                  .get(0, String.class))
+          .isEqualTo("bigint");
+      assertThat(rowImages(testSchema.dsl(), retainedRegionBridgeTable))
+          .containsExactlyElementsOf(regionBridgeRowsBeforeExecutorFenceConversion);
+      assertThat(rowImagesWithXmin(testSchema.dsl(), retainedRegionBridgeTable))
+          .isNotEqualTo(regionBridgeRowsWithXminBefore);
 
       migrateRemaining(testSchema);
       List<String> migrationHistoryAfterCurrent = migrationHistorySnapshot(testSchema.dsl());
@@ -682,9 +723,14 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       assertThat(migrationHistoryAfter).containsExactlyElementsOf(migrationHistoryAfterCurrent);
       assertThat(
               retainedSourceTables.stream()
+                  .filter(table -> !table.equals(retainedRegionBridgeTable))
                   .map(table -> rowImagesWithXmin(testSchema.dsl(), table))
                   .toList())
-          .isEqualTo(retainedRowsWithXminBefore);
+          .containsExactlyElementsOf(
+              retainedSourceTables.stream()
+                  .filter(table -> !table.equals(retainedRegionBridgeTable))
+                  .map(table -> retainedRowsWithXminBefore.get(retainedSourceTables.indexOf(table)))
+                  .toList());
     } finally {
       executor.shutdownNow();
       dropSchema(testSchema.schema());
@@ -2152,6 +2198,16 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .migrate();
   }
 
+  private static void migrateThrough1044_1(TestSchema testSchema) {
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1044.1");
+  }
+
+  private static void migrateThrough1044_2(TestSchema testSchema) {
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1044.2");
+  }
+
   private static void migrateRemaining(TestSchema testSchema) {
     CanonicalGameplayIssuerTestFixtures.migrateSchema(
         testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, null);
@@ -2355,6 +2411,29 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), schema);
   }
 
+  private static String retainedPreBridgeRegionImage(DSLContext dsl) {
+    // Keep the populated V1030 fixture's original source columns comparable across nullable
+    // schema extensions; the explicit V1044.2 type conversion separately accounts for xmin.
+    String originalFields =
+        "ARRAY['transition_id', 'binding_ref', 'account_id', 'tenant_id', 'game_instance_id',"
+            + " 'runtime_game_instance_id', 'session_id', 'binding_generation', 'region_id',"
+            + " 'region_epoch', 'status', 'inventory_revision']";
+    Long unexpectedMaterializedFields =
+        dsl.fetchSingle(
+                "SELECT count(*) FROM game_session_canonical_binding_region_bridge_obligation g"
+                    + " WHERE jsonb_strip_nulls(to_jsonb(g) - "
+                    + originalFields
+                    + ") <> '{}'::jsonb")
+            .get(0, Long.class);
+    if (unexpectedMaterializedFields == null || unexpectedMaterializedFields != 0L) {
+      throw new IllegalStateException("Historical fixture gained materialized bridge evidence");
+    }
+    return "to_jsonb(retained_row) - ARRAY(SELECT key FROM jsonb_each(to_jsonb(retained_row))"
+        + " WHERE NOT (key = ANY("
+        + originalFields
+        + ")))";
+  }
+
   private static List<String> rowImages(DSLContext dsl, String tableName) {
     String image = "to_jsonb(retained_row)";
     if (tableName.equals("game_session_canonical_binding_transition")) {
@@ -2367,6 +2446,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       image =
           "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
               + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
+      image = retainedPreBridgeRegionImage(dsl);
     }
     return dsl.fetch(
             "SELECT ("
@@ -2389,6 +2470,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       image =
           "CASE WHEN to_jsonb(retained_row)->'local_release_operation_id' = 'null'::jsonb"
               + " THEN to_jsonb(retained_row) - 'local_release_operation_id' ELSE to_jsonb(retained_row) END";
+    } else if (tableName.equals("game_session_canonical_binding_region_bridge_obligation")) {
+      image = retainedPreBridgeRegionImage(dsl);
     }
     return dsl.fetch(
             "SELECT xmin::text || ':' || ("

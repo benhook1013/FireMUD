@@ -37,6 +37,7 @@ import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
@@ -62,6 +63,164 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
   void clearRequestContexts() {
     SessionContext.clear();
     TransactionSynchronizationManager.clear();
+  }
+
+  @Test
+  void regionCodecMismatchAndSizeHaveDeterministicStatuses(@TempDir Path temporary)
+      throws Exception {
+    var pki =
+        LoopbackMtlsTestPki.create(
+            temporary,
+            "World region refusal proof CA",
+            identity("world", NAMESPACE, "world-management-service", true),
+            identity("game-session", NAMESPACE, "game-session-service", false));
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    var mismatched = controlledRegionResult(true);
+    var oversized = controlledRegionResult(false);
+    when(owner.readRegion(any()))
+        .thenReturn(Optional.of(mismatched), Optional.of(oversized))
+        .thenThrow(new IllegalStateException("private owner failure"));
+    Server server = startServer(pki, owner);
+    try {
+      var channel = channel(pki, "game-session", server.getPort());
+      try {
+        var stub =
+            CanonicalInitialPlayerLocationServiceGrpc.newBlockingStub(channel)
+                .withDeadlineAfter(10, TimeUnit.SECONDS);
+        for (var code :
+            List.of(
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.RESOURCE_EXHAUSTED,
+                Status.Code.UNAVAILABLE)) {
+          assertThatThrownBy(() -> stub.readInitialPlayerLocationRegion(request()))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure -> {
+                    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(code);
+                    assertThat(Status.fromThrowable(failure).getDescription())
+                        .doesNotContain("private");
+                    assertThat(Status.fromThrowable(failure).getCause()).isNull();
+                  });
+        }
+      } finally {
+        stopChannel(channel);
+      }
+    } finally {
+      stopServer(server);
+    }
+  }
+
+  /** Controlled owner-output corruption isolates mapping; it grants no World authority. */
+  private static WorldCanonicalInitialPlayerLocationRepository.RegionResult controlledRegionResult(
+      boolean mismatchedRoom) {
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request());
+    var start =
+        new net.firedevops.firemud.common.world.RoomTemplateRef(TENANT, VERSION, UUID.randomUUID());
+    var placement =
+        new Result(
+            Outcome.APPLIED,
+            null,
+            start,
+            917L,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var canonicalRegion = UUID.randomUUID();
+    var operationalRegion = UUID.randomUUID();
+    var request =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+                .initialLocationReadRequestId(OPERATION),
+            NAMESPACE,
+            TENANT,
+            selection.worldSlug(),
+            GAME_INSTANCE,
+            PLAYABLE_NAMESPACE,
+            "SHARED",
+            true,
+            "controlled-region-read",
+            VERSION,
+            "sha256:" + "c".repeat(64),
+            "sha256:" + "d".repeat(64),
+            "sha256:" + "e".repeat(64));
+    var lifecycle =
+        mock(net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.class);
+    when(lifecycle.request()).thenReturn(request);
+    when(lifecycle.startLocation()).thenReturn(start);
+    when(lifecycle.runtimeRoomInstanceId()).thenReturn(mismatchedRoom ? 918L : 917L);
+    when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
+    when(lifecycle.lifecycleEpoch()).thenReturn(selection.activeLifecycleEpoch());
+    when(lifecycle.rowVersion()).thenReturn(1L);
+    when(lifecycle.captureId()).thenReturn(UUID.randomUUID());
+    when(lifecycle.graphSha256()).thenReturn(mismatchedRoom ? "f".repeat(64) : "f".repeat(9000));
+    when(lifecycle.preparationInputDigest()).thenReturn("sha256:" + "1".repeat(64));
+    when(lifecycle.operationalRegionAssignments())
+        .thenReturn(java.util.Map.of(canonicalRegion, operationalRegion));
+    return new WorldCanonicalInitialPlayerLocationRepository.RegionResult(
+        placement, 4L, 917L, canonicalRegion, operationalRegion, lifecycle);
+  }
+
+  @Test
+  void regionConversionRuntimeFailureUsesSanitizedUnavailableAndOneErrorCallback() {
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    var retained = controlledRegionResult(false);
+    var privateFailure = new UnsupportedOperationException("private conversion detail");
+    when(retained.lifecycleEvidence().request()).thenThrow(privateFailure);
+    when(owner.readRegion(any())).thenReturn(Optional.of(retained));
+    var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+    var nextCalls = new int[1];
+    var errorCalls = new int[1];
+    var completedCalls = new int[1];
+    var errors = new Throwable[1];
+    StreamObserver<CanonicalInitialPlayerLocationRegionResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CanonicalInitialPlayerLocationRegionResponse response) {
+            nextCalls[0]++;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            errorCalls[0]++;
+            errors[0] = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            completedCalls[0]++;
+          }
+        };
+
+    // This direct callback fixture isolates conversion failure mapping; it grants no World
+    // authority.
+    try (MockedStatic<CanonicalInitialPlayerLocationPeerInterceptor> peer =
+        mockStatic(CanonicalInitialPlayerLocationPeerInterceptor.class)) {
+      peer.when(CanonicalInitialPlayerLocationPeerInterceptor::currentVerifiedPeer)
+          .thenReturn(
+              new GrpcPeerIdentity(
+                  "spiffe://firemud/ns/firemud/sa/game-session-service",
+                  NAMESPACE,
+                  "game-session-service"));
+      peer.when(() -> CanonicalInitialPlayerLocationPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+          .thenCallRealMethod();
+
+      grpc.readInitialPlayerLocationRegion(request(), observer);
+    }
+
+    assertThat(nextCalls[0]).isZero();
+    assertThat(errorCalls[0]).isEqualTo(1);
+    assertThat(completedCalls[0]).isZero();
+    assertThat(errors[0]).isInstanceOf(StatusRuntimeException.class);
+    var status = Status.fromThrowable(errors[0]);
+    assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status.getDescription())
+        .isEqualTo("World initial-player region read is unavailable");
+    assertThat(status.getDescription()).doesNotContain("private");
+    assertThat(status.getCause()).isNull();
+    verify(owner).readRegion(CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request()));
   }
 
   @Test
@@ -91,6 +250,7 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         .thenThrow(upstreamFailure)
         .thenThrow(Status.NOT_FOUND.withDescription("secret Entity absence").asRuntimeException());
     when(service.read(any())).thenReturn(Optional.of(retained), Optional.empty());
+    when(service.readRegion(any())).thenReturn(Optional.empty());
     Server server = startServer(pki, service);
     try {
       ManagedChannel channel = channel(pki, "game-session", server.getPort());
@@ -108,6 +268,12 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         var read = stub.readInitialPlayerLocation(request);
         assertThat(read).isEqualTo(placed);
         assertThatThrownBy(() -> stub.readInitialPlayerLocation(request))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.NOT_FOUND));
+        assertThatThrownBy(() -> stub.readInitialPlayerLocationRegion(request))
             .isInstanceOf(StatusRuntimeException.class)
             .satisfies(
                 failure ->
@@ -143,6 +309,8 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
             .place(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request));
         verify(service, times(2))
             .read(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request));
+        verify(service)
+            .readRegion(CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request));
 
         assertThatThrownBy(
                 () ->
@@ -163,11 +331,14 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
           var stub =
               CanonicalInitialPlayerLocationServiceGrpc.newBlockingStub(rejectedPeerChannel)
                   .withDeadlineAfter(10, TimeUnit.SECONDS);
-          for (boolean read : new boolean[] {false, true}) {
+          for (int method : new int[] {0, 1, 2}) {
             assertThatThrownBy(
                     () -> {
-                      if (read) stub.readInitialPlayerLocation(request());
-                      else stub.placeInitialPlayer(request());
+                      switch (method) {
+                        case 0 -> stub.placeInitialPlayer(request());
+                        case 1 -> stub.readInitialPlayerLocation(request());
+                        default -> stub.readInitialPlayerLocationRegion(request());
+                      }
                     })
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(

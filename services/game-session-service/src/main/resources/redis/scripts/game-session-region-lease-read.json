@@ -1,0 +1,25 @@
+{
+  "scriptId": "game-session.region-lease-read.v1",
+  "resourcePath": "redis/lua/game-session-region-lease-read.lua",
+  "sha256": "ef62557b212e9f19298f8066e6f4b499f2f7bebf09a05d9f79cfaa314add266e",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionMeta", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [{"name": "schema"}, {"name": "token"}, {"name": "expectedRegionEpoch"}],
+  "category": "TICK_LOCK",
+  "outcomes": [
+    {"code": "LEASE_CURRENT", "category": "SUCCESS", "effect": "NON_MUTATING"},
+    {"code": "STALE_OR_EXPIRED", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "REGION",
+  "lossClass": "STAGED_EFFECT_OR_RETRY",
+  "tailLossBehavior": "Only exact physical readback of the live grant may support later owner checks. Missing or mismatched fields fail closed; lease possession is not a substitute for the durable executor fence or World assignment.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "none"}],
+  "legacyPayloadShape": null
+}

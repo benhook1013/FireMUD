@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
@@ -129,6 +130,84 @@ public final class CanonicalInitialPlayerLocationGrpcService
 
     try {
       responseObserver.onNext(response.orElseThrow());
+    } catch (RuntimeException observerFailure) {
+      responseObserver.onError(observerFailure);
+      return;
+    }
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void readInitialPlayerLocationRegion(
+      CanonicalInitialPlayerLocationRequest request,
+      StreamObserver<CanonicalInitialPlayerLocationRegionResponse> responseObserver) {
+    if (!requirePeer(responseObserver)) return;
+    CanonicalInitialPlayerLocationGrpcCodec.Selection selection;
+    try {
+      selection = CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request);
+    } catch (IllegalArgumentException invalid) {
+      fail(
+          responseObserver,
+          Status.INVALID_ARGUMENT,
+          "A complete closed region-placement selector is required");
+      return;
+    }
+    final Optional<WorldCanonicalInitialPlayerLocationRepository.RegionResult> retainedRegion;
+    try {
+      retainedRegion = service.readRegion(selection);
+    } catch (StatusRuntimeException rejected) {
+      reportOwnerFailure(
+          responseObserver, rejected, "World initial-player region read is unavailable");
+      return;
+    } catch (WorldCanonicalInitialPlayerLocationRepository.OperationBindingConflictException
+        | WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationEvidenceException
+        | WorldCanonicalInitialPlayerLocationRepository.InvalidInitialLocationReadbackException
+        | WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException rejected) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Exact initial-placement region evidence is unavailable");
+      return;
+    } catch (RuntimeException failure) {
+      fail(responseObserver, Status.UNAVAILABLE, "World initial-player region read is unavailable");
+      return;
+    }
+
+    final Optional<CanonicalInitialPlayerLocationRegionResponse> response;
+    try {
+      response =
+          retainedRegion.map(
+              retained ->
+                  CanonicalInitialPlayerLocationGrpcCodec.toRegionResponse(selection, retained));
+    } catch (IllegalStateException inconsistent) {
+      fail(
+          responseObserver,
+          Status.FAILED_PRECONDITION,
+          "Exact initial-placement region evidence is unavailable");
+      return;
+    } catch (RuntimeException failure) {
+      fail(responseObserver, Status.UNAVAILABLE, "World initial-player region read is unavailable");
+      return;
+    }
+
+    if (response.isEmpty()) {
+      fail(
+          responseObserver,
+          Status.NOT_FOUND,
+          "No exact retained initial-placement region matches the selector");
+      return;
+    }
+    CanonicalInitialPlayerLocationRegionResponse value = response.orElseThrow();
+    if (value.getSerializedSize()
+        > CanonicalInitialPlayerLocationGrpcCodec.MAX_REGION_RESPONSE_BYTES) {
+      fail(
+          responseObserver,
+          Status.RESOURCE_EXHAUSTED,
+          "World initial-player region response exceeds its method bound");
+      return;
+    }
+    try {
+      responseObserver.onNext(value);
     } catch (RuntimeException observerFailure) {
       responseObserver.onError(observerFailure);
       return;

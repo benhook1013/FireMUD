@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.Empty;
 import com.google.protobuf.util.JsonFormat;
@@ -11,6 +12,7 @@ import io.grpc.BindableService;
 import io.grpc.CallOptions;
 import io.grpc.Context;
 import io.grpc.ForwardingServerCall;
+import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Server;
@@ -22,8 +24,10 @@ import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.protobuf.ProtoUtils;
 import io.grpc.stub.ClientCalls;
 import io.grpc.stub.ServerCalls;
@@ -33,6 +37,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -47,6 +52,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -73,6 +79,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementService;
+import net.firedevops.firemud.common.account.AccountActorStagingEligibilityEvidence;
+import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionClient;
@@ -110,9 +118,11 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAsso
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionCurrentAttemptClient;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidenceReadClient;
+import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
@@ -131,20 +141,40 @@ import net.firedevops.firemud.common.world.GrpcWorldOriginalStartSessionActivati
 import net.firedevops.firemud.common.world.GrpcWorldOriginalStartSessionProtectedActivationClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
+import net.firedevops.firemud.entitymanagement.config.PreseededActorAssignmentConfiguration;
+import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAccountIdentityPort;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidencePort;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload.ActorKind;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorStagingEligibilityPort;
+import net.firedevops.firemud.entitymanagement.service.impl.CanonicalPreseededActorAssignmentGrpcService;
+import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
+import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
+import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.client.GrpcAccountStartSessionAdmissionProtectionClient;
 import net.firedevops.firemud.gamesession.client.WorldCanonicalInitialAdmissionHoldClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionIntentSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerCompositionFixture;
 import net.firedevops.firemud.gamesession.repository.CanonicalHumanRuntimeCompletionRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionIntentRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
@@ -158,6 +188,9 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.service.AccountInitialAdmissionSettlementReadService;
+import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
+import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.service.CanonicalRegionBootstrapAssignmentResolver;
 import net.firedevops.firemud.gamesession.service.impl.AccountInitialAdmissionSettlementReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.AuthenticatedCanonicalInitialAdmissionWorldVerifier;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcService;
@@ -169,6 +202,7 @@ import net.firedevops.firemud.gamesession.service.impl.ProtectedCanonicalInitial
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import net.firedevops.firemud.test.TestContainerImages;
+import net.firedevops.firemud.worldmanagement.client.EntityPreseededActorAssignmentReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionCanonicalInitialAdmissionOwnerClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
@@ -179,6 +213,7 @@ import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBinding
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImpl;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
@@ -192,6 +227,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -199,6 +235,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mockito;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.boot.ssl.SslBundle;
+import org.springframework.boot.ssl.SslBundles;
+import org.springframework.boot.ssl.SslManagerBundle;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -207,6 +248,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -224,10 +267,15 @@ import tools.jackson.databind.json.JsonMapper;
  * operation/terminal/release and complete-launch inputs, logging claims, creator/environment/signer
  * provisioning, and ephemeral PKI are controlled upstream evidence. This proves World owner storage
  * with those stipulated inputs, not a genuine GDS producer or authority. The positive composition
- * additionally proves actual Account participation settlement, authenticated activation protection,
- * guarded World ACTIVE storage, and exact Account activation settlement. No genuine Human
- * issuer/environment, registered endpoint, runtime admission or Entity proof is asserted. The small
- * test-only World socket invokes the typed preparation owner directly, not assembly.
+ * additionally proves actual Account participation and admission settlement, authenticated
+ * activation protection, guarded World ACTIVE storage, exact Account activation settlement, actual
+ * Entity assignment/projection, authenticated World placement/currentness reads, and the selected
+ * Game Session first-NEW region grant, SQL fence, and durable bridge acknowledgement. Account
+ * staging and published-policy source evidence, the Account lease carrier, issuer reservation,
+ * stable Redis deployment-incarnation evidence, and loopback PKI remain controlled test inputs;
+ * this does not establish genuine Human issuer/environment authority, production PKI, registered
+ * endpoint activation, or runtime admission. The small test-only World socket invokes the typed
+ * preparation owner directly, not assembly.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -2767,6 +2815,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
       var finalWorldState = worldHoldOwner.readState(identity, lifecycleRequest).orElseThrow();
       assertThat(finalWorldState.holdStatus().name()).isEqualTo("COMMITTED");
+      composeActualEntityWorldRegionPrerequisite(
+          gs,
+          world,
+          proofDirectory,
+          pki,
+          factory,
+          gsEndpoints,
+          association,
+          identity,
+          request,
+          accountUuid);
     }
   }
 
@@ -2828,6 +2887,770 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       assertThat(storedSettlement.get("terminal_digest", String.class))
           .isEqualTo(accountSettlement.digest());
     }
+  }
+
+  /**
+   * Extends the retained 2973 COMMITTED hold through actual Entity assignment, World placement,
+   * authenticated current World reads, and the selected Game Session first-NEW region owners.
+   * Account staging and published-policy evidence plus the one-use run capability remain controlled
+   * local test inputs; the selected OPEN route and terminal are read from actual Game Session SQL.
+   */
+  private static void composeActualEntityWorldRegionPrerequisite(
+      Database gs,
+      Database world,
+      Path proofDirectory,
+      WorldOriginalStartSessionPreparationProofPki worldPki,
+      GrpcChannelFactory channels,
+      ServiceEndpointsProperties gsEndpoints,
+      WorldCanonicalInstanceAssociation association,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity holdIdentity,
+      CanonicalInitialAdmissionRequest admissionRequest,
+      UUID accountUuid)
+      throws Exception {
+    var catalogs = new GameSessionCanonicalRealmCatalogRepository(gs.dsl());
+    var admissionOwner =
+        new CanonicalInitialAdmissionRepository(
+            gs.dsl(),
+            catalogs,
+            new GameSessionCanonicalAdmissionPointerRepository(
+                gs.dsl(), catalogs, new GameplayAdmissionPointerEventRepository(gs.dsl())));
+    var launchOwner = new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE);
+    var routeReader =
+        new CanonicalPlayerRouteReadService(NAMESPACE, catalogs, admissionOwner, launchOwner);
+    CanonicalPlayableTarget currentTarget =
+        routeReader.readCurrentTarget(association.identity().canonicalTenantId());
+    assertThat(currentTarget.ownerProofOutcome())
+        .isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+    assertThat(currentTarget.pointerVersion()).isEqualTo(1L);
+    assertThat(currentTarget.holdId()).isEqualTo(holdIdentity.holdId());
+    assertThat(currentTarget.holdFence()).isEqualTo(holdIdentity.holdFence());
+    assertThat(currentTarget.initialAdmissionRequestId())
+        .isEqualTo(admissionRequest.initialAdmissionRequestId());
+    assertThat(currentTarget.initialAdmissionRequestDigest())
+        .isEqualTo(admissionRequest.requestDigest());
+    assertThat(currentTarget.activeWorldEpoch())
+        .isEqualTo(holdIdentity.request().activeLifecycleEpoch());
+    assertThat(currentTarget.canonicalGameInstanceId())
+        .isEqualTo(association.identity().canonicalGameInstanceId());
+
+    UUID assignmentUuid = UUID.randomUUID();
+    String displayName = "Region Owner Player";
+    String frozenPolicyDigest = "d".repeat(64);
+    String releaseBundleRef = association.worldPrepareFields().publishedReleaseBundleRef();
+    var assignmentTarget =
+        new PreseededActorAssignmentExpectedTarget(
+            currentTarget.canonicalTenantId(),
+            currentTarget.realmId(),
+            currentTarget.worldSlug(),
+            currentTarget.realmSlug(),
+            currentTarget.canonicalGameInstanceId().toString(),
+            currentTarget.catalogRevision(),
+            currentTarget.canonicalVersionId(),
+            frozenPolicyDigest,
+            currentTarget.playableStateNamespaceId(),
+            releaseBundleRef,
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED);
+    var assignmentRequest =
+        new PreseededActorAssignmentRequest(
+            assignmentUuid,
+            accountUuid,
+            new PreseededActorCorePayload(ActorKind.PLAYER, displayName),
+            assignmentTarget);
+
+    var entityPkiDirectory =
+        Files.createDirectories(proofDirectory.resolve("entity-region-owner-pki"));
+    var entityPki =
+        LoopbackMtlsTestPki.create(
+            entityPkiDirectory,
+            "Controlled Entity region-owner composition test CA",
+            new IdentitySpec(
+                "entity-server",
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service",
+                true),
+            new IdentitySpec(
+                "game-session-client",
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service",
+                false),
+            new IdentitySpec(
+                "world-management-client",
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service",
+                false));
+    Files.setPosixFilePermissions(
+        entityPkiDirectory.resolve("test-ca.crt"),
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
+    String trustRootFingerprint =
+        HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(entityPki.caCertificate().getEncoded()));
+    Path capabilityDirectory =
+        Files.createDirectories(proofDirectory.resolve("entity-region-capability"));
+    Files.setPosixFilePermissions(
+        capabilityDirectory,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE));
+    Path capability = capabilityDirectory.resolve("assignment-grant.json");
+    writeRegionAssignmentCapability(
+        capability,
+        assignmentRequest,
+        "region-owner-composition",
+        "firemud-region-owner-composition",
+        trustRootFingerprint);
+
+    var managers = Mockito.mock(SslManagerBundle.class);
+    when(managers.getTrustManagers())
+        .thenReturn(entityPki.trustManagerFactory().getTrustManagers());
+    var activeBundle = Mockito.mock(SslBundle.class);
+    when(activeBundle.getManagers()).thenReturn(managers);
+    var activeBundles = Mockito.mock(SslBundles.class);
+    when(activeBundles.getBundle("firemud-grpc")).thenReturn(activeBundle);
+    var entityConfiguration = new PreseededActorAssignmentConfiguration();
+    var assignmentAuthority =
+        entityConfiguration.runOwnedPreseededAssignmentAuthorityFromCapability(
+            capability.toString(),
+            "region-owner-composition",
+            "firemud-region-owner-composition",
+            NAMESPACE,
+            entityPkiDirectory.resolve("test-ca.crt").toString(),
+            "firemud-grpc",
+            activeBundles);
+
+    var accountIdentity =
+        new RuntimeAccountIdentityEvidence(
+            1, NAMESPACE, assignmentUuid, accountUuid, 23L, "ACCOUNT_REPOSITORY_INSERT");
+    var staging =
+        AccountActorStagingEligibilityEvidence.seal(
+            NAMESPACE,
+            assignmentUuid,
+            accountUuid,
+            currentTarget.canonicalTenantId(),
+            AccountActorStagingEligibilityEvidence.Purpose.PUBLIC_PRODUCTION_STAGING_ONLY,
+            java.time.Instant.now(),
+            "ACCOUNT_REPOSITORY_INSERT",
+            "ACTIVE",
+            "ACTIVE",
+            true,
+            "EXPLICIT_JOIN",
+            1L,
+            1L,
+            "FRESH_GAME_DESIGN",
+            UUID.randomUUID(),
+            "sha256:" + "a".repeat(64),
+            1L,
+            UUID.randomUUID(),
+            "sha256:" + "b".repeat(64),
+            false);
+    var currentEntityTarget =
+        new PreseededActorAssignmentOwnerEvidence(
+            assignmentUuid,
+            accountUuid,
+            PreseededActorAssignmentOwnerEvidence.Eligibility.ELIGIBLE,
+            staging.observedAt(),
+            staging.membershipAuthorityGeneration(),
+            staging.eligibilityDecisionDigest(),
+            currentTarget.canonicalTenantId(),
+            currentTarget.realmId(),
+            currentTarget.worldSlug(),
+            currentTarget.realmSlug(),
+            currentTarget.canonicalGameInstanceId().toString(),
+            currentTarget.catalogRevision(),
+            currentTarget.canonicalVersionId(),
+            frozenPolicyDigest,
+            currentTarget.playableStateNamespaceId(),
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED,
+            PreseededActorAssignmentOwnerEvidence.PublishedEntryPolicy.PRESEEDED_ONLY,
+            PreseededActorAssignmentOwnerEvidence.AccountPurpose.PRESEEDED_ACTOR_STAGING,
+            PreseededActorAssignmentOwnerEvidence.AccountCurrentness.CURRENT_AT_REVALIDATION,
+            staging.authoritySnapshotDigest(),
+            currentTarget.ownerProofDigest().substring("sha256:".length()),
+            releaseBundleRef);
+    PreseededActorAccountIdentityPort identityPort =
+        (requestedAccount, requestedAssignment) -> {
+          if (!accountUuid.toString().equals(requestedAccount)
+              || !assignmentUuid.toString().equals(requestedAssignment)) {
+            throw new IllegalStateException("Controlled Account identity selector changed");
+          }
+          return accountIdentity;
+        };
+    PreseededActorStagingEligibilityPort stagingPort =
+        (requestedAccount, requestedTenant, requestedAssignment) -> {
+          if (!accountUuid.toString().equals(requestedAccount)
+              || !currentTarget.canonicalTenantId().toString().equals(requestedTenant)
+              || !assignmentUuid.toString().equals(requestedAssignment)) {
+            throw new IllegalStateException("Controlled Account staging selector changed");
+          }
+          return staging;
+        };
+    PreseededActorAssignmentOwnerEvidencePort targetPort =
+        (request, observedIdentity, observedStaging) -> {
+          if (!assignmentRequest.equals(request)
+              || !accountIdentity.equals(observedIdentity)
+              || !staging.equals(observedStaging)) {
+            throw new IllegalStateException("Controlled Game Session evidence selector changed");
+          }
+          return currentEntityTarget;
+        };
+
+    try (var entityDatabase = database(GS, "entity-management-service", false)) {
+      var characterRepository =
+          transactionalCharacterRepository(
+              new CharacterRepository(entityDatabase.dsl()), entityDatabase.manager());
+      var assignmentService =
+          entityConfiguration.preseededActorAssignmentService(
+              assignmentAuthority, identityPort, stagingPort, targetPort, characterRepository);
+      var receiptService =
+          entityConfiguration.preseededActorAssignmentReceiptService(characterRepository);
+      var assignmentFailure = new AtomicReference<RuntimeException>();
+      var observedAssignmentService = Mockito.spy(assignmentService);
+      Mockito.doAnswer(
+              invocation -> {
+                try {
+                  return invocation.callRealMethod();
+                } catch (RuntimeException failure) {
+                  assignmentFailure.set(failure);
+                  throw failure;
+                }
+              })
+          .when(observedAssignmentService)
+          .assign(Mockito.any(PreseededActorAssignmentRequest.class));
+      CanonicalPreseededActorAssignmentGrpcService entityHandler =
+          entityConfiguration.canonicalPreseededActorAssignmentGrpcService(
+              NAMESPACE, observedAssignmentService, receiptService);
+      var entityServerFactory =
+          new BoundedGrpcServerFactory(
+              "127.0.0.1:0",
+              List.of(),
+              entityPki.keyManagerFactory(entityPki.identity("entity-server")),
+              entityPki.trustManagerFactory(),
+              io.grpc.TlsServerCredentials.ClientAuth.REQUIRE,
+              GrpcRequestBytePolicy.ordinary(),
+              GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+      entityServerFactory.addService(
+          ServerInterceptors.intercept(
+              entityHandler,
+              entityConfiguration.canonicalPreseededActorAssignmentPeerInterceptor(NAMESPACE),
+              new GrpcPeerIdentityInterceptor()));
+      Server entityServer = entityServerFactory.createServer().start();
+      try {
+        ManagedChannel assignmentChannel =
+            entityChannel(entityPki, "game-session-client", entityServer.getPort());
+        try {
+          var wireRequest = toWire(assignmentRequest);
+          net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse assigned;
+          try {
+            assigned =
+                CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(assignmentChannel)
+                    .withDeadlineAfter(10, TimeUnit.SECONDS)
+                    .assignPreseededActor(wireRequest);
+          } catch (StatusRuntimeException failure) {
+            throw new AssertionError(
+                "Actual Entity assignment failed before region composition",
+                assignmentFailure.get() == null ? failure : assignmentFailure.get());
+          }
+          assertThat(assigned.getOutcome())
+              .isEqualTo(
+                  net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentOutcome
+                      .PRESEEDED_ACTOR_ASSIGNMENT_OUTCOME_ASSIGNED);
+          assertThat(assigned.getIntentDigest())
+              .isEqualTo(assignmentRequest.mutationIntentDigest());
+          var assignmentRetry =
+              CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(assignmentChannel)
+                  .withDeadlineAfter(10, TimeUnit.SECONDS)
+                  .assignPreseededActor(wireRequest);
+          assertThat(assignmentRetry.toByteArray()).containsExactly(assigned.toByteArray());
+          var runtimeReferenceSelector =
+              ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+                  .setSchemaVersion(1)
+                  .setAssignmentUuid(assignmentUuid.toString())
+                  .setCanonicalAccountUuid(accountUuid.toString())
+                  .setCharacterUuid(assigned.getCharacterUuid())
+                  .setIntentDigest(assignmentRequest.mutationIntentDigest())
+                  .setExpectedTarget(toWire(assignmentTarget))
+                  .build();
+          ManagedChannel worldPeerChannel =
+              entityChannel(entityPki, "world-management-client", entityServer.getPort());
+          try {
+            assertThatThrownBy(
+                    () ->
+                        CanonicalPreseededActorAssignmentServiceGrpc.newBlockingStub(
+                                worldPeerChannel)
+                            .withDeadlineAfter(10, TimeUnit.SECONDS)
+                            .readPreseededActorRuntimeReference(runtimeReferenceSelector))
+                .isInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                            .isEqualTo(Status.Code.PERMISSION_DENIED));
+          } finally {
+            shutdown(worldPeerChannel);
+          }
+
+          var entityEndpoints = new ServiceEndpointsProperties();
+          entityEndpoints.setEntityManagementService("127.0.0.1:" + entityServer.getPort());
+          var associationRepository =
+              new WorldCanonicalInstanceAssociationRepository(
+                  world.dsl(),
+                  new WorldCompleteLaunchBindingRepository(world.dsl()),
+                  new WorldAuthoredSourceIntakeRepository(world.dsl()),
+                  new WorldAuthoredVersionIdentityRepository(world.dsl()));
+          var lifecycleRepository =
+              new WorldCanonicalInstanceLifecycleReadRepository(
+                  world.dsl(), world.manager(), associationRepository);
+          var holdRepository =
+              new WorldCanonicalInitialAdmissionHoldRepository(
+                  world.dsl(), world.manager(), associationRepository, lifecycleRepository);
+          var locationRepository =
+              new WorldCanonicalInitialPlayerLocationRepository(
+                  world.dsl(), world.manager(), lifecycleRepository);
+          var entityReceiptClient =
+              new EntityPreseededActorAssignmentReceiptClient(
+                  entityEndpoints,
+                  entityPki.clientProperties(
+                      entityPkiDirectory, entityPki.identity("world-management-client")),
+                  channels,
+                  NAMESPACE);
+          var gsOwnerClient =
+              new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
+                  gsEndpoints, worldPki.client("world-management-service"), channels, NAMESPACE);
+          entityReceiptClient.init();
+          gsOwnerClient.init();
+          var worldLocationOwner =
+              new CanonicalInitialPlayerLocationService(
+                  NAMESPACE,
+                  associationRepository,
+                  holdRepository,
+                  locationRepository,
+                  gsOwnerClient,
+                  entityReceiptClient);
+          var worldLocationGrpc =
+              new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, worldLocationOwner);
+          BindableService authenticatedWorldLocationGrpc =
+              () ->
+                  ServerInterceptors.intercept(
+                      worldLocationGrpc,
+                      new CanonicalInitialPlayerLocationPeerInterceptor(NAMESPACE));
+          Server worldLocationServer =
+              server(
+                  "world-management-service",
+                  worldPki,
+                  authenticatedWorldLocationGrpc,
+                  new WorldCanonicalInstanceLifecycleReadGrpcService(
+                      lifecycleRepository, NAMESPACE));
+          try {
+            var worldEndpoints = new ServiceEndpointsProperties();
+            worldEndpoints.setWorldManagementService("127.0.0.1:" + worldLocationServer.getPort());
+            var initialLocationClient =
+                new CanonicalInitialPlayerLocationClient(
+                    worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE);
+            var lifecycleClient =
+                new WorldCanonicalInstanceLifecycleClient(
+                    worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE);
+            var runtimeReferenceClient =
+                new CanonicalPreseededActorRuntimeReferenceClient(
+                    entityEndpoints,
+                    entityPki.clientProperties(
+                        entityPkiDirectory, entityPki.identity("game-session-client")),
+                    channels,
+                    NAMESPACE);
+            try (initialLocationClient;
+                lifecycleClient;
+                runtimeReferenceClient) {
+              initialLocationClient.init();
+              lifecycleClient.init();
+              runtimeReferenceClient.init();
+              var placementRequest =
+                  toWorldLocationRequest(
+                      currentTarget,
+                      assignmentRequest,
+                      assignmentTarget,
+                      assigned.getCharacterUuid(),
+                      holdIdentity);
+              var placed = initialLocationClient.placeInitialPlayer(placementRequest);
+              assertThat(placed.getOutcome())
+                  .isEqualTo(
+                      net.firedevops.firemud.worldmanagement.v1
+                          .CanonicalInitialPlayerLocationOutcome
+                          .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED);
+              var placementRetry = initialLocationClient.placeInitialPlayer(placementRequest);
+              assertThat(placementRetry.toByteArray()).containsExactly(placed.toByteArray());
+
+              var regionResolver =
+                  new CanonicalInitialPlayerLocationRegionResolver(
+                      initialLocationClient,
+                      new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
+              var worldRegion = regionResolver.resolve(placementRequest);
+              assertThat(worldRegion.lifecycleAssignment().lifecycleStatus()).isEqualTo("ACTIVE");
+              assertThat(worldRegion.lifecycleAssignment().lifecycleEpoch())
+                  .isEqualTo(currentTarget.activeWorldEpoch());
+              assertThat(worldRegion.operationalRegionId()).isNotEqualTo(new UUID(0L, 0L));
+
+              var secondBinding =
+                  controlledSecondBinding(
+                      placementRequest,
+                      currentTarget,
+                      assignmentTarget,
+                      initialLocationClient,
+                      lifecycleClient,
+                      runtimeReferenceClient,
+                      lifecycleClient.read(worldRegion.lifecycleAssignment().request()),
+                      worldRegion);
+              var regionProofs =
+                  CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeTwoCandidates(
+                      gs.dsl(),
+                      REDIS.getHost(),
+                      REDIS.getMappedPort(6379),
+                      placementRequest,
+                      currentTarget,
+                      secondBinding.worldRegionResolver(),
+                      runtimeReferenceClient,
+                      secondBinding);
+              var regionProof = regionProofs.first();
+              var secondRegionProof = regionProofs.second();
+              assertThat(regionProof.operationalRegionId())
+                  .isEqualTo(worldRegion.operationalRegionId());
+              assertThat(regionProof.canonicalRegionId())
+                  .isEqualTo(worldRegion.canonicalRegionInstanceId());
+              assertThat(regionProof.lifecycleEpoch())
+                  .isEqualTo(worldRegion.lifecycleAssignment().lifecycleEpoch());
+              assertThat(regionProof.executorFence()).isPositive();
+              assertThat(regionProof.bridgeOperationId()).isNotNull();
+              assertThat(regionProof.runtimeEntityId()).isPositive();
+              assertThat(regionProof.entityProjectionGeneration()).isPositive();
+              assertThat(regionProof.entityProjectionFence()).isPositive();
+              assertThat(regionProof.entityReferenceDigest()).hasSize(64);
+              assertThat(regionProof.worldSourceDigest()).hasSize(64);
+              assertThat(regionProof.redisReadbackDigest()).hasSize(64);
+              assertThat(regionProof.acknowledgedInventoryRevision()).isPositive();
+              assertThat(regionProof.acknowledgedAt()).isNotNull();
+              assertThat(regionProof.exactLostReplyRetry()).isTrue();
+              assertThat(secondRegionProof).isNotNull();
+              assertThat(secondRegionProof.transitionId()).isNotEqualTo(regionProof.transitionId());
+              assertThat(secondRegionProof.bridgeOperationId())
+                  .isNotEqualTo(regionProof.bridgeOperationId());
+              assertThat(secondRegionProof.redisReadbackDigest())
+                  .isNotEqualTo(regionProof.redisReadbackDigest());
+              assertThat(secondRegionProof.exactLostReplyRetry()).isTrue();
+              assertThat(regionProofs.firstAbort().exactAcknowledgementRetained()).isTrue();
+              assertThat(regionProofs.firstAbort().acknowledgedRevision())
+                  .isEqualTo(regionProof.acknowledgedInventoryRevision());
+              assertThat(regionProofs.firstAbort().abortRevision())
+                  .isGreaterThan(regionProofs.firstAbort().acknowledgedRevision());
+              assertThat(regionProofs.firstAbort().candidateLifecycle())
+                  .isEqualTo("TERMINAL_UNRESOLVED");
+              assertThat(regionProofs.firstAbort().reservationLifecycle())
+                  .isEqualTo("RELEASE_PENDING");
+              assertThat(regionProofs.firstTimelineUnchanged()).isTrue();
+              assertThat(regionProofs.initialMetaUnchanged()).isTrue();
+              assertThat(regionProofs.regionLeaseStillLive()).isTrue();
+              assertThat(regionProofs.foreignOwnerCapabilityRejectedWithoutStateChange()).isTrue();
+              assertThat(regionProofs.expiredGrantRejectedWithoutStateChange()).isTrue();
+            }
+          } finally {
+            shutdown(worldLocationServer);
+            entityReceiptClient.close();
+            gsOwnerClient.close();
+          }
+        } finally {
+          shutdown(assignmentChannel);
+        }
+      } finally {
+        shutdown(entityServer);
+      }
+    }
+  }
+
+  private static CanonicalInitialPlayerLocationRequest toWorldLocationRequest(
+      CanonicalPlayableTarget currentTarget,
+      PreseededActorAssignmentRequest assignmentRequest,
+      PreseededActorAssignmentExpectedTarget assignmentTarget,
+      String characterUuid,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity holdIdentity) {
+    return CanonicalInitialPlayerLocationRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setPlacementOperationUuid(UUID.randomUUID().toString())
+        .setExpectedTarget(toWire(assignmentTarget))
+        .setCanonicalAccountUuid(assignmentRequest.canonicalAccountUuid().toString())
+        .setCharacterUuid(characterUuid)
+        .setAssignmentUuid(assignmentRequest.assignmentUuid().toString())
+        .setAssignmentIntentDigest(assignmentRequest.mutationIntentDigest())
+        .setInitialAdmissionHoldUuid(holdIdentity.holdId().toString())
+        .setInitialAdmissionHoldFence(holdIdentity.holdFence().toString())
+        .setInitialAdmissionRequestId(holdIdentity.request().initialAdmissionRequestId())
+        .setInitialAdmissionRequestDigest(holdIdentity.request().initialAdmissionRequestDigest())
+        .setActiveLifecycleEpoch(holdIdentity.request().activeLifecycleEpoch())
+        .setTerminalProofDigest(currentTarget.ownerProofDigest())
+        .setCommittedPointerVersion(currentTarget.pointerVersion())
+        .setAuditEventId(currentTarget.auditEventId())
+        .build();
+  }
+
+  private static CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding
+      controlledSecondBinding(
+          CanonicalInitialPlayerLocationRequest firstRequest,
+          CanonicalPlayableTarget currentTarget,
+          PreseededActorAssignmentExpectedTarget assignmentTarget,
+          CanonicalInitialPlayerLocationClient actualInitialLocationClient,
+          WorldCanonicalInstanceLifecycleClient actualLifecycleClient,
+          CanonicalPreseededActorRuntimeReferenceClient actualEntityReferenceClient,
+          WorldCanonicalInstanceLifecycleEvidence firstLifecycleEvidence,
+          CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion firstResolvedRegion) {
+    UUID placementOperationId = UUID.randomUUID();
+    UUID assignmentId = UUID.randomUUID();
+    UUID characterId = UUID.randomUUID();
+    CanonicalInitialPlayerLocationRequest secondRequest =
+        firstRequest.toBuilder()
+            .setPlacementOperationUuid(placementOperationId.toString())
+            .setAssignmentUuid(assignmentId.toString())
+            .setCharacterUuid(characterId.toString())
+            .setAssignmentIntentDigest("c".repeat(64))
+            .build();
+    var originalLifecycleRequest = firstLifecycleEvidence.request();
+    var secondLifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            originalLifecycleRequest.schemaVersion(),
+            WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                placementOperationId),
+            originalLifecycleRequest.targetNamespace(),
+            originalLifecycleRequest.canonicalTenantId(),
+            originalLifecycleRequest.worldSlug(),
+            originalLifecycleRequest.canonicalGameInstanceId(),
+            originalLifecycleRequest.playableStateNamespaceId(),
+            originalLifecycleRequest.playableStateScope(),
+            originalLifecycleRequest.publicProduction(),
+            originalLifecycleRequest.controlPlaneRequestId(),
+            originalLifecycleRequest.canonicalVersionId(),
+            originalLifecycleRequest.expectedDescriptorRequestDigest(),
+            originalLifecycleRequest.expectedDescriptorResultDigest(),
+            originalLifecycleRequest.expectedReleaseAttestationDigest());
+    var secondLifecycleEvidence =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            secondLifecycleRequest,
+            firstLifecycleEvidence.launchBinding(),
+            firstLifecycleEvidence.startLocation(),
+            firstLifecycleEvidence.runtimeRoomInstanceId(),
+            firstLifecycleEvidence.lifecycleStatus(),
+            firstLifecycleEvidence.lifecycleEpoch(),
+            firstLifecycleEvidence.rowVersion(),
+            firstLifecycleEvidence.captureId(),
+            firstLifecycleEvidence.graphSha256(),
+            firstLifecycleEvidence.preparationInputDigest(),
+            firstLifecycleEvidence.operationalRegionAssignments());
+
+    var initialLocationClient = Mockito.mock(CanonicalInitialPlayerLocationClient.class);
+    var originalPlacement = firstResolvedRegion.observation().getPlacementResult();
+    var secondPlacement =
+        originalPlacement.toBuilder()
+            .setPlacementOperationUuid(secondRequest.getPlacementOperationUuid())
+            .setCanonicalAccountUuid(secondRequest.getCanonicalAccountUuid())
+            .setCharacterUuid(secondRequest.getCharacterUuid())
+            .setAssignmentUuid(secondRequest.getAssignmentUuid())
+            .setAssignmentIntentDigest(secondRequest.getAssignmentIntentDigest())
+            .setRequestDigest("sha256:" + "d".repeat(64))
+            .setResultDigest("sha256:" + "e".repeat(64))
+            .build();
+    var secondLifecycle =
+        firstResolvedRegion.observation().getLifecycle().toBuilder()
+            .setCanonicalRequestBytes(
+                com.google.protobuf.ByteString.copyFrom(secondLifecycleRequest.canonicalBytes()))
+            .build();
+    var secondObservation =
+        firstResolvedRegion.observation().toBuilder()
+            .setPlacementResult(secondPlacement)
+            .setLifecycle(secondLifecycle)
+            .build();
+    Mockito.doAnswer(
+            invocation -> {
+              CanonicalInitialPlayerLocationRequest request = invocation.getArgument(0);
+              if (secondRequest.equals(request)) return secondObservation;
+              return actualInitialLocationClient.readInitialPlayerLocationRegion(request);
+            })
+        .when(initialLocationClient)
+        .readInitialPlayerLocationRegion(Mockito.any(CanonicalInitialPlayerLocationRequest.class));
+    var lifecycleClient = Mockito.mock(WorldCanonicalInstanceLifecycleClient.class);
+    Mockito.doAnswer(
+            invocation -> {
+              WorldCanonicalInstanceLifecycleEvidence.Request request = invocation.getArgument(0);
+              if (secondLifecycleRequest.equals(request)) return secondLifecycleEvidence;
+              return actualLifecycleClient.read(request);
+            })
+        .when(lifecycleClient)
+        .read(Mockito.any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
+    var secondWorldRegionResolver =
+        new CanonicalInitialPlayerLocationRegionResolver(
+            initialLocationClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
+
+    var entityReferenceClient = Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.class);
+    var runtimeReference =
+        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference.class);
+    var runtimeEntityId =
+        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId.class);
+    when(runtimeEntityId.tenantId()).thenReturn(currentTarget.canonicalTenantId());
+    when(runtimeEntityId.gameInstanceId())
+        .thenReturn(currentTarget.canonicalGameInstanceId().toString());
+    when(runtimeEntityId.value()).thenReturn(900_002L);
+    when(runtimeReference.workloadNamespace()).thenReturn(currentTarget.targetNamespace());
+    when(runtimeReference.runtimeEntityId()).thenReturn(runtimeEntityId);
+    when(runtimeReference.projectionGeneration()).thenReturn(2L);
+    when(runtimeReference.projectionFence()).thenReturn(2L);
+    when(runtimeReference.assignmentUuid()).thenReturn(assignmentId);
+    when(runtimeReference.canonicalAccountUuid())
+        .thenReturn(UUID.fromString(secondRequest.getCanonicalAccountUuid()));
+    when(runtimeReference.characterUuid()).thenReturn(characterId);
+    when(runtimeReference.intentDigest()).thenReturn(secondRequest.getAssignmentIntentDigest());
+    when(runtimeReference.playableStateNamespaceId())
+        .thenReturn(currentTarget.playableStateNamespaceId());
+    when(runtimeReference.target()).thenReturn(toWire(assignmentTarget));
+    when(runtimeReference.publishedOwnerProofDigest()).thenReturn(currentTarget.ownerProofDigest());
+    when(runtimeReference.corePayload())
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
+                .newBuilder()
+                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                .setDisplayName("Controlled Second Region Player")
+                .build());
+    var secondEntityReferenceSelector =
+        ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(secondRequest.getAssignmentUuid())
+            .setCanonicalAccountUuid(secondRequest.getCanonicalAccountUuid())
+            .setExpectedTarget(secondRequest.getExpectedTarget())
+            .setCharacterUuid(secondRequest.getCharacterUuid())
+            .setIntentDigest(secondRequest.getAssignmentIntentDigest())
+            .build();
+    Mockito.doAnswer(
+            invocation -> {
+              ReadPreseededActorRuntimeReferenceRequest request = invocation.getArgument(0);
+              if (secondEntityReferenceSelector.equals(request)) {
+                return runtimeReference;
+              }
+              return actualEntityReferenceClient.read(request);
+            })
+        .when(entityReferenceClient)
+        .read(Mockito.any(ReadPreseededActorRuntimeReferenceRequest.class));
+    return new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
+        secondRequest, currentTarget, secondWorldRegionResolver, entityReferenceClient);
+  }
+
+  private static AssignPreseededActorRequest toWire(PreseededActorAssignmentRequest request) {
+    var target = request.expectedTarget();
+    return AssignPreseededActorRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setAssignmentUuid(request.assignmentUuid().toString())
+        .setCanonicalAccountUuid(request.canonicalAccountUuid().toString())
+        .setExpectedTarget(toWire(target))
+        .setCorePayload(
+            net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
+                .newBuilder()
+                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                .setDisplayName(request.corePayload().displayName())
+                .build())
+        .setMutationIntentDigest(request.mutationIntentDigest())
+        .build();
+  }
+
+  private static net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget
+      toWire(PreseededActorAssignmentExpectedTarget target) {
+    return net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget
+        .newBuilder()
+        .setCanonicalTenantUuid(target.canonicalTenantUuid().toString())
+        .setRealmUuid(target.realmUuid().toString())
+        .setWorldSlug(target.worldSlug())
+        .setRealmSlug(target.realmSlug())
+        .setGameInstanceId(target.gameInstanceId())
+        .setCatalogRevision(target.catalogRevision())
+        .setCanonicalVersionUuid(target.canonicalVersionUuid().toString())
+        .setFrozenPolicyDigest(target.frozenPolicyDigest())
+        .setPlayableStateNamespaceUuid(target.playableStateNamespaceId().toString())
+        .setPublishedReleaseBundleRef(target.publishedReleaseBundleRef())
+        .setPlayableStateScope(target.playableStateScope())
+        .build();
+  }
+
+  private static void writeRegionAssignmentCapability(
+      Path capability,
+      PreseededActorAssignmentRequest request,
+      String runId,
+      String project,
+      String trustRootFingerprint)
+      throws Exception {
+    var target = request.expectedTarget();
+    String body =
+        """
+        {\
+          "schema": "firemud.run-owned-preseeded-actor-assignment.v3",%n\
+          "runId": "%s",%n\
+          "composeProjectName": "%s",%n\
+          "action": "PRESEEDED_ACTOR_ASSIGNMENT",%n\
+          "trustedGameSessionUriSan": "spiffe://firemud/ns/%s/sa/game-session-service",%n\
+          "trustedGameSessionNamespace": "%s",%n\
+          "assignmentUuid": "%s",%n\
+          "canonicalAccountUuid": "%s",%n\
+          "expectedTarget": {%n\
+            "canonicalTenantUuid": "%s",%n\
+            "realmUuid": "%s",%n\
+            "worldSlug": "%s",%n\
+            "realmSlug": "%s",%n\
+            "gameInstanceId": "%s",%n\
+            "catalogRevision": %d,%n\
+            "canonicalVersionUuid": "%s",%n\
+            "frozenPolicyDigest": "%s",%n\
+            "playableStateNamespaceUuid": "%s",%n\
+            "publishedReleaseBundleRef": "%s",%n\
+            "playableStateScope": "%s"%n\
+          },%n\
+          "corePayload": {"actorKind": "PLAYER", "displayName": "%s"},%n\
+          "intentDigest": "%s",%n\
+          "entityServerTrustRootSha256": "%s"%n\
+        }%n\
+        """
+            .formatted(
+                runId,
+                project,
+                NAMESPACE,
+                NAMESPACE,
+                request.assignmentUuid(),
+                request.canonicalAccountUuid(),
+                target.canonicalTenantUuid(),
+                target.realmUuid(),
+                target.worldSlug(),
+                target.realmSlug(),
+                target.gameInstanceId(),
+                target.catalogRevision(),
+                target.canonicalVersionUuid(),
+                target.frozenPolicyDigest(),
+                target.playableStateNamespaceId(),
+                target.publishedReleaseBundleRef(),
+                target.playableStateScope().name(),
+                request.corePayload().displayName(),
+                request.mutationIntentDigest(),
+                trustRootFingerprint);
+    Files.writeString(capability, body);
+    Files.setPosixFilePermissions(
+        capability,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
+  }
+
+  private static io.grpc.ManagedChannel entityChannel(
+      LoopbackMtlsTestPki.Pki pki, String identityAlias, int port) throws Exception {
+    var identity = pki.identity(identityAlias);
+    return NettyChannelBuilder.forAddress("127.0.0.1", port)
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forClient()
+                        .trustManager(pki.caCertificate())
+                        .keyManager(identity.privateKey(), identity.certificate()))
+                .build())
+        .build();
   }
 
   private static WorldCanonicalInstancePreparation.Input preparationInputs(
@@ -3345,6 +4168,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 
+  private static void shutdown(ManagedChannel channel) throws InterruptedException {
+    channel.shutdownNow();
+    assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+  }
+
   private static void assertPendingActivationState(DSLContext world) {
     assertThat(world.fetch("SELECT status FROM world_instance").getValues("status", String.class))
         .containsExactly("PREPARING");
@@ -3370,6 +4198,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     return result;
   }
 
+  private static CharacterRepository transactionalCharacterRepository(
+      CharacterRepository target, PlatformTransactionManager manager) {
+    var transactions = new TransactionInterceptor();
+    transactions.setTransactionManager(manager);
+    transactions.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+    var proxy = new ProxyFactory(target);
+    proxy.setProxyTargetClass(true);
+    proxy.addAdvice(transactions);
+    return (CharacterRepository) proxy.getProxy();
+  }
+
   private static Database database(PostgreSQLContainer<?> postgres, String service, boolean saga) {
     String schema = "original_prepare_" + UUID.randomUUID().toString().replace("-", "");
     var source =
@@ -3385,15 +4224,20 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           "filesystem:"
               + repositoryRoot()
                   .resolve("services/common-saga/src/main/resources/db/migration/saga"));
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations(locations.toArray(String[]::new))
-        .load()
-        .migrate();
+    var migrations =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations(locations.toArray(String[]::new));
+    if ("entity-management-service".equals(service)) {
+      migrations
+          .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+          .setTransactionalLock(false);
+    }
+    migrations.load().migrate();
     var manager = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(manager);
     write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);

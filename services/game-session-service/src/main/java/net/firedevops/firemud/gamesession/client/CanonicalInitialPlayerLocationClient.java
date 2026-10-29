@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.client;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -14,7 +15,9 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
@@ -26,6 +29,9 @@ public final class CanonicalInitialPlayerLocationClient
             .CanonicalInitialPlayerLocationServiceBlockingStub> {
   private static final int SCHEMA_VERSION = 1;
   private static final long CALL_DEADLINE_SECONDS = 20L;
+  private static final int MAX_REGION_REQUEST_BYTES = 16 * 1024;
+  private static final int MAX_REGION_RESPONSE_BYTES = 8 * 1024;
+  private static final int MAX_LIFECYCLE_REQUEST_BYTES = 4 * 1024;
   private static final int MAX_REQUEST_ID_LENGTH = 128;
   private static final int MAX_RELEASE_REF_LENGTH = 128;
   private static final Pattern RAW_SHA256 = Pattern.compile("[0-9a-f]{64}");
@@ -90,6 +96,26 @@ public final class CanonicalInitialPlayerLocationClient
   public CanonicalInitialPlayerLocationResponse readInitialPlayerLocation(
       CanonicalInitialPlayerLocationRequest request) {
     return invoke(request, false);
+  }
+
+  /** Reads the fresh current-room region consequence for an exact retained APPLIED placement. */
+  public CanonicalInitialPlayerLocationRegionResponse readInitialPlayerLocationRegion(
+      CanonicalInitialPlayerLocationRequest request) {
+    requireNoAmbientSql("Initial player location region RPC requires no ambient SQL");
+    requireRequest(request);
+    if (request.getSerializedSize() > MAX_REGION_REQUEST_BYTES) {
+      throw new IllegalArgumentException(
+          "Initial player location region request exceeds its bound");
+    }
+    var stub =
+        requireInitializedStub("World initial player location client is unavailable")
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
+            .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES);
+    CanonicalInitialPlayerLocationRegionResponse response =
+        stub.readInitialPlayerLocationRegion(request);
+    requireRegionResponse(request, response);
+    return response;
   }
 
   private CanonicalInitialPlayerLocationResponse invoke(
@@ -221,6 +247,90 @@ public final class CanonicalInitialPlayerLocationClient
         }
       }
       default -> throw invalidResponse("World returned an unsupported placement outcome");
+    }
+  }
+
+  private void requireRegionResponse(
+      CanonicalInitialPlayerLocationRequest request,
+      CanonicalInitialPlayerLocationRegionResponse response) {
+    if (response == null
+        || response.getSerializedSize() > MAX_REGION_RESPONSE_BYTES
+        || response.getSchemaVersion() != SCHEMA_VERSION
+        || !response.getUnknownFields().asMap().isEmpty()
+        || !response.hasPlacementResult()
+        || !response.hasExpectedTarget()
+        || !response.hasLifecycle()
+        || !request.getExpectedTarget().equals(response.getExpectedTarget())
+        || !response.getExpectedTarget().getUnknownFields().asMap().isEmpty()) {
+      throw invalidResponse("Region response is not a bounded, closed echo of the selected target");
+    }
+    CanonicalInitialPlayerLocationResponse placement = response.getPlacementResult();
+    requireResponse(request, placement);
+    if (placement.getOutcome()
+        != net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome
+            .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED) {
+      throw invalidResponse("Region resolution requires the exact APPLIED placement result");
+    }
+    requireResponseUuid(
+        response.getCanonicalRegionInstanceUuid(), "canonical_region_instance_uuid");
+    requireResponseUuid(response.getOperationalRegionUuid(), "operational_region_uuid");
+    if (response.getCanonicalRegionInstanceUuid().equals(response.getOperationalRegionUuid())
+        || response.getPrivateWorldInstanceKey() <= 0L
+        || response.getObservedRuntimeRoomKey() <= 0L) {
+      throw invalidResponse("Region response has an invalid World or runtime room identity");
+    }
+    requirePositivePrivateRuntimeRoomKey(placement.getPrivateRuntimeRoomKey());
+    if (Long.parseLong(placement.getPrivateRuntimeRoomKey())
+        != response.getObservedRuntimeRoomKey()) {
+      throw invalidResponse("Region response changed the retained initial runtime room");
+    }
+
+    var lifecycle = response.getLifecycle();
+    if (!lifecycle.getUnknownFields().asMap().isEmpty()
+        || lifecycle.getCanonicalRequestBytes().isEmpty()
+        || lifecycle.getCanonicalRequestBytes().size() > MAX_LIFECYCLE_REQUEST_BYTES
+        || !"ACTIVE".equals(lifecycle.getLifecycleStatus())
+        || lifecycle.getLifecycleEpoch() != request.getActiveLifecycleEpoch()
+        || lifecycle.getRowVersion() < 0L) {
+      throw invalidResponse("Region lifecycle consequence is incomplete or stale");
+    }
+    requireResponseUuid(lifecycle.getCaptureUuid(), "lifecycle.capture_uuid");
+    if (lifecycle.getGraphSha256() == null
+        || !RAW_SHA256.matcher(lifecycle.getGraphSha256()).matches()) {
+      throw invalidResponse("lifecycle.graph_sha256 is not raw lowercase SHA-256");
+    }
+    requireResponseDigest(
+        lifecycle.getPreparationInputDigest(), "lifecycle.preparation_input_digest");
+    WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest;
+    try {
+      lifecycleRequest =
+          WorldCanonicalInstanceLifecycleEvidence.Request.fromStored(
+              lifecycle.getCanonicalRequestBytes().toByteArray());
+    } catch (IllegalArgumentException invalid) {
+      throw invalidResponse(
+          "lifecycle.canonical_request_bytes is not a closed canonical request", invalid);
+    }
+    var target = request.getExpectedTarget();
+    if (!lifecycleRequest.canonicalTenantId().toString().equals(target.getCanonicalTenantUuid())
+        || !namespace.equals(lifecycleRequest.targetNamespace())
+        || !lifecycleRequest
+            .readRequestId()
+            .equals(
+                WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                    UUID.fromString(request.getPlacementOperationUuid())))
+        || !lifecycleRequest.canonicalGameInstanceId().toString().equals(target.getGameInstanceId())
+        || !lifecycleRequest
+            .playableStateNamespaceId()
+            .toString()
+            .equals(target.getPlayableStateNamespaceUuid())
+        || !lifecycleRequest.playableStateScope().equals("SHARED")
+        || !lifecycleRequest.worldSlug().equals(target.getWorldSlug())
+        || !lifecycleRequest
+            .canonicalVersionId()
+            .toString()
+            .equals(target.getCanonicalVersionUuid())
+        || !lifecycleRequest.publicProduction()) {
+      throw invalidResponse("lifecycle request differs from the echoed canonical placement target");
     }
   }
 

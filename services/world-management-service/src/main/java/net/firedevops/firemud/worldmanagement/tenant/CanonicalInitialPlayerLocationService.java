@@ -9,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
@@ -129,6 +128,26 @@ public final class CanonicalInitialPlayerLocationService {
     return retained;
   }
 
+  /**
+   * Reads a fresh initial-room region consequence after revalidating the immutable Entity receipt.
+   * The repository performs the retained placement, current location, topology, and ACTIVE
+   * lifecycle checks together in one read-only owner snapshot.
+   */
+  public Optional<WorldCanonicalInitialPlayerLocationRepository.RegionResult> readRegion(
+      CanonicalInitialPlayerLocationGrpcCodec.Selection selection) {
+    Objects.requireNonNull(selection, "selection");
+    requireNoAmbientTransaction("World initial-player location region read");
+    RequestSelector selector = requestSelector(selection);
+    Optional<Result> retained =
+        locationRepository.readByOperationId(selection.placementOperationId(), selector);
+    if (retained.isEmpty()) return Optional.empty();
+    if (retained.orElseThrow().outcome() != Outcome.APPLIED) {
+      throw failedPrecondition("Initial-player region resolution requires an APPLIED placement");
+    }
+    requireExactEntityReceipt(selection);
+    return locationRepository.readInitialPlayerLocationRegion(selector);
+  }
+
   private ReadPreseededActorAssignmentReceiptResponse requireExactEntityReceipt(
       CanonicalInitialPlayerLocationGrpcCodec.Selection selection) {
     // This is Entity's immutable historical assignment receipt, not current Account authority or
@@ -207,7 +226,8 @@ public final class CanonicalInitialPlayerLocationService {
     var release = association.completeLaunchBinding().evidence().releaseAttestation();
     return new WorldCanonicalInstanceLifecycleEvidence.Request(
         WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
-        lifecycleReadRequestId(selection.placementOperationId()),
+        WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+            selection.placementOperationId()),
         trustedNamespace,
         identity.canonicalTenantId(),
         identity.worldSlug(),
@@ -387,13 +407,6 @@ public final class CanonicalInitialPlayerLocationService {
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
-  }
-
-  private static UUID lifecycleReadRequestId(UUID operationId) {
-    byte[] name =
-        ("firemud-world-initial-location-lifecycle-read/v1/" + operationId)
-            .getBytes(StandardCharsets.US_ASCII);
-    return UUID.nameUUIDFromBytes(name);
   }
 
   private static io.grpc.StatusRuntimeException failedPrecondition(String message) {
