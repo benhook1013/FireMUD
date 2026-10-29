@@ -145,6 +145,49 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       MigrationVersion migrationTarget,
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap) {
+    this(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        seedBootstrapMemberCount,
+        migrationTarget,
+        afterBootstrap,
+        true);
+  }
+
+  /**
+   * Keeps the actual V1047-era owners at their historical schema until the caller upgrades it.
+   * Later-schema composition tests retain the normal after-bootstrap upgrade behavior.
+   */
+  static CanonicalGameplayAdmissionAbortCompositionFixture atHistoricalIssuerAdmissionFrontier(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      MigrationVersion migrationTarget) {
+    Objects.requireNonNull(migrationTarget, "migrationTarget");
+    if (!migrationTarget.equals(MigrationVersion.fromVersion("1047"))
+        && !migrationTarget.equals(MigrationVersion.fromVersion("1047.1"))) {
+      throw new IllegalArgumentException("Historical issuer admission requires V1047 or V1047.1");
+    }
+    return new CanonicalGameplayAdmissionAbortCompositionFixture(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        0,
+        migrationTarget,
+        (data, intent) -> {},
+        false);
+  }
+
+  private CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget,
+      BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
+          afterBootstrap,
+      boolean upgradeAfterBootstrap) {
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
@@ -240,7 +283,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
             .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
     Objects.requireNonNull(afterBootstrap, "afterBootstrap").accept(dataSource, bootstrapIntent);
-    if (migrationTarget != null) {
+    if (migrationTarget != null && upgradeAfterBootstrap) {
       upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
     }
     new CanonicalGameplayIssuerAdmissionControlRepository(dsl)

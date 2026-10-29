@@ -1498,8 +1498,11 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     accountDataSource.setUsername(POSTGRES.getUsername());
     accountDataSource.setPassword(POSTGRES.getPassword());
     fixture =
-        new CanonicalGameplayAdmissionAbortCompositionFixture(
-            accountDataSource, candidate, ownerClient, 0, migrationTarget);
+        migrationTarget == null
+            ? new CanonicalGameplayAdmissionAbortCompositionFixture(
+                accountDataSource, candidate, ownerClient, 0)
+            : CanonicalGameplayAdmissionAbortCompositionFixture.atHistoricalIssuerAdmissionFrontier(
+                accountDataSource, candidate, ownerClient, migrationTarget);
     Candidate actualCandidate = fixture.candidate();
     CanonicalGameplayBindingIdentity identity = identity(actualCandidate);
     fixture.publish(controlledLeaseEvidence(identity, fixture.generation(), fixture.target()));
