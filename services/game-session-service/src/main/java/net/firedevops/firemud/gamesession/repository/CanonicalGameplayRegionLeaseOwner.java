@@ -117,26 +117,26 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
           redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
-        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
-            permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
-        CanonicalGameplayBindingProvisionalCasEvidence afterClaimEvidence =
+        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
             readCurrentProvisionalEvidence(transitionId);
-        bindingInventory.requireSameProvisionalSource(evidence, afterClaimEvidence);
-        ResolvedBridgeSource afterClaimWorld =
-            resolveExactBridgeSource(worldRequest, afterClaimEvidence);
-        requireSameSource(source, afterClaimWorld.source);
-        CanonicalGameplayRegionIncarnationSource.StableEvidence afterClaimIncarnation =
+        bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
+        ResolvedBridgeSource beforeClaimWorld =
+            resolveExactBridgeSource(worldRequest, beforeClaimEvidence);
+        requireSameSource(source, beforeClaimWorld.source);
+        CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
             readCurrentIncarnation(source);
-        requireSameIncarnation(incarnation, afterClaimIncarnation);
+        requireSameIncarnation(incarnation, beforeClaimIncarnation);
         if (!statusRepository.matchesTimelinePreparation(
             preparation,
-            afterClaimEvidence,
+            beforeClaimEvidence,
             worldRequest,
-            afterClaimWorld.resolvedRegion,
+            beforeClaimWorld.resolvedRegion,
             source,
-            afterClaimIncarnation)) {
+            beforeClaimIncarnation)) {
           throw unavailable();
         }
+        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+            permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
         grant = session.initialize(permit.orElse(null));
       }
       redisOwner.verifyInitializedTimeline(grant, preparation);
