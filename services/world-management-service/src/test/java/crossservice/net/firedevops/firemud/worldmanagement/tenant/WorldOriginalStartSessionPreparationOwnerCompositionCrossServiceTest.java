@@ -539,6 +539,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
     }
+    if (playerCreatedPlacement
+        && (!exerciseCoupledCanonicalInitialAdmission || abortCanonicalInitialAdmission)) {
+      throw new IllegalArgumentException(
+          "Created placement proof requires the committed coupled owner path");
+    }
     UUID tenant = UUID.randomUUID();
     try (var account =
             new AccountControlUiOriginalOrderFixture(

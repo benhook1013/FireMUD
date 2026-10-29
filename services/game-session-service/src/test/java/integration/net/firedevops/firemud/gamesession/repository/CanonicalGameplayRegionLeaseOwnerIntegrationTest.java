@@ -29,7 +29,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -65,6 +67,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInvent
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
@@ -87,6 +90,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -972,6 +976,187 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void retainedParentRegionBridgeUpgradePreservesRowsHistoryAndMigrationRetry() throws Exception {
+    assertRetainedParentRegionBridgeUpgrade(false);
+  }
+
+  @Test
+  void retainedParentRegionBridgeUpgradeRefusesChangedPreparationWithoutMutation()
+      throws Exception {
+    assertRetainedParentRegionBridgeUpgrade(true);
+  }
+
+  /** Physical SQL proof; controlled initialization/grant outcomes do not establish a Redis ACK. */
+  private static void assertRetainedParentRegionBridgeUpgrade(boolean incompatible)
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema("1050.5");
+    try {
+      var target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              schema.dataSource(), UUID.randomUUID(), "firemud");
+      var world = WorldFixture.open(target);
+      UUID transitionId;
+      try (var entity = EntityReferenceFixture.open()) {
+        transitionId =
+            CanonicalGameplayRegionOwnerCompositionFixture
+                .installHistoricalMaterializedRequiredBridge(
+                    schema.dsl(),
+                    world.request(),
+                    target.playableTarget(),
+                    world.resolver(),
+                    entity.client());
+      }
+      var bridge =
+          schema
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_canonical_binding_region_bridge_obligation WHERE transition_id = ?",
+                  transitionId);
+      assertThat(bridge.get("bridge_operation_id", UUID.class)).isNotNull();
+      assertThat(bridge.get("status", String.class)).isEqualTo("REQUIRED");
+      assertThat(bridge.get("redis_readback_digest")).isNull();
+      assertThat(
+              schema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT phase FROM game_session_region_timeline_preparation WHERE transition_id = ?",
+                      transitionId)
+                  .get(0, String.class))
+          .isEqualTo("INSTALLED");
+      if (incompatible) {
+        // V1050.5 permits this ordinary checked write. No trigger or constraint is bypassed.
+        assertThat(
+                schema
+                    .dsl()
+                    .execute(
+                        "UPDATE game_session_region_timeline_preparation SET assignment_uuid = ? WHERE transition_id = ?",
+                        UUID.randomUUID(),
+                        transitionId))
+            .isOne();
+      }
+      var before = retainedRegionMigrationImage(schema.dsl());
+      var historyBefore = regionMigrationHistoryImage(schema.dsl());
+      if (incompatible) {
+        Throwable failure = catchThrowable(() -> upgradeRegionSchema(schema));
+        assertThat(failure).hasRootCauseInstanceOf(PSQLException.class);
+        while (failure.getCause() != null) failure = failure.getCause();
+        var databaseFailure = (PSQLException) failure;
+        assertThat(databaseFailure.getSQLState()).isEqualTo("23514");
+        assertThat(databaseFailure.getServerErrorMessage()).isNotNull();
+        assertThat(databaseFailure.getServerErrorMessage().getConstraint())
+            .isEqualTo("gs_region_bridge_original_preparation_upgrade");
+        assertThat(databaseFailure.getServerErrorMessage().getMessage())
+            .isEqualTo("Retained region bridge requires its exact original installed preparation");
+        assertThat(regionMigrationHistoryImage(schema.dsl())).isEqualTo(historyBefore);
+        assertThat(
+                schema
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()"
+                            + " AND table_name IN ('game_session_region_timeline_preparation',"
+                            + " 'game_session_canonical_binding_region_bridge_obligation')"
+                            + " AND column_name = 'entity_created_origin'")
+                    .get(0, Integer.class))
+            .isZero();
+        assertThat(
+                schema
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT count(*) FROM pg_proc WHERE pronamespace = current_schema()::regnamespace"
+                            + " AND proname = 'gs_region_bridge_original_preparation_matches'")
+                    .get(0, Integer.class))
+            .isZero();
+      } else {
+        assertThat(upgradeRegionSchema(schema)).isOne();
+        var historyAfter = regionMigrationHistoryImage(schema.dsl());
+        assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+        assertThat(historyAfter.subList(0, historyBefore.size())).isEqualTo(historyBefore);
+        assertThat(
+                schema
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT gs_region_bridge_original_preparation_matches(bridge)"
+                            + " FROM game_session_canonical_binding_region_bridge_obligation bridge"
+                            + " WHERE transition_id = ?",
+                        transitionId)
+                    .get(0, Boolean.class))
+            .isTrue();
+        for (String table :
+            List.of(
+                "game_session_region_timeline_preparation",
+                "game_session_canonical_binding_region_bridge_obligation")) {
+          assertThat(
+                  schema
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT count(*) FROM "
+                              + table
+                              + " WHERE entity_created_origin IS NOT NULL")
+                      .get(0, Integer.class))
+              .isZero();
+        }
+        // Current typed owner reads and an exact Flyway retry preserve the retained SQL evidence.
+        var inventory = new CanonicalGameplayBindingInventoryRepository(schema.dsl());
+        var retainedBridges = inventory.readSnapshot().regionBridgeObligations();
+        assertThat(retainedBridges).hasSize(1);
+        assertThat(retainedBridges.get(0).bridgeOperationId())
+            .isEqualTo(bridge.get("bridge_operation_id", UUID.class));
+        assertThat(retainedBridges.get(0).actorOrigin())
+            .isEqualTo(
+                new CanonicalGameplayRuntimeActorReference.AssignmentOrigin(
+                    UUID.fromString(world.request().getAssignmentUuid()),
+                    world.request().getAssignmentIntentDigest()));
+        assertThat(inventory.readSnapshot().regionBridgeObligations()).isEqualTo(retainedBridges);
+        assertThat(upgradeRegionSchema(schema)).isZero();
+        assertThat(regionMigrationHistoryImage(schema.dsl())).isEqualTo(historyAfter);
+      }
+      assertThat(retainedRegionMigrationImage(schema.dsl())).isEqualTo(before);
+    } finally {
+      dropSchema(schema.schema());
+    }
+  }
+
+  private static Map<String, List<String>> retainedRegionMigrationImage(DSLContext dsl) {
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "game_session_region_timeline_preparation",
+            "game_session_region_runtime_status",
+            "game_session_canonical_binding_transition",
+            "game_session_canonical_gameplay_binding_inventory",
+            "game_session_canonical_binding_region_bridge_obligation",
+            "game_session_canonical_binding_account_index_obligation",
+            "game_session_canonical_binding_issuer_index_obligation",
+            "game_session_canonical_issuer_partition_reservation",
+            "game_session_canonical_binding_inventory_clock")) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(retained) - 'entity_created_origin',"
+                      + " 'xmin', xmin::text)::text AS image FROM "
+                      + table
+                      + " retained ORDER BY to_jsonb(retained)::text")
+              .getValues("image", String.class));
+    }
+    return rows;
+  }
+
+  private static List<String> regionMigrationHistoryImage(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT to_jsonb(history)::text AS image FROM flyway_schema_history history"
+                + " ORDER BY installed_rank")
+        .getValues("image", String.class);
+  }
+
+  private static int upgradeRegionSchema(TestSchema schema) {
+    return regionMigrations(schema.dataSource(), schema.schema())
+        .load()
+        .migrate()
+        .migrationsExecuted;
+  }
+
+  @Test
   void createdOriginNativeBridgeRetainsOriginalPurposeAndRejectsSourceSubstitution()
       throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
@@ -1309,6 +1494,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   private static TestSchema newTestSchema() {
+    return newTestSchema(null);
+  }
+
+  private static TestSchema newTestSchema(String targetVersion) {
     String schema = "gs_region_member_order_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(POSTGRES.getDriverClassName());
@@ -1316,16 +1505,22 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     dataSource.setUrl(POSTGRES.getJdbcUrl() + separator + "currentSchema=" + schema);
     dataSource.setUsername(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
-    Flyway.configure()
+    var migrations = regionMigrations(dataSource, schema);
+    if (targetVersion != null) migrations.target(targetVersion);
+    migrations.load().migrate();
+    return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
+  }
+
+  private static org.flywaydb.core.api.configuration.FluentConfiguration regionMigrations(
+      DataSource dataSource, String schema) {
+    return Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
         .defaultSchema(schema)
         .table("flyway_schema_history")
         .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
-        .load()
-        .migrate();
-    return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
+            "filesystem:"
+                + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
   }
 
   private static void dropSchema(String schema) {

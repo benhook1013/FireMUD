@@ -124,6 +124,78 @@ class EntityPlayerCreatedRuntimeReferenceIngressTest {
   }
 
   @Test
+  void pendingCreationAndStorageFailuresRemainDistinctAcrossBothOwnerMethods() throws Exception {
+    var pki =
+        LoopbackMtlsTestPki.create(
+            directory,
+            "Entity pending reference proof CA",
+            identity("entity", "firemud", "entity-management-service", true),
+            identity("world", "firemud", "world-management-service", false),
+            identity("game-session", "firemud", "game-session-service", false));
+    var dsl = mock(DSLContext.class);
+    var creation = mock(EntityCharacterCreateRepository.class);
+    var owner = new EntityPlayerCreatedRuntimeReferenceService("firemud", dsl, creation);
+    var entity = pki.identity("entity");
+    Server server =
+        NettyServerBuilder.forPort(0)
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(entity.privateKey(), entity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(EntityPlayerCreatedRuntimeReferenceIngressFactory.bind(owner, "firemud"))
+            .build()
+            .start();
+    try {
+      var worldChannel = channel(server.getPort(), pki, "world");
+      var gameChannel = channel(server.getPort(), pki, "game-session");
+      try {
+        var world =
+            CanonicalPlayerCreatedRuntimeReferenceServiceGrpc.newBlockingStub(worldChannel)
+                .withDeadlineAfter(5, TimeUnit.SECONDS);
+        var game =
+            CanonicalPlayerCreatedRuntimeReferenceServiceGrpc.newBlockingStub(gameChannel)
+                .withDeadlineAfter(5, TimeUnit.SECONDS);
+        var request = validRequest();
+        // Controlled repository PENDING result; this does not fabricate a committed SQL terminal.
+        when(creation.read(any()))
+            .thenThrow(
+                Status.UNAVAILABLE
+                    .withDescription("Creation has no definitive terminal")
+                    .asRuntimeException());
+        for (Runnable read :
+            java.util.List.<Runnable>of(
+                () -> world.readPlayerCreatedActorPlacementReceipt(request),
+                () -> game.readPlayerCreatedActorRuntimeReference(request))) {
+          assertThatThrownBy(read::run)
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure -> {
+                    var status = Status.fromThrowable(failure);
+                    assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(status.getDescription())
+                        .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
+                  });
+        }
+        org.mockito.Mockito.doThrow(new org.jooq.exception.DataAccessException("private detail"))
+            .when(creation)
+            .read(any());
+        assertCode(
+            () -> world.readPlayerCreatedActorPlacementReceipt(request), Status.Code.UNAVAILABLE);
+        assertCode(
+            () -> game.readPlayerCreatedActorRuntimeReference(request), Status.Code.UNAVAILABLE);
+        verifyNoInteractions(dsl);
+      } finally {
+        worldChannel.shutdownNow();
+        gameChannel.shutdownNow();
+      }
+    } finally {
+      server.shutdownNow();
+    }
+  }
+
+  @Test
   void grpcAdapterReturnsBoundedSafeStorageFailureWithoutPartialResponse() {
     var owner = mock(EntityPlayerCreatedRuntimeReferenceService.class);
     var failure = new DataAccessResourceFailureException("private database detail");

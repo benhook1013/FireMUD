@@ -73,8 +73,12 @@ public final class EntityPlayerCreatedRuntimeReferenceService {
     try {
       terminal = creationRepository.read(originalRequest).orElseThrow(() -> unavailable());
     } catch (StatusRuntimeException failure) {
-      // The shared writer reports digest reuse as a conflict; this read exposes one refusal.
-      if (failure.getStatus().getCode() == Status.Code.ALREADY_EXISTS) throw unavailable();
+      // Digest reuse and a pending creation both lack the original evidence this read requires.
+      // Transient storage failures are DataAccessException and retain the adapter's UNAVAILABLE.
+      Status.Code code = failure.getStatus().getCode();
+      if (code == Status.Code.ALREADY_EXISTS || code == Status.Code.UNAVAILABLE) {
+        throw unavailable();
+      }
       throw failure;
     }
     CharacterCreateOperatorAction action =
