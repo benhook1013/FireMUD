@@ -11,6 +11,8 @@ option java_outer_classname = "AccountGameplayAdmissionLeaseProto";
 // Explicit, manually composed Account-only NEW-binding owner protocol. The same-namespace
 // Game Session certificate is the workload identity; no generic service JWT is accepted as it.
 service AccountGameplayAdmissionLeaseService {
+  rpc AbortNeverAdmittedGameplayAdmissionLease(AbortNeverAdmittedGameplayAdmissionLeaseRequest)
+      returns (AbortNeverAdmittedGameplayAdmissionLeaseResponse);
   rpc AcquireGameplayAdmissionLease(AcquireGameplayAdmissionLeaseRequest)
       returns (AccountGameplayAdmissionLeaseResponse);
   rpc FinalizeGameplayAdmissionLease(FinalizeGameplayAdmissionLeaseRequest)
@@ -160,4 +162,26 @@ message AccountGameplayAdmissionOriginalAckReceiptEvidence {
   repeated string finalization_xid = 9;
   repeated string committed_before_ms = 10;
   repeated string receipt_xid = 11;
+}
+
+// Distinct negative purpose: never accepts or manufactures a positive admission decision.
+message AbortNeverAdmittedGameplayAdmissionLeaseRequest {
+  repeated uint32 schema_version = 1;
+  repeated string presented_initial_gsa_compact_jwt = 2;
+  repeated bytes original_lease_evidence_utf8 = 3;
+  repeated string transition_uuid = 4;
+  repeated string abandonment_uuid = 5;
+}
+
+// ABORTED-only retained original terminal and pending cleanup linkage, never cleanup completion.
+message AbortNeverAdmittedGameplayAdmissionLeaseResponse {
+  repeated uint32 schema_version = 1;
+  repeated bytes original_lease_evidence_utf8 = 2;
+  repeated AccountGameplayAdmissionLeaseState state = 3;
+  repeated string transition_uuid = 4;
+  repeated string abandonment_uuid = 5;
+  repeated string candidate_sha256 = 6;
+  repeated string closure_readback_sha256 = 7;
+  repeated string orphan_cleanup_uuid = 8;
+  repeated string negative_resolution_uuid = 9;
 }

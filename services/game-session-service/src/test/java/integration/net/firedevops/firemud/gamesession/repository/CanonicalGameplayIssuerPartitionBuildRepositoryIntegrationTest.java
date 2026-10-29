@@ -2456,6 +2456,19 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               + " = 'null'::jsonb THEN ARRAY['original_new_final_session_sha256',"
               + " 'original_new_admission_at_ms', 'original_new_continuity_expires_at_ms',"
               + " 'original_new_session_duration_ms'] ELSE ARRAY[]::text[] END";
+      // Only all-null V1050.2 additions are absence-equivalent; retain material selection evidence.
+      image =
+          "("
+              + image
+              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_abandonment_id' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_state' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_closure_digest' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_orphan_cleanup_id' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_resolution_id' = 'null'::jsonb"
+              + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
+              + " 'original_new_abandonment_closure_digest',"
+              + " 'original_new_abandonment_orphan_cleanup_id', 'original_new_abandonment_resolution_id']"
+              + " ELSE ARRAY[]::text[] END";
     } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
       // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
       image =
@@ -2495,6 +2508,19 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               + " = 'null'::jsonb THEN ARRAY['original_new_final_session_sha256',"
               + " 'original_new_admission_at_ms', 'original_new_continuity_expires_at_ms',"
               + " 'original_new_session_duration_ms'] ELSE ARRAY[]::text[] END";
+      // Only all-null V1050.2 additions are absence-equivalent; retain material selection evidence.
+      image =
+          "("
+              + image
+              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_abandonment_id' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_state' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_closure_digest' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_orphan_cleanup_id' = 'null'::jsonb"
+              + " AND to_jsonb(retained_row)->'original_new_abandonment_resolution_id' = 'null'::jsonb"
+              + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
+              + " 'original_new_abandonment_closure_digest',"
+              + " 'original_new_abandonment_orphan_cleanup_id', 'original_new_abandonment_resolution_id']"
+              + " ELSE ARRAY[]::text[] END";
     } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
       // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
       image =

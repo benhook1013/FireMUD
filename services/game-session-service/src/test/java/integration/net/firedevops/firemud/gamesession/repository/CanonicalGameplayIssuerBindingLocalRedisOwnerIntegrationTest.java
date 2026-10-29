@@ -950,6 +950,72 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
   }
 
   @Test
+  void abandonmentPreservesAnIssuedCapacityMutationAndRefusesFreshOrdinaryProjection()
+      throws Exception {
+    DSLContext dsl = schema.dsl();
+    establishActualLegacyDisposition(dsl);
+    UUID bootstrapRequest = UUID.randomUUID();
+    var intent =
+        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+            .beginInitialBootstrapIntent(
+                bootstrapRequest, descriptor(), sourceCheckpoint(BigInteger.valueOf(7)));
+    migrateRemaining(schema);
+    var state =
+        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+            intent.sourceCheckpoint(), stableIncarnation("negative-capacity-original"));
+    var anchor =
+        initialCoverageOwner(dsl, () -> state)
+            .completeInitialBootstrap(intent.operationId(), bootstrapRequest);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, () -> state);
+    var runtime =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            schema.dataSource(), uuid("negative-capacity-tenant"));
+    var candidate = identity("negative-capacity-original", runtime);
+    var request = request("negative-capacity-request", "negative-capacity-transition", candidate);
+    var original =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> state)
+            .beginOrResumeOrdinaryNew(request);
+    var projection = new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, () -> state);
+    var prepared = projection.prepareAddMutationWork(original);
+    assertThat(prepared.physicalMutation().kind())
+        .isEqualTo(CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY);
+    byte[] key =
+        CanonicalGameplayIssuerRedisKeys.forMember(original.memberValue())
+            .getBytes(StandardCharsets.US_ASCII);
+    var physicalBefore = hashImage(key);
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var evidence = inventory.readProvisionalCasEvidence(request.transitionId());
+    var decision =
+        new CanonicalGameplayAdmissionDecision(
+            request.transitionId(),
+            controlledLeaseEvidence(
+                candidate, evidence.transition().bindingGeneration(), runtime.playableTarget()),
+            candidate,
+            evidence.transition().bindingGeneration(),
+            null,
+            runtime.playableTarget());
+    inventory.claimOriginalNewCandidateInstallation(decision);
+    inventory.selectOriginalNewAbandonment(request.transitionId());
+
+    assertThatThrownBy(() -> projectionOwner(dsl, () -> state).projectAndRead(original))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("abandoned");
+    var retained =
+        CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+            dsl,
+            CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY,
+            original.operationId(),
+            original.reservation().partitionId());
+    assertThat(retained.mutationId()).isEqualTo(prepared.physicalMutation().mutationId());
+    assertThat(retained.exactIntendedChangeBytes())
+        .containsExactly(prepared.physicalMutation().exactIntendedChangeBytes());
+    assertThat(retained.status())
+        .isEqualTo(CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF);
+    assertThat(hashImage(key)).isEqualTo(physicalBefore);
+  }
+
+  @Test
   void malformedLuaBindingReferenceAndReleaseCountsRefuseWithoutChangingPartition()
       throws Exception {
     byte[] key =

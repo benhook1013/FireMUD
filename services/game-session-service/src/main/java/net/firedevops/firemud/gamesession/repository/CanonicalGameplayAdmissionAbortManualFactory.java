@@ -20,6 +20,31 @@ import org.jooq.DSLContext;
 public final class CanonicalGameplayAdmissionAbortManualFactory {
   private CanonicalGameplayAdmissionAbortManualFactory() {}
 
+  public static CanonicalGameplayOriginalNewNeverAdmittedAbortOwner
+      createUnregisteredNeverAdmittedOwner(
+          DSLContext dsl,
+          io.lettuce.core.RedisClient redis,
+          net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog catalog,
+          CanonicalGameplayTenantGameplayTagRepository tags,
+          CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource issuerSource,
+          CanonicalGameplayOriginalNewClosureQualification qualification,
+          AccountGameplayAdmissionLeaseClient accountClient) {
+    return new CanonicalGameplayOriginalNewNeverAdmittedAbortOwner(
+        dsl, redis, catalog, tags, issuerSource, qualification, accountClient);
+  }
+
+  public static CanonicalGameplayAdmissionDecisionReadGrpcService
+      createUnregisteredNegativeDecisionReadReceiver(
+          DSLContext dsl,
+          String workloadNamespace,
+          CanonicalGameplayOriginalNewCandidateClosureRedisOwner closure) {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcService(
+        new CanonicalGameplayBindingInventoryRepository(dsl),
+        new CanonicalGameplayAdmissionDecisionReadWorkloadGuard(workloadNamespace),
+        workloadNamespace,
+        Objects.requireNonNull(closure));
+  }
+
   public static CanonicalGameplayAdmissionAbortOwner createUnregisteredOwner(
       DSLContext dsl, AccountGameplayAdmissionLeaseClient accountClient) {
     return new CanonicalGameplayAdmissionAbortOwner(

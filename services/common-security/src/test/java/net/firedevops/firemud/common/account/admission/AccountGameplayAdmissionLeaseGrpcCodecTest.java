@@ -52,6 +52,128 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
+  void
+      negativePurposeRoundTripsWithoutPositiveDecisionAndRejectsChangedPurposeCorrelationAndState() {
+    var original = lease();
+    var wireRequest =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toRequest(JWT, original, DECISION_ID, OTHER);
+    var request = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(wireRequest);
+    var decisionWireRequest =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionRequest(
+            DECISION_ID, OTHER, original);
+    var decisionRequest =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(decisionWireRequest);
+    var decision =
+        new AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence(
+            original,
+            DECISION_ID,
+            OTHER,
+            "a".repeat(64),
+            "b".repeat(64),
+            candidate(original),
+            target(original),
+            new BigInteger(HIGH));
+    var decisionWire =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(
+            decisionRequest, decision);
+    var decodedDecision =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+            decisionRequest, decisionWire);
+    assertThat(decodedDecision.candidate()).isEqualTo(candidate(original));
+    assertThat(decodedDecision.targetEvidence()).isEqualTo(target(original));
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                    decisionRequest,
+                    decisionWire.toBuilder().setPurpose(0, "provisional-decision/v1").build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                    decisionRequest,
+                    decisionWire.toBuilder().addCandidateSha256("a".repeat(64)).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                    decisionRequest, decisionWire.toBuilder().setBindingGeneration(0, "1").build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                    decisionRequest,
+                    decisionWire.toBuilder().setClosureReadbackSha256(0, "A".repeat(64)).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                    decisionRequest,
+                    decisionWire.toBuilder().setAbandonmentUuid(0, CLEANUP_ID.toString()).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var abort =
+        new AccountGameplayAdmissionNeverAdmittedGrpcCodec.AbortEvidence(
+            original,
+            DECISION_ID,
+            OTHER,
+            "a".repeat(64),
+            "b".repeat(64),
+            CLEANUP_ID,
+            UUID.randomUUID());
+    var response = AccountGameplayAdmissionNeverAdmittedGrpcCodec.toResponse(request, abort);
+    assertThat(AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(request, response))
+        .isEqualTo(abort);
+    assertThat(request.toString()).doesNotContain(JWT);
+    for (int state : List.of(0, 1, 2, 999)) {
+      assertThatThrownBy(
+              () ->
+                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+                      request, response.toBuilder().setStateValue(0, state).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+                    request, response.toBuilder().addSchemaVersion(1).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
+                    wireRequest.toBuilder()
+                        .setTransitionUuid(0, "00000000-0000-0000-0000-000000000000")
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
+                    wireRequest.toBuilder().addPresentedInitialGsaCompactJwt(JWT).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+                    request, response.toBuilder().setUnknownFields(unknown).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                    decisionWireRequest.toBuilder()
+                        .setExpectedLeaseEvidenceUtf8(
+                            0, ByteString.copyFromUtf8(original.canonicalJson() + " "))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
+                    wireRequest.toBuilder()
+                        .setPresentedInitialGsaCompactJwt(0, "x".repeat(256 * 1024))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void roundTripsExactAcquireLeaseBytesAndCompleteAckWithoutClaimingAuthority() {
     var lease = lease();
     var request = request(lease, candidate(lease), target(lease));

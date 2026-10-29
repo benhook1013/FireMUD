@@ -6,7 +6,7 @@ local mutationRevisionField = '!issuer-partition-mutation-revision/v1'
 local capacityPrefix = '!issuer-reservation-capacity/v1:'
 local maxMemberValueBytes = 65536
 local maxMetadataBytes = 65536
-local maxMemberOperations = 256
+local maxMemberOperations = 512
 local maxHashFields = 1025
 local maxPhysicalFields = 1026
 local maxBaselineFields = 513
@@ -316,7 +316,8 @@ local plannedAggregate = ARGV[cursor + 8]
 local aggregateBound = ARGV[cursor + 9]
 local expectedRevision = ARGV[cursor + 10]
 local successorRevision = ARGV[cursor + 11]
-if #ARGV ~= cursor + 11 or not uuid(originalOperationId) or not uuid(releaseOperationId)
+local neverAdmitted = ARGV[cursor + 12]
+if #ARGV ~= cursor + 12 or (neverAdmitted ~= '0' and neverAdmitted ~= '1') or not uuid(originalOperationId) or not uuid(releaseOperationId)
     or originalOperationId == releaseOperationId or not uuid(targetReservationId)
     or type(targetBindingRef) ~= 'string' or type(originalBytes) ~= 'string'
     or type(releasedBytes) ~= 'string' or #originalBytes == 0 or #releasedBytes == 0
@@ -338,6 +339,7 @@ local targetRegisteredReleased = false
 for _, operation in ipairs(operations) do
   if operation.reservationId == targetReservationId then
     if operation.bindingRef ~= targetBindingRef then return -2 end
+    if neverAdmitted == '1' and operation.bindingPresent ~= '0' then return -2 end
     if operation.operationId == originalOperationId and operation.memberBytes == originalBytes
         and operation.countsCapacity == '1' then targetRegistered = true
     elseif operation.operationId == releaseOperationId and operation.memberBytes == releasedBytes
@@ -415,9 +417,15 @@ if revisionBefore == successorRevision then
   if targetCapacityBefore ~= releasedBytes or targetBindingBefore ~= nil then return -1 end
   return 2
 end
-if revisionBefore ~= expectedRevision
-    or targetCapacityBefore ~= originalBytes
-    or targetBindingBefore ~= originalBytes then return -1 end
+if revisionBefore ~= expectedRevision then return -1 end
+if neverAdmitted == '1' then
+  -- SQL proves this original never reached PROVISIONAL and excludes any new binding grant.
+  -- A previously issued capacity mutation must already have durable exact outcome proof.
+  if targetBindingBefore ~= nil
+      or (targetCapacityBefore ~= nil and targetCapacityBefore ~= originalBytes) then return -1 end
+else
+  if targetCapacityBefore ~= originalBytes or targetBindingBefore ~= originalBytes then return -1 end
+end
 redis.call('HSET', KEYS[1], mutationRevisionField, successorRevision,
     targetCapacityField, releasedBytes)
 redis.call('HDEL', KEYS[1], targetBindingRef)

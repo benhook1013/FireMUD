@@ -10,6 +10,8 @@ import java.util.Objects;
 import java.util.UUID;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
@@ -26,6 +28,7 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Evidence;
@@ -367,6 +370,84 @@ public final class AccountGameplayAdmissionLeaseOwner {
         aborted.bindingDecisionId(),
         aborted.orphanCleanupId(),
         receipt);
+  }
+
+  /** Closes only an exact original NEW attempt under independently read negative-purpose proof. */
+  public AbortNeverAdmittedGameplayAdmissionLeaseResponse abortNeverAdmitted(
+      AbortNeverAdmittedGameplayAdmissionLeaseRequest wireRequest) {
+    GrpcPeerIdentity peer = requireGameSessionCaller();
+    requireNoAmbientSql();
+    final AccountGameplayAdmissionNeverAdmittedGrpcCodec.Request request;
+    try {
+      request = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(wireRequest);
+    } catch (RuntimeException malformed) {
+      throw invalidArgument();
+    }
+    var lease = request.originalLeaseEvidence();
+    VerifiedCaller caller = verifyCaller(request.presentedInitialGsACompactJwt(), peer);
+    requireCallerMatchesLease(caller, peer, lease);
+    final AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence decision;
+    try {
+      // The GS closure exclusion remains held by the calling GS owner through this callback.
+      // No Account SQL transaction encloses the independent reverse mTLS read.
+      decision =
+          decisionReadClient.readOriginalNewNeverAdmitted(
+              request.transitionId(), request.abandonmentId(), lease);
+      if (!decision.originalLeaseEvidence().hasSameIdentity(lease)
+          || !decision.transitionId().equals(request.transitionId())
+          || !decision.abandonmentId().equals(request.abandonmentId())) throw unavailable();
+      requireCandidateMatchesCaller(decision.candidate(), caller, peer);
+      requireCandidateMatchesLease(decision.candidate(), lease);
+      requireLeaseMatchesCandidateTarget(
+          lease,
+          requestId(lease),
+          decision.candidate(),
+          decision.targetEvidence(),
+          decision.bindingGeneration());
+    } catch (RuntimeException unknown) {
+      throw unavailable();
+    }
+    final AccountGameplayAdmissionAbortResolution resolution;
+    try {
+      resolution =
+          inWritableSerializableTransaction(
+              dsl -> {
+                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
+                    .requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
+                var repository = new AccountGameplayAdmissionLeaseRepository(dsl);
+                var original =
+                    repository
+                        .readExact(lease)
+                        .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
+                if (original.state() == AccountGameplayAdmissionLeaseOperation.State.COMMITTED
+                    || original.bindingDecisionId() != null) throw unavailable();
+                if (original.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING)
+                  original = repository.recordAborted(lease, null, UUID.randomUUID());
+                if (original.state() != AccountGameplayAdmissionLeaseOperation.State.ABORTED
+                    || original.bindingDecisionId() != null
+                    || original.orphanCleanupId() == null) throw unavailable();
+                return new AccountGameplayAdmissionAbortResolutionRepository(dsl)
+                    .recordOrReplayNeverAdmitted(
+                        lease,
+                        original.orphanCleanupId(),
+                        request.transitionId(),
+                        request.abandonmentId(),
+                        decision.candidateDigest(),
+                        decision.closureDigest());
+              });
+    } catch (RuntimeException unknown) {
+      throw unavailable();
+    }
+    return AccountGameplayAdmissionNeverAdmittedGrpcCodec.toResponse(
+        request,
+        new AccountGameplayAdmissionNeverAdmittedGrpcCodec.AbortEvidence(
+            lease,
+            resolution.transitionId(),
+            resolution.abandonmentId(),
+            resolution.candidateDigest(),
+            resolution.closureDigest(),
+            resolution.orphanCleanupId(),
+            resolution.resolutionId()));
   }
 
   private AccountGameplayAdmissionLeaseResponse resolveUnknownAbort(

@@ -7,6 +7,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Evidence;
@@ -85,6 +86,39 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     } catch (IllegalArgumentException malformed) {
       throw new IllegalStateException(
           "Game Session returned invalid canonical gameplay admission evidence", malformed);
+    }
+  }
+
+  /** Independently reads only the original NEW negative-purpose qualified closure. */
+  public AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence
+      readOriginalNewNeverAdmitted(
+          UUID transitionId, UUID abandonmentId, AccountGameplayAdmissionLeaseEvidence lease) {
+    requireNoAmbientSql("Never-admitted read requires no ambient Account transaction");
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || SessionContext.isInternalService()
+        || SessionContext.getServiceName() != null
+        || SessionContext.getServiceInstanceId() != null)
+      throw new IllegalStateException("Never-admitted read requires workload-only caller context");
+    Objects.requireNonNull(lease, "Original NEW lease evidence required");
+    if (!workloadNamespace.equals(lease.carrier().get("targetNamespace")))
+      throw new IllegalArgumentException(
+          "Never-admitted read requires configured workload namespace");
+    var request =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionRequest(
+            transitionId, abandonmentId, lease);
+    var expected = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request);
+    var response =
+        requireInitializedStub("Gameplay admission decision client is not initialized")
+            .withMaxInboundMessageSize(
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES)
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .getOriginalNewNeverAdmittedDecision(request);
+    try {
+      return AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+          expected, response);
+    } catch (RuntimeException malformed) {
+      throw new IllegalStateException(
+          "Game Session negative closure evidence unavailable", malformed);
     }
   }
 

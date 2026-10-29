@@ -8,6 +8,8 @@ import java.sql.SQLException;
 import java.util.Objects;
 import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
@@ -19,6 +21,7 @@ import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseOwner;
 import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwner;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import org.jooq.exception.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.CannotCreateTransactionException;
@@ -48,6 +51,21 @@ public final class AccountGameplayAdmissionLeaseGrpcService
     this.originalNewCredentialOwner = originalNewCredentialOwner;
     this.workloadGuard =
         Objects.requireNonNull(workloadGuard, "Account gameplay admission lease guard required");
+  }
+
+  @Override
+  public void abortNeverAdmittedGameplayAdmissionLease(
+      AbortNeverAdmittedGameplayAdmissionLeaseRequest request,
+      StreamObserver<AbortNeverAdmittedGameplayAdmissionLeaseResponse> observer) {
+    receive(
+        request,
+        observer,
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES,
+        () -> {
+          var parsed = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(request);
+          workloadGuard.requireNeverAdmittedNamespace(parsed);
+          return () -> owner.abortNeverAdmitted(request);
+        });
   }
 
   @Override
@@ -207,14 +225,14 @@ public final class AccountGameplayAdmissionLeaseGrpcService
     observer.onCompleted();
   }
 
-  private <T> void receive(
+  private <T, R> void receive(
       T request,
-      StreamObserver<AccountGameplayAdmissionLeaseResponse> observer,
+      StreamObserver<R> observer,
       int maximumBytes,
-      Supplier<Supplier<AccountGameplayAdmissionLeaseResponse>> validateAndCall) {
+      Supplier<Supplier<R>> validateAndCall) {
     Objects.requireNonNull(observer, "response observer is required");
 
-    final Supplier<AccountGameplayAdmissionLeaseResponse> ownerCall;
+    final Supplier<R> ownerCall;
     try {
       // This is deliberately the first request-related operation.
       workloadGuard.requireGameSessionCaller();
@@ -246,7 +264,7 @@ public final class AccountGameplayAdmissionLeaseGrpcService
       return;
     }
 
-    final AccountGameplayAdmissionLeaseResponse response;
+    final R response;
     try {
       response = Objects.requireNonNull(ownerCall.get(), "Account owner response required");
     } catch (StatusRuntimeException failure) {

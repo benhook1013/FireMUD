@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.issuer-binding-local-retirement.v1",
   "resourcePath": "redis/lua/game-session-issuer-binding-local-retirement.lua",
-  "sha256": "65afdf95a21a25ea872c97dfe79fb808740389c0fd877249b47ba4605f739e8e",
+  "sha256": "976662c14286f46b1515980139c8c63dba5cee0f91967a160655855007490060",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -14,7 +14,7 @@
   ],
   "arguments": [
     {"name": "issuerIdPartitionLayoutAndExactBaselineFields"},
-    {"name": "currentUnretiredLocalOperationCountAndExactFields"},
+    {"name": "currentUnretiredOriginalMemberCountAndExactFields"},
     {"name": "originalReleaseReceiptAndOpaquePhysicalRevisionCompareAndAdvance"}
   ],
   "category": "SESSION_ISSUER_INDEX",
