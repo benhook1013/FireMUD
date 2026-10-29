@@ -81,8 +81,17 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     adminConnection = administrator.connect(ByteArrayCodec.INSTANCE);
     admin = adminConnection.sync();
     admin.flushdb();
-    admin.aclSetuser(
-        PRINCIPAL,
+    configurePrincipal(true);
+    ownerClient = createClient(PRINCIPAL, PASSWORD);
+    var catalog = RedisScriptCatalog.loadInstalled(getClass().getClassLoader());
+    source = prepareSource();
+    owner =
+        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
+            ownerClient, catalog, source.repository(), source.tenantTags());
+  }
+
+  private void configurePrincipal(boolean allowScriptLoad) {
+    AclSetuserArgs permissions =
         new AclSetuserArgs()
             .reset()
             .on()
@@ -92,20 +101,15 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
             .addCommand(CommandType.PING)
             .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
             .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
-            .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
             .addCommand(CommandType.EVALSHA)
             .addCommand(CommandType.TYPE)
             .addCommand(CommandType.PTTL)
             .addCommand(CommandType.GET)
             .addCommand(CommandType.SET)
             .addCommand(CommandType.SADD)
-            .addCommand(CommandType.SISMEMBER));
-    ownerClient = createClient(PRINCIPAL, PASSWORD);
-    var catalog = RedisScriptCatalog.loadInstalled(getClass().getClassLoader());
-    source = prepareSource();
-    owner =
-        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
-            ownerClient, catalog, source.repository(), source.tenantTags());
+            .addCommand(CommandType.SISMEMBER);
+    if (allowScriptLoad) permissions.addCommand(CommandType.SCRIPT, CommandKeyword.LOAD);
+    admin.aclSetuser(PRINCIPAL, permissions);
   }
 
   @org.junit.jupiter.api.AfterEach
@@ -114,6 +118,76 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     if (adminConnection != null) adminConnection.close();
     if (ownerClient != null) ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
     if (administrator != null) administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+  }
+
+  @org.junit.jupiter.api.Test
+  void failedScriptPreflightLeavesCreationUnclaimedAndTheSameOriginalCanRetry() {
+    String sqlBefore = sourceSqlImage(source);
+    configurePrincipal(false);
+
+    assertThatThrownBy(() -> owner.installOnce(source.decision()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Original NEW candidate install/readback is unavailable");
+
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+    assertThat(admin.dbsize()).isZero();
+    var untouched = source.repository().readOriginalNewCandidateInstallationSource(source.decision());
+    assertThat(untouched.state().name()).isEqualTo("NEVER_DISPATCHED");
+    assertThat(untouched.consumeCreatePermission()).isFalse();
+    configurePrincipal(true);
+    var installed = owner.installOnce(source.decision());
+    assertThat(installed.candidate()).isEqualTo(untouched.candidate());
+    assertThat(installed.provisionalTransition().status().name()).isEqualTo("PROVISIONAL");
+    assertThat(admin.get(ascii(installed.sessionKey())))
+        .containsExactly(untouched.candidate().canonicalBytes());
+  }
+
+  @org.junit.jupiter.api.Test
+  void currentAccountMovementAfterPreflightRefusesDispatchWithoutClaimingCreation() {
+    var repository = org.mockito.Mockito.spy(source.repository());
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              new CanonicalGameplayAccountAdmissionBarrierRepository(source.dsl())
+                  .beginFenceIntent(source.identity().accountId(), UUID.randomUUID());
+              return invocation.callRealMethod();
+            })
+        .when(repository)
+        .claimOriginalNewCandidateInstallation(source.decision());
+    var racingOwner =
+        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
+            ownerClient,
+            RedisScriptCatalog.loadInstalled(getClass().getClassLoader()),
+            repository,
+            source.tenantTags());
+    String sqlBefore = sourceSqlImage(source);
+
+    assertThatThrownBy(() -> racingOwner.installOnce(source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Account-fence acquisition intent blocks a new binding transition");
+
+    org.mockito.Mockito.verify(repository).claimOriginalNewCandidateInstallation(source.decision());
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+    assertThat(admin.dbsize()).isZero();
+  }
+
+  @org.junit.jupiter.api.Test
+  void retainedDispatchUsesReadbackWithoutScriptLoadAndNeverRecreatesMissingState() {
+    var installed = owner.installOnce(source.decision());
+    String sqlBefore = sourceSqlImage(source);
+    configurePrincipal(false);
+    admin.scriptFlush();
+
+    var retry = owner.installOnce(source.decision());
+    assertThat(retry.candidate()).isEqualTo(installed.candidate());
+    assertThat(retry.physicalReadback().digest()).isEqualTo(installed.physicalReadback().digest());
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+
+    assertThat(admin.del(ascii(installed.sessionKey()))).isEqualTo(1L);
+    assertThatThrownBy(() -> owner.installOnce(source.decision()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Original NEW candidate install/readback is unavailable");
+    assertThat(admin.type(ascii(installed.sessionKey()))).isEqualTo("none");
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
   }
 
   @org.junit.jupiter.api.Test
@@ -216,7 +290,7 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     assertThat(first.consumeCreatePermission()).isTrue();
     assertThat(first.consumeCreatePermission()).isFalse();
     assertThat(second.consumeCreatePermission()).isFalse();
-    assertThatThrownBy(() -> owner.installClaimOnce(second))
+    assertThatThrownBy(() -> owner.installOnce(source.decision()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("install/readback is unavailable");
     assertThat(admin.dbsize()).isZero();
