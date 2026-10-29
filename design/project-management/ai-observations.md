@@ -196,7 +196,7 @@ Entry format:
   - Expected pattern: expose the controlling grant decision, timestamp, actor, original reason and baseline beside its additional-result count through an existing read-only controller command, so a worker can distinguish lifetime history from the current allowance without guessing. This is a tooling suggestion; existing counting and authorization rules stay unchanged.
   - Reconsideration trigger: when an existing read-only controller command exposes the controlling grant decision, timestamp, rationale and baseline beside the remaining allowance, verify it against separate lifetime and current allowances and revisit the manual queue readback.
 
-<a id="validation-none-whitespace-checks"></a>
+## Closed validation allowance
 
 - `2026-10-17`: A validation allowance of NONE includes whitespace checks.
   - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
@@ -204,6 +204,8 @@ Entry format:
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
   - Recurrence (`2026-10-27`): two documentation helpers assigned validation `NONE` nevertheless ran scoped `git diff --check` and disclosed it; no substantive gate or semantic proof was claimed. Main retained the named consolidated checks.
   - Recurrence (`2026-10-29`): a tracker helper embedded the whitespace check in a status command and disclosed it. Its separate unsupported R948 artifact-absence claim was corrected from the retained results and remains recorded in the artifact-naming observation below.
+
+## Further dated observations
 
 - `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
   - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
@@ -535,7 +537,7 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
 - `2026-10-29`: Inspect artifact naming before declaring proof missing
   - Context: a bounded tracker helper searched for R948 validation artifacts.
   - Observation: its search missed uppercase `R948` logs and produced an unsupported absence statement, which Main corrected after reading the retained results.
-  - Expected pattern: inspect actual artifact naming and retained results before asserting missing evidence. The separate validation-allowance recurrence is retained with the [original closed-allowlist observation](#validation-none-whitespace-checks).
+  - Expected pattern: inspect actual artifact naming and retained results before asserting missing evidence. The separate validation-allowance recurrence is retained with the [original closed-allowlist observation](#closed-validation-allowance).
 
 - `2026-10-29`: Malformed source-refresh IDs missing the `review_refresh_` prefix returned unrelated startup-binding advice. The original full receipt IDs recovered the existing observations without another fetch. FireController owner reports client-only fix `18cf3b4d` now identifies `refresh_id`, its required prefix/format and retained-receipt recovery; an existing MCP process keeps its prior binary until normal reconnection. Preserve exact full handles in delegation messages rather than abbreviating tool arguments.
 
