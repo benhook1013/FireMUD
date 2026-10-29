@@ -299,8 +299,10 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (existing.get("original_new_abandonment_id", UUID.class) != null) {
             return loadOriginalNewAbandonmentSource(transaction, transitionId, true);
           }
+          // Negative selection consumes the retained dispatch, not authority to admit again.
+          // Account acquisition may already own the frozen original candidate in its cohort.
           CanonicalGameplayBindingProvisionalCasEvidence evidence =
-              loadProvisionalCasEvidence(transaction, transitionId, true);
+              loadProvisionalCasEvidence(transaction, transitionId, true, false);
           if (evidence.transition().status()
                   != CanonicalGameplayBindingTransitionSnapshot.Status.PREPARED
               || evidence.expectedPrior() != null
@@ -3394,6 +3396,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   private static CanonicalGameplayBindingProvisionalCasEvidence loadProvisionalCasEvidence(
       DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    return loadProvisionalCasEvidence(transaction, transitionId, forUpdate, true);
+  }
+
+  private static CanonicalGameplayBindingProvisionalCasEvidence loadProvisionalCasEvidence(
+      DSLContext transaction,
+      UUID transitionId,
+      boolean forUpdate,
+      boolean requireCurrentAccountControl) {
     String lock = forUpdate ? " FOR UPDATE" : "";
     Record transition =
         transaction.fetchOne(
@@ -3460,7 +3470,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
     CanonicalGameplayBindingTransitionSnapshot transitionSnapshot =
         toTransitionSnapshot(transition, candidateRow, reservationRow);
-    if (initialBinding) {
+    if (initialBinding && requireCurrentAccountControl) {
       requireReadAccountCoverageEvidenceCurrent(
           transaction,
           transitionSnapshot.candidate().accountId(),

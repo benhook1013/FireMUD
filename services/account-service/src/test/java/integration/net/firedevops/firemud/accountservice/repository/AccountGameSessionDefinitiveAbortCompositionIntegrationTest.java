@@ -276,6 +276,82 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void negativeCleanupOwnerResumesAfterCommittedReleasePreparationReplyLoss(
+      boolean installedBootstrap) throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      assertThat(session.client.read(session.jwt, session.leaseBytes()).state())
+          .isEqualTo(State.ABORTED);
+      String account = session.accountOperationImage();
+      String resolution = session.negativeResolutionImage();
+      String fence = session.gs.negativeFence();
+      session.gs.restoreIssuerState();
+
+      assertThatThrownBy(session.gs::prepareIssuerReleaseAndLoseReply)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled lost issuer release preparation reply");
+      String originalRelease = session.issuerReleaseIdentityImage();
+      var release = session.gs.prepareIssuerRelease();
+      var preparedRetry = session.gs.prepareIssuerRelease();
+      assertThat(preparedRetry.operationId()).isEqualTo(release.operationId());
+      assertThat(preparedRetry.exactOriginalMemberValueBytes())
+          .containsExactly(release.exactOriginalMemberValueBytes());
+      assertThat(preparedRetry.exactReleasedMemberValueBytes())
+          .containsExactly(release.exactReleasedMemberValueBytes());
+      session.restartAccount();
+      var completed = session.abortNeverAdmitted();
+
+      assertThat(completed.cleanupComplete()).isTrue();
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.issuerReleaseIdentityImage()).isEqualTo(originalRelease);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      if (installedBootstrap) session.gs.assertUnaffectedBootstrapFieldsPresent();
+      session.assertNeverAdmittedExactRetryPreservesState();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void negativeCleanupOwnerResumesAfterCommittedRetirementReplyLoss(boolean installedBootstrap)
+      throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      String account = session.accountOperationImage();
+      String resolution = session.negativeResolutionImage();
+      String fence = session.gs.negativeFence();
+      session.gs.restoreIssuerState();
+      var release = session.gs.prepareIssuerRelease();
+      session.gs.completeIssuerRelease(release, session.gs.projectIssuerRelease(release));
+      assertThatThrownBy(
+              () ->
+                  session.gs.retireIssuerCapacityAndLoseReplyForTransition(
+                      session.gs.transitionId()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled lost retirement reply");
+      String history = session.issuerCleanupHistoryImage();
+      byte[] retiredFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+
+      session.restartAccount();
+      assertThat(session.abortNeverAdmitted().cleanupComplete()).isTrue();
+
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(retiredFields);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      if (installedBootstrap) session.gs.assertUnaffectedBootstrapFieldsPresent();
+      session.assertNeverAdmittedExactRetryPreservesState();
+    }
+  }
+
   @Test
   void neverAdmittedMissingQualificationChangedCredentialAndMismatchedAbandonmentRemainUnsettled()
       throws Exception {
@@ -1349,6 +1425,54 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                       .getValues("image")
                       .toString())
           .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private String issuerReleaseIdentityImage() {
+      return gs.dsl()
+          .fetchSingle(
+              "SELECT (to_jsonb(release) - ARRAY['status', 'completion_inventory_revision',"
+                  + " 'physical_readback_field_set_bytes', 'physical_readback_field_set_digest', 'completed_at'])::text"
+                  + " FROM game_session_canonical_issuer_binding_local_release_operation release WHERE transition_id = ?",
+              gs.transitionId())
+          .get(0, String.class);
+    }
+
+    private String issuerCleanupHistoryImage() {
+      return java.util.List.of(
+              "game_session_canonical_issuer_binding_local_operation",
+              "game_session_canonical_issuer_bootstrap_member_operation",
+              "game_session_canonical_issuer_bootstrap_partition_proof",
+              "game_session_canonical_issuer_binding_local_release_operation",
+              "game_session_canonical_issuer_binding_local_retirement",
+              "game_session_canonical_issuer_partition_mutation")
+          .stream()
+          .map(
+              table ->
+                  gs.dsl()
+                      .fetch(
+                          "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
+                              + table
+                              + " t ORDER BY 1")
+                      .getValues("image")
+                      .toString())
+          .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private void assertNeverAdmittedExactRetryPreservesState() {
+      String terminal = image();
+      String history = issuerCleanupHistoryImage();
+      String account = accountOperationImage();
+      String resolution = negativeResolutionImage();
+      String fence = gs.negativeFence();
+      byte[] fields = gs.issuerPartitionFieldSetBytes();
+      assertThat(abortNeverAdmitted().cleanupComplete()).isTrue();
+      assertThat(image()).isEqualTo(terminal);
+      assertThat(issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(accountOperationImage()).isEqualTo(account);
+      assertThat(negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(gs.negativeFence()).isEqualTo(fence);
+      assertThat(gs.issuerPartitionFieldSetBytes()).containsExactly(fields);
+      assertThat(gs.heldClosureQualifications()).isZero();
     }
 
     private byte[] leaseBytes() {

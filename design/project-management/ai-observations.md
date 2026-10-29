@@ -604,7 +604,7 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: A Python proof runner launched inside `run-locked-gradle.sh --resource-session` invoked nested Gradle.
   - Observation: Default `subprocess.run` behavior closed the inherited resource descriptor, and the wrapper correctly refused admission before running tests (`Invalid inherited local resource session: invalid inherited lock descriptor`). The runner’s guarded cleanup restored temporary version selections.
   - Expected pattern: Pass the existing `FIREMUD_LOCAL_RESOURCE_SESSION_FD` explicitly with `pass_fds` so nested subprocesses retain the original verified lease without creating or bypassing one.
-  - Outcome: The failed invocation remains an unrun gate, and the corrected invocation is being qualified. Recovery: R1034 passed 28 native cases and the selected Node 26 frontend/OpenAPI consumers with the original verified descriptor passed through `pass_fds`.
+  - Outcome: The failed invocation remains an unrun gate. R1034 subsequently passed 28 native cases and the selected Node 26 frontend/OpenAPI consumers with the original verified descriptor passed through `pass_fds`.
 
 - `2026-10-30`: Verify the remote PR head ref before publishing a carry
   - Context: While publishing a reconciled local branch for #3320, Gameplay guessed a remote branch name.

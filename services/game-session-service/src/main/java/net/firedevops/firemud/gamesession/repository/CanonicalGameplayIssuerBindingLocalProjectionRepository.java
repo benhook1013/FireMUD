@@ -77,19 +77,46 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
 
   java.util.Optional<PreparedPartitionWork> prepareNeverAdmittedCapacityMutationWork(
       CanonicalGameplayIssuerBindingLocalOperation target) {
-    var source =
-        new CanonicalGameplayBindingInventoryRepository(dsl)
-            .readIssuerCleanupSource(target.request().transitionId());
-    if (!source.neverAdmitted()) throw unavailable("Capacity cleanup requires a negative terminal");
-    var existing =
-        dsl.fetchOne(
-            "SELECT mutation_kind FROM game_session_canonical_issuer_partition_mutation"
-                + " WHERE owner_operation_id = ? AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')",
-            target.operationId());
-    if (existing == null) return java.util.Optional.empty();
-    if (!"ADD_CAPACITY".equals(existing.get("mutation_kind", String.class))) {
-      throw unavailable("Never-admitted cleanup cannot adopt an issued binding mutation");
-    }
+    Objects.requireNonNull(target, "target");
+    requireNoAmbientTransaction();
+    boolean reconcileAdd =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+              lockInventoryClock(transaction);
+              var source =
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, target.request().transitionId(), true);
+              if (!source.neverAdmitted())
+                throw unavailable("Capacity cleanup requires a negative terminal");
+              Record release =
+                  transaction.fetchOne(
+                      "SELECT * FROM "
+                          + ISSUER_LOCAL_RELEASE
+                          + " WHERE transition_id = ? FOR UPDATE",
+                      target.request().transitionId());
+              if (release != null) {
+                // An exact durable release has already taken over the original capacity intent.
+                // Replaying ADD would compare its old revision with a later release/retirement.
+                CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
+                    transaction,
+                    release,
+                    source,
+                    CanonicalGameplayIssuerOriginalMemberSource.ordinary(target));
+                return false;
+              }
+              Record existing =
+                  transaction.fetchOne(
+                      "SELECT mutation_kind FROM game_session_canonical_issuer_partition_mutation"
+                          + " WHERE owner_operation_id = ? AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')",
+                      target.operationId());
+              if (existing == null) return false;
+              if (!"ADD_CAPACITY".equals(existing.get("mutation_kind", String.class))) {
+                throw unavailable("Never-admitted cleanup cannot adopt an issued binding mutation");
+              }
+              return true;
+            });
+    if (!reconcileAdd) return java.util.Optional.empty();
     return java.util.Optional.of(
         readPreparedPartitionWork(
             CanonicalGameplayIssuerOriginalMemberSource.ordinary(target), true, false));
