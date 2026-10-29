@@ -68,6 +68,8 @@ public interface AccountOriginalNewFinalAdmissionReadClient {
    * compares every anchor and checks the canonical continuity deadline before persisting it.
    */
   final class AuthenticatedFinalAdmissionReadback {
+    private static final long MAX_CANONICAL_SESSION_DURATION_MILLIS = 300_000L;
+
     private final int sessionSchemaVersion;
     private final String admissionState;
     private final ExpectedOriginalAdmission anchors;
@@ -102,6 +104,7 @@ public interface AccountOriginalNewFinalAdmissionReadClient {
           || !"COMPLETE".equals(admissionState)
           || admissionAtMillis <= 0L
           || canonicalSessionDurationMillis <= 0L
+          || canonicalSessionDurationMillis > MAX_CANONICAL_SESSION_DURATION_MILLIS
           || continuityExpiresAtMillis != expectedExpiry) throw invalid();
     }
 
