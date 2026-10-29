@@ -854,7 +854,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         + " AND ? = ANY(pg_blocking_pids(pid))"
                         + " AND query LIKE '%game_instances%' LIMIT 1",
                     holderPid);
-        if (waiter != null) waitingPid = waiter.get("pid", Integer.class);
+        if (waiter != null) {
+          waitingPid = waiter.get("pid", Integer.class);
+        } else {
+          Thread.sleep(10L);
+        }
       }
       assertThat(waitingPid).as("bridge waits on exact runtime holder").isNotNull();
       assertThat(bridge.isDone()).isFalse();

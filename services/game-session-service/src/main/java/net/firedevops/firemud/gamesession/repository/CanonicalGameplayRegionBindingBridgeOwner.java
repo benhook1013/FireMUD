@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
@@ -12,6 +13,27 @@ import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeR
 
 /** Manual owner for the initial-NEW region binding mutation and its durable local ACK. */
 final class CanonicalGameplayRegionBindingBridgeOwner {
+  enum SqlPhase {
+    PREPARE,
+    ACKNOWLEDGE
+  }
+
+  /**
+   * Package-private SQL seam for owner-composition lock-order proof; production uses direct calls.
+   */
+  @FunctionalInterface
+  interface SqlPhaseRunner {
+    <T> T run(SqlPhase phase, Supplier<T> action);
+  }
+
+  private static final SqlPhaseRunner DIRECT_SQL_PHASE_RUNNER =
+      new SqlPhaseRunner() {
+        @Override
+        public <T> T run(SqlPhase phase, Supplier<T> action) {
+          return action.get();
+        }
+      };
+
   private final CanonicalGameplayRegionLeaseOwner regionLeaseOwner;
   private final CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient;
   private final CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient;
@@ -63,7 +85,13 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
   /** Executes only an exact first-NEW bridge from a privately created region installation. */
   CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement bridge(
       CanonicalGameplayRegionLeaseOwner.Installation installation) {
+    return bridge(installation, DIRECT_SQL_PHASE_RUNNER);
+  }
+
+  CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement bridge(
+      CanonicalGameplayRegionLeaseOwner.Installation installation, SqlPhaseRunner sqlPhaseRunner) {
     Objects.requireNonNull(installation, "installation");
+    Objects.requireNonNull(sqlPhaseRunner, "sqlPhaseRunner");
     CanonicalGameplayRegionLeaseOwner.BridgeContext initial =
         regionLeaseOwner.currentBridgeContext(installation);
     if (initial.evidence().expectedPrior() != null
@@ -76,7 +104,9 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     CanonicalGameplayRuntimeActorReference reference = readReference(installation.worldRequest);
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage initialPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, reference);
-    regionLeaseOwner.prepareBridge(installation, initialPreimage, reference);
+    sqlPhaseRunner.run(
+        SqlPhase.PREPARE,
+        () -> regionLeaseOwner.prepareBridge(installation, initialPreimage, reference));
 
     // The stable operation and current SQL fence are durable before this first physical write.
     CanonicalGameplayRuntimeActorReference beforeWriteReference =
@@ -85,7 +115,11 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeWritePreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, beforeWriteReference);
     CanonicalGameplayBindingRegionBridgeObligation prepared =
-        regionLeaseOwner.prepareBridge(installation, beforeWritePreimage, beforeWriteReference);
+        sqlPhaseRunner.run(
+            SqlPhase.PREPARE,
+            () ->
+                regionLeaseOwner.prepareBridge(
+                    installation, beforeWritePreimage, beforeWriteReference));
     regionLeaseOwner.applyRegionSessionBinding(installation, beforeWriteReference);
 
     CanonicalGameplayRuntimeActorReference currentReference =
@@ -94,7 +128,11 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
     CanonicalGameplayRegionLeaseOwner.RegionBridgePreimage beforeReadbackPreimage =
         regionLeaseOwner.probeRegionSessionBinding(installation, currentReference);
     prepared =
-        regionLeaseOwner.prepareBridge(installation, beforeReadbackPreimage, currentReference);
+        sqlPhaseRunner.run(
+            SqlPhase.PREPARE,
+            () ->
+                regionLeaseOwner.prepareBridge(
+                    installation, beforeReadbackPreimage, currentReference));
 
     CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback =
         regionLeaseOwner.readBackRegionSessionBinding(
@@ -108,10 +146,22 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
       throw unavailable();
     }
     prepared =
-        regionLeaseOwner.prepareBridge(installation, beforeAckPreimage, afterReadbackReference);
+        sqlPhaseRunner.run(
+            SqlPhase.PREPARE,
+            () ->
+                regionLeaseOwner.prepareBridge(
+                    installation, beforeAckPreimage, afterReadbackReference));
 
-    return regionLeaseOwner.acknowledgeBridge(
-        installation, prepared, beforeAckPreimage.context(), afterReadbackReference, readback);
+    CanonicalGameplayBindingRegionBridgeObligation acknowledgementPreparation = prepared;
+    return sqlPhaseRunner.run(
+        SqlPhase.ACKNOWLEDGE,
+        () ->
+            regionLeaseOwner.acknowledgeBridge(
+                installation,
+                acknowledgementPreparation,
+                beforeAckPreimage.context(),
+                afterReadbackReference,
+                readback));
   }
 
   /**
