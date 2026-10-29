@@ -22,7 +22,9 @@ public final class CanonicalGameplayAccountAdmissionFenceIntent {
     ISSUER_OBLIGATION,
     REGION_OBLIGATION,
     MEMBER_REPAIR_CONTROL,
-    MEMBER_REPAIR_OPERATION
+    MEMBER_REPAIR_OPERATION,
+    INITIALIZER,
+    INITIAL_TARGET
   }
 
   private final UUID operationId;

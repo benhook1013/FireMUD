@@ -1085,6 +1085,8 @@ class CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest {
       var anchor =
           coverage.completeInitialBootstrap(replacement.operationId(), replacement.requestId());
       assertThat(anchor.bootstrapOperationId()).isEqualTo(replacement.operationId());
+      new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+          .installInitialOpen(anchor, () -> state);
       var runtime =
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
               schema.dataSource(), TENANT_ID);

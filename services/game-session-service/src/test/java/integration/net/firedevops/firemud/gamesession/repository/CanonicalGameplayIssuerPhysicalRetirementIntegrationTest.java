@@ -758,122 +758,127 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
 
   @Test
   void bootstrapMembershipPreservesFrozenOwnershipAcrossAnUnrelatedAdditiveColumn() {
-    // Capture through the real bootstrap owner at the published prior migration frontier.
     try (var fixture =
         newFixture(
             controlledCandidate(BigInteger.valueOf(19), BigInteger.ONE),
             1,
-            MigrationVersion.fromVersion("1040.5"))) {
+            MigrationVersion.fromVersion("1040.5"),
+            this::upgradeRetainedBootstrapAcrossAdditiveColumn)) {
       assertThat(fixture.originalBaselineReservationCount()).isOne();
-      String baselineSourceSql =
-          " FROM game_session_canonical_issuer_installed_anchor anchor"
-              + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
-              + " ON cohort.build_operation_id = anchor.build_operation_id"
-              + " AND cohort.source_operation_id = anchor.bootstrap_operation_id"
-              + " AND cohort.issuer_id = anchor.issuer_id"
-              + " AND cohort.source_kind = 'RESERVATION'";
-      UUID baselineReservationId =
-          fixture
-              .dsl()
-              .fetchSingle("SELECT cohort.source_key::uuid" + baselineSourceSql)
-              .get(0, UUID.class);
-      String retainedOwnerSql =
-          "SELECT jsonb_build_object('cohort', to_jsonb(cohort), 'anchor', to_jsonb(anchor))::text"
-              + baselineSourceSql;
-      String retainedOwnerBefore = fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class);
-      String reservationBefore = reservationImage(fixture.dsl(), baselineReservationId);
-      byte[] partitionBefore = physicalFieldSet(fixture.issuerPartitionKey());
-      List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
-      String durableHistoryBefore = durableHistoryImage(fixture.dsl(), NIL_UUID);
-      List<String> migrationHistoryBefore = fixture.migrationHistoryImage();
-
-      assertThat(
-              fixture.upgradeWithDefaultGameSessionMigrations(
-                  MigrationVersion.fromVersion("1040.6")))
-          .isOne();
-      List<String> migrationHistoryAfter = fixture.migrationHistoryImage();
-      assertThat(migrationHistoryAfter).hasSize(migrationHistoryBefore.size() + 1);
-      assertThat(migrationHistoryAfter.subList(0, migrationHistoryBefore.size()))
-          .containsExactlyElementsOf(migrationHistoryBefore);
-      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(durableHistoryBefore);
-      assertThat(fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class))
-          .isEqualTo(retainedOwnerBefore);
-      assertThat(reservationImage(fixture.dsl(), baselineReservationId))
-          .isEqualTo(reservationBefore);
-      assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);
-      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(partitionBefore);
-
-      fixture
-          .dsl()
-          .execute(
-              "ALTER TABLE game_session_canonical_issuer_partition_reservation"
-                  + " ADD COLUMN non_authority_annotation text");
-      // The captured immutable JSON has no new key; the current row has an explicit SQL NULL.
-      assertThat(
-              fixture
-                  .dsl()
-                  .fetchSingle(
-                      "SELECT jsonb_exists(cohort.source_row_json::jsonb, 'non_authority_annotation')"
-                          + baselineSourceSql)
-                  .get(0, Boolean.class))
-          .isFalse();
-      assertThat(
-              fixture
-                  .dsl()
-                  .fetchSingle(
-                      "SELECT non_authority_annotation FROM"
-                          + " game_session_canonical_issuer_partition_reservation"
-                          + " WHERE reservation_id = ?",
-                      baselineReservationId)
-                  .get(0, String.class))
-          .isNull();
-      fixture
-          .dsl()
-          .fetch(
-              "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
-
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .transaction(
-                          configuration -> {
-                            DSLContext transaction = DSL.using(configuration);
-                            assertThat(
-                                    transaction.execute(
-                                        "UPDATE game_session_canonical_issuer_partition_reservation"
-                                            + " SET coverage_fence = coverage_fence + 1"
-                                            + " WHERE reservation_id = ?",
-                                        baselineReservationId))
-                                .isOne();
-                            transaction.fetch(
-                                "SELECT gs_require_issuer_reservation_current_membership(?)",
-                                baselineReservationId);
-                          }))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .rootCause()
-          .isInstanceOf(org.postgresql.util.PSQLException.class)
-          .hasMessageContaining(
-              "Installed issuer reservation requires exact bootstrap or current local-operation membership");
-      fixture
-          .dsl()
-          .fetch(
-              "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
-      assertThat(
-              fixture
-                  .dsl()
-                  .fetchSingle(
-                      "SELECT (to_jsonb(reservation) - 'non_authority_annotation')::text FROM"
-                          + " game_session_canonical_issuer_partition_reservation reservation"
-                          + " WHERE reservation_id = ?",
-                      baselineReservationId)
-                  .get(0, String.class))
-          .isEqualTo(reservationBefore);
-      assertThat(fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class))
-          .isEqualTo(retainedOwnerBefore);
-      assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);
-      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(partitionBefore);
+      assertThat(currentOperationIds(fixture.dsl())).containsExactly(fixture.originalOperationId());
     }
+  }
+
+  private void upgradeRetainedBootstrapAcrossAdditiveColumn(
+      org.springframework.jdbc.datasource.DriverManagerDataSource dataSource,
+      CanonicalGameplayIssuerLayoutBootstrapIntent intent) {
+    DSLContext parent = DSL.using(dataSource, org.jooq.SQLDialect.POSTGRES);
+    byte[] partitionKey =
+        CanonicalGameplayIssuerRedisKeys.forPartition(intent.layoutDescriptor(), BigInteger.ZERO)
+            .getBytes(StandardCharsets.US_ASCII);
+    String baselineSourceSql =
+        " FROM game_session_canonical_issuer_installed_anchor anchor"
+            + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
+            + " ON cohort.build_operation_id = anchor.build_operation_id"
+            + " AND cohort.source_operation_id = anchor.bootstrap_operation_id"
+            + " AND cohort.issuer_id = anchor.issuer_id"
+            + " AND cohort.source_kind = 'RESERVATION'";
+    UUID baselineReservationId =
+        parent.fetchSingle("SELECT cohort.source_key::uuid" + baselineSourceSql).get(0, UUID.class);
+    String retainedOwnerSql =
+        "SELECT jsonb_build_object('cohort', to_jsonb(cohort), 'anchor', to_jsonb(anchor))::text"
+            + baselineSourceSql;
+    String retainedOwnerBefore = parent.fetchSingle(retainedOwnerSql).get(0, String.class);
+    String reservationBefore = reservationImage(parent, baselineReservationId);
+    byte[] partitionBefore = physicalFieldSet(partitionKey);
+    List<UUID> membershipBefore = currentOperationIds(parent);
+    assertThat(membershipBefore).isEmpty();
+    String durableHistoryBefore = durableHistoryImage(parent, NIL_UUID);
+    List<String> migrationHistoryBefore =
+        parent
+            .fetch(
+                "SELECT to_jsonb(retained_row)::text FROM flyway_schema_history retained_row ORDER BY installed_rank")
+            .getValues(0, String.class);
+
+    assertThat(
+            CanonicalGameplayAdmissionAbortCompositionFixture
+                .upgradeWithDefaultGameSessionMigrations(
+                    MigrationVersion.fromVersion("1040.6"), dataSource))
+        .isOne();
+    List<String> migrationHistoryAfter =
+        parent
+            .fetch(
+                "SELECT to_jsonb(retained_row)::text FROM flyway_schema_history retained_row ORDER BY installed_rank")
+            .getValues(0, String.class);
+    assertThat(migrationHistoryAfter).hasSize(migrationHistoryBefore.size() + 1);
+    assertThat(migrationHistoryAfter.subList(0, migrationHistoryBefore.size()))
+        .containsExactlyElementsOf(migrationHistoryBefore);
+    assertThat(durableHistoryImage(parent, NIL_UUID)).isEqualTo(durableHistoryBefore);
+    assertThat(parent.fetchSingle(retainedOwnerSql).get(0, String.class))
+        .isEqualTo(retainedOwnerBefore);
+    assertThat(reservationImage(parent, baselineReservationId)).isEqualTo(reservationBefore);
+    assertThat(currentOperationIds(parent)).isEqualTo(membershipBefore);
+    assertThat(physicalFieldSet(partitionKey)).isEqualTo(partitionBefore);
+
+    parent.execute(
+        "ALTER TABLE game_session_canonical_issuer_partition_reservation"
+            + " ADD COLUMN non_authority_annotation text");
+    // The captured immutable JSON has no new key; the current row has an explicit SQL NULL.
+    assertThat(
+            parent
+                .fetchSingle(
+                    "SELECT jsonb_exists(cohort.source_row_json::jsonb, 'non_authority_annotation')"
+                        + baselineSourceSql)
+                .get(0, Boolean.class))
+        .isFalse();
+    assertThat(
+            parent
+                .fetchSingle(
+                    "SELECT non_authority_annotation FROM"
+                        + " game_session_canonical_issuer_partition_reservation"
+                        + " WHERE reservation_id = ?",
+                    baselineReservationId)
+                .get(0, String.class))
+        .isNull();
+    parent.fetch(
+        "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
+
+    assertThatThrownBy(
+            () ->
+                parent.transaction(
+                    configuration -> {
+                      DSLContext transaction = DSL.using(configuration);
+                      assertThat(
+                              transaction.execute(
+                                  "UPDATE game_session_canonical_issuer_partition_reservation"
+                                      + " SET coverage_fence = coverage_fence + 1"
+                                      + " WHERE reservation_id = ?",
+                                  baselineReservationId))
+                          .isOne();
+                      transaction.fetch(
+                          "SELECT gs_require_issuer_reservation_current_membership(?)",
+                          baselineReservationId);
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining(
+            "Installed issuer reservation requires exact bootstrap or current local-operation membership");
+    parent.fetch(
+        "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
+    assertThat(
+            parent
+                .fetchSingle(
+                    "SELECT (to_jsonb(reservation) - 'non_authority_annotation')::text FROM"
+                        + " game_session_canonical_issuer_partition_reservation reservation"
+                        + " WHERE reservation_id = ?",
+                    baselineReservationId)
+                .get(0, String.class))
+        .isEqualTo(reservationBefore);
+    assertThat(parent.fetchSingle(retainedOwnerSql).get(0, String.class))
+        .isEqualTo(retainedOwnerBefore);
+    assertThat(currentOperationIds(parent)).isEqualTo(membershipBefore);
+    assertThat(physicalFieldSet(partitionKey)).isEqualTo(partitionBefore);
   }
 
   @Test

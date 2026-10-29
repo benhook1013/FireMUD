@@ -449,6 +449,39 @@ class CanonicalGameplayIssuerLocalCapacityIntegrationTest
   }
 
   @Test
+  void seededReleaseCompletesWithoutPublishingTheOriginalAcknowledgement() {
+    // This class retains prior physical partitions; keep this original in its own layout domain.
+    try (var fixture = newFixture(BigInteger.valueOf(10), BigInteger.ONE, 0)) {
+      String seed = "release-without-original-acknowledgement";
+      UUID seededOperationId = fixture.prepareOtherControllerNew(seed);
+      fixture.projectOtherControllerNew(seed);
+      fixture.publishOtherControllerNew(seed);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_canonical_issuer_binding_local_acknowledgement"
+                          + " WHERE operation_id = ?",
+                      fixture.originalOperationId())
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(fixture.recordOtherAccountAbort(seed).isAccountAborted()).isTrue();
+      var pendingRelease = fixture.prepareIssuerRelease(seed);
+      assertThat(pendingRelease.originalOperation().operationId()).isEqualTo(seededOperationId);
+      assertThat(seededOperationId).isNotEqualTo(fixture.originalOperationId());
+
+      var completed =
+          fixture.completeIssuerRelease(
+              pendingRelease, fixture.projectIssuerRelease(pendingRelease));
+      assertThat(completed.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+      var retry = fixture.prepareIssuerRelease(seed);
+      assertThat(retry.operationId()).isEqualTo(completed.operationId());
+      assertThat(fixture.projectIssuerRelease(retry).scriptOutcome()).isEqualTo(2L);
+    }
+  }
+
+  @Test
   void actualReleaseReadbackPersistsAndReloadsWithMoreThan513PhysicalFields() throws Exception {
     try (var fixture = newFixture(BigInteger.valueOf(8), BigInteger.ONE, 250)) {
       assertThat(fixture.originalBaselineReservationCount()).isEqualTo(250);

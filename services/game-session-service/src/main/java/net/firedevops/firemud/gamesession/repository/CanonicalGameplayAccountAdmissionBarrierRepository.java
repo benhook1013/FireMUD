@@ -627,6 +627,27 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
             + " ON i.binding_ref = t.candidate_binding_ref"
             + " WHERE o.account_id = ? ORDER BY o.operation_id",
         accountId);
+    appendRows(
+        rows,
+        transaction,
+        CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER,
+        "SELECT i.original_request_id::text AS source_key, t.tenant_id,"
+            + " t.playable_state_namespace_id, to_jsonb(i)::text AS source_record_json"
+            + " FROM game_session_canonical_initial_account_barrier_initializer i"
+            + " JOIN game_session_canonical_initial_account_barrier_target t"
+            + " ON t.initializer_id = i.initializer_id"
+            + " AND t.original_request_id = i.original_request_id"
+            + " WHERE i.account_id = ? ORDER BY i.original_request_id",
+        accountId);
+    appendRows(
+        rows,
+        transaction,
+        CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET,
+        "SELECT t.initializer_id::text || ':' || t.target_ordinal::text AS source_key,"
+            + " t.tenant_id, t.playable_state_namespace_id, to_jsonb(t)::text AS source_record_json"
+            + " FROM game_session_canonical_initial_account_barrier_target t"
+            + " WHERE t.account_id = ? ORDER BY t.initializer_id, t.target_ordinal",
+        accountId);
     return List.copyOf(rows);
   }
 
@@ -693,8 +714,12 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
                 + " LEFT JOIN game_session_canonical_gameplay_binding_inventory i"
                 + " ON i.binding_ref = t.candidate_binding_ref"
                 + " WHERE o.account_id = ?"
+                + " UNION ALL SELECT t.tenant_id, t.playable_state_namespace_id"
+                + " FROM game_session_canonical_initial_account_barrier_target t"
+                + " WHERE t.account_id = ?"
                 + ") account_scopes"
                 + " ORDER BY tenant_id, playable_state_namespace_id",
+            accountId,
             accountId,
             accountId,
             accountId,

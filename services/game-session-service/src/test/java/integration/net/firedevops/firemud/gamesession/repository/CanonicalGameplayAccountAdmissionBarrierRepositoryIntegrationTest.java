@@ -2,7 +2,10 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -212,6 +215,178 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
   }
 
   @Test
+  void pendingInitialAccountTargetIsFrozenIntoCutoffAndItsTargetSet() {
+    TestSchema testSchema = newTestSchema("gs_account_fence_initial_target_");
+    try {
+      establishActualLegacyDisposition(testSchema.dsl());
+      var inventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+      prepare(inventory, ACCOUNT_ID, TENANT_ID, NAMESPACE_ID, 1);
+      var initial =
+          insertControlledInitialTarget(
+              testSchema.dsl(), ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID);
+
+      var cutoff =
+          new CanonicalGameplayAccountAdmissionBarrierRepository(testSchema.dsl())
+              .beginFenceIntent(ACCOUNT_ID, UUID.randomUUID());
+
+      assertThat(cutoff.cohortRows())
+          .anySatisfy(
+              row -> {
+                assertThat(row.kind())
+                    .isEqualTo(CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER);
+                assertThat(row.sourceKey()).isEqualTo(initial.originalRequestId().toString());
+                assertThat(row.sourceRecordJson()).contains(initial.initializerId().toString());
+              });
+      assertThat(cutoff.cohortRows())
+          .anySatisfy(
+              row -> {
+                assertThat(row.kind())
+                    .isEqualTo(
+                        CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET);
+                assertThat(row.sourceKey()).isEqualTo(initial.initializerId() + ":0");
+                assertThat(row.tenantId()).isEqualTo(OTHER_TENANT_ID);
+                assertThat(row.playableStateNamespaceId()).isEqualTo(OTHER_NAMESPACE_ID);
+              });
+      assertThat(cutoff.barrierTargets())
+          .extracting(
+              CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget::tenantId,
+              CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget::playableStateNamespaceId)
+          .contains(org.assertj.core.groups.Tuple.tuple(OTHER_TENANT_ID, OTHER_NAMESPACE_ID));
+      assertThatThrownBy(
+              () ->
+                  insertControlledInitialTarget(
+                      testSchema.dsl(), ACCOUNT_ID, TENANT_ID, OTHER_NAMESPACE_ID))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void accountCutoffThatWinsInventoryClockOrderBlocksAnInitialTargetInsert() {
+    TestSchema testSchema = newTestSchema("gs_account_fence_initial_cutoff_wins_");
+    try {
+      establishActualLegacyDisposition(testSchema.dsl());
+      var inventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+      prepare(inventory, ACCOUNT_ID, TENANT_ID, NAMESPACE_ID, 1);
+      var cutoff =
+          new CanonicalGameplayAccountAdmissionBarrierRepository(testSchema.dsl())
+              .beginFenceIntent(ACCOUNT_ID, UUID.randomUUID());
+
+      assertThat(cutoff.cohortRows())
+          .noneSatisfy(
+              row ->
+                  assertThat(row.kind())
+                      .isIn(
+                          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER,
+                          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET));
+      assertThatThrownBy(
+              () ->
+                  insertControlledInitialTarget(
+                      testSchema.dsl(), ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) AS row_count FROM"
+                          + " game_session_canonical_initial_account_barrier_initializer"
+                          + " WHERE account_id = ?",
+                      ACCOUNT_ID)
+                  .get("row_count", Long.class))
+          .isZero();
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void initialSourceRequiresPresentNoActiveControlAndPreservesItsActualEpochIncludingZero() {
+    TestSchema missingControlSchema = newTestSchema("gs_account_initial_missing_control_");
+    try {
+      establishActualLegacyDisposition(missingControlSchema.dsl());
+      missingControlSchema
+          .dsl()
+          .execute(
+              "UPDATE game_session_canonical_binding_inventory_clock"
+                  + " SET inventory_revision = 1 WHERE singleton_id = 1");
+      var original =
+          new net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates(
+              UUID.randomUUID(), UUID.randomUUID(), 17L);
+      var login = mockLoginResult(original, UUID.randomUUID(), UUID.randomUUID());
+
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayAccountInitialBarrierInitializerRepository(
+                          missingControlSchema.dsl())
+                      .beginOrRead(original, login, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining("Account coverage control row is missing");
+    } finally {
+      dropSchema(missingControlSchema.schema());
+    }
+
+    TestSchema nonzeroEpochSchema = newTestSchema("gs_account_initial_nonzero_epoch_");
+    try {
+      establishActualLegacyDisposition(nonzeroEpochSchema.dsl());
+      var inventory = new CanonicalGameplayBindingInventoryRepository(nonzeroEpochSchema.dsl());
+      prepare(inventory, ACCOUNT_ID, TENANT_ID, NAMESPACE_ID, 1);
+      var original =
+          new net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates(
+              UUID.randomUUID(), UUID.randomUUID(), 17L);
+      var login = mockLoginResult(original, ACCOUNT_ID, UUID.randomUUID());
+      insertCommittedOriginalLogin(nonzeroEpochSchema.dsl(), original, login.evidence());
+      nonzeroEpochSchema
+          .dsl()
+          .execute(
+              "UPDATE game_session_canonical_account_coverage_control"
+                  + " SET last_operation_fence = 8 WHERE account_id = ?",
+              ACCOUNT_ID);
+
+      var initializer =
+          new CanonicalGameplayAccountInitialBarrierInitializerRepository(nonzeroEpochSchema.dsl())
+              .beginOrRead(original, login, OTHER_TENANT_ID, OTHER_NAMESPACE_ID);
+
+      assertThat(initializer.sourceControlState()).isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(initializer.sourceControlEpoch()).isEqualTo(BigInteger.valueOf(8));
+      assertThat(initializer.state())
+          .isEqualTo(
+              CanonicalGameplayAccountInitialBarrierInitializerRepository.State.NEVER_DISPATCHED);
+    } finally {
+      dropSchema(nonzeroEpochSchema.schema());
+    }
+
+    TestSchema zeroEpochSchema = newTestSchema("gs_account_initial_zero_epoch_");
+    try {
+      establishActualLegacyDisposition(zeroEpochSchema.dsl());
+      prepare(
+          new CanonicalGameplayBindingInventoryRepository(zeroEpochSchema.dsl()),
+          ACCOUNT_ID,
+          TENANT_ID,
+          NAMESPACE_ID,
+          1);
+      var original =
+          new net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates(
+              UUID.randomUUID(), UUID.randomUUID(), 17L);
+      var login = mockLoginResult(original, ACCOUNT_ID, UUID.randomUUID());
+      insertCommittedOriginalLogin(zeroEpochSchema.dsl(), original, login.evidence());
+
+      var initializer =
+          new CanonicalGameplayAccountInitialBarrierInitializerRepository(zeroEpochSchema.dsl())
+              .beginOrRead(original, login, OTHER_TENANT_ID, OTHER_NAMESPACE_ID);
+
+      assertThat(initializer.sourceControlState()).isEqualTo("NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+      assertThat(initializer.sourceControlEpoch()).isEqualTo(BigInteger.ZERO);
+    } finally {
+      dropSchema(zeroEpochSchema.schema());
+    }
+  }
+
+  @Test
   void preparationRacingIntentIsEitherCapturedOrRefused() throws Exception {
     TestSchema testSchema = newTestSchema("gs_account_fence_race_");
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -405,6 +580,123 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
             transitionId, UUID.randomUUID(), candidate, reservation, null, null));
   }
 
+  /**
+   * Controlled durable SQL source used only to exercise the existing inventory/control lock order.
+   */
+  private static ControlledInitialTarget insertControlledInitialTarget(
+      DSLContext dsl, UUID accountId, UUID tenantId, UUID namespaceId) {
+    UUID originalRequestId = UUID.randomUUID();
+    UUID callerContextId = UUID.randomUUID();
+    UUID initializerId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+    String accountEvidenceDigest = "sha256:" + "a".repeat(64);
+    String sourceControlDigest = "sha256:" + "b".repeat(64);
+    dsl.transaction(
+        configuration -> {
+          var transaction = org.jooq.impl.DSL.using(configuration);
+          var inventoryClock =
+              transaction.fetchOne(
+                  "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                      + " WHERE singleton_id = 1 FOR UPDATE");
+          var control =
+              transaction.fetchOne(
+                  "SELECT state, last_operation_fence FROM"
+                      + " game_session_canonical_account_coverage_control"
+                      + " WHERE account_id = ? FOR UPDATE",
+                  accountId);
+          if (inventoryClock == null || control == null) {
+            throw new IllegalStateException("Controlled source lacks positive SQL owners");
+          }
+          transaction.execute(
+              "INSERT INTO game_session_initial_gameplay_login_journal"
+                  + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, 7)",
+              originalRequestId,
+              callerContextId);
+          transaction.execute(
+              "UPDATE game_session_initial_gameplay_login_journal"
+                  + " SET verified_token_jti = ?, verified_token_sha256 = ?,"
+                  + " verified_token_generation = 1, verified_issuance_fence = 1"
+                  + " WHERE request_id = ?",
+              tokenJti,
+              "c".repeat(64),
+              originalRequestId);
+          transaction.execute(
+              "INSERT INTO game_session_canonical_initial_account_barrier_initializer"
+                  + " (initializer_id, original_request_id, original_caller_context_id,"
+                  + " original_attempt_fence, account_id, account_login_evidence_digest,"
+                  + " source_control_state, source_control_epoch, inventory_snapshot_revision,"
+                  + " source_control_digest) VALUES (?, ?, ?, 7, ?, ?, ?, 0, ?, ?)",
+              initializerId,
+              originalRequestId,
+              callerContextId,
+              accountId,
+              accountEvidenceDigest,
+              "NO_ACTIVE_ACCOUNT_WIDE_FLOW",
+              inventoryClock.get("inventory_revision"),
+              sourceControlDigest);
+          transaction.execute(
+              "INSERT INTO game_session_canonical_initial_account_barrier_target"
+                  + " (initializer_id, original_request_id, account_id, target_ordinal, tenant_id,"
+                  + " playable_state_namespace_id, target_state)"
+                  + " VALUES (?, ?, ?, 0, ?, ?, 'NEVER_DISPATCHED')",
+              initializerId,
+              originalRequestId,
+              accountId,
+              tenantId,
+              namespaceId);
+        });
+    return new ControlledInitialTarget(initializerId, originalRequestId);
+  }
+
+  private static net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult
+      mockLoginResult(
+          net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates coordinates,
+          UUID accountId,
+          UUID tokenJti) {
+    var evidence =
+        new net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult.NonSecretEvidence(
+            accountId,
+            coordinates.requestId(),
+            coordinates.callerContextId(),
+            tokenJti,
+            "d".repeat(64),
+            GameSessionAccountDelegationProfile.PROFILE,
+            1_000L,
+            1_000L,
+            2_000L,
+            "1",
+            "1",
+            ByteString.copyFromUtf8("{}"),
+            ByteString.copyFromUtf8("[]"),
+            ByteString.copyFromUtf8("[]"));
+    var result = mock(net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult.class);
+    when(result.evidence()).thenReturn(evidence);
+    return result;
+  }
+
+  private static void insertCommittedOriginalLogin(
+      DSLContext dsl,
+      net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates original,
+      net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult.NonSecretEvidence
+          evidence) {
+    dsl.execute(
+        "INSERT INTO game_session_initial_gameplay_login_journal"
+            + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, ?)",
+        original.requestId(),
+        original.callerContextId(),
+        original.expectedAttemptFence());
+    dsl.execute(
+        "UPDATE game_session_initial_gameplay_login_journal"
+            + " SET verified_token_jti = ?, verified_token_sha256 = ?,"
+            + " verified_token_generation = ?, verified_issuance_fence = ?"
+            + " WHERE request_id = ?",
+        evidence.tokenJti(),
+        evidence.tokenSha256(),
+        Long.parseLong(evidence.tokenGeneration()),
+        Long.parseLong(evidence.issuanceFence()),
+        original.requestId());
+  }
+
   private static void establishActualLegacyDisposition(DSLContext dsl) {
     var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
     var migration = new CanonicalGameplayLegacyMigrationRepository(dsl, inventory);
@@ -495,7 +787,9 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
   }
 
   private static TestSchema newTestSchema(String prefix) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema =
+        prefix.substring(0, Math.min(prefix.length(), 31))
+            + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
@@ -538,4 +832,6 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
   }
 
   private record TestSchema(String schema, DSLContext dsl) {}
+
+  private record ControlledInitialTarget(UUID initializerId, UUID originalRequestId) {}
 }

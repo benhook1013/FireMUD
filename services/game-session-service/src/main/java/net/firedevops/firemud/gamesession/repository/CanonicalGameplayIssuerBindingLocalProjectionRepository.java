@@ -94,6 +94,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
                   transaction,
                   target,
                   anchor,
+                  before,
                   prepareAddMutation,
                   requireCurrentTargetAccountControl);
             });
@@ -101,6 +102,25 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     requireSameCurrentIssuerState(before, after);
     requireCurrentSourceMatches(work.anchor(), after);
     return work;
+  }
+
+  /**
+   * Rebuilds the exact SQL proof inside a caller-owned transaction that already holds the
+   * inventory-clock lock. The caller must obtain a fresh issuer source before entering SQL and
+   * re-read it after commit; this method performs no remote work and never holds SQL over Redis.
+   */
+  PreparedPartitionWork readPreparedPartitionWorkInTransaction(
+      DSLContext transaction,
+      CanonicalGameplayIssuerBindingLocalOperation target,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState) {
+    Objects.requireNonNull(transaction, "transaction");
+    Objects.requireNonNull(target, "target");
+    requireCurrentSourceMatches(target.anchor(), currentState);
+    CanonicalGameplayIssuerInstalledAnchor anchor =
+        CanonicalGameplayIssuerBootstrapCoverageRepository
+            .readInstalledAnchorForBindingPreparationInTransaction(transaction, currentState);
+    requireSameAnchor(target.anchor(), anchor);
+    return prepareInTransaction(transaction, target, anchor, currentState, false, true);
   }
 
   /** Re-reads the durable set and all currentness inputs after the Redis round trip. */
@@ -131,8 +151,15 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       DSLContext transaction,
       CanonicalGameplayIssuerBindingLocalOperation target,
       CanonicalGameplayIssuerInstalledAnchor anchor,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState,
       boolean prepareAddMutation,
       boolean requireCurrentTargetAccountControl) {
+    if (requireCurrentTargetAccountControl) {
+      // ADD and admitting ACK join live OPEN control. Historical release/retirement reads
+      // retain their original source guards without claiming new admission authority.
+      CanonicalGameplayIssuerAdmissionControlRepository.requireOpenInTransaction(
+          transaction, anchor, currentState);
+    }
     BigInteger targetPartition = target.reservation().partitionId();
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead mutationHead =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(

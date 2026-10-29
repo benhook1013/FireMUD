@@ -1,0 +1,1895 @@
+package net.firedevops.firemud.gamesession.repository;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
+
+import io.lettuce.core.AclSetuserArgs;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
+import io.lettuce.core.api.sync.RedisCommands;
+import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.protocol.CommandKeyword;
+import io.lettuce.core.protocol.CommandType;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
+import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.api.MigrationVersion;
+import org.jooq.DSLContext;
+import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+/** Focused PostgreSQL/Redis proof for the first OPEN permit, replay-only retries, and cutoff. */
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
+class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
+  private static final String ISSUER = GameSessionAccountDelegationProfile.ISSUER;
+  private static final String OWNER_PRINCIPAL = "gamesession_coord_app";
+  private static final BigInteger ONE = BigInteger.ONE;
+  private static final String EVIDENCE_PREFIX = "game_session_canonical_issuer_admission_";
+  private static final List<String> EVIDENCE_TABLES =
+      List.of("initializer", "initializer_receipt", "cohort_row", "cutoff_target", "operation");
+
+  @Container
+  private static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  private static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  private RedisClient administrator;
+  private RedisClient ownerClient;
+  private StatefulRedisConnection<byte[], byte[]> administratorConnection;
+  private RedisCommands<byte[], byte[]> administratorCommands;
+  private CanonicalGameplayAdmissionAbortCompositionFixture fixture;
+
+  @BeforeEach
+  void setUp() {
+    String password = UUID.randomUUID().toString();
+    administrator = createRedisClient(null, null);
+    administratorConnection = administrator.connect(ByteArrayCodec.INSTANCE);
+    administratorCommands = administratorConnection.sync();
+    administratorCommands.flushdb();
+    administratorCommands.aclSetuser(
+        OWNER_PRINCIPAL,
+        new AclSetuserArgs()
+            .reset()
+            .on()
+            .addPassword(password)
+            .keyPattern("session:game:*")
+            .addCommand(CommandType.HELLO)
+            .addCommand(CommandType.PING)
+            .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+            .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+            .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+            .addCommand(CommandType.EVALSHA)
+            .addCommand(CommandType.TYPE)
+            .addCommand(CommandType.PTTL)
+            .addCommand(CommandType.HGET)
+            .addCommand(CommandType.HLEN)
+            .addCommand(CommandType.HGETALL)
+            .addCommand(CommandType.HSET));
+    ownerClient = createRedisClient(OWNER_PRINCIPAL, password);
+  }
+
+  @AfterEach
+  void tearDown() {
+    if (fixture != null) fixture.close();
+    if (administratorConnection != null) administratorConnection.close();
+    if (ownerClient != null) ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    if (administrator != null) administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+  }
+
+  @Test
+  void preparedReadsRetainTheSoleCreatePermitUntilTheRemoteBoundary() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var first = state.repository().readPreparedInitializer(operationId);
+    var second = state.repository().readPreparedInitializer(operationId);
+    assertThat(second.value().exactBytes()).containsExactly(first.value().exactBytes());
+    assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(first.key()))).isZero();
+
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(1L);
+    assertThat(state.repository().claimFirstCreatePermit(first)).isFalse();
+    assertThat(state.repository().claimFirstCreatePermit(second)).isFalse();
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(2L);
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"DESCRIPTOR", "SOURCE", "CURRENTNESS"})
+  void localPreflightFailureRetainsPreparedInitializerAndAllowsOneValidCreate(String failure) {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    var repository =
+        new ForwardingProjectionRepository(state.repository()) {
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer initializer) {
+            if ("CURRENTNESS".equals(failure)) {
+              throw new IllegalStateException("Controlled preclaim SQL currentness failure");
+            }
+            super.requireStillCurrent(initializer);
+          }
+        };
+    RedisScriptCatalog catalog =
+        RedisScriptCatalog.fromContributions(
+            "DESCRIPTOR".equals(failure)
+                ? List.of()
+                : List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
+    var failingOwner =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+            ownerClient,
+            catalog,
+            repository,
+            () -> {
+              if ("SOURCE".equals(failure)) {
+                throw new IllegalStateException("Controlled preclaim current source failure");
+              }
+              return state.sourceReader().readFreshCurrentState();
+            });
+
+    assertThatThrownBy(() -> failingOwner.initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(1L);
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(2L);
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void remotePreflightFailuresRetainPreparedInitializerAndAllowOneValidCreate() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    RedisClient connectFailure = mock(RedisClient.class);
+    when(connectFailure.connect(any(ByteArrayCodec.class)))
+        .thenThrow(new IllegalStateException("controlled connect failure"));
+    RedisClient loadFailure = mock(RedisClient.class);
+    try (var loadConnection = ownerClient.connect(ByteArrayCodec.INSTANCE)) {
+      StatefulRedisConnection<byte[], byte[]> connection = spy(loadConnection);
+      RedisAsyncCommands<byte[], byte[]> commands = spy(loadConnection.async());
+      doReturn(commands).when(connection).async();
+      doThrow(new IllegalStateException("controlled SCRIPT LOAD failure"))
+          .when(commands)
+          .scriptLoad(any(byte[].class));
+      when(loadFailure.connect(any(ByteArrayCodec.class))).thenReturn(connection);
+      // The actual administrator connection reports principal 'default', which must be refused.
+      for (RedisClient failingClient : List.of(connectFailure, administrator, loadFailure)) {
+        var owner =
+            new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+                failingClient,
+                RedisScriptCatalog.fromContributions(
+                    List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution())),
+                state.repository(),
+                state.sourceReader());
+        assertThatThrownBy(() -> owner.initializeAndRead(operationId))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
+        assertThat(countReceipt(state, operationId)).isZero();
+        assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+      }
+      org.mockito.Mockito.verify(commands, org.mockito.Mockito.never())
+          .evalsha(any(), any(), any(byte[][].class), any(byte[][].class));
+    }
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(1L);
+    assertThat(state.owner().initializeAndRead(operationId).scriptOutcome()).isEqualTo(2L);
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @Test
+  void concurrentClaimsOfRetainedPreparedReadsHaveOnlyOneFirstCreateWinner() throws Exception {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var first = state.repository().readPreparedInitializer(operationId);
+    var second = state.repository().readPreparedInitializer(operationId);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      var firstClaim =
+          executor.submit(
+              () -> {
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Controlled claim start timed out");
+                }
+                return state.repository().claimFirstCreatePermit(first);
+              });
+      var secondClaim =
+          executor.submit(
+              () -> {
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Controlled claim start timed out");
+                }
+                return state.repository().claimFirstCreatePermit(second);
+              });
+      start.countDown();
+      assertThat(
+              List.of(firstClaim.get(10, TimeUnit.SECONDS), secondClaim.get(10, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(true, false);
+      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(countReceipt(state, operationId)).isZero();
+      assertThat(administratorCommands.exists(bytes(first.key()))).isZero();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void lostClaimReplyLeavesMissingOpenReplayOnlyWithoutRearmingThePermit() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    var lostClaimReply =
+        new ForwardingProjectionRepository(state.repository()) {
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer initializer) {
+            assertThat(super.claimFirstCreatePermit(initializer)).isTrue();
+            throw new IllegalStateException("Controlled loss after first-create claim committed");
+          }
+        };
+    assertThatThrownBy(() -> state.owner(lostClaimReply).initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+    assertThat(state.repository().claimFirstCreatePermit(prepared)).isFalse();
+    assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+  }
+
+  @Test
+  void firstOpenIsPersistedExactRetryIsReplayOnlyAndCutoffPreservesNewerClosedState() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+
+    var first = state.owner().initializeAndRead(operationId);
+    assertThat(first.scriptOutcome()).isEqualTo(1L);
+    assertThat(initializationState(state, operationId)).isEqualTo("OPEN_CONFIRMED");
+    var replay = state.owner().initializeAndRead(operationId);
+    assertThat(replay.scriptOutcome()).isEqualTo(2L);
+    assertThat(replay.exactPhysicalPayload()).containsExactly(first.exactPhysicalPayload());
+
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    administratorCommands.del(bytes(prepared.key()));
+    assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+
+    UUID cutoffOperationId = UUID.randomUUID();
+    state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+    var cutoffTargets = state.repository().readPreparedCutoffTargets(cutoffOperationId);
+    assertThat(cutoffTargets).hasSize(1);
+    var target = cutoffTargets.getFirst();
+    var closed =
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
+    assertThat(closed.scriptOutcome()).isEqualTo(1L);
+
+    var newerClosed =
+        CanonicalGameplayIssuerAdmissionBarrierValue.closed(
+            ISSUER,
+            target.closedValue().tenantId(),
+            target.closedValue().playableStateNamespaceId(),
+            target.closedValue().tenantGameplayTag(),
+            target.closedValue().admissionEpoch().add(ONE),
+            UUID.randomUUID(),
+            target.closedValue().initializer());
+    writePhysicalValue(target.key(), newerClosed);
+    byte[] newerBytes = newerClosed.exactBytes();
+    assertThatThrownBy(
+            () ->
+                state
+                    .owner()
+                    .closeAndRead(
+                        cutoffOperationId,
+                        target.closedValue().tenantId(),
+                        target.closedValue().playableStateNamespaceId()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(administratorCommands.hget(bytes(target.key()), bytes("payload")))
+        .containsExactly(newerBytes);
+  }
+
+  @Test
+  void lostReceiptReplaysTheExistingOpenWithoutMintingAnotherCreatePermit() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    AtomicBoolean loseFirstReceipt = new AtomicBoolean(true);
+    var delegate = state.repository();
+    var lostReplyRepository =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository() {
+          @Override
+          public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer
+              readPreparedInitializer(UUID id) {
+            return delegate.readPreparedInitializer(id);
+          }
+
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            return delegate.claimFirstCreatePermit(prepared);
+          }
+
+          @Override
+          public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
+              readPreparedCutoffTarget(UUID id, UUID tenantId, UUID namespaceId) {
+            return delegate.readPreparedCutoffTarget(id, tenantId, namespaceId);
+          }
+
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            delegate.requireStillCurrent(prepared);
+          }
+
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared) {
+            delegate.requireStillCurrent(prepared);
+          }
+
+          @Override
+          public void recordOpenReadback(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared,
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+            if (loseFirstReceipt.getAndSet(false)) {
+              throw new IllegalStateException("Controlled loss after physical OPEN readback");
+            }
+            delegate.recordOpenReadback(prepared, readback);
+          }
+
+          @Override
+          public void recordClosedReadback(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared,
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+            delegate.recordClosedReadback(prepared, readback);
+          }
+        };
+    var lostReplyOwner = state.owner(lostReplyRepository);
+
+    assertThatThrownBy(() -> lostReplyOwner.initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+    assertThat(countReceipt(state, operationId)).isZero();
+
+    var replay = state.owner().initializeAndRead(operationId);
+    assertThat(replay.scriptOutcome()).isEqualTo(2L);
+    assertThat(initializationState(state, operationId)).isEqualTo("OPEN_CONFIRMED");
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @Test
+  void missingOpenAfterUncertainFirstAttemptIsNeverRecreated() {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    AtomicBoolean loseFirstReceipt = new AtomicBoolean(true);
+    var delegate = state.repository();
+    var lostReplyRepository =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository() {
+          @Override
+          public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer
+              readPreparedInitializer(UUID id) {
+            return delegate.readPreparedInitializer(id);
+          }
+
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            return delegate.claimFirstCreatePermit(prepared);
+          }
+
+          @Override
+          public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
+              readPreparedCutoffTarget(UUID id, UUID tenantId, UUID namespaceId) {
+            return delegate.readPreparedCutoffTarget(id, tenantId, namespaceId);
+          }
+
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            delegate.requireStillCurrent(prepared);
+          }
+
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared) {
+            delegate.requireStillCurrent(prepared);
+          }
+
+          @Override
+          public void recordOpenReadback(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared,
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+            if (loseFirstReceipt.getAndSet(false)) {
+              throw new IllegalStateException("Controlled loss after physical OPEN readback");
+            }
+            delegate.recordOpenReadback(prepared, readback);
+          }
+
+          @Override
+          public void recordClosedReadback(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared,
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+            delegate.recordClosedReadback(prepared, readback);
+          }
+        };
+    assertThatThrownBy(() -> state.owner(lostReplyRepository).initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    administratorCommands.del(bytes(prepared.key()));
+    assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+    assertThat(countReceipt(state, operationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+  }
+
+  @Test
+  void cutoffCapturesAnInitializerPreparedBeforeItsCreatePermitIsClaimed() throws Exception {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    UUID cutoffOperationId = UUID.randomUUID();
+    CountDownLatch preparedForRedis = new CountDownLatch(1);
+    CountDownLatch allowRedisOwnerToContinue = new CountDownLatch(1);
+    AtomicReference<CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer>
+        observedInitializer = new AtomicReference<>();
+    var delegate = state.repository();
+    var gatedRepository =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository() {
+          @Override
+          public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer
+              readPreparedInitializer(UUID id) {
+            var prepared = delegate.readPreparedInitializer(id);
+            observedInitializer.set(prepared);
+            preparedForRedis.countDown();
+            try {
+              if (!allowRedisOwnerToContinue.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Controlled initializer gate timed out");
+              }
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(
+                  "Controlled initializer gate was interrupted", interrupted);
+            }
+            return prepared;
+          }
+
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            return delegate.claimFirstCreatePermit(prepared);
+          }
+
+          @Override
+          public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
+              readPreparedCutoffTarget(UUID id, UUID tenantId, UUID namespaceId) {
+            return delegate.readPreparedCutoffTarget(id, tenantId, namespaceId);
+          }
+
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            delegate.requireStillCurrent(prepared);
+          }
+
+          @Override
+          public void requireStillCurrent(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared) {
+            delegate.requireStillCurrent(prepared);
+          }
+
+          @Override
+          public void recordOpenReadback(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared,
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+            delegate.recordOpenReadback(prepared, readback);
+          }
+
+          @Override
+          public void recordClosedReadback(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared,
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+            delegate.recordClosedReadback(prepared, readback);
+          }
+        };
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      var initializerAttempt =
+          executor.submit(() -> state.owner(gatedRepository).initializeAndRead(operationId));
+      assertThat(preparedForRedis.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(initializationState(state, operationId)).isEqualTo("PREPARED");
+
+      state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+      allowRedisOwnerToContinue.countDown();
+      assertThatThrownBy(() -> initializerAttempt.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
+      assertThat(administratorCommands.exists(bytes(observedInitializer.get().key()))).isZero();
+
+      var targets = state.repository().readPreparedCutoffTargets(cutoffOperationId);
+      assertThat(targets).hasSize(1);
+      var closed =
+          state
+              .owner()
+              .closeAndRead(
+                  cutoffOperationId,
+                  targets.getFirst().closedValue().tenantId(),
+                  targets.getFirst().closedValue().playableStateNamespaceId());
+      assertThat(closed.scriptOutcome()).isEqualTo(1L);
+      assertThat(countReceipt(state, operationId)).isZero();
+    } finally {
+      allowRedisOwnerToContinue.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void cutoffInstalledAfterCreateClaimCannotBeOverwrittenByTheDelayedOpen() throws Exception {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    UUID cutoffOperationId = UUID.randomUUID();
+    CountDownLatch claimCommitted = new CountDownLatch(1);
+    CountDownLatch allowRedisOwnerToContinue = new CountDownLatch(1);
+    AtomicReference<CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer>
+        observedInitializer = new AtomicReference<>();
+    var gatedRepository =
+        new ForwardingProjectionRepository(state.repository()) {
+          @Override
+          public boolean claimFirstCreatePermit(
+              CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+            boolean claimed = super.claimFirstCreatePermit(prepared);
+            assertThat(claimed).isTrue();
+            observedInitializer.set(prepared);
+            claimCommitted.countDown();
+            try {
+              if (!allowRedisOwnerToContinue.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Controlled postclaim gate timed out");
+              }
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(
+                  "Controlled postclaim gate was interrupted", interrupted);
+            }
+            return claimed;
+          }
+        };
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      var initializerAttempt =
+          executor.submit(() -> state.owner(gatedRepository).initializeAndRead(operationId));
+      assertThat(claimCommitted.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      var prepared = observedInitializer.get();
+      assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+
+      var pending = state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+      var targets = state.repository().readPreparedCutoffTargets(cutoffOperationId);
+      assertThat(targets).hasSize(1);
+      var target = targets.getFirst();
+      assertThat(target.expectedOpenValue().exactBytes())
+          .containsExactly(prepared.value().exactBytes());
+      assertThat(target.closedValue().initializer().exactBytes())
+          .containsExactly(prepared.value().initializer().exactBytes());
+      var closed =
+          state
+              .owner()
+              .closeAndRead(
+                  cutoffOperationId,
+                  target.closedValue().tenantId(),
+                  target.closedValue().playableStateNamespaceId());
+      assertThat(closed.scriptOutcome()).isEqualTo(1L);
+
+      allowRedisOwnerToContinue.countDown();
+      assertThatThrownBy(() -> initializerAttempt.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
+      assertThat(administratorCommands.hget(bytes(prepared.key()), bytes("payload")))
+          .containsExactly(closed.exactPhysicalPayload());
+      assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
+      assertThat(countReceipt(state, operationId)).isZero();
+      var installed = state.repository().completeCutoff(cutoffOperationId);
+      assertThat(installed.state())
+          .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+      assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
+    } finally {
+      allowRedisOwnerToContinue.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void cutoffClosesAnAbortedOriginTargetAndRetainsItsFrozenInitializer() {
+    FixtureState state = fixtureState();
+    UUID originalOperationId = state.fixture().originalOperationId();
+    var opened = state.owner().initializeAndRead(originalOperationId);
+
+    new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl())
+        .recordFirstNewAccountAbort(state.fixture().source(), UUID.randomUUID());
+    assertThat(
+            state
+                .fixture()
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition"
+                        + " WHERE transition_id = ?",
+                    state.fixture().transitionId())
+                .get("status", String.class))
+        .isEqualTo("ABORTED");
+
+    UUID cutoffOperationId = UUID.randomUUID();
+    state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+    var targets = state.repository().readPreparedCutoffTargets(cutoffOperationId);
+    assertThat(targets).hasSize(1);
+    var target = targets.getFirst();
+    assertThat(target.expectedOpenValue()).isNotNull();
+    assertThat(target.expectedOpenValue().exactBytes())
+        .containsExactly(opened.exactPhysicalPayload());
+    assertThat(target.closedValue().initializer().exactBytes())
+        .containsExactly(opened.value().initializer().exactBytes());
+
+    var closed =
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
+    // Outcome 3 is CAPTURED_OPEN_CLOSED: this target replaces the exact OPEN
+    // payload captured by the cutoff.
+    assertThat(closed.scriptOutcome()).isEqualTo(3L);
+    var installed = state.repository().completeCutoff(cutoffOperationId);
+    assertThat(installed.state())
+        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+
+    var frozenInitializer =
+        state
+            .fixture()
+            .dsl()
+            .fetchOne(
+                "SELECT operation_id, open_payload_bytes FROM"
+                    + " game_session_canonical_issuer_admission_initializer"
+                    + " WHERE operation_id = ?",
+                originalOperationId);
+    assertThat(frozenInitializer.get("operation_id", UUID.class)).isEqualTo(originalOperationId);
+    assertThat(frozenInitializer.get("open_payload_bytes", byte[].class))
+        .containsExactly(opened.exactPhysicalPayload());
+    assertThatThrownBy(() -> state.owner().initializeAndRead(originalOperationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(administratorCommands.hget(bytes(target.key()), bytes("payload")))
+        .containsExactly(closed.exactPhysicalPayload());
+  }
+
+  @Test
+  void cutoffCompletesFromFrozenSourcesAfterTheProvisionalOriginAborts() {
+    FixtureState state = fixtureState();
+    var opened = state.owner().initializeAndRead(state.fixture().originalOperationId());
+    UUID cutoffOperationId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    var pending = state.repository().beginCutoff(cutoffOperationId, requestId);
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    List<String> frozenRows =
+        state
+            .fixture()
+            .dsl()
+            .fetch(
+                "SELECT to_jsonb(c)::text AS image FROM"
+                    + " game_session_canonical_issuer_admission_cohort_row c"
+                    + " WHERE operation_id = ? ORDER BY row_ordinal",
+                cutoffOperationId)
+            .getValues("image", String.class);
+    var frozenTarget =
+        state
+            .fixture()
+            .dsl()
+            .fetchSingle(
+                "SELECT target_source_digest, closed_payload_digest FROM"
+                    + " game_session_canonical_issuer_admission_cutoff_target"
+                    + " WHERE operation_id = ?",
+                cutoffOperationId);
+
+    new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl())
+        .recordFirstNewAccountAbort(state.fixture().source(), UUID.randomUUID());
+    var transition =
+        state
+            .fixture()
+            .dsl()
+            .fetchSingle(
+                "SELECT status, inventory_revision FROM game_session_canonical_binding_transition"
+                    + " WHERE transition_id = ?",
+                state.fixture().transitionId());
+    assertThat(transition.get("status", String.class)).isEqualTo("ABORTED");
+    assertThat(transition.get("inventory_revision", java.math.BigDecimal.class).toBigIntegerExact())
+        .isGreaterThan(pending.inventorySnapshotRevision());
+    var retry = state.repository().beginCutoff(cutoffOperationId, requestId);
+    assertThat(retry.cohortDigest()).isEqualTo(pending.cohortDigest());
+    assertThat(retry.cohortRowCount()).isEqualTo(pending.cohortRowCount());
+    assertThat(retry.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
+    assertThatThrownBy(() -> state.repository().completeCutoff(cutoffOperationId))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(target.expectedOpenValue().exactBytes())
+        .containsExactly(opened.exactPhysicalPayload());
+    var closed =
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
+    assertThat(closed.scriptOutcome()).isEqualTo(3L);
+    assertThat(closed.exactPhysicalPayload()).containsExactly(target.closedValue().exactBytes());
+    var installed = state.repository().completeCutoff(cutoffOperationId);
+    assertThat(installed.state())
+        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+    assertThat(installed.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
+    assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
+    assertThat(
+            state
+                .fixture()
+                .dsl()
+                .fetch(
+                    "SELECT to_jsonb(c)::text AS image FROM"
+                        + " game_session_canonical_issuer_admission_cohort_row c"
+                        + " WHERE operation_id = ? ORDER BY row_ordinal",
+                    cutoffOperationId)
+                .getValues("image", String.class))
+        .containsExactlyElementsOf(frozenRows);
+    var completedTarget =
+        state
+            .fixture()
+            .dsl()
+            .fetchSingle(
+                "SELECT target_source_digest, closed_payload_digest, target_state,"
+                    + " exact_closed_readback_bytes FROM game_session_canonical_issuer_admission_cutoff_target"
+                    + " WHERE operation_id = ?",
+                cutoffOperationId);
+    assertThat(completedTarget.get("target_source_digest", String.class))
+        .isEqualTo(frozenTarget.get("target_source_digest", String.class));
+    assertThat(completedTarget.get("closed_payload_digest", String.class))
+        .isEqualTo(frozenTarget.get("closed_payload_digest", String.class));
+    assertThat(completedTarget.get("target_state", String.class)).isEqualTo("CLOSED");
+    assertThat(completedTarget.get("exact_closed_readback_bytes", byte[].class))
+        .containsExactly(target.closedValue().exactBytes());
+    assertThatThrownBy(() -> state.owner().initializeAndRead(state.fixture().originalOperationId()))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"SOURCE_BYTES", "MISSING_SOURCE", "MISSING_TARGET", "TARGET_DIGEST"})
+  void cutoffRefusesChangedOrMissingFrozenEvidence(String corruption) {
+    FixtureState state = fixtureState();
+    state.owner().initializeAndRead(state.fixture().originalOperationId());
+    UUID cutoffOperationId = UUID.randomUUID();
+    var pending = state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    // Controlled corruption is confined to a rollback-only SQL transaction. The public owners
+    // reject ambient transactions, so exercise their shared frozen-evidence verifier directly.
+    String mutation =
+        switch (corruption) {
+          case "SOURCE_BYTES" ->
+              "UPDATE game_session_canonical_issuer_admission_cohort_row"
+                  + " SET source_row_json = source_row_json || ' ' WHERE operation_id = ?";
+          case "MISSING_SOURCE" ->
+              "DELETE FROM game_session_canonical_issuer_admission_cohort_row WHERE operation_id = ?";
+          case "MISSING_TARGET" ->
+              "DELETE FROM game_session_canonical_issuer_admission_cutoff_target WHERE operation_id = ?";
+          case "TARGET_DIGEST" ->
+              "UPDATE game_session_canonical_issuer_admission_cutoff_target"
+                  + " SET target_source_digest = 'sha256:' || repeat('0', 64) WHERE operation_id = ?";
+          default -> throw new IllegalArgumentException(corruption);
+        };
+    var dsl = state.fixture().dsl();
+    var before = retainedEvidenceImage(dsl);
+    String family =
+        corruption.endsWith("SOURCE") || "SOURCE_BYTES".equals(corruption)
+            ? "cohort_row"
+            : "cutoff_target";
+    String trigger =
+        "cohort_row".equals(family)
+            ? "gs_issuer_admission_cohort_guard"
+            : "gs_issuer_admission_cutoff_target_guard";
+    RuntimeException rollback = new IllegalStateException("Controlled corruption rollback");
+    assertThatThrownBy(
+            () ->
+                dsl.transaction(
+                    configuration -> {
+                      var transaction = DSL.using(configuration);
+                      transaction.execute(
+                          "ALTER TABLE "
+                              + EVIDENCE_PREFIX
+                              + family
+                              + " DISABLE TRIGGER "
+                              + trigger);
+                      assertThat(transaction.execute(mutation, cutoffOperationId)).isPositive();
+                      String expectedMessage =
+                          switch (corruption) {
+                            case "SOURCE_BYTES" ->
+                                "cohort source digest differs from its stored JSON";
+                            case "MISSING_SOURCE" ->
+                                "cohort no longer matches its frozen complete digest";
+                            case "MISSING_TARGET" ->
+                                "target set differs from its complete frozen cohort";
+                            case "TARGET_DIGEST" ->
+                                "target differs from its immutable captured source";
+                            default -> throw new IllegalArgumentException(corruption);
+                          };
+                      assertThatThrownBy(
+                              () ->
+                                  new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
+                                      .verifyCurrentCutoffTarget(
+                                          transaction,
+                                          pending,
+                                          target.closedValue().tenantId(),
+                                          target.closedValue().playableStateNamespaceId(),
+                                          target.closedValue().exactBytes()))
+                          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+                          .hasMessageContaining(expectedMessage);
+                      throw rollback;
+                    }))
+        .isSameAs(rollback);
+    assertThat(retainedEvidenceImage(dsl)).isEqualTo(before);
+    assertThat(
+            state
+                .repository()
+                .readPreparedCutoffTarget(
+                    cutoffOperationId,
+                    target.closedValue().tenantId(),
+                    target.closedValue().playableStateNamespaceId())
+                .closedValue()
+                .exactBytes())
+        .containsExactly(target.closedValue().exactBytes());
+    assertThatThrownBy(() -> state.repository().completeCutoff(cutoffOperationId))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("Every frozen issuer tenant target must read back CLOSED");
+    assertThatThrownBy(() -> dsl.execute(mutation, cutoffOperationId))
+        .hasMessageContaining("Retained issuer admission");
+    state
+        .owner()
+        .closeAndRead(
+            cutoffOperationId,
+            target.closedValue().tenantId(),
+            target.closedValue().playableStateNamespaceId());
+    assertThat(state.repository().completeCutoff(cutoffOperationId).state())
+        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+  }
+
+  @Test
+  void reusesFrozenTargetInitializerAcrossOperationsRevisionProgressAndOriginAbort() {
+    FixtureState state = fixtureState();
+    UUID originalOperationId = state.fixture().originalOperationId();
+    var opened = state.owner().initializeAndRead(originalOperationId);
+    byte[] originalPayload = opened.exactPhysicalPayload();
+    UUID secondAccountId = UUID.randomUUID();
+    assertThat(secondAccountId).isNotEqualTo(state.candidate().accountId());
+
+    CanonicalGameplayIssuerBindingLocalOperation currentOperation =
+        prepareCurrentOperation(state, "same-target-different-account", secondAccountId);
+    var originalRetry = state.owner().initializeAndRead(originalOperationId);
+    assertThat(originalRetry.scriptOutcome()).isEqualTo(2L);
+    assertThat(originalRetry.exactPhysicalPayload()).containsExactly(originalPayload);
+
+    var abortSource = state.fixture().source();
+    new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl())
+        .recordFirstNewAccountAbort(abortSource, UUID.randomUUID());
+    assertThat(
+            state
+                .fixture()
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition"
+                        + " WHERE transition_id = ?",
+                    state.fixture().transitionId())
+                .get("status", String.class))
+        .isEqualTo("ABORTED");
+
+    var abortedOriginRetry = state.owner().initializeAndRead(originalOperationId);
+    assertThat(abortedOriginRetry.scriptOutcome()).isEqualTo(2L);
+    assertThat(abortedOriginRetry.exactPhysicalPayload()).containsExactly(originalPayload);
+
+    var currentCandidateReadback = state.owner().initializeAndRead(currentOperation.operationId());
+    assertThat(currentCandidateReadback.scriptOutcome()).isEqualTo(2L);
+    assertThat(currentCandidateReadback.exactPhysicalPayload()).containsExactly(originalPayload);
+
+    var storedInitializer =
+        state
+            .fixture()
+            .dsl()
+            .fetchOne(
+                "SELECT operation_id, open_payload_bytes FROM"
+                    + " game_session_canonical_issuer_admission_initializer"
+                    + " WHERE tenant_id = ? AND playable_state_namespace_id = ?",
+                state.candidate().tenantId(),
+                state.candidate().playableStateNamespaceId());
+    assertThat(storedInitializer.get("operation_id", UUID.class)).isEqualTo(originalOperationId);
+    assertThat(storedInitializer.get("open_payload_bytes", byte[].class))
+        .containsExactly(originalPayload);
+
+    state.currentState().set(currentIssuerState(state.candidate(), "moved-source"));
+    assertThatThrownBy(() -> state.owner().initializeAndRead(currentOperation.operationId()))
+        .isInstanceOf(IllegalStateException.class);
+
+    state.currentState().set(currentIssuerState(state.candidate()));
+    var prepared = state.repository().readPreparedInitializer(currentOperation.operationId());
+    administratorCommands.del(bytes(prepared.key()));
+    assertThatThrownBy(() -> state.owner().initializeAndRead(currentOperation.operationId()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(administratorCommands.exists(bytes(prepared.key()))).isZero();
+  }
+
+  @Test
+  void preparedInitializerWithAbortedOriginBlocksAnotherAccountInTheSameTenantNamespace() {
+    FixtureState state = fixtureState();
+    UUID originalOperationId = state.fixture().originalOperationId();
+    var original = state.repository().readPreparedInitializer(originalOperationId);
+    var frozenBeforeAbort = retainedEvidenceImage(state.fixture().dsl());
+    assertThat(initializationState(state, originalOperationId)).isEqualTo("PREPARED");
+    assertThat(administratorCommands.exists(bytes(original.key()))).isZero();
+    assertThat(state.fixture().recordOriginalAccountAbort().isAccountAborted()).isTrue();
+
+    UUID anotherAccountId = UUID.randomUUID();
+    assertThat(anotherAccountId).isNotEqualTo(state.candidate().accountId());
+    var anotherOperation =
+        prepareCurrentOperation(state, "aborted-unclaimed-origin", anotherAccountId);
+    var retained = state.repository().readPreparedInitializer(anotherOperation.operationId());
+    assertThat(retained.value().initializer().operationId()).isEqualTo(originalOperationId);
+    assertThat(retained.value().exactBytes()).containsExactly(original.value().exactBytes());
+    assertThat(retained.value().tenantId()).isEqualTo(state.candidate().tenantId());
+    assertThat(retained.value().playableStateNamespaceId())
+        .isEqualTo(state.candidate().playableStateNamespaceId());
+    assertThat(state.repository().claimFirstCreatePermit(retained)).isFalse();
+    assertThatThrownBy(() -> state.owner().initializeAndRead(anotherOperation.operationId()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> state.owner().initializeAndRead(originalOperationId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(initializationState(state, originalOperationId)).isEqualTo("PREPARED");
+    assertThat(countReceipt(state, originalOperationId)).isZero();
+    assertThat(administratorCommands.exists(bytes(original.key()))).isZero();
+    assertThat(retainedEvidenceImage(state.fixture().dsl())).isEqualTo(frozenBeforeAbort);
+  }
+
+  @Test
+  void forwardRetentionGuardsPreservePopulatedV1047EvidenceAndCompleteFlywayHistory() {
+    FixtureState state = fixtureState(MigrationVersion.fromVersion("1047"));
+    UUID operationId = state.fixture().originalOperationId();
+    state.owner().initializeAndRead(operationId);
+    UUID cutoffOperationId = UUID.randomUUID();
+    UUID cutoffRequestId = UUID.randomUUID();
+    var pending = state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
+    var before = retainedEvidenceImage(state.fixture().dsl());
+    before.values().forEach(rows -> assertThat(rows).isNotEmpty());
+    var historyBefore = state.fixture().migrationHistoryImage();
+    assertThat(
+            state
+                .fixture()
+                .dsl()
+                .fetchSingle(
+                    "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
+                .get(0, String.class))
+        .isEqualTo("1047");
+
+    assertThat(
+            state
+                .fixture()
+                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.1")))
+        .isEqualTo(1);
+    assertThat(retainedEvidenceImage(state.fixture().dsl())).isEqualTo(before);
+    var historyAfter = state.fixture().migrationHistoryImage();
+    assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+    assertThat(historyAfter.subList(0, historyBefore.size()))
+        .containsExactlyElementsOf(historyBefore);
+    assertThat(
+            state
+                .fixture()
+                .dsl()
+                .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1047.1'")
+                .get(0, String.class))
+        .isEqualTo("V1047.1__issuer_admission_retained_evidence_guards.sql");
+    assertThat(
+            state
+                .fixture()
+                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.1")))
+        .isZero();
+    assertThat(retainedEvidenceImage(state.fixture().dsl())).isEqualTo(before);
+    assertThat(state.fixture().migrationHistoryImage()).containsExactlyElementsOf(historyAfter);
+
+    assertThat(state.repository().beginCutoff(cutoffOperationId, cutoffRequestId).exactBytes())
+        .containsExactly(pending.exactBytes());
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    var closed =
+        state
+            .owner()
+            .closeAndRead(
+                cutoffOperationId,
+                target.closedValue().tenantId(),
+                target.closedValue().playableStateNamespaceId());
+    assertThat(closed.scriptOutcome()).isEqualTo(3L);
+    assertThat(
+            state
+                .owner()
+                .closeAndRead(
+                    cutoffOperationId,
+                    target.closedValue().tenantId(),
+                    target.closedValue().playableStateNamespaceId())
+                .scriptOutcome())
+        .isEqualTo(2L);
+    var installed = state.repository().completeCutoff(cutoffOperationId);
+    assertThat(installed.state())
+        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+    assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
+        .containsExactly(installed.exactBytes());
+    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"initializer", "initializer_receipt", "cohort_row", "cutoff_target", "operation"})
+  void retainedEvidenceRejectsDirectUpdateDeleteAndTruncate(String family) {
+    FixtureState state = fixtureState();
+    state.owner().initializeAndRead(state.fixture().originalOperationId());
+    state.repository().beginCutoff(UUID.randomUUID(), UUID.randomUUID());
+    var dsl = state.fixture().dsl();
+    String table = EVIDENCE_PREFIX + family;
+    String update =
+        switch (family) {
+          case "initializer" -> "initialization_state = 'PREPARED'";
+          case "initializer_receipt" -> "script_outcome = script_outcome";
+          case "cohort_row" -> "source_row_json = source_row_json || ' '";
+          case "cutoff_target" -> "target_source_digest = 'sha256:' || repeat('0', 64)";
+          case "operation" -> "operation_state = operation_state";
+          default -> throw new IllegalArgumentException(family);
+        };
+    var before = retainedEvidenceImage(dsl);
+    assertThatThrownBy(() -> dsl.execute("UPDATE " + table + " SET " + update))
+        .hasMessageContaining("Retained issuer admission");
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM " + table))
+        .hasMessageContaining("Retained issuer admission");
+    assertThatThrownBy(() -> dsl.execute("TRUNCATE TABLE " + table + " CASCADE"))
+        .hasMessageContaining("Retained issuer admission");
+    assertThat(retainedEvidenceImage(dsl)).isEqualTo(before);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "INITIALIZER_SKIP",
+        "INITIALIZER_ID",
+        "INITIALIZER_PAYLOAD",
+        "INITIALIZER_REARM",
+        "TARGET_ID",
+        "TARGET_PAYLOAD",
+        "TARGET_PARTIAL",
+        "TARGET_READBACK",
+        "TARGET_REWRITE",
+        "OPERATION_SOURCE",
+        "OPERATION_REOPEN"
+      })
+  void retainedEvidenceRejectsIllegalTransitionsIdentityAndPayloadChanges(String change) {
+    FixtureState state = fixtureState();
+    UUID operationId = state.fixture().originalOperationId();
+    var prepared = state.repository().readPreparedInitializer(operationId);
+    if ("INITIALIZER_REARM".equals(change)) {
+      assertThat(state.repository().claimFirstCreatePermit(prepared)).isTrue();
+    }
+    UUID cutoffOperationId = UUID.randomUUID();
+    state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+    if ("TARGET_REWRITE".equals(change)) {
+      var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+      state
+          .owner()
+          .closeAndRead(
+              cutoffOperationId,
+              target.closedValue().tenantId(),
+              target.closedValue().playableStateNamespaceId());
+    }
+    var dsl = state.fixture().dsl();
+    String mutation =
+        switch (change) {
+          case "INITIALIZER_SKIP" -> "initializer SET initialization_state = 'OPEN_CONFIRMED'";
+          case "INITIALIZER_ID" ->
+              "initializer SET operation_id = '11111111-1111-4111-8111-111111111111'";
+          case "INITIALIZER_PAYLOAD" ->
+              "initializer SET open_payload_bytes = convert_to('changed', 'UTF8')";
+          case "INITIALIZER_REARM" -> "initializer SET initialization_state = 'PREPARED'";
+          case "TARGET_ID" -> "cutoff_target SET target_ordinal = target_ordinal + 1";
+          case "TARGET_PAYLOAD" ->
+              "cutoff_target SET closed_payload_bytes = convert_to('changed', 'UTF8')";
+          case "TARGET_PARTIAL" -> "cutoff_target SET target_state = 'CLOSED'";
+          case "TARGET_READBACK" ->
+              "cutoff_target SET target_state = 'CLOSED', script_outcome = 1,"
+                  + " exact_closed_readback_bytes = convert_to('changed', 'UTF8'),"
+                  + " exact_closed_readback_digest = closed_payload_digest";
+          case "TARGET_REWRITE" -> "cutoff_target SET script_outcome = 2";
+          case "OPERATION_SOURCE" -> "operation SET cohort_digest = 'sha256:' || repeat('0', 64)";
+          case "OPERATION_REOPEN" ->
+              "operation SET operation_state = 'OPEN' WHERE operation_kind = 'CUTOFF'";
+          default -> throw new IllegalArgumentException(change);
+        };
+    var before = retainedEvidenceImage(dsl);
+    assertThatThrownBy(() -> dsl.execute("UPDATE " + EVIDENCE_PREFIX + mutation))
+        .hasMessageContaining("Retained issuer admission");
+    assertThat(retainedEvidenceImage(dsl)).isEqualTo(before);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void forwardLiveControlGuardsPreserveV1047_1RowsAndSameEpochCutoffCompletion(
+      boolean cutoffBeforeUpgrade) {
+    FixtureState state = fixtureState(MigrationVersion.fromVersion("1047.1"));
+    var opened = state.owner().initializeAndRead(state.fixture().originalOperationId());
+    UUID cutoffOperationId = UUID.randomUUID();
+    UUID cutoffRequestId = UUID.randomUUID();
+    if (cutoffBeforeUpgrade) {
+      state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
+    }
+    var dsl = state.fixture().dsl();
+    var before = liveControlEvidenceImage(dsl);
+    var historyBefore = state.fixture().migrationHistoryImage();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
+                .get(0, String.class))
+        .isEqualTo("1047.1");
+
+    assertThat(
+            state
+                .fixture()
+                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.2")))
+        .isEqualTo(1);
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+    var historyAfter = state.fixture().migrationHistoryImage();
+    assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+    assertThat(historyAfter.subList(0, historyBefore.size()))
+        .containsExactlyElementsOf(historyBefore);
+    assertThat(
+            dsl.fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1047.2'")
+                .get(0, String.class))
+        .isEqualTo("V1047.2__issuer_admission_live_control_guards.sql");
+    assertThat(
+            state
+                .fixture()
+                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.2")))
+        .isZero();
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+    assertThat(state.fixture().migrationHistoryImage()).containsExactlyElementsOf(historyAfter);
+
+    var pending = state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
+    assertThat(pending.liveBarrierEpoch()).isEqualTo(opened.value().admissionEpoch().add(ONE));
+    var pendingImage = liveControlEvidenceImage(dsl);
+    assertThat(state.repository().beginCutoff(cutoffOperationId, cutoffRequestId).exactBytes())
+        .containsExactly(pending.exactBytes());
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(pendingImage);
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    state
+        .owner()
+        .closeAndRead(
+            cutoffOperationId,
+            target.closedValue().tenantId(),
+            target.closedValue().playableStateNamespaceId());
+    String pendingProvenance =
+        dsl.fetchSingle(
+                "SELECT (to_jsonb(control) - ARRAY['state', 'control_exact_bytes',"
+                    + " 'control_exact_digest', 'updated_at'])::text FROM "
+                    + EVIDENCE_PREFIX
+                    + "control control")
+            .get(0, String.class);
+    var installed = state.repository().completeCutoff(cutoffOperationId);
+    assertThat(installed.state())
+        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+    assertThat(installed.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
+    assertThat(installed.currentOperationId()).isEqualTo(pending.currentOperationId());
+    assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT (to_jsonb(control) - ARRAY['state', 'control_exact_bytes',"
+                        + " 'control_exact_digest', 'updated_at'])::text FROM "
+                        + EVIDENCE_PREFIX
+                        + "control control")
+                .get(0, String.class))
+        .isEqualTo(pendingProvenance);
+    var installedImage = liveControlEvidenceImage(dsl);
+    assertThat(installedImage.get("epoch_counter")).isEqualTo(pendingImage.get("epoch_counter"));
+    assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
+        .containsExactly(installed.exactBytes());
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(installedImage);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void liveIssuerCounterOnlyAdvanceFailsAtCommitAndRetainsOriginalAuthority(boolean cutoffPending) {
+    FixtureState state = fixtureState();
+    state.owner().initializeAndRead(state.fixture().originalOperationId());
+    if (cutoffPending) {
+      state.repository().beginCutoff(UUID.randomUUID(), UUID.randomUUID());
+    }
+    var dsl = state.fixture().dsl();
+    var before = liveControlEvidenceImage(dsl);
+    AtomicBoolean allocationExecuted = new AtomicBoolean();
+    assertThatThrownBy(
+            () ->
+                dsl.transaction(
+                    configuration -> {
+                      DSLContext transaction = DSL.using(configuration);
+                      assertThat(
+                              transaction.execute(
+                                  "UPDATE "
+                                      + EVIDENCE_PREFIX
+                                      + "epoch_counter"
+                                      + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1"))
+                          .isEqualTo(1);
+                      assertThat(
+                              transaction
+                                  .fetchSingle(
+                                      "SELECT counter.last_live_barrier_epoch - control.live_barrier_epoch FROM "
+                                          + EVIDENCE_PREFIX
+                                          + "epoch_counter counter JOIN "
+                                          + EVIDENCE_PREFIX
+                                          + "control control USING (issuer_id)")
+                                  .get(0, BigInteger.class))
+                          .isEqualTo(ONE);
+                      allocationExecuted.set(true);
+                    }))
+        .hasStackTraceContaining("Live issuer admission epoch counter and control");
+    assertThat(allocationExecuted).isTrue();
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void liveIssuerGuardUpgradeRejectsIncompatibleRetainedEpochPair(boolean missingControl) {
+    FixtureState state = fixtureState(MigrationVersion.fromVersion("1047.1"));
+    var dsl = state.fixture().dsl();
+    if (missingControl) {
+      assertThat(dsl.execute("DELETE FROM " + EVIDENCE_PREFIX + "control")).isEqualTo(1);
+    } else {
+      assertThat(
+              dsl.execute(
+                  "UPDATE "
+                      + EVIDENCE_PREFIX
+                      + "epoch_counter"
+                      + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1"))
+          .isEqualTo(1);
+    }
+    var before = liveControlEvidenceImage(dsl);
+    var historyBefore = state.fixture().migrationHistoryImage();
+    assertThatThrownBy(
+            () ->
+                state
+                    .fixture()
+                    .upgradeWithDefaultGameSessionMigrations(
+                        MigrationVersion.fromVersion("1047.2")))
+        .hasStackTraceContaining("Live issuer admission epoch counter and control");
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+    assertThat(state.fixture().migrationHistoryImage()).containsExactlyElementsOf(historyBefore);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"epoch_counter", "control"})
+  void liveIssuerAuthorityRejectsResetRemovalAndProvenanceRewrites(String family) {
+    FixtureState state = fixtureState();
+    var dsl = state.fixture().dsl();
+    String table = EVIDENCE_PREFIX + family;
+    var before = liveControlEvidenceImage(dsl);
+    String cutoffTransition =
+        "state = 'CUTOFF_PENDING', current_operation_kind = 'CUTOFF',"
+            + " current_operation_id = '11111111-1111-4111-8111-111111111111',"
+            + " live_barrier_epoch = live_barrier_epoch + 1, ";
+    List<String> changes =
+        "epoch_counter".equals(family)
+            ? List.of(
+                "last_live_barrier_epoch = last_live_barrier_epoch - 1",
+                "last_live_barrier_epoch = 0",
+                "last_live_barrier_epoch = last_live_barrier_epoch",
+                "last_live_barrier_epoch = last_live_barrier_epoch + 2",
+                "issuer_id = 'changed-issuer', last_live_barrier_epoch = last_live_barrier_epoch + 1")
+            : List.of(
+                "live_barrier_epoch = live_barrier_epoch - 1",
+                "live_barrier_epoch = 0",
+                "live_barrier_epoch = live_barrier_epoch",
+                "state = 'INSTALLED', current_operation_kind = 'CUTOFF'",
+                "state = 'CUTOFF_PENDING', current_operation_kind = 'CUTOFF',"
+                    + " current_operation_id = '11111111-1111-4111-8111-111111111111'",
+                "state = 'CUTOFF_PENDING', current_operation_kind = 'CUTOFF',"
+                    + " current_operation_id = '11111111-1111-4111-8111-111111111111',"
+                    + " live_barrier_epoch = live_barrier_epoch + 2",
+                cutoffTransition + "anchor_exact_bytes = convert_to('changed', 'UTF8')",
+                cutoffTransition + "account_checkpoint_bytes = convert_to('changed', 'UTF8')",
+                cutoffTransition + "stable_incarnation_bytes = convert_to('changed', 'UTF8')");
+    for (String change : changes) {
+      assertThatThrownBy(() -> dsl.execute("UPDATE " + table + " SET " + change))
+          .as(change)
+          .hasMessageContaining("Live issuer admission");
+    }
+    assertThatThrownBy(() -> dsl.execute("DELETE FROM " + table))
+        .hasMessageContaining("Live issuer admission");
+    assertThatThrownBy(() -> dsl.execute("TRUNCATE TABLE " + table + " CASCADE"))
+        .hasMessageContaining("Live issuer admission");
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+  }
+
+  @Test
+  void liveIssuerCutoffCompletionFreezesEpochOperationCohortAndSourceAndCannotReopen() {
+    FixtureState state = fixtureState();
+    state.owner().initializeAndRead(state.fixture().originalOperationId());
+    UUID cutoffOperationId = UUID.randomUUID();
+    state.repository().beginCutoff(cutoffOperationId, UUID.randomUUID());
+    var dsl = state.fixture().dsl();
+    var pendingImage = liveControlEvidenceImage(dsl);
+    for (String change :
+        List.of(
+            "state = 'OPEN', current_operation_kind = 'INITIAL_ANCHOR_INSTALL'",
+            "state = 'CUTOFF_PENDING'",
+            "state = 'INSTALLED', live_barrier_epoch = live_barrier_epoch + 1",
+            "state = 'INSTALLED', live_barrier_epoch = live_barrier_epoch - 1",
+            "state = 'INSTALLED', current_operation_id = '11111111-1111-4111-8111-111111111111'",
+            "state = 'INSTALLED', cohort_row_count = cohort_row_count + 1",
+            "state = 'INSTALLED', cohort_digest = 'sha256:' || repeat('0', 64)",
+            "state = 'INSTALLED', bootstrap_control_epoch = bootstrap_control_epoch + 1",
+            "state = 'INSTALLED', account_checkpoint_bytes = convert_to('changed', 'UTF8')",
+            "state = 'INSTALLED', anchor_exact_bytes = convert_to('changed', 'UTF8')",
+            "state = 'INSTALLED', stable_incarnation_bytes = convert_to('changed', 'UTF8')")) {
+      assertThatThrownBy(() -> dsl.execute("UPDATE " + EVIDENCE_PREFIX + "control SET " + change))
+          .as(change)
+          .hasMessageContaining("Live issuer admission");
+    }
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(pendingImage);
+    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+    state
+        .owner()
+        .closeAndRead(
+            cutoffOperationId,
+            target.closedValue().tenantId(),
+            target.closedValue().playableStateNamespaceId());
+    var installed = state.repository().completeCutoff(cutoffOperationId);
+    var installedImage = liveControlEvidenceImage(dsl);
+    for (String change :
+        List.of(
+            "state = 'INSTALLED'",
+            "state = 'OPEN', current_operation_kind = 'INITIAL_ANCHOR_INSTALL'",
+            "state = 'CUTOFF_PENDING', live_barrier_epoch = live_barrier_epoch + 1")) {
+      assertThatThrownBy(() -> dsl.execute("UPDATE " + EVIDENCE_PREFIX + "control SET " + change))
+          .as(change)
+          .hasMessageContaining("Live issuer admission");
+    }
+    assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
+        .containsExactly(installed.exactBytes());
+    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(installedImage);
+  }
+
+  private static Map<String, List<String>> liveControlEvidenceImage(DSLContext dsl) {
+    Map<String, List<String>> snapshots = new LinkedHashMap<>(retainedEvidenceImage(dsl));
+    for (String family : List.of("epoch_counter", "control")) {
+      snapshots.put(
+          family,
+          dsl.fetch(
+                  "SELECT to_jsonb(evidence)::text || ':' || xmin::text AS image FROM "
+                      + EVIDENCE_PREFIX
+                      + family
+                      + " evidence ORDER BY to_jsonb(evidence)::text")
+              .getValues("image", String.class));
+    }
+    return snapshots;
+  }
+
+  private static Map<String, List<String>> retainedEvidenceImage(DSLContext dsl) {
+    Map<String, List<String>> snapshots = new LinkedHashMap<>();
+    for (String family : EVIDENCE_TABLES) {
+      snapshots.put(
+          family,
+          dsl.fetch(
+                  "SELECT to_jsonb(evidence)::text || ':' || xmin::text AS image FROM "
+                      + EVIDENCE_PREFIX
+                      + family
+                      + " evidence ORDER BY to_jsonb(evidence)::text")
+              .getValues("image", String.class));
+    }
+    return snapshots;
+  }
+
+  @Test
+  void callerOwnedJooqTransactionRefusesBeforeSourceOrRemoteDispatch() {
+    FixtureState state = fixtureState();
+    var dsl = state.fixture().dsl();
+    var current = state.currentState().get();
+    var anchor =
+        dsl.transactionResult(
+            configuration -> {
+              var transaction = org.jooq.impl.DSL.using(configuration);
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+              return CanonicalGameplayIssuerBootstrapCoverageRepository
+                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+            });
+    AtomicBoolean sourceCalled = new AtomicBoolean();
+    CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source =
+        () -> {
+          sourceCalled.set(true);
+          return current;
+        };
+    dsl.transaction(
+        configuration -> {
+          var transaction = org.jooq.impl.DSL.using(configuration);
+          var repository =
+              new CanonicalGameplayIssuerAdmissionBarrierRepository(
+                  transaction,
+                  new CanonicalGameplayTenantGameplayTagRepository(
+                      transaction, state.fixture().target().targetNamespace(), 1),
+                  source);
+          assertThatThrownBy(
+                  () -> repository.readPreparedInitializer(state.fixture().originalOperationId()))
+              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+              .hasMessageContaining("jOOQ transaction");
+          assertThatThrownBy(
+                  () ->
+                      new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
+                          .installInitialOpen(anchor, source))
+              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+              .hasMessageContaining("jOOQ transaction");
+        });
+    assertThat(sourceCalled).isFalse();
+    assertThat(
+            dsl.fetchCount(
+                org.jooq.impl.DSL.table("game_session_canonical_issuer_admission_initializer")))
+        .isZero();
+  }
+
+  private FixtureState fixtureState() {
+    return fixtureState(null);
+  }
+
+  private FixtureState fixtureState(MigrationVersion migrationTarget) {
+    Candidate candidate = candidate();
+    DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
+    accountDataSource.setDriverClassName("org.postgresql.Driver");
+    String jdbcUrl = POSTGRES.getJdbcUrl();
+    accountDataSource.setUrl(
+        jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=public");
+    accountDataSource.setUsername(POSTGRES.getUsername());
+    accountDataSource.setPassword(POSTGRES.getPassword());
+    fixture =
+        migrationTarget == null
+            ? new CanonicalGameplayAdmissionAbortCompositionFixture(
+                accountDataSource, candidate, ownerClient, 0)
+            : CanonicalGameplayAdmissionAbortCompositionFixture.atHistoricalIssuerAdmissionFrontier(
+                accountDataSource, candidate, ownerClient, migrationTarget);
+    Candidate actualCandidate = fixture.candidate();
+    CanonicalGameplayBindingIdentity identity = identity(actualCandidate);
+    fixture.publish(controlledLeaseEvidence(identity, fixture.generation(), fixture.target()));
+    // Controlled upstream Account current-source and stable-incarnation inputs; native SQL/Redis
+    // owners execute below, but this fixture does not establish production source custody.
+    var currentState = new AtomicReference<>(currentIssuerState(actualCandidate));
+    var sourceReader =
+        (CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource)
+            currentState::get;
+    var repository =
+        new CanonicalGameplayIssuerAdmissionBarrierRepository(
+            fixture.dsl(),
+            new CanonicalGameplayTenantGameplayTagRepository(
+                fixture.dsl(), fixture.target().targetNamespace(), 1),
+            sourceReader);
+    return new FixtureState(
+        fixture,
+        actualCandidate,
+        repository,
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+            ownerClient,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution())),
+            repository,
+            sourceReader),
+        ownerClient,
+        currentState);
+  }
+
+  private CanonicalGameplayIssuerBindingLocalOperation prepareCurrentOperation(
+      FixtureState state, String seed, UUID accountId) {
+    Candidate candidate = state.candidate();
+    CanonicalGameplayBindingIdentity identity =
+        new CanonicalGameplayBindingIdentity(
+            accountId,
+            candidate.tenantId(),
+            candidate.playableStateNamespaceId(),
+            UUID.randomUUID(),
+            candidate.playableStateScope(),
+            candidate.gameInstanceId(),
+            candidate.runtimeGameInstanceId(),
+            UUID.randomUUID().toString(),
+            candidate.regionId(),
+            candidate.regionEpoch(),
+            candidate.issuerId(),
+            candidate.issuerAuthGeneration(),
+            candidate.issuerIndexLayoutVersion(),
+            candidate.issuerIndexPartitionCount(),
+            candidate.issuerIndexPartitionCapacity());
+    UUID transitionId = UUID.randomUUID();
+    var request =
+        new CanonicalGameplayIssuerBindingLocalOperation.Request(
+            UUID.randomUUID(), transitionId, identity, null, null);
+    var operation =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(
+                state.fixture().dsl(), state.sourceReader())
+            .beginOrResumeOrdinaryNew(request);
+    var localCatalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution()));
+    var localProjection =
+        new CanonicalGameplayIssuerBindingLocalProjectionRepository(
+            state.fixture().dsl(), state.sourceReader());
+    var localOwner =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            ownerClient, localCatalog, localProjection, state.sourceReader());
+    // Capacity is a distinct physical phase: publish it while SQL is still PREPARED.
+    localOwner.projectAndRead(operation);
+    var inventory = new CanonicalGameplayBindingInventoryRepository(state.fixture().dsl());
+    var provisionalEvidence = inventory.readProvisionalCasEvidence(transitionId);
+    var lease =
+        controlledLeaseEvidence(
+            identity, operation.preparedTransition().bindingGeneration(), state.fixture().target());
+    inventory.markProvisional(
+        provisionalEvidence,
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            identity,
+            operation.preparedTransition().bindingGeneration(),
+            null,
+            state.fixture().source().originalDecision().targetEvidence()));
+    localOwner.projectAndRead(operation);
+    return operation;
+  }
+
+  private static Candidate candidate() {
+    return new Candidate(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "controlled-scope",
+        UUID.randomUUID(),
+        1L,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        ONE,
+        ISSUER,
+        ONE,
+        BigInteger.valueOf(3),
+        ONE,
+        BigInteger.valueOf(2));
+  }
+
+  private static CanonicalGameplayBindingIdentity identity(Candidate candidate) {
+    return new CanonicalGameplayBindingIdentity(
+        candidate.accountId(),
+        candidate.tenantId(),
+        candidate.playableStateNamespaceId(),
+        candidate.characterId(),
+        candidate.playableStateScope(),
+        candidate.gameInstanceId(),
+        candidate.runtimeGameInstanceId(),
+        candidate.sessionId().toString(),
+        candidate.regionId(),
+        candidate.regionEpoch(),
+        candidate.issuerId(),
+        candidate.issuerAuthGeneration(),
+        candidate.issuerIndexLayoutVersion(),
+        candidate.issuerIndexPartitionCount(),
+        candidate.issuerIndexPartitionCapacity());
+  }
+
+  private static CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState
+      currentIssuerState(Candidate candidate) {
+    return currentIssuerState(candidate, "controlled-release-composition");
+  }
+
+  private static CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState
+      currentIssuerState(Candidate candidate, String seed) {
+    byte[] checkpoint =
+        ("controlled-initial-issuer-checkpoint/v1|" + candidate.issuerId() + "|1")
+            .getBytes(StandardCharsets.UTF_8);
+    var sourceCheckpoint =
+        new CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint(
+            candidate.issuerId(),
+            candidate.issuerAuthGeneration(),
+            checkpoint,
+            CanonicalGameplayIssuerMemberV2Codec.sha256(checkpoint),
+            null,
+            null);
+    String digest =
+        CanonicalGameplayIssuerMemberV2Codec.sha256(seed.getBytes(StandardCharsets.UTF_8));
+    var deployment =
+        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
+            "controlled-release-deployment-" + seed,
+            "controlled-release-generation-" + seed,
+            List.of("controlled-release-node-" + seed),
+            "controlled-release-redis-build-" + seed,
+            "controlled-release-registry-" + seed,
+            digest,
+            "READY",
+            "controlled-release-boot-" + seed,
+            "controlled-release-startup-" + seed,
+            "controlled-release-storage-" + seed,
+            "controlled-release-aof-" + seed);
+    var incarnation =
+        new CanonicalGameplayIssuerMemberV2Value.Incarnation(
+            "controlled-release-attestor-" + seed, digest, deployment, digest, digest);
+    return new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+        sourceCheckpoint, incarnation);
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate, BigInteger bindingGeneration, Target target) {
+    long now = System.currentTimeMillis();
+    String nowSeconds = Long.toString(now / 1000L);
+    Map<String, Object> carrier = new LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
+    carrier.put("targetNamespace", target.targetNamespace());
+    carrier.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
+    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("leaseId", UUID.randomUUID().toString());
+    carrier.put("leaseFence", "1");
+    Map<String, Object> scope = new LinkedHashMap<>();
+    scope.put("accountId", candidate.accountId().toString());
+    scope.put("tenantId", candidate.tenantId().toString());
+    scope.put("realmId", target.realmId().toString());
+    scope.put("worldSlug", target.worldSlug());
+    scope.put("realmSlug", target.realmSlug());
+    scope.put("playableStateNamespaceId", target.playableStateNamespaceId().toString());
+    scope.put("playableStateScope", target.playableStateScope());
+    scope.put("gameInstanceId", target.canonicalGameInstanceId().toString());
+    scope.put("characterId", candidate.characterId().toString());
+    scope.put("sessionId", candidate.sessionId().toString());
+    scope.put("bindingGeneration", bindingGeneration.toString());
+    scope.put("catalogRevision", Long.toString(target.catalogRevision()));
+    scope.put("pointerVersion", Long.toString(target.pointerVersion()));
+    scope.put("regionId", candidate.regionId().toString());
+    scope.put("regionEpoch", candidate.regionEpoch().toString());
+    carrier.put("bindingScope", scope);
+    Map<String, Object> authority = new LinkedHashMap<>();
+    authority.put("issuerAuthGeneration", candidate.issuerAuthGeneration().toString());
+    authority.put("accountAuthorityGeneration", "1");
+    authority.put("tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"));
+    authority.put("membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"));
+    authority.put("privateRealmGrantVersions", List.of());
+    carrier.put("authorityTuple", authority);
+    carrier.put("issuanceFence", "1");
+    carrier.put(
+        "membershipBaseline",
+        new LinkedHashMap<>(
+            Map.of(
+                "membershipLifecycleState", "ACTIVE",
+                "membershipVersion", Map.of(candidate.tenantId().toString(), "1"),
+                "membershipAuthorityGeneration", "1")));
+    String prefix = "account:auth-authority:v1:";
+    carrier.put(
+        "outboxCheckpoints",
+        List.of(
+            checkpoint(prefix + "account/" + candidate.accountId(), "0"),
+            checkpoint(prefix + "issuer/" + ISSUER, "0"),
+            checkpoint(
+                prefix + "membership/" + candidate.accountId() + "/" + candidate.tenantId(), "1"),
+            checkpoint(prefix + "tenant/" + candidate.tenantId(), "1")));
+    Map<String, Object> tokenIdentity = new LinkedHashMap<>();
+    tokenIdentity.put("accountId", candidate.accountId().toString());
+    tokenIdentity.put("operationId", UUID.randomUUID().toString());
+    tokenIdentity.put("issuanceRequestId", UUID.randomUUID().toString());
+    tokenIdentity.put("tokenJti", UUID.randomUUID().toString());
+    tokenIdentity.put("tokenSHA256", "a".repeat(64));
+    tokenIdentity.put("tokenProfile", "game-session-account-delegation");
+    tokenIdentity.put("tokenGeneration", "1");
+    tokenIdentity.put("issuanceFence", "1");
+    tokenIdentity.put("tokenIdentityFence", "1");
+    tokenIdentity.put("issuedAt", nowSeconds);
+    tokenIdentity.put("notBefore", nowSeconds);
+    tokenIdentity.put("expiresAt", Long.toString(now / 1000L + 60L));
+    carrier.put("tokenIdentityEvidence", tokenIdentity);
+    carrier.put("evaluatedAt", Long.toString(now));
+    carrier.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+  }
+
+  private static Map<String, Object> checkpoint(String key, String sequence) {
+    return new LinkedHashMap<>(Map.of("outboxStreamKey", key, "outboxSequence", sequence));
+  }
+
+  private static String initializationState(FixtureState state, UUID operationId) {
+    return state
+        .fixture()
+        .dsl()
+        .fetchSingle(
+            "SELECT initialization_state FROM game_session_canonical_issuer_admission_initializer"
+                + " WHERE operation_id = ?",
+            operationId)
+        .get("initialization_state", String.class);
+  }
+
+  private static long countReceipt(FixtureState state, UUID operationId) {
+    return state
+        .fixture()
+        .dsl()
+        .fetchSingle(
+            "SELECT count(*) AS receipt_count"
+                + " FROM game_session_canonical_issuer_admission_initializer_receipt"
+                + " WHERE operation_id = ?",
+            operationId)
+        .get("receipt_count", Long.class);
+  }
+
+  private void writePhysicalValue(String key, CanonicalGameplayIssuerAdmissionBarrierValue value) {
+    var initializer = value.initializer();
+    Map<String, String> fields = new LinkedHashMap<>();
+    fields.put("schema", CanonicalGameplayIssuerAdmissionBarrierValue.SCHEMA);
+    fields.put("issuerId", value.issuerId());
+    fields.put("tenantId", value.tenantId().toString());
+    fields.put("playableStateNamespaceId", value.playableStateNamespaceId().toString());
+    fields.put("tenantGameplayTag", value.tenantGameplayTag());
+    fields.put("state", value.state().name());
+    fields.put("admissionEpoch", value.admissionEpoch().toString());
+    fields.put("ownerOperationId", value.ownerOperationId().toString());
+    fields.put(
+        "initializerOperationId",
+        initializer == null ? "none" : initializer.operationId().toString());
+    fields.put(
+        "initializerEpoch", initializer == null ? "0" : initializer.admissionEpoch().toString());
+    fields.put("initializerDigest", initializer == null ? "none" : initializer.exactDigest());
+    fields.put("payloadDigest", value.exactDigest());
+    for (Map.Entry<String, String> field : fields.entrySet()) {
+      administratorCommands.hset(bytes(key), bytes(field.getKey()), bytes(field.getValue()));
+    }
+    administratorCommands.hset(bytes(key), bytes("payload"), value.exactBytes());
+  }
+
+  private static RedisClient createRedisClient(String username, String password) {
+    RedisURI.Builder builder = RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379));
+    if (username != null) builder.withAuthentication(username, password);
+    RedisURI uri = builder.build();
+    uri.setTimeout(Duration.ofSeconds(5));
+    RedisClient client = RedisClient.create(uri);
+    client.setOptions(
+        ClientOptions.builder()
+            .autoReconnect(false)
+            .protocolVersion(io.lettuce.core.protocol.ProtocolVersion.RESP2)
+            .build());
+    return client;
+  }
+
+  private static byte[] bytes(String value) {
+    return value.getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static class ForwardingProjectionRepository
+      implements CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository {
+    private final CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository delegate;
+
+    ForwardingProjectionRepository(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer
+        readPreparedInitializer(UUID operationId) {
+      return delegate.readPreparedInitializer(operationId);
+    }
+
+    @Override
+    public boolean claimFirstCreatePermit(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+      return delegate.claimFirstCreatePermit(prepared);
+    }
+
+    @Override
+    public CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget
+        readPreparedCutoffTarget(UUID operationId, UUID tenantId, UUID namespaceId) {
+      return delegate.readPreparedCutoffTarget(operationId, tenantId, namespaceId);
+    }
+
+    @Override
+    public void requireStillCurrent(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared) {
+      delegate.requireStillCurrent(prepared);
+    }
+
+    @Override
+    public void requireStillCurrent(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared) {
+      delegate.requireStillCurrent(prepared);
+    }
+
+    @Override
+    public void recordOpenReadback(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedInitializer prepared,
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+      delegate.recordOpenReadback(prepared, readback);
+    }
+
+    @Override
+    public void recordClosedReadback(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.PreparedCutoffTarget prepared,
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+      delegate.recordClosedReadback(prepared, readback);
+    }
+  }
+
+  private record FixtureState(
+      CanonicalGameplayAdmissionAbortCompositionFixture fixture,
+      Candidate candidate,
+      CanonicalGameplayIssuerAdmissionBarrierRepository repository,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner owner,
+      RedisClient ownerClient,
+      AtomicReference<CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState>
+          currentState) {
+    private CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
+        sourceReader() {
+      return currentState::get;
+    }
+
+    private CanonicalGameplayIssuerAdmissionBarrierRedisOwner owner(
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.ProjectionRepository
+            projectionRepository) {
+      return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+          ownerClient,
+          RedisScriptCatalog.fromContributions(
+              List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution())),
+          projectionRepository,
+          sourceReader());
+    }
+  }
+}

@@ -95,6 +95,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       initialIssuerState;
   private final CanonicalGameplayIssuerBindingLocalOperation localOperation;
   private final CanonicalGameplayIssuerBindingLocalProjectionRepository localProjectionRepository;
+  private byte[] issuerAcknowledgementBytes;
   private final RedisClient issuerRedisClient;
   private final RedisScriptCatalog issuerCatalog;
   private final Map<String, CanonicalGameplayIssuerBindingLocalOperation> otherOperations =
@@ -144,6 +145,49 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       MigrationVersion migrationTarget,
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap) {
+    this(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        seedBootstrapMemberCount,
+        migrationTarget,
+        afterBootstrap,
+        true);
+  }
+
+  /**
+   * Keeps the actual V1047-era owners at their historical schema until the caller upgrades it.
+   * Later-schema composition tests retain the normal after-bootstrap upgrade behavior.
+   */
+  static CanonicalGameplayAdmissionAbortCompositionFixture atHistoricalIssuerAdmissionFrontier(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      MigrationVersion migrationTarget) {
+    Objects.requireNonNull(migrationTarget, "migrationTarget");
+    if (!migrationTarget.equals(MigrationVersion.fromVersion("1047"))
+        && !migrationTarget.equals(MigrationVersion.fromVersion("1047.1"))) {
+      throw new IllegalArgumentException("Historical issuer admission requires V1047 or V1047.1");
+    }
+    return new CanonicalGameplayAdmissionAbortCompositionFixture(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        0,
+        migrationTarget,
+        (data, intent) -> {},
+        false);
+  }
+
+  private CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget,
+      BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
+          afterBootstrap,
+      boolean upgradeAfterBootstrap) {
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
@@ -235,9 +279,15 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var partitionOwner =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
             issuerRedisClient, issuerCatalog, issuerSource);
-    new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
-        .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
+    CanonicalGameplayIssuerInstalledAnchor installedAnchor =
+        new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
+            .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
     Objects.requireNonNull(afterBootstrap, "afterBootstrap").accept(dataSource, bootstrapIntent);
+    if (migrationTarget != null && upgradeAfterBootstrap) {
+      upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
+    }
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(installedAnchor, issuerSource);
     var request =
         new CanonicalGameplayIssuerBindingLocalOperation.Request(
             UUID.randomUUID(), transitionId, identity, null, null);
@@ -474,9 +524,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         repository.readProvisionalCasEvidence(transitionId),
         new CanonicalGameplayAdmissionDecision(
             transitionId, lease, identity, generation, null, target));
-    new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-        .projectAndRead(localOperation);
+    var physicalReadback =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+                issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+            .projectAndRead(localOperation);
+    issuerAcknowledgementBytes =
+        new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
+            .acknowledge(physicalReadback)
+            .exactBytes();
   }
 
   /** Uses a controlled Account lease input and the actual provisional SQL/Redis owners. */
@@ -729,8 +784,22 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public CanonicalGameplayIssuerBindingLocalReleaseOperation completeIssuerRelease(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation,
       CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.Readback readback) {
-    return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
-        .completeWithReadback(operation, readback);
+    var completed =
+        new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
+            .completeWithReadback(operation, readback);
+    if (operation.originalOperation().operationId().equals(localOperation.operationId())) {
+      var historicalAcknowledgement =
+          new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
+              .readHistorical(localOperation.operationId());
+      if (issuerAcknowledgementBytes == null
+          || historicalAcknowledgement == null
+          || !java.util.Arrays.equals(
+              issuerAcknowledgementBytes, historicalAcknowledgement.exactBytes())) {
+        throw new IllegalStateException(
+            "Issuer release did not retain the exact original binding-local acknowledgement");
+      }
+    }
+    return completed;
   }
 
   /** Records a controlled Account terminal input through the actual Game Session abort owner. */
