@@ -832,10 +832,7 @@ public class CharacterRepository {
         .set(
             ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE,
             evidence.playableStateScope().name())
-        .onConflict(
-            ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.TENANT_UUID,
-            ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_NAMESPACE_ID)
-        .doNothing()
+        .onConflictDoNothing()
         .execute();
 
     String enrolledScope =
