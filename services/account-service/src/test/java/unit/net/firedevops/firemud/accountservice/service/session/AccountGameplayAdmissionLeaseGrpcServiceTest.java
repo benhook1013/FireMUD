@@ -457,6 +457,22 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   }
 
   @Test
+  void originalNewCredentialReceiptTransactionFailureIsSanitizedUnavailable() {
+    assertCredentialIssuanceFailure(
+        new org.springframework.transaction.TransactionSystemException(
+            "private owner detail " + JWT, new java.sql.SQLException("private receipt failure")),
+        Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void invalidTransactionStateRemainsSanitizedInternal() {
+    assertCredentialIssuanceFailure(
+        new org.springframework.transaction.IllegalTransactionStateException(
+            "private owner detail " + JWT),
+        Status.Code.INTERNAL);
+  }
+
+  @Test
   void unexpectedOriginalNewCredentialOwnerFailureRemainsSanitizedInternal() {
     assertCredentialIssuanceFailure(
         new NullPointerException("private owner detail " + JWT), Status.Code.INTERNAL);
