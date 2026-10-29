@@ -15,6 +15,7 @@ import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionAbortResolution;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseRepository.Allocation;
@@ -330,6 +331,9 @@ public final class AccountGameplayAdmissionLeaseOwner {
           receipt);
     }
     if (initial.state() == AccountGameplayAdmissionLeaseOperation.State.ABORTED) {
+      if (initial.bindingDecisionId() == null && request.bindingDecisionId() != null) {
+        return resolveUnknownAbort(request, initial, caller, peer);
+      }
       requireAbortDecisionMatches(request.bindingDecisionId(), initial);
       return AccountGameplayAdmissionLeaseGrpcCodec.toAbortResponse(
           request,
@@ -363,6 +367,64 @@ public final class AccountGameplayAdmissionLeaseOwner {
         aborted.bindingDecisionId(),
         aborted.orphanCleanupId(),
         receipt);
+  }
+
+  private AccountGameplayAdmissionLeaseResponse resolveUnknownAbort(
+      AccountGameplayAdmissionLeaseGrpcCodec.OriginalLeaseRequest request,
+      AccountGameplayAdmissionLeaseOperation original,
+      VerifiedCaller caller,
+      GrpcPeerIdentity peer) {
+    AccountGameplayAdmissionLeaseEvidence lease = original.evidence();
+    UUID cleanupId = original.orphanCleanupId();
+    UUID decisionId = request.bindingDecisionId();
+    AccountGameplayAdmissionAbortResolution resolution =
+        readOrRecordAbortResolution(caller, lease, cleanupId, decisionId, false);
+    if (resolution == null) {
+      // The real PROVISIONAL decision is read outside Account SQL. An unavailable response is
+      // unknown; neither lease presence nor the cleanup UUID proves a transition link.
+      try {
+        Evidence decision = decisionReadClient.read(decisionId, lease);
+        requireDecisionMatchesLease(decision, decisionId, lease, caller, peer);
+      } catch (RuntimeException unknown) {
+        throw unavailable();
+      }
+      resolution = readOrRecordAbortResolution(caller, lease, cleanupId, decisionId, true);
+    }
+    return AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+        request,
+        lease,
+        cleanupId,
+        new AccountGameplayAdmissionLeaseGrpcCodec.AbortResolutionEvidence(
+            resolution.resolutionId(),
+            resolution.originalLeaseId(),
+            resolution.originalLeaseFence(),
+            resolution.originalLeaseSha256(),
+            resolution.orphanCleanupId(),
+            resolution.bindingDecisionId()));
+  }
+
+  private AccountGameplayAdmissionAbortResolution readOrRecordAbortResolution(
+      VerifiedCaller caller,
+      AccountGameplayAdmissionLeaseEvidence lease,
+      UUID cleanupId,
+      UUID decisionId,
+      boolean record) {
+    try {
+      return inWritableSerializableTransaction(
+              dsl -> {
+                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
+                    .requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
+                var repository = new AccountGameplayAdmissionAbortResolutionRepository(dsl);
+                return record
+                    ? java.util.Optional.of(repository.recordOrReplay(lease, cleanupId, decisionId))
+                    : repository.readExact(lease, cleanupId, decisionId);
+              })
+          .orElse(null);
+    } catch (StatusRuntimeException failure) {
+      throw failure;
+    } catch (RuntimeException unknown) {
+      throw unavailable();
+    }
   }
 
   private PublishedRealmEvidence readPublishedTarget(

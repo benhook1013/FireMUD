@@ -112,6 +112,21 @@ message AccountGameplayAdmissionLeaseResponse {
   // Present only on IssueOriginalNewGameplayCredential. Kept separate so closed original lease
   // evidence and its committed receipt remain byte-for-byte unchanged.
   repeated OriginalNewGameplayCredentialResult original_new_credential = 7;
+  // Abort-only reconciliation of an originally unknown decision. This preserves the original
+  // terminal fields and reports a pending obligation, never completed cleanup or admission.
+  repeated AccountGameplayAdmissionAbortResolutionEvidence abort_resolution = 8;
+}
+
+// Separate durable Account resolution for an unchanged original ABORTED/null-decision lease.
+// Repeated fields preserve absence and duplicates for closed receiver validation.
+message AccountGameplayAdmissionAbortResolutionEvidence {
+  repeated uint32 schema_version = 1;
+  repeated string resolution_uuid = 2;
+  repeated string original_lease_uuid = 3;
+  repeated string original_lease_fence = 4;
+  repeated string original_lease_sha256 = 5;
+  repeated string orphan_cleanup_uuid = 6;
+  repeated string binding_decision_uuid = 7;
 }
 
 // Protected Account result transported only to the authenticated Game Session service. The

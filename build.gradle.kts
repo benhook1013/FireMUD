@@ -115,6 +115,8 @@ checkstyle {
 
 spotbugs {
     toolVersion.set(spotbugsToolVersion)
+    // Preserve full analysis while keeping the auxiliary classpath out of one OS-limited argument.
+    useAuxclasspathFile.set(true)
 }
 
 subprojects {
@@ -323,6 +325,7 @@ subprojects {
 
     spotbugs {
         toolVersion.set(spotbugsToolVersion)
+        useAuxclasspathFile.set(true)
     }
 
     // --- Gate Checkstyle & SpotBugs ---
@@ -351,10 +354,10 @@ subprojects {
                 .filterNot { it.path.contains(generatedDir) }
                 .map { fileTree(it) { exclude(protoAndJooqPackages) } }
         )
+        // Keep source roots unexpanded so -sourcepath stays a compact argument.
         sourceDirs.setFrom(
             sourceDirs.files
                 .filterNot { it.path.contains(generatedDir) }
-                .map { fileTree(it) { exclude(protoAndJooqPackages) } }
         )
         auxClassPaths.from(originalClassDirs)
     }
