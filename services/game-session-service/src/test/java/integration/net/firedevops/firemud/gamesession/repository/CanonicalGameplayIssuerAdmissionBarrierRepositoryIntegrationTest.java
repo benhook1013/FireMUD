@@ -1600,19 +1600,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             .beginOrResumeOrdinaryNew(
                 new CanonicalGameplayIssuerBindingLocalOperation.Request(
                     UUID.randomUUID(), transitionId, bindingIdentity, null, null));
-    var localProjectionRepository =
-        new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, sourceReader);
-    var localOwner =
-        new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            ownerClient,
-            RedisScriptCatalog.fromContributions(
-                List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution())),
-            localProjectionRepository,
-            sourceReader);
-    localOwner.projectAndRead(operation);
-
-    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
-    var provisionalEvidence = inventory.readProvisionalCasEvidence(transitionId);
+    // This historical proof needs a genuine prepared SQL operation and tenant-local barriers.
+    // Leave issuer capacity and acknowledgement unprojected; current physical owners require
+    // the current schema and are independently qualified by their default-frontier native suites.
     var lease =
         controlledLeaseEvidence(
             bindingIdentity,
@@ -1627,10 +1617,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             null,
             target);
     CanonicalGameplayAdmissionAbortCompositionFixture.seedHistoricalLeaseBoundProvisional(
-        dsl, provisionalEvidence, decision);
-    var readback = localOwner.projectAndRead(operation);
-    new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, sourceReader)
-        .acknowledge(readback);
+        dsl, operation.preparedTransition(), decision);
 
     var repository =
         new CanonicalGameplayIssuerAdmissionBarrierRepository(
