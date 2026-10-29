@@ -158,6 +158,33 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     assertThat(admin.dbsize()).isZero();
   }
 
+  @org.junit.jupiter.api.Test
+  void selectedAbandonmentCannotLoseItsStateAndRetainsTheSameOriginalOnRetry() {
+    var claim = source.repository().claimOriginalNewCandidateInstallation(source.decision());
+    var selected = source.repository().selectOriginalNewAbandonment(TRANSITION_ID);
+    String retained = sourceSqlImage(source);
+
+    assertCandidateConstraint(
+        () ->
+            source
+                .dsl()
+                .execute(
+                    "UPDATE game_session_canonical_binding_transition"
+                        + " SET original_new_abandonment_state = NULL WHERE transition_id = ?",
+                    TRANSITION_ID),
+        "chk_original_new_abandonment");
+
+    assertThat(sourceSqlImage(source)).isEqualTo(retained);
+    var retry = source.repository().selectOriginalNewAbandonment(TRANSITION_ID);
+    assertThat(retry.state())
+        .isEqualTo(CanonicalGameplayOriginalNewAbandonmentSource.State.ABANDONMENT_SELECTED);
+    assertThat(retry.abandonmentId()).isEqualTo(selected.abandonmentId());
+    assertThat(retry.transition()).isEqualTo(selected.transition());
+    assertThat(retry.candidate()).isEqualTo(claim.candidate());
+    assertThat(sourceSqlImage(source)).isEqualTo(retained);
+    assertThat(admin.dbsize()).isZero();
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(
       strings = {"HISTORICAL", "ACQUISITION_INTENT", "ACTIVE"})
@@ -754,19 +781,26 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
         .dsl()
         .fetchSingle(
             "SELECT jsonb_build_array("
-                + "(SELECT to_jsonb(t) FROM game_session_canonical_binding_transition t"
+                + "(SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)"
+                + " FROM game_session_canonical_binding_transition t"
                 + " WHERE t.transition_id = ?),"
-                + "(SELECT to_jsonb(i) FROM game_session_canonical_gameplay_binding_inventory i"
+                + "(SELECT jsonb_build_array(to_jsonb(i), i.xmin::text)"
+                + " FROM game_session_canonical_gameplay_binding_inventory i"
                 + " WHERE i.transition_id = ?),"
-                + "(SELECT to_jsonb(r) FROM game_session_canonical_issuer_partition_reservation r"
+                + "(SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)"
+                + " FROM game_session_canonical_issuer_partition_reservation r"
                 + " WHERE r.transition_id = ?),"
-                + "(SELECT to_jsonb(a) FROM game_session_canonical_binding_account_index_obligation a"
+                + "(SELECT jsonb_build_array(to_jsonb(a), a.xmin::text)"
+                + " FROM game_session_canonical_binding_account_index_obligation a"
                 + " WHERE a.transition_id = ?),"
-                + "(SELECT to_jsonb(i) FROM game_session_canonical_binding_issuer_index_obligation i"
+                + "(SELECT jsonb_build_array(to_jsonb(i), i.xmin::text)"
+                + " FROM game_session_canonical_binding_issuer_index_obligation i"
                 + " WHERE i.transition_id = ?),"
-                + "(SELECT to_jsonb(r) FROM game_session_canonical_binding_region_bridge_obligation r"
+                + "(SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)"
+                + " FROM game_session_canonical_binding_region_bridge_obligation r"
                 + " WHERE r.transition_id = ?),"
-                + "(SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                + "(SELECT jsonb_build_array(to_jsonb(c), c.xmin::text)"
+                + " FROM game_session_canonical_binding_inventory_clock c"
                 + " WHERE singleton_id = 1))::text",
             TRANSITION_ID,
             TRANSITION_ID,

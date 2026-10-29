@@ -15,6 +15,7 @@ ALTER TABLE game_session_canonical_binding_transition
         AND original_new_abandonment_resolution_id IS NULL)
       OR (original_new_abandonment_id IS NOT NULL
         AND original_new_abandonment_id <> '00000000-0000-0000-0000-000000000000'::uuid
+        AND original_new_abandonment_state IS NOT NULL
         AND original_new_candidate_state = 'DISPATCH_POSSIBLE'
         AND original_new_candidate_bytes IS NOT NULL
         AND original_new_candidate_readback_digest IS NULL
