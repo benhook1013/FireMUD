@@ -513,6 +513,19 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Expected pattern: retain the exact pre-upgrade schema, source rows and history in migration proof. Use explicitly historical fixture input when current Java requires a later schema; do not add production compatibility branches or backfill authority merely to seed a test.
 
 - `2026-10-29`: Retained Redis layouts must be unique across combined fixture cases
-  - Context: The #3341 membership guard passed alone in R978, but its combined R981 run reused layout 11 already initialized by a sibling with different baseline data. Bootstrap correctly refused before the guard assertions.
+  - Context: #3341 membership-guard integration fixture; isolated R978 and combined R981 runs.
+  - Observation: The guard passed alone, but the combined run reused layout 11 already initialized by a sibling with different baseline data. Bootstrap correctly refused before the guard assertions, so the isolated pass did not establish shared-container isolation.
   - Outcome: Give the seeded guard layout 17 while retaining the existing layout 11 and snapshot layout 13 cases. R983 passes all three together; the original R981 aggregate remains failed. Production SQL and Redis guards are unchanged by this fixture repair.
   - Expected pattern: Check the full class's retained key/layout identities when adding a physical fixture. An isolated pass does not establish shared-container isolation; run the actual former collision cases together after repair.
+
+- `2026-10-29`: Explicitly selected analysis tasks can still be disabled
+  - Context: Gameplay R987 passed the three World migration-frontier regression cases and applied formatting, but omitted `-PfullCheck` when selecting Checkstyle, SpotBugs and formatting checks.
+  - Observation: Gradle returned success while those selected checks were `SKIPPED`. The initial progress report incorrectly described them as passing; test execution and formatter application were real, but did not establish enabled analysis or formatting verification.
+  - Outcome: R990 separately passes the enabled World integration Checkstyle, SpotBugs and formatting checks. Its aggregate remains failed on a Game Session negative-test oracle; this does not change R987's skipped-task attribution.
+  - Expected pattern: Include `-PfullCheck` and inspect the selected task outcomes before claiming those checks passed. Preserve R987 as the passing regression run with its skipped checks and record the subsequent enabled checks separately.
+
+- `2026-10-29`: An unrelated bot report delayed capture of a completed Hosted review
+  - Context: #3341 Hosted1 finished at 18:57 NZDT, while its original FireController operation remained `active / trigger_recovered` without native evidence.
+  - Observation: FireController's owner reproduced a false CodeRabbit attribution conflict caused by a newly created and edited Greptile report. The original immutable capture already contained the completed review, all three findings and the exact original comparison; no replacement trigger was needed.
+  - Outcome: The owner deployed the bounded parser correction, and the same operation recovered its three findings at 19:55 NZDT without changing review allowances or attribution. Gameplay consumed and adjudicated that original evidence.
+  - Expected pattern: Preserve the original attempt, report the capture mismatch to the tool owner and continue safe local work. Distinguish actual provider completion from stale local operation state; do not spend another review to recover existing results.
