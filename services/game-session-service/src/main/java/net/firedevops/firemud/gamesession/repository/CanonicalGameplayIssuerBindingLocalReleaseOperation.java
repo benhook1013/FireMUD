@@ -105,9 +105,10 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
         || abortSource.transition().status()
             != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
                 .Status.ABORTED
-        || abortSource.candidate().lifecycle()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
-                .Lifecycle.TERMINAL_UNRESOLVED
+        || (abortSource.candidate().lifecycle()
+                != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                    .Lifecycle.TERMINAL_UNRESOLVED
+            && !(status == Status.RELEASED && abortSource.cleanupComplete()))
         || !abortSource.transition().transitionId().equals(originalOperation.transitionId())
         || !sourceReservation.reservationId().equals(original.reservation().reservationId())
         || !sourceReservation.transitionId().equals(original.reservation().transitionId())
@@ -133,7 +134,14 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
             && (sourceReservation.lifecycle()
                     != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED
                 || this.completionInventoryRevision == null
-                || !sourceReservation.inventoryRevision().equals(this.completionInventoryRevision)
+                || (abortSource.cleanupComplete()
+                    ? sourceReservation
+                            .inventoryRevision()
+                            .compareTo(this.completionInventoryRevision)
+                        <= 0
+                    : !sourceReservation
+                        .inventoryRevision()
+                        .equals(this.completionInventoryRevision))
                 || this.completionInventoryRevision.compareTo(sourceInventoryRevision) <= 0))
         || !operationId.equals(releasedMemberValue.memberOperation().operationId())
         || !operationFence.equals(releasedMemberValue.memberOperation().operationFence())

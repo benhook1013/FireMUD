@@ -157,6 +157,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
           .isEqualTo(installedBootstrap);
       assertThat(releaseSource.get("original_local_operation_id") != null)
           .isEqualTo(!installedBootstrap);
+      session.assertNeverAdmittedExactRetryPreservesState();
       assertThat(
               session
                   .gs
@@ -1447,18 +1448,45 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     private void assertNeverAdmittedExactRetryPreservesState() {
       String terminal = image();
       String history = issuerCleanupHistoryImage();
+      String current = completedNegativeCleanupCurrentImage();
       String account = accountOperationImage();
       String resolution = negativeResolutionImage();
       String fence = gs.negativeFence();
       byte[] fields = gs.issuerPartitionFieldSetBytes();
       assertThat(abortNeverAdmitted().cleanupComplete()).isTrue();
+      gs.assertCompletedNegativeReleaseAndRetirementReplay();
       assertThat(image()).isEqualTo(terminal);
       assertThat(issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(completedNegativeCleanupCurrentImage()).isEqualTo(current);
       assertThat(accountOperationImage()).isEqualTo(account);
       assertThat(negativeResolutionImage()).isEqualTo(resolution);
       assertThat(gs.negativeFence()).isEqualTo(fence);
       assertThat(gs.issuerPartitionFieldSetBytes()).containsExactly(fields);
       assertThat(gs.heldClosureQualifications()).isZero();
+    }
+
+    private String completedNegativeCleanupCurrentImage() {
+      return java.util.List.of(
+              "game_session_canonical_binding_transition",
+              "game_session_canonical_gameplay_binding_inventory",
+              "game_session_canonical_issuer_partition_reservation",
+              "game_session_canonical_binding_account_index_obligation",
+              "game_session_canonical_binding_issuer_index_obligation",
+              "game_session_canonical_binding_region_bridge_obligation",
+              "game_session_canonical_issuer_current_local_operation",
+              "game_session_canonical_issuer_partition_mutation_head",
+              "game_session_canonical_binding_inventory_clock")
+          .stream()
+          .map(
+              table ->
+                  gs.dsl()
+                      .fetch(
+                          "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
+                              + table
+                              + " t ORDER BY 1")
+                      .getValues("image")
+                      .toString())
+          .collect(java.util.stream.Collectors.joining("\n"));
     }
 
     private byte[] leaseBytes() {
