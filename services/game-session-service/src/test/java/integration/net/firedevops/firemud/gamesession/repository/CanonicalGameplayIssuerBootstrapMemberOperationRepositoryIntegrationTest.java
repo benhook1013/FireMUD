@@ -16,7 +16,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
@@ -25,8 +24,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransi
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -716,65 +713,17 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor(BigInteger version, BigInteger count, BigInteger capacity) {
-    String encoded =
-        "issuer-layout-descriptor/v1|"
-            + ISSUER
-            + "|"
-            + version
-            + "|"
-            + count
-            + "|"
-            + capacity
-            + "|"
-            + CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
-        ISSUER,
-        version,
-        count,
-        capacity,
-        CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
-        encoded.getBytes(StandardCharsets.UTF_8));
+    return CanonicalGameplayIssuerTestFixtures.descriptor(ISSUER, version, count, capacity);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint
       sourceCheckpoint(BigInteger issuerGeneration) {
-    long sequence = issuerGeneration.longValueExact() - 1L;
-    var event =
-        AccountAuthoritySourceEventV1Codec.sealIssuer(
-            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
-                UUID.randomUUID().toString(),
-                UUID.randomUUID().toString(),
-                AccountAuthoritySourceEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + ISSUER,
-                Long.toString(sequence),
-                ISSUER,
-                issuerGeneration.toString(),
-                issuerGeneration.toString(),
-                "ISSUER_SECURITY_CHANGE"));
-    byte[] eventBytes = event.canonicalJsonUtf8();
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
-        ISSUER, issuerGeneration, eventBytes, eventBytes);
+    return CanonicalGameplayIssuerTestFixtures.sourceCheckpoint(ISSUER, issuerGeneration);
   }
 
   private static CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation
       stableIncarnation(String seed) {
-    String digest = digest(seed);
-    return new CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation(
-        "controlled-attestor-" + seed,
-        digest,
-        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
-            "controlled-deployment-" + seed,
-            "deployment-generation-" + seed,
-            List.of("controlled-node-" + seed),
-            "controlled-redis-build-" + seed,
-            "controlled-lua-registry-" + seed,
-            digest,
-            "READY",
-            "boot-" + seed,
-            "startup-" + seed,
-            "storage-" + seed,
-            "aof-" + seed),
-        digest,
-        digest);
+    return CanonicalGameplayIssuerTestFixtures.trustedStableIncarnation(seed);
   }
 
   private static String digest(String text) {
@@ -794,52 +743,25 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
   }
 
   private static void migrateThrough1031(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1031"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1031");
   }
 
   private static void migrateThrough1032(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1032"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1032");
   }
 
   private static void migrateRemaining(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, null);
   }
 
   private static TestSchema newTestSchemaAtVersion(String prefix, String version) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
     DriverManagerDataSource dataSource = dataSource(schema);
-    var configuration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
-    if (version != null) configuration.target(MigrationVersion.fromVersion(version));
-    configuration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, version);
     return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
   }
 
@@ -886,24 +808,13 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
   }
 
   private static DriverManagerDataSource dataSource(String schema) {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName("org.postgresql.Driver");
-    String jdbcUrl = postgres.getJdbcUrl();
-    String separator = jdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-    return dataSource;
+    return CanonicalGameplayIssuerTestFixtures.dataSource(
+        postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), schema);
   }
 
   private static void dropSchema(String schema) {
-    try (var connection = dataSource("public").getConnection()) {
-      DSL.using(connection, SQLDialect.POSTGRES)
-          .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
-    } catch (Exception failure) {
-      throw new IllegalStateException(
-          "Could not drop the owned member-operation test schema", failure);
-    }
+    CanonicalGameplayIssuerTestFixtures.dropSchema(
+        dataSource("public"), schema, "Could not drop the owned member-operation test schema");
   }
 
   private record Fixture(
