@@ -565,7 +565,7 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     var anchor =
         initialCoverageOwner(dsl, () -> state)
             .completeInitialBootstrap(intent.operationId(), intent.requestId());
-    // This historical phase has no V1038.5 membership table. Adapt only its slot-count read;
+    // This historical phase has no V1040.5 membership table. Adapt only its slot-count read;
     // registration still uses the actual owner and all enabled old-schema guards. This does not
     // qualify the new membership gate before that schema exists.
     AtomicInteger oldPhaseSlotCountSubstitutions = new AtomicInteger();
@@ -738,7 +738,8 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                   context.sql(oldSlotCount);
                 } else if (sql != null
                     && sql.contains("game_session_canonical_issuer_current_local_operation")) {
-                  throw new AssertionError("Unexpected membership read in the pre-V1038.5 producer");
+                  throw new AssertionError(
+                      "Unexpected membership read in the pre-V1040.5 producer");
                 }
               }
             }));

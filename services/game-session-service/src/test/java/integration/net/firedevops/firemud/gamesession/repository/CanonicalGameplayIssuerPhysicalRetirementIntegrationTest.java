@@ -582,6 +582,70 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
   }
 
   @Test
+  void retirementRequiresAndPreservesExactSeededBaselineSnapshot() throws Exception {
+    // Sibling cases retain Redis hashes, so use a distinct layout for the seeded baseline.
+    try (var fixture = newFixture(BigInteger.valueOf(13), BigInteger.ONE, 1)) {
+      assertThat(fixture.originalBaselineReservationCount()).isOne();
+      assertThat(fixture.originalBaselineBindingCount()).isOne();
+      fixture.publishOriginalWithControlledAccountLease();
+      assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+      var pendingRelease = fixture.prepareIssuerRelease();
+      var releaseReadback = fixture.projectIssuerRelease(pendingRelease);
+      var release = fixture.completeIssuerRelease(pendingRelease, releaseReadback);
+      assertThat(release.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+
+      var pendingRetirement = fixture.prepareIssuerRetirement(fixture.transitionId());
+      var baseline =
+          fixture.readPreparedPartitionWork(release.originalOperation()).baselineFields();
+      var baselineCapacity =
+          baseline.entrySet().stream()
+              .filter(
+                  entry ->
+                      entry
+                          .getKey()
+                          .startsWith(
+                              CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
+                                  .RESERVATION_FIELD_PREFIX))
+              .findFirst()
+              .orElseThrow();
+      byte[] baselineCapacityField = baselineCapacity.getKey().getBytes(StandardCharsets.US_ASCII);
+      byte[] partitionKey = fixture.issuerPartitionKey();
+      byte[] beforeRetirement = physicalFieldSet(partitionKey);
+      String historyBefore = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      String headBefore = partitionHeadImage(fixture.dsl(), fixture.originalPartitionId());
+      String retirementBefore = retirementImage(fixture.dsl(), fixture.transitionId());
+      List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
+      LuaInvocation invocation = retirementInvocation(fixture, pendingRetirement);
+
+      administratorCommands.hdel(partitionKey, new byte[][] {baselineCapacityField});
+      byte[] missingBaseline = physicalFieldSet(partitionKey);
+      assertThat(evaluate(invocation)).isEqualTo(-1L);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(missingBaseline);
+
+      administratorCommands.hset(
+          partitionKey, baselineCapacityField, release.exactReleasedMemberValueBytes());
+      byte[] mismatchedBaseline = physicalFieldSet(partitionKey);
+      assertThat(evaluate(invocation)).isEqualTo(-1L);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(mismatchedBaseline);
+      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(historyBefore);
+      assertThat(partitionHeadImage(fixture.dsl(), fixture.originalPartitionId()))
+          .isEqualTo(headBefore);
+      assertThat(retirementImage(fixture.dsl(), fixture.transitionId()))
+          .isEqualTo(retirementBefore);
+      assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);
+
+      administratorCommands.hset(partitionKey, baselineCapacityField, baselineCapacity.getValue());
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeRetirement);
+      assertThat(fixture.retireIssuerCapacity(pendingRetirement).scriptOutcome()).isEqualTo(1L);
+      byte[] afterRetirement = physicalFieldSet(partitionKey);
+      assertRetirementFieldDelta(beforeRetirement, afterRetirement, pendingRetirement);
+      var retiredFields = decodeFields(afterRetirement);
+      baseline.forEach((field, value) -> assertThat(retiredFields.get(field)).isEqualTo(value));
+    }
+  }
+
+  @Test
   void retirementRefusesMissingPartitionRevisionWithoutRedisOrSqlWrites() throws Exception {
     try (var fixture = newFixture(BigInteger.valueOf(6), BigInteger.ONE, 0)) {
       fixture.publishOriginalWithControlledAccountLease();
@@ -659,7 +723,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
 
   @Test
   void currentMembershipRejectsPrematureDeletionMutationTruncateAndDeferredSourceMismatch() {
-    try (var fixture = newFixture(BigInteger.valueOf(3), BigInteger.ONE, 1)) {
+    // A seeded baseline needs its own physical layout; sibling cases retain their issuer hashes.
+    try (var fixture = newFixture(BigInteger.valueOf(11), BigInteger.ONE, 1)) {
       UUID originalId = fixture.originalOperationId();
       List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
       String originalBefore = localOperationImage(fixture.dsl(), originalId);
@@ -714,7 +779,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
                             assertThat(
                                     transaction.execute(
                                         "UPDATE game_session_canonical_issuer_partition_reservation reservation"
-                                            + " SET coverage_fence = coverage_fence + 1"
+                                            + " SET coverage_fence = reservation.coverage_fence + 1"
                                             + " FROM game_session_canonical_issuer_binding_local_operation original"
                                             + " WHERE original.operation_id = ?"
                                             + " AND reservation.reservation_id = original.reservation_id",
@@ -722,6 +787,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
                                 .isOne();
                           }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
           .hasMessageContaining("exact installed local-operation source");
       assertThatThrownBy(
               () ->
@@ -737,7 +804,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
                             assertThat(
                                     transaction.execute(
                                         "UPDATE game_session_canonical_issuer_partition_reservation reservation"
-                                            + " SET coverage_fence = coverage_fence + 1"
+                                            + " SET coverage_fence = reservation.coverage_fence + 1"
                                             + " FROM game_session_canonical_issuer_installed_anchor anchor"
                                             + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
                                             + " ON cohort.build_operation_id = anchor.build_operation_id"
@@ -748,6 +815,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
                                 .isOne();
                           }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
           .hasMessageContaining(
               "Installed issuer reservation requires exact bootstrap or current local-operation membership");
       assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);

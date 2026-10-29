@@ -253,7 +253,7 @@ for _, operation in ipairs(operations) do
   end
 end
 for field, value in pairs(baseline) do
-  if redis.call('HGET', KEYS[1], field) ~= value then return -1 end
+  if actualFields[field] ~= value then return -1 end
 end
 if actualCapacity > tonumber(plannedPartitionCapacity)
     or actualReservations < baselineReservations
