@@ -422,30 +422,38 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Credential result is closed");
 
-    Map<String, Object> unboundClaims = new LinkedHashMap<>(claims);
-    unboundClaims.remove("tenantId");
-    unboundClaims.put("membershipVersion", Map.of());
-    unboundClaims.put("authorityTuple", GameSessionAccountDelegationProfile.authorityTuple(1L, 1L));
-    String unboundJwt = compactJwt(unboundClaims);
-    OriginalNewCredential unboundCredential =
-        AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
-            unboundJwt,
-            handle,
-            lineageId,
-            tokenJti,
-            jwtSha256(unboundJwt),
-            Long.parseLong((String) carrier.get("issuanceFence")),
-            leaseId,
-            leaseFence,
-            "102",
-            checkpointsSha256);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
-                    request, lease, State.COMMITTED, DECISION_ID, ack, unboundCredential))
-        .isInstanceOf(IllegalArgumentException.class);
+    for (String changedClaim :
+        java.util.List.of("missingTenantId", "tenantId", "sub", "accountId", "tokenGeneration")) {
+      Map<String, Object> changedClaims = new LinkedHashMap<>(claims);
+      if (changedClaim.equals("missingTenantId")) {
+        changedClaims.remove("tenantId");
+      } else {
+        changedClaims.put(
+            changedClaim,
+            changedClaim.equals("tokenGeneration") ? "2" : UUID.randomUUID().toString());
+      }
+      String changedJwt = compactJwt(changedClaims);
+      try (OriginalNewCredential changedCredential =
+          AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+              changedJwt,
+              handle,
+              lineageId,
+              tokenJti,
+              jwtSha256(changedJwt),
+              Long.parseLong((String) carrier.get("issuanceFence")),
+              leaseId,
+              leaseFence,
+              "102",
+              checkpointsSha256)) {
+        assertThatThrownBy(
+                () ->
+                    AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+                        request, lease, State.COMMITTED, DECISION_ID, ack, changedCredential))
+            .as("independently rejects changed %s", changedClaim)
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+    }
     credential.close();
-    unboundCredential.close();
     java.util.Arrays.fill(handle, (byte) 0);
     java.util.Arrays.fill(leaseBytes, (byte) 0);
   }

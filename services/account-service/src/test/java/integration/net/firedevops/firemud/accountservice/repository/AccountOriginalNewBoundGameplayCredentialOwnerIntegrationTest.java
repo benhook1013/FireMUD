@@ -35,6 +35,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayDele
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -304,6 +305,57 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           tokenRegistry.requireExactOriginalNewActiveRecord(afterLostConfirmation);
       assertThat(activeAfterLostConfirmation.absoluteExpiryMillis())
           .isEqualTo(exactRedisExpiryMillis);
+      assertThat(finalReadCalls.get()).isEqualTo(1);
+
+      // Recover the unchanged issuance while Redis is ACTIVE but SQL confirmation is absent.
+      // Both API forms must return the same original credential without a second final read.
+      String issuanceAfterActivation =
+          dsl.fetchSingle(
+                  "SELECT xmin::text || ':' || to_jsonb(issuance)::text"
+                      + " FROM account_original_new_bound_gameplay_issuances issuance")
+              .get(0, String.class);
+      var rpcRequest =
+          AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(
+              AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+                  loginJwt, originalLease.canonicalJson().getBytes(StandardCharsets.UTF_8)));
+      try (var directRetry =
+              Context.current()
+                  .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                  .call(() -> owner.issue(loginJwt, originalLease));
+          var rpcRetry =
+              AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+                  rpcRequest,
+                  Context.current()
+                      .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                      .call(() -> owner.issue(rpcRequest)))) {
+        for (var retry : List.of(directRetry, rpcRetry)) {
+          assertThat(retry.signedBoundGsACompactJwt()).isEqualTo(first.signedBoundGsACompactJwt());
+          assertThat(retry.lineageId()).isEqualTo(first.lineageId());
+          assertThat(retry.tokenJti()).isEqualTo(first.tokenJti());
+          assertThat(retry.tokenSha256()).isEqualTo(first.tokenSha256());
+          assertThat(retry.originalAckReceiptXid()).isEqualTo(first.originalAckReceiptXid());
+          byte[] expectedHandle = first.opaqueRebindHandle();
+          byte[] actualHandle = retry.opaqueRebindHandle();
+          try {
+            assertThat(MessageDigest.isEqual(expectedHandle, actualHandle)).isTrue();
+          } finally {
+            Arrays.fill(expectedHandle, (byte) 0);
+            Arrays.fill(actualHandle, (byte) 0);
+          }
+        }
+      }
+      Genesis afterIssuanceRetries = assertUnconfirmed(dsl, serializable, originalLease);
+      assertThat(afterIssuanceRetries.committedRegistryReceiptSha256())
+          .isEqualTo(afterLostConfirmation.committedRegistryReceiptSha256());
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT xmin::text || ':' || to_jsonb(issuance)::text"
+                          + " FROM account_original_new_bound_gameplay_issuances issuance")
+                  .get(0, String.class))
+          .isEqualTo(issuanceAfterActivation);
+      assertSameActiveRegistryReadback(
+          activeAfterLostConfirmation,
+          tokenRegistry.requireExactOriginalNewActiveRecord(afterIssuanceRetries));
       assertThat(finalReadCalls.get()).isEqualTo(1);
 
       // ACTIVE Redis state cannot substitute for a new authenticated Game Session final read.

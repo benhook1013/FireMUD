@@ -1,12 +1,5 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -33,6 +26,14 @@ import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReserv
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadConstraints;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** Closed, bounded RFC 8785 codec for the distinct original-NEW candidate purpose. */
 final class CanonicalGameplayOriginalNewCandidateCodec {
@@ -50,8 +51,10 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
                   .build())
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .build();
-  private static final ObjectMapper JSON =
-      new ObjectMapper(JSON_FACTORY).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final JsonMapper JSON =
+      JsonMapper.builder(JSON_FACTORY)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
   private static final Set<String> ROOT_FIELDS =
       Set.of(
           "purpose",
@@ -178,7 +181,7 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
         throw invalid("Original NEW candidate exceeds its 128 KiB resource bound");
       }
       return canonical;
-    } catch (IOException failure) {
+    } catch (IOException | JacksonException failure) {
       throw new IllegalArgumentException("Could not encode original NEW candidate", failure);
     }
   }
@@ -214,7 +217,7 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
         throw invalid("Original NEW candidate bytes are not canonical");
       }
       return decoded;
-    } catch (IOException failure) {
+    } catch (IOException | JacksonException failure) {
       throw new IllegalArgumentException("Malformed original NEW candidate", failure);
     }
   }
@@ -602,7 +605,7 @@ final class CanonicalGameplayOriginalNewCandidateCodec {
 
   private static void requireFields(ObjectNode node, Set<String> expected, String name) {
     Set<String> fields = new HashSet<>();
-    node.fieldNames().forEachRemaining(fields::add);
+    fields.addAll(node.propertyNames());
     if (!fields.equals(expected)) throw invalid(name + " has missing or unknown fields");
   }
 

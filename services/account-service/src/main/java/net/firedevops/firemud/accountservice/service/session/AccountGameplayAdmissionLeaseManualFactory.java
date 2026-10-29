@@ -44,28 +44,12 @@ public final class AccountGameplayAdmissionLeaseManualFactory {
       TrustManagerFactory trust,
       AccountGameplayAdmissionLeaseOwner owner,
       String workloadNamespace) {
-    Objects.requireNonNull(address, "gRPC server address required");
-    Objects.requireNonNull(keys, "gRPC server key manager required");
-    Objects.requireNonNull(trust, "gRPC server trust manager required");
-    int transportMaximum =
-        Math.max(
-            AccountGameplayAdmissionLeaseGrpcCodec.MAX_ACQUIRE_REQUEST_WIRE_BYTES,
-            AccountGameplayAdmissionLeaseGrpcCodec.MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES);
-    var factory =
-        new BoundedGrpcServerFactory(
-            address,
-            List.of(),
-            keys,
-            trust,
-            TlsServerCredentials.ClientAuth.REQUIRE,
-            GrpcRequestBytePolicy.ordinary(),
-            transportMaximum);
-    factory.addService(
-        ServerInterceptors.interceptForward(
-            createUnregisteredReceiver(owner, workloadNamespace),
-            new GrpcPeerIdentityInterceptor(),
-            new AccountGameplayAdmissionLeaseWorkloadGuard(workloadNamespace)));
-    return factory.createServer();
+    return server(
+        address,
+        keys,
+        trust,
+        createUnregisteredReceiver(owner, workloadNamespace),
+        workloadNamespace);
   }
 
   /** Creates an unstarted, method-guarded receiver with the ORIGINAL-NEW credential owner wired. */
@@ -75,6 +59,20 @@ public final class AccountGameplayAdmissionLeaseManualFactory {
       TrustManagerFactory trust,
       AccountGameplayAdmissionLeaseOwner owner,
       AccountOriginalNewBoundGameplayCredentialOwner originalNewCredentialOwner,
+      String workloadNamespace) {
+    return server(
+        address,
+        keys,
+        trust,
+        createUnregisteredReceiver(owner, originalNewCredentialOwner, workloadNamespace),
+        workloadNamespace);
+  }
+
+  private static Server server(
+      String address,
+      KeyManagerFactory keys,
+      TrustManagerFactory trust,
+      AccountGameplayAdmissionLeaseGrpcService receiver,
       String workloadNamespace) {
     Objects.requireNonNull(address, "gRPC server address required");
     Objects.requireNonNull(keys, "gRPC server key manager required");
@@ -94,7 +92,7 @@ public final class AccountGameplayAdmissionLeaseManualFactory {
             transportMaximum);
     factory.addService(
         ServerInterceptors.interceptForward(
-            createUnregisteredReceiver(owner, originalNewCredentialOwner, workloadNamespace),
+            receiver,
             new GrpcPeerIdentityInterceptor(),
             new AccountGameplayAdmissionLeaseWorkloadGuard(workloadNamespace)));
     return factory.createServer();

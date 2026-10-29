@@ -29,6 +29,7 @@ import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundG
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient.AccountCoordinationRedisException;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient.PendingRegistrationReceipt;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.OriginalNewBoundSignedCandidate;
@@ -171,6 +172,11 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
   /** Issues once after the durable original COMMITTED lease and ACK are independently read back. */
   public OriginalNewCredential issue(
       String presentedInitialGsACompactJwt, AccountGameplayAdmissionLeaseEvidence requestedLease) {
+    return issueChecked(presentedInitialGsACompactJwt, requestedLease).credential();
+  }
+
+  private IssuedOriginalNew issueChecked(
+      String presentedInitialGsACompactJwt, AccountGameplayAdmissionLeaseEvidence requestedLease) {
     GrpcPeerIdentity peer = requireGameSessionCaller();
     requireNoAmbientSql();
     Objects.requireNonNull(requestedLease, "Original NEW lease is required");
@@ -224,13 +230,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     if (genesis.status() == AccountOriginalNewBoundGameplayIssuanceRepository.Status.COMMITTED) {
       receiptDigest = genesis.committedRegistryReceiptSha256();
       if (receiptDigest == null) throw unavailable();
-      if (genesis.confirmedAdmissionAtMillis() != null) {
-        tokenRegistry.requireExactOriginalNewActiveRecord(genesis);
-      } else {
-        // Reasserts the same immutable PENDING bytes and deadline. The original SQL receipt digest
-        // remains frozen; this retry does not replace it with a later WAITAOF observation.
-        tokenRegistry.registerOriginalNewPending(genesis);
-      }
+      requireCommittedRegistryProjection(genesis);
     } else {
       PendingRegistrationReceipt redisReceipt = tokenRegistry.registerOriginalNewPending(genesis);
       receiptDigest = pendingRegistryReceiptDigest(redisReceipt);
@@ -272,7 +272,10 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
 
     // The caller receives the result only after Account's issuance row and active identity fence
     // committed together. Opening requires a fresh source and exact active-fence readback.
-    return openCommittedResult(currentCaller, requestedLease, receipt, committed);
+    return new IssuedOriginalNew(
+        openCommittedResult(currentCaller, requestedLease, receipt, committed),
+        receipt,
+        initial.operation().bindingDecisionId());
   }
 
   /** Full protected RPC result, with the original lease and ACK carrier left unchanged. */
@@ -280,13 +283,9 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredentialRequest request) {
     Objects.requireNonNull(request, "Parsed ORIGINAL-NEW credential request is required");
     AccountGameplayAdmissionLeaseEvidence lease = request.originalLeaseEvidence();
-    SourceRead source = readCurrentOriginalSourceAfterAuthentication(request, lease);
-    if (source.operation().state() != State.COMMITTED
-        || source.operation().bindingDecisionId() == null) throw unavailable();
-    AccountGameplayAdmissionOriginalAckReceipt receipt =
-        receiptExecutor.read(lease, source.operation().bindingDecisionId());
-    requireExactReceipt(receipt, source.operation(), lease);
-    OriginalNewCredential credential = issue(request.presentedInitialGsACompactJwt(), lease);
+    IssuedOriginalNew issued = issueChecked(request.presentedInitialGsACompactJwt(), lease);
+    AccountGameplayAdmissionOriginalAckReceipt receipt = issued.receipt();
+    OriginalNewCredential credential = issued.credential();
     try {
       var ack =
           AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence.fromFields(
@@ -305,7 +304,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
           request,
           lease,
           AccountGameplayAdmissionLeaseGrpcCodec.State.COMMITTED,
-          source.operation().bindingDecisionId(),
+          issued.bindingDecisionId(),
           ack,
           credential);
     } finally {
@@ -313,13 +312,24 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     }
   }
 
-  private SourceRead readCurrentOriginalSourceAfterAuthentication(
-      AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredentialRequest request,
-      AccountGameplayAdmissionLeaseEvidence lease) {
-    GrpcPeerIdentity peer = requireGameSessionCaller();
-    VerifiedCaller caller = verifyCaller(request.presentedInitialGsACompactJwt(), peer);
-    requireCallerMatchesLease(caller, peer, lease);
-    return readCurrentOriginalSource(caller, lease);
+  private record IssuedOriginalNew(
+      OriginalNewCredential credential,
+      AccountGameplayAdmissionOriginalAckReceipt receipt,
+      UUID bindingDecisionId) {}
+
+  private void requireCommittedRegistryProjection(Genesis committed) {
+    if (committed.confirmedAdmissionAtMillis() != null) {
+      tokenRegistry.requireExactOriginalNewActiveRecord(committed);
+      return;
+    }
+    try {
+      // Keep the frozen original SQL receipt and absolute deadline, even on a later retry.
+      tokenRegistry.registerOriginalNewPending(committed);
+    } catch (AccountCoordinationRedisException pendingUnavailableOrConflicting) {
+      // Activation may have succeeded before SQL confirmation failed. Accept only its exact
+      // original ACTIVE readback; this path cannot reactivate or downgrade a registry record.
+      tokenRegistry.requireExactOriginalNewActiveRecord(committed);
+    }
   }
 
   /**
@@ -679,11 +689,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
               return exact;
             });
 
-    if (committed.confirmedAdmissionAtMillis() != null) {
-      tokenRegistry.requireExactOriginalNewActiveRecord(committed);
-    } else {
-      tokenRegistry.registerOriginalNewPending(committed);
-    }
+    requireCommittedRegistryProjection(committed);
 
     return openFrozenCredentialResult(lease, receipt, source, committed);
   }
