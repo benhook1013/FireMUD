@@ -212,7 +212,7 @@ DECLARE
                   OR (original_new_negative_terminal(transition.transition_id)
                       AND transition.original_new_abandonment_orphan_cleanup_id = OLD.orphan_cleanup_id))';
 BEGIN
-    SELECT pg_get_functiondef('"${serviceSchema}".retain_first_new_issuer_release_operation()'::regprocedure)
+    SELECT pg_get_functiondef(format('%I.retain_first_new_issuer_release_operation()', current_schema())::regprocedure)
       INTO STRICT original;
     IF (length(original) - length(replace(original, anchor, ''))) / length(anchor) <> 1 THEN
         RAISE EXCEPTION 'Expected exact first-NEW release completion cleanup selector';
