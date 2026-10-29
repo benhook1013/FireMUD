@@ -27,4 +27,5 @@ message GetAccountInitialAdmissionSettlementResponse {
   repeated string read_request_id = 1;
   repeated bytes account_protection_evidence = 2;
   repeated bytes canonical_game_session_owner_proof = 3;
+  repeated int32 schema_version = 4;
 }

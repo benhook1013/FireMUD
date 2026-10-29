@@ -246,6 +246,13 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .executeWithoutResult(
               status -> repository.reserveProtected(prepared.request(), prepared.protection()));
       assertThat(currentOriginReads).hasValue(1);
+      // The real second request is refused at intent reservation while the first is pending.
+      assertThatThrownBy(() -> prepare(target, "protected-writer-later-open", 1211, true))
+          .isInstanceOf(
+              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
+          .hasMessage("Another nonterminal initial-admission intent already owns this realm");
+      assertThat(terminal(harness, prepared.request()).get("status", String.class))
+          .isEqualTo("PENDING");
       String pointerBefore =
           harness.dsl().fetch("SELECT * FROM gameplay_admission_pointer").formatJSON();
       String auditBefore =
@@ -311,6 +318,203 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   .fetch("SELECT * FROM gameplay_admission_pointer_event ORDER BY id")
                   .formatJSON())
           .isEqualTo(auditBefore);
+
+      // A later OPEN route needs a separately issued original owner attempt. This fixture
+      // reuses one source; it does not qualify independently advanced-pointer recovery.
+    } finally {
+      harness.close();
+    }
+  }
+
+  @Test
+  void protectedClosedAbortRetainsImmutableOriginAfterSyntheticCurrentPointerRemoval()
+      throws Exception {
+    var harness = CanonicalInitialAdmissionIntentRepositoryIntegrationTest.harness(postgres);
+    try {
+      var target = harness.seed();
+      var catalog = target.catalog();
+      var pointers =
+          new GameSessionCanonicalAdmissionPointerRepository(
+              harness.dsl(),
+              new GameSessionCanonicalRealmCatalogRepository(harness.dsl()),
+              new GameplayAdmissionPointerEventRepository(harness.dsl()));
+      var closeRequest =
+          new net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest(
+              uuid(1299),
+              catalog.targetNamespace(),
+              catalog.tenantId(),
+              catalog.realmId(),
+              catalog.creationRequestId(),
+              catalog.catalogRevision(),
+              "controlled-closed-owner",
+              "Immutable CLOSED origin for synthetic missing-pointer storage proof");
+      var closed = pointers.prepareInitialClosed(closeRequest);
+      harness.transactions().executeWithoutResult(status -> pointers.createInitialClosed(closed));
+      var origin =
+          pointers
+              .readOriginalClosedOrigin(catalog.targetNamespace(), closeRequest.requestId())
+              .orElseThrow();
+      Prepared prepared = prepare(target, "protected-closed-missing-pointer", 1281, true);
+      var repository = repository(harness);
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status -> repository.reserveProtected(prepared.request(), prepared.protection()));
+      Record pending = terminal(harness, prepared.request());
+      assertThat(pending.get("status", String.class)).isEqualTo("PENDING");
+      assertThat(pending.get("account_protection_id", UUID.class))
+          .isEqualTo(prepared.protection().accountProtectionId());
+      assertThat(pending.get("account_protection_evidence_bytes", byte[].class))
+          .containsExactly(prepared.protection().canonicalBytes());
+      String catalogBefore =
+          harness.dsl().fetch("SELECT * FROM game_session_canonical_realm_catalog").formatJSON();
+      String originBefore =
+          harness
+              .dsl()
+              .fetch("SELECT * FROM game_session_canonical_closed_admission_pointer_request")
+              .formatJSON();
+      String auditBefore =
+          harness
+              .dsl()
+              .fetch("SELECT * FROM gameplay_admission_pointer_event ORDER BY id")
+              .formatJSON();
+      Long pointerId =
+          harness
+              .dsl()
+              .fetchSingle(
+                  "SELECT id FROM gameplay_admission_pointer WHERE representation_version = 2 "
+                      + "AND target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
+                  catalog.targetNamespace(),
+                  catalog.tenantId(),
+                  catalog.realmId())
+              .get("id", Long.class);
+      // Isolate only survivor immutability for one synthetic setup DELETE in this disposable
+      // schema. This is not an issued writer or an independently advanced OPEN route. No guard
+      // is exempted during the actual abort, and the immutable origin/catalog/audit stay intact.
+      harness
+          .dsl()
+          .execute(
+              "ALTER TABLE gameplay_admission_pointer DISABLE TRIGGER "
+                  + "gameplay_admission_pointer_canonical_immutable");
+      try {
+        harness
+            .transactions()
+            .executeWithoutResult(
+                status ->
+                    assertThat(
+                            harness
+                                .dsl()
+                                .execute(
+                                    "DELETE FROM gameplay_admission_pointer WHERE id = ? "
+                                        + "AND representation_version = 2 AND target_namespace = ? "
+                                        + "AND canonical_tenant_id = ? AND realm_id = ?",
+                                    pointerId,
+                                    catalog.targetNamespace(),
+                                    catalog.tenantId(),
+                                    catalog.realmId()))
+                        .isEqualTo(1));
+      } finally {
+        harness
+            .dsl()
+            .execute(
+                "ALTER TABLE gameplay_admission_pointer ENABLE TRIGGER "
+                    + "gameplay_admission_pointer_canonical_immutable");
+      }
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT tgenabled::text AS enabled FROM pg_trigger "
+                          + "WHERE tgrelid = 'gameplay_admission_pointer'::regclass "
+                          + "AND tgname = 'gameplay_admission_pointer_canonical_immutable'")
+                  .get("enabled", String.class))
+          .isEqualTo("O");
+      assertThat(
+              harness
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) AS disabled FROM pg_trigger trigger_row "
+                          + "JOIN pg_class relation ON relation.oid = trigger_row.tgrelid "
+                          + "WHERE relation.relnamespace = current_schema()::regnamespace "
+                          + "AND trigger_row.tgenabled NOT IN ('O', 'A')")
+                  .get("disabled", Long.class))
+          .isZero();
+      assertThat(harness.dsl().fetchCount(org.jooq.impl.DSL.table("gameplay_admission_pointer")))
+          .isZero();
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(pending.formatJSON());
+      assertThat(
+              pointers.readOriginalClosedOrigin(
+                  catalog.targetNamespace(), closeRequest.requestId()))
+          .contains(origin);
+
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(),
+                      prepared.protection(),
+                      "synthetic current pointer missing"));
+      Record aborted = terminal(harness, prepared.request());
+      assertThat(aborted.get("status", String.class)).isEqualTo("ABORTED");
+      assertThat(aborted.get("prior_pointer_request_id", UUID.class)).isEqualTo(origin.requestId());
+      assertThat(aborted.get("prior_pointer_request_digest", String.class))
+          .isEqualTo(origin.requestDigest());
+      assertThat(aborted.get("prior_pointer_audit_event_id", Long.class))
+          .isEqualTo(origin.auditEventId());
+      assertThat(aborted.get("account_protection_id", UUID.class))
+          .isEqualTo(prepared.protection().accountProtectionId());
+      assertThat(aborted.get("account_protection_evidence_bytes", byte[].class))
+          .containsExactly(prepared.protection().canonicalBytes());
+      assertThat(aborted.get("pointer_id")).isNull();
+      assertThat(aborted.get("pointer_version")).isNull();
+      assertThat(aborted.get("audit_event_id")).isNull();
+      var proof =
+          repository
+              .read(
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId())
+              .orElseThrow();
+      harness
+          .transactions()
+          .executeWithoutResult(
+              status ->
+                  repository.abortProtected(
+                      prepared.request(),
+                      prepared.protection(),
+                      "synthetic current pointer missing"));
+      assertThat(terminal(harness, prepared.request()).formatJSON())
+          .isEqualTo(aborted.formatJSON());
+      assertThat(
+              repository.read(
+                  prepared.request().targetNamespace(),
+                  prepared.request().initialAdmissionRequestId()))
+          .contains(proof);
+      assertThat(harness.dsl().fetchCount(org.jooq.impl.DSL.table("gameplay_admission_pointer")))
+          .isZero();
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch("SELECT * FROM game_session_canonical_realm_catalog")
+                  .formatJSON())
+          .isEqualTo(catalogBefore);
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch("SELECT * FROM game_session_canonical_closed_admission_pointer_request")
+                  .formatJSON())
+          .isEqualTo(originBefore);
+      assertThat(
+              harness
+                  .dsl()
+                  .fetch("SELECT * FROM gameplay_admission_pointer_event ORDER BY id")
+                  .formatJSON())
+          .isEqualTo(auditBefore);
+      assertThat(
+              pointers.readOriginalClosedOrigin(
+                  catalog.targetNamespace(), closeRequest.requestId()))
+          .contains(origin);
     } finally {
       harness.close();
     }
