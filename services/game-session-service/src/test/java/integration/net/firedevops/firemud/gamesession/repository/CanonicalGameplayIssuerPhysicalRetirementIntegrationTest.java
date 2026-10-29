@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
@@ -754,6 +755,47 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       assertThat(fixture.projectOtherControllerNew(pendingTargetSeed).scriptOutcome())
           .isEqualTo(1L);
     }
+  }
+
+  @Test
+  void installedBootstrapCleanupUpgradePreservesPopulatedBootstrapAndOrdinarySources() {
+    try (var fixture = newFixture(controlledCandidate(BigInteger.valueOf(37), BigInteger.ONE), 1,
+        MigrationVersion.fromVersion("1050.3"), this::upgradeInstalledBootstrapCleanupSources)) {
+      assertThat(fixture.dsl().fetchSingle("SELECT count(*) FROM game_session_canonical_issuer_binding_local_operation").get(0, Long.class)).isEqualTo(2L);
+    }
+  }
+
+  private void upgradeInstalledBootstrapCleanupSources(
+      org.springframework.jdbc.datasource.DriverManagerDataSource dataSource,
+      CanonicalGameplayIssuerLayoutBootstrapIntent intent) {
+    DSLContext parent = DSL.using(dataSource, org.jooq.SQLDialect.POSTGRES);
+    var original = CanonicalGameplayIssuerMemberV2Codec.decode(Objects.requireNonNull(parent.fetchSingle(
+        "SELECT member_value_bytes FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ?",
+        intent.operationId()).get(0, byte[].class)));
+    var state = new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(intent.sourceCheckpoint(), original.incarnation());
+    var anchor = new CanonicalGameplayIssuerBootstrapCoverageRepository(parent)
+        .readInstalledAnchor(intent.operationId(), intent.requestId(), state).orElseThrow();
+    new CanonicalGameplayIssuerAdmissionControlRepository(parent).installInitialOpen(anchor, () -> state);
+    var owner = original.owner();
+    var candidate = new CanonicalGameplayBindingIdentity(owner.accountId(), owner.tenantId(),
+        owner.playableStateNamespaceId(), UUID.randomUUID(), owner.playableStateScope(),
+        owner.gameInstanceId(), owner.runtimeGameInstanceId(), UUID.randomUUID().toString(),
+        owner.regionId(), owner.regionEpoch(), owner.issuerId(), owner.issuerAuthGeneration(),
+        owner.issuerIndexLayoutVersion(), owner.issuerIndexPartitionCount(), owner.issuerIndexPartitionCapacity());
+    new CanonicalGameplayIssuerBindingLocalOperationRepository(parent, () -> state).beginOrResumeOrdinaryNew(
+        new CanonicalGameplayIssuerBindingLocalOperation.Request(UUID.randomUUID(), UUID.randomUUID(), candidate, null, null));
+    var tables = List.of("game_session_canonical_issuer_layout_bootstrap_intent",
+        "game_session_canonical_issuer_partition_build_cohort_row", "game_session_canonical_issuer_bootstrap_member_operation",
+        "game_session_canonical_issuer_installed_anchor", "game_session_canonical_issuer_bootstrap_partition_proof",
+        "game_session_canonical_issuer_binding_local_operation", "game_session_canonical_issuer_current_local_operation");
+    Map<String, String> before = new HashMap<>();
+    for (String table : tables) before.put(table, parent.fetch("SELECT to_jsonb(retained)::text FROM " + table + " retained ORDER BY to_jsonb(retained)::text").formatJSON());
+    var history = parent.fetch("SELECT to_jsonb(retained)::text FROM flyway_schema_history retained ORDER BY installed_rank").getValues(0, String.class);
+    assertThat(CanonicalGameplayAdmissionAbortCompositionFixture.upgradeWithDefaultGameSessionMigrations(
+        MigrationVersion.fromVersion("1050.4"), dataSource)).isOne();
+    for (String table : tables) assertThat(parent.fetch("SELECT to_jsonb(retained)::text FROM " + table + " retained ORDER BY to_jsonb(retained)::text").formatJSON()).isEqualTo(before.get(table));
+    assertThat(parent.fetch("SELECT to_jsonb(retained)::text FROM flyway_schema_history retained ORDER BY installed_rank").getValues(0, String.class)).startsWithElementsOf(history);
+    assertThat(parent.fetchSingle("SELECT count(*) FROM pg_constraint WHERE connamespace = current_schema()::regnamespace AND conname IN ('chk_gs_issuer_release_original_xor', 'chk_gs_issuer_retirement_original_xor') AND convalidated").get(0, Long.class)).isEqualTo(2L);
   }
 
   @Test

@@ -49,6 +49,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
@@ -87,11 +89,13 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     accountFixtures.dropRunOwnedSchemas();
   }
 
-  @Test
-  void claimedBeforeCreateProcessLossSettlesThroughActualBidirectionalMtlsAndIssuerRetirement()
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void claimedBeforeCreateProcessLossSettlesThroughActualBidirectionalMtlsAndIssuerRetirement(boolean installedBootstrap)
       throws Exception {
-    try (var session = openNeverAdmitted()) {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
       assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
+      var frozenProofs = session.gs.dsl().fetch("SELECT to_jsonb(proof)::text FROM game_session_canonical_issuer_bootstrap_partition_proof proof ORDER BY partition_id").formatJSON();
       var claimed =
           session
               .gs
@@ -136,13 +140,27 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
               org.mockito.ArgumentMatchers.eq(terminal.abandonmentId()),
               any());
       org.mockito.Mockito.verify(session.reverse, org.mockito.Mockito.never()).read(any(), any());
+      var releaseSource = session.gs.dsl().fetchSingle(
+          "SELECT original_local_operation_id, original_bootstrap_member_operation_id FROM game_session_canonical_issuer_binding_local_release_operation WHERE transition_id = ?", session.gs.transitionId());
+      assertThat(releaseSource.get("original_bootstrap_member_operation_id") != null).isEqualTo(installedBootstrap);
+      assertThat(releaseSource.get("original_local_operation_id") != null).isEqualTo(!installedBootstrap);
+      assertThat(session.gs.dsl().fetch("SELECT to_jsonb(proof)::text FROM game_session_canonical_issuer_bootstrap_partition_proof proof ORDER BY partition_id").formatJSON()).isEqualTo(frozenProofs);
+      if (installedBootstrap) {
+        session.gs.assertUnaffectedBootstrapFieldsPresent();
+        assertThat(session.gs.dsl().fetchSingle("SELECT count(*) FROM game_session_canonical_issuer_binding_local_operation WHERE transition_id = ?", session.gs.transitionId()).get(0, Long.class)).isZero();
+        session.gs.prepareOtherControllerNew("after-bootstrap-retirement");
+        assertThat(session.gs.projectOtherControllerNew("after-bootstrap-retirement").scriptOutcome()).isEqualTo(1L);
+        session.gs.assertUnaffectedBootstrapFieldsPresent();
+        assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      }
     }
   }
 
-  @Test
-  void neverAdmittedUnknownAccountTerminalAndRestartRetainOriginalCleanupAndNegativeResolution()
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void neverAdmittedUnknownAccountTerminalAndRestartRetainOriginalCleanupAndNegativeResolution(boolean installedBootstrap)
       throws Exception {
-    try (var session = openNeverAdmitted()) {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
       var unknown = session.client.abort(session.jwt, session.leaseBytes(), null);
       assertThat(unknown.state()).isEqualTo(State.ABORTED);
       assertThat(unknown.bindingDecisionId()).isNull();
@@ -168,6 +186,43 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(settledIssuer);
       assertThat(session.gs.negativeFence()).isEqualTo(fence);
       assertThat(session.gs.heldClosureQualifications()).isZero();
+    }
+  }
+
+  @Test
+  void installedBootstrapNegativeCleanupResumesOriginalReleaseAndRetirementAfterLostReplies() throws Exception {
+    try (var session = openNeverAdmitted(true)) {
+      // Actual Account negative RPC completes; the changed controlled issuer incarnation holds GS cleanup.
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      assertThat(session.client.read(session.jwt, session.leaseBytes()).state()).isEqualTo(State.ABORTED);
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      session.gs.restoreIssuerState();
+      session.gs.prepareOtherControllerNew("pending-bootstrap-cleanup");
+      var release = session.gs.prepareIssuerRelease();
+      assertThatThrownBy(() -> session.gs.projectOtherControllerNew("pending-bootstrap-cleanup")).isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(() -> session.gs.projectIssuerReleaseAndLoseReply(release)).isInstanceOf(IllegalStateException.class).hasMessageContaining("controlled lost issuer release reply");
+      var retry = session.gs.prepareIssuerRelease();
+      assertThat(retry.operationId()).isEqualTo(release.operationId());
+      assertThat(retry.exactReleasedMemberValueBytes()).containsExactly(release.exactReleasedMemberValueBytes());
+      var readback = session.gs.projectIssuerRelease(retry);
+      assertThat(readback.scriptOutcome()).isEqualTo(2L);
+      session.gs.completeIssuerRelease(retry, readback);
+      var releasedFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(session.gs::replayOriginalBootstrapPartition).isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(releasedFields);
+      var retirement = session.gs.prepareIssuerRetirement(session.gs.transitionId());
+      assertThatThrownBy(() -> session.gs.projectOtherControllerNew("pending-bootstrap-cleanup")).isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(() -> session.gs.retireIssuerCapacityAndLoseReply(retirement)).isInstanceOf(IllegalStateException.class).hasMessageContaining("controlled lost retirement reply");
+      assertThat(session.gs.isIssuerRetirementComplete(session.gs.prepareIssuerRetirement(session.gs.transitionId()))).isTrue();
+      var retiredFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(() -> session.gs.projectIssuerRelease(release)).isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(session.gs::replayOriginalBootstrapPartition).isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(retiredFields);
+      session.restartAccount();
+      assertThat(session.abortNeverAdmitted().cleanupComplete()).isTrue();
+      assertThat(session.gs.projectOtherControllerNew("pending-bootstrap-cleanup").scriptOutcome()).isEqualTo(1L);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
     }
   }
 
@@ -1044,8 +1099,12 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   }
 
   private Session openNeverAdmitted() throws Exception {
+    return openNeverAdmitted(false);
+  }
+
+  private Session openNeverAdmitted(boolean installedBootstrap) throws Exception {
     accountFixtures.temporaryDirectory = temporaryDirectory;
-    return new Session(false, true);
+    return new Session(false, true, installedBootstrap);
   }
 
   private final class Session implements AutoCloseable {
@@ -1068,6 +1127,10 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     }
 
     private Session(boolean prepareMemberRepair, boolean claimedNeverAdmitted) throws Exception {
+      this(prepareMemberRepair, claimedNeverAdmitted, false);
+    }
+
+    private Session(boolean prepareMemberRepair, boolean claimedNeverAdmitted, boolean installedBootstrap) throws Exception {
       try {
         accountFixture = accountFixtures.newFixture(redis.client());
         var issuance = accountFixture.committedCandidate.identity();
@@ -1096,10 +1159,10 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 candidate.issuerAuthGeneration(),
                 candidate.issuerIndexLayoutVersion(),
                 candidate.issuerIndexPartitionCount(),
-                java.math.BigInteger.valueOf(prepareMemberRepair ? 3 : 2));
+                java.math.BigInteger.valueOf(prepareMemberRepair || installedBootstrap ? 3 : 2));
         gs =
             new CanonicalGameplayAdmissionAbortCompositionFixture(
-                accountFixture.dataSource, capacityCandidate, redis.issuerOwnerClient(), 0);
+                accountFixture.dataSource, capacityCandidate, redis.issuerOwnerClient(), installedBootstrap);
         if (prepareMemberRepair) gs.prepareMemberRepairRedis();
         pkiDirectory = Files.createTempDirectory(temporaryDirectory, "actual-abort-mtls-");
         pki =

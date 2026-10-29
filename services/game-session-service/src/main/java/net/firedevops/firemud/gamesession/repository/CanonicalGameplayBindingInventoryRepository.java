@@ -3801,20 +3801,22 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !CanonicalGameplayIssuerMemberV2Codec.sha256(readbackBytes).equals(readbackDigest)) {
       throw conflict("Released issuer receipt contains malformed exact-value digests");
     }
-    Record original =
-        transaction.fetchOne(
-            "SELECT * FROM game_session_canonical_issuer_binding_local_operation"
-                + " WHERE operation_id = ? AND transition_id = ?",
-            release.get("original_local_operation_id", UUID.class),
-            transitionId);
+    UUID localId = release.get("original_local_operation_id", UUID.class);
+    UUID bootstrapId = release.get("original_bootstrap_member_operation_id", UUID.class);
+    if ((localId == null) == (bootstrapId == null)) throw conflict("Issuer release requires exactly one original source");
+    Record original = localId != null
+        ? transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_issuer_binding_local_operation WHERE operation_id = ? AND transition_id = ?", localId, transitionId)
+        : transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE member_operation_id = ?", bootstrapId);
     if (original == null
         || !Arrays.equals(originalBytes, original.get("member_value_bytes", byte[].class))
         || !Objects.equals(originalDigest, original.get("member_value_digest", String.class))
         || !Objects.equals(
             original.get("reservation_id", UUID.class), release.get("reservation_id", UUID.class))
-        || !Arrays.equals(original.get("binding_ref", byte[].class), bindingRef)) {
+        || (localId != null && !Arrays.equals(original.get("binding_ref", byte[].class), bindingRef))) {
       throw conflict(
-          "Released issuer receipt no longer retains its immutable original V1034 operation");
+          "Released issuer receipt no longer retains its immutable original member operation");
     }
     CanonicalGameplayIssuerMemberV2Value originalValue;
     CanonicalGameplayIssuerMemberV2Value releasedValue;
@@ -3824,6 +3826,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
     } catch (RuntimeException malformed) {
       throw conflict("Released issuer receipt contains a malformed schema-v2 member");
     }
+    if (!originalValue.reservation().transitionId().equals(transitionId)
+        || !Arrays.equals(originalValue.owner().bindingRef().bytes(), bindingRef)) throw conflict("Issuer release original owner differs");
     BigInteger sourceRevision = readBigInteger(release, "source_inventory_revision");
     BigInteger operationFence = readBigInteger(release, "release_operation_fence");
     BigInteger generation = readBigInteger(release, "release_local_member_generation");
