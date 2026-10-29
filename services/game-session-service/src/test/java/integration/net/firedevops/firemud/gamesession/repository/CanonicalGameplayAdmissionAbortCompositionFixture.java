@@ -1433,9 +1433,18 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       DSLContext dsl,
       CanonicalGameplayBindingProvisionalCasEvidence prepared,
       CanonicalGameplayAdmissionDecision decision) {
-    Objects.requireNonNull(dsl, "dsl");
     assertThat(prepared.expectedPrior()).isNull();
-    assertThat(prepared.transition().status())
+    seedHistoricalLeaseBoundProvisional(dsl, prepared.transition(), decision);
+  }
+
+  static void seedHistoricalLeaseBoundProvisional(
+      DSLContext dsl,
+      CanonicalGameplayBindingTransitionSnapshot prepared,
+      CanonicalGameplayAdmissionDecision decision) {
+    Objects.requireNonNull(dsl, "dsl");
+    assertThat(prepared.expectedPriorBindingRef()).isNull();
+    assertThat(prepared.expectedPriorBindingGeneration()).isNull();
+    assertThat(prepared.status())
         .isEqualTo(
             net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
                 .Status.PREPARED);
@@ -1445,7 +1454,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
           BigInteger currentRevision =
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
           BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
-          BigInteger priorRevision = prepared.transition().inventoryRevision();
+          BigInteger priorRevision = prepared.inventoryRevision();
           assertThat(
                   transaction.fetchOne(
                       "SELECT id FROM game_instances"
@@ -1468,10 +1477,10 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                           + " AND account_index_state = 'REPAIR_REQUIRED'"
                           + " AND issuer_index_state = 'REPAIR_REQUIRED' AND inventory_revision = ?",
                       new BigDecimal(nextRevision),
-                      prepared.candidate().bindingRef().bytes(),
-                      prepared.transition().transitionId(),
-                      new BigDecimal(prepared.transition().bindingGeneration()),
-                      prepared.transition().candidateAccountIndexFence(),
+                      prepared.bindingRef().bytes(),
+                      prepared.transitionId(),
+                      new BigDecimal(prepared.bindingGeneration()),
+                      prepared.candidateAccountIndexFence(),
                       new BigDecimal(priorRevision)))
               .isOne();
           for (String obligationTable :
@@ -1485,7 +1494,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                             + obligationTable
                             + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
                         new BigDecimal(nextRevision),
-                        prepared.transition().transitionId(),
+                        prepared.transitionId(),
                         new BigDecimal(priorRevision)))
                 .isOne();
           }
@@ -1495,8 +1504,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                           + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
                           + " AND lifecycle = 'RESERVED' AND inventory_revision = ?",
                       new BigDecimal(nextRevision),
-                      prepared.transition().issuerReservationId(),
-                      prepared.transition().transitionId(),
+                      prepared.issuerReservationId(),
+                      prepared.transitionId(),
                       new BigDecimal(priorRevision)))
               .isOne();
           assertThat(
@@ -1511,18 +1520,18 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   private static int seedHistoricalProvisionalTransition(
       DSLContext transaction,
-      CanonicalGameplayBindingProvisionalCasEvidence current,
+      CanonicalGameplayBindingTransitionSnapshot current,
       CanonicalGameplayAdmissionDecision decision,
       BigInteger priorRevision,
       BigInteger nextRevision) {
     List<Object> values = new ArrayList<>();
     values.add(new BigDecimal(nextRevision));
     values.addAll(historicalAdmissionDecisionValues(decision));
-    values.add(current.transition().transitionId());
+    values.add(current.transitionId());
     values.add(new BigDecimal(priorRevision));
-    values.add(current.candidate().bindingRef().bytes());
-    values.add(new BigDecimal(current.transition().bindingGeneration()));
-    values.add(current.transition().candidateAccountIndexFence());
+    values.add(current.bindingRef().bytes());
+    values.add(new BigDecimal(current.bindingGeneration()));
+    values.add(current.candidateAccountIndexFence());
     String expectedPriorPredicate =
         "AND expected_prior_binding_ref IS NULL AND expected_prior_binding_generation IS NULL";
     values.add(decision.leaseExpiresAtEpochMillis().toString());
