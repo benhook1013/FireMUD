@@ -685,6 +685,20 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
         .isEqualTo(issuerAcknowledgement.evidence().issuerBindingLocalAcknowledgementGeneration());
     assertThat(restartedAcknowledgementRepository.readHistorical(first.operationId()).exactBytes())
         .containsExactly(issuerAcknowledgement.exactBytes());
+    var transactionLocalHistoricalReceipt =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext historicalQuery = DSL.using(configuration);
+              boolean autoCommit =
+                  historicalQuery.connectionResult(connection -> connection.getAutoCommit());
+              assertThat(autoCommit).isFalse();
+              return CanonicalGameplayIssuerBindingLocalAcknowledgementRepository.readHistorical(
+                  historicalQuery, first.operationId());
+            });
+    assertThat(transactionLocalHistoricalReceipt.exactBytes())
+        .containsExactly(issuerAcknowledgement.exactBytes());
+    assertThat(transactionLocalHistoricalReceipt.digest())
+        .isEqualTo(issuerAcknowledgement.digest());
     assertThat(count(dsl, ACKNOWLEDGEMENT_TABLE)).isEqualTo(1L);
     assertThat(
             Objects.requireNonNull(

@@ -2448,6 +2448,14 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               + " = 'null'::jsonb THEN ARRAY['original_new_candidate_bytes',"
               + " 'original_new_candidate_digest', 'original_new_candidate_state',"
               + " 'original_new_candidate_readback_digest'] ELSE ARRAY[]::text[] END";
+      // Only the wholly absent V1049 extension is absence-equivalent across the upgrade.
+      image =
+          "("
+              + image
+              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_final_session_sha256'"
+              + " = 'null'::jsonb THEN ARRAY['original_new_final_session_sha256',"
+              + " 'original_new_admission_at_ms', 'original_new_continuity_expires_at_ms',"
+              + " 'original_new_session_duration_ms'] ELSE ARRAY[]::text[] END";
     } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
       // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
       image =
@@ -2479,6 +2487,14 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               + " = 'null'::jsonb THEN ARRAY['original_new_candidate_bytes',"
               + " 'original_new_candidate_digest', 'original_new_candidate_state',"
               + " 'original_new_candidate_readback_digest'] ELSE ARRAY[]::text[] END";
+      // Only the wholly absent V1049 extension is absence-equivalent across the upgrade.
+      image =
+          "("
+              + image
+              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_final_session_sha256'"
+              + " = 'null'::jsonb THEN ARRAY['original_new_final_session_sha256',"
+              + " 'original_new_admission_at_ms', 'original_new_continuity_expires_at_ms',"
+              + " 'original_new_session_duration_ms'] ELSE ARRAY[]::text[] END";
     } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
       // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
       image =

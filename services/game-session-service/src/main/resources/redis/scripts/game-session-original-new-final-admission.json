@@ -1,0 +1,49 @@
+{
+  "scriptId": "game-session.original-new-final-admission.v1",
+  "resourcePath": "redis/lua/game-session-original-new-final-admission.lua",
+  "sha256": "1ecd5a3e06a4338ead9b9b57c3449f6235e0cf7906cdea7dea17a01684d2177c",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {"name": "session", "ownedPrefix": "session:game:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "characterIndex", "ownedPrefix": "session:game:index:character:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "accountTenantIndex", "ownedPrefix": "session:game:index:account-tenant:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "tenantIndex", "ownedPrefix": "session:game:index:tenant:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "accountAdmissionBarrier", "ownedPrefix": "session:game:account-admission:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "issuerAdmissionBarrier", "ownedPrefix": "session:game:issuer-admission:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [
+    {"name": "tenantId"},
+    {"name": "accountId"},
+    {"name": "playableStateNamespaceId"},
+    {"name": "characterId"},
+    {"name": "gameInstanceId"},
+    {"name": "sessionId"},
+    {"name": "bindingGeneration"},
+    {"name": "tenantGameplayTag"},
+    {"name": "candidateBytes"},
+    {"name": "characterProjectionBytes"},
+    {"name": "templateBytes"},
+    {"name": "canonicalSessionDurationMillis"},
+    {"name": "accountOpenFieldsJSON"},
+    {"name": "issuerOpenFieldsJSON"},
+    {"name": "absoluteDeadlineMillis"},
+    {"name": "issuerPayloadBytes"}
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "FINAL_ADMISSION_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "FINAL_ADMISSION_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "CURRENT_PHYSICAL_STATE_REFUSED", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "A missing or changed candidate, tenant index, OPEN barrier, or Redis state fails closed. Exact retry is read-only and preserves the first Redis TIME values; the script never repairs indexes, recreates barriers, transfers a controller, or claims that the supplied OPEN sources establish the complete admission flow. The owner returns evidence only after independent exact physical readback. Reset-sensitive state requires its owning recovery before the final consumer can proceed.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}
