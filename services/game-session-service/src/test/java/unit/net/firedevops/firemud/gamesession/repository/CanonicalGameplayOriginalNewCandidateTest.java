@@ -137,7 +137,7 @@ class CanonicalGameplayOriginalNewCandidateTest {
   }
 
   @Test
-  void refusesResumeAndUnrecognizedTransitionStates() {
+  void refusesResumeAndRequiresRetryableTypedTransitionEvidence() {
     Bundle original = bundle(CHARACTER, BigInteger.valueOf(7), "World", false);
     var resumeCarrier =
         new LinkedHashMap<>(
@@ -163,13 +163,11 @@ class CanonicalGameplayOriginalNewCandidateTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("public-production original NEW");
 
-    var aborted = evidenceWithStatus(original.identity(), "ABORTED");
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
-                    aborted, original.decision()))
+    // The typed evidence refuses terminal states before a candidate can receive them.
+    // This asserts that upstream boundary, not coverage of an unreachable candidate branch.
+    assertThatThrownBy(() -> evidenceWithStatus(original.identity(), "ABORTED"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("no-prior PREPARED or PROVISIONAL NEW candidate");
+        .hasMessage("transition is not a retryable provisional operation");
   }
 
   @Test

@@ -1171,7 +1171,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           fixture.dsl.fetch(
               "SELECT installed_rank, version, checksum FROM flyway_schema_history ORDER BY installed_rank");
       int predecessorInstalledRank =
-          fixture.dsl.fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+          fixture
+              .dsl
+              .fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
               .get(0, Integer.class);
       Flyway.configure()
           .dataSource(fixture.dataSource)
