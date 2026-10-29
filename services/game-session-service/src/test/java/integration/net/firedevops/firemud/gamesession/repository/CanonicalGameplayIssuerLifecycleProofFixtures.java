@@ -136,6 +136,16 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
 
   protected CanonicalGameplayAdmissionAbortCompositionFixture newFixture(
       Candidate candidate, int seedBootstrapMemberCount, MigrationVersion migrationTarget) {
+    return newFixture(candidate, seedBootstrapMemberCount, migrationTarget, (data, intent) -> {});
+  }
+
+  protected CanonicalGameplayAdmissionAbortCompositionFixture newFixture(
+      Candidate candidate,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget,
+      java.util.function.BiConsumer<
+              DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
+          afterBootstrap) {
     DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
     accountDataSource.setDriverClassName("org.postgresql.Driver");
     String postgresJdbcUrl = postgres().getJdbcUrl();
@@ -144,7 +154,12 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
     accountDataSource.setUsername(postgres().getUsername());
     accountDataSource.setPassword(postgres().getPassword());
     return new CanonicalGameplayAdmissionAbortCompositionFixture(
-        accountDataSource, candidate, issuerOwner, seedBootstrapMemberCount, migrationTarget);
+        accountDataSource,
+        candidate,
+        issuerOwner,
+        seedBootstrapMemberCount,
+        migrationTarget,
+        afterBootstrap);
   }
 
   protected static Candidate controlledCandidate() {
