@@ -33,7 +33,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public final class CanonicalGameplayOriginalNewCandidateRedisOwner {
   private static final String PRINCIPAL = "gamesession_coord_app";
   private static final int MAX_SCRIPT_BYTES = 32 * 1024;
-  private static final int MAX_CANDIDATE_BYTES = 512 * 1024;
+  // Candidate acceptance follows the codec. Retained V1048 and Lua storage guards allow
+  // up to 512 KiB defensively; they do not widen the codec's 128 KiB input contract.
+  private static final int MAX_CANDIDATE_BYTES =
+      CanonicalGameplayOriginalNewCandidateCodec.MAX_CANDIDATE_BYTES;
   private static final long COMMAND_TIMEOUT_MILLIS = 5_000;
   private static final List<RedisScriptDescriptor.KeySpec> EXPECTED_KEYS =
       List.of(
