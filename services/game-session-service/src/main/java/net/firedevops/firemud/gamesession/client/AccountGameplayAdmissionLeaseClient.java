@@ -230,6 +230,7 @@ public final class AccountGameplayAdmissionLeaseClient
                       (String) expected.originalLeaseEvidence().carrier().get("leaseId")))
           || credential.originalLeaseFence()
               != expected.originalLeaseEvidence().leaseFence().longValueExact()) {
+        credential.close();
         throw new IllegalArgumentException("Account credential result changed its original lease");
       }
       return credential;

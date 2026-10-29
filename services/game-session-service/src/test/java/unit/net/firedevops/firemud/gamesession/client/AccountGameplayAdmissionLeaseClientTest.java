@@ -237,6 +237,7 @@ class AccountGameplayAdmissionLeaseClientTest {
     var observed = new CopyOnWriteArrayList<String>();
     var deadlines = new CopyOnWriteArrayList<Deadline>();
     var issuedRequests = new CopyOnWriteArrayList<IssueOriginalNewGameplayCredentialRequest>();
+    var signedBoundJwts = new CopyOnWriteArrayList<String>();
     var confirmationRequests =
         new CopyOnWriteArrayList<ConfirmOriginalNewGameplayAdmissionRequest>();
     byte[] handle = new byte[32];
@@ -261,6 +262,7 @@ class AccountGameplayAdmissionLeaseClientTest {
                   Map<?, ?> scope = object(carrier, "bindingScope");
                   Map<String, Object> claims = testBoundClaims(lease);
                   String compactJwt = testCompactJwt(claims);
+                  signedBoundJwts.add(compactJwt);
                   UUID lineage = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
                   UUID tokenJti = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
                   OriginalNewCredential credential =
@@ -332,7 +334,9 @@ class AccountGameplayAdmissionLeaseClientTest {
       } finally {
         java.util.Arrays.fill(receivedHandle, (byte) 0);
       }
-      assertThat(received.toString()).doesNotContain(JWT, HexFormat.of().formatHex(handle));
+      assertThat(signedBoundJwts).containsExactly(received.signedBoundGsACompactJwt());
+      assertThat(received.toString())
+          .doesNotContain(JWT, signedBoundJwts.getFirst(), HexFormat.of().formatHex(handle));
       var confirmation = client.confirmOriginalNewGameplayAdmission(JWT, originalLease);
 
       assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER);
@@ -364,6 +368,79 @@ class AccountGameplayAdmissionLeaseClientTest {
               });
       received.close();
       java.util.Arrays.fill(originalLease, (byte) 0);
+    } finally {
+      java.util.Arrays.fill(handle, (byte) 0);
+      stop(server);
+    }
+  }
+
+  @Test
+  void originalLeaseMismatchClosesParsedCredentialAndRetainsOnlySanitizedLocalCause()
+      throws Exception {
+    Server server =
+        server(
+            "account-server",
+            new AccountGameplayAdmissionLeaseServiceGrpc
+                .AccountGameplayAdmissionLeaseServiceImplBase() {
+              @Override
+              public void issueOriginalNewGameplayCredential(
+                  IssueOriginalNewGameplayCredentialRequest request,
+                  StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
+                observer.onNext(AccountGameplayAdmissionLeaseResponse.getDefaultInstance());
+                observer.onCompleted();
+              }
+            });
+    byte[] handle = new byte[32];
+    java.util.Arrays.fill(handle, (byte) 0x2a);
+    try (var client = client(server)) {
+      client.init();
+      var originalLease = lease();
+      byte[] originalBytes = originalLease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+      String signedJwt = testCompactJwt(testBoundClaims(originalLease));
+      for (boolean changedId : List.of(true, false)) {
+        try (OriginalNewCredential parsed =
+                AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+                    signedJwt,
+                    handle,
+                    UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                    UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                    jwtSha256(signedJwt),
+                    Long.parseLong((String) originalLease.carrier().get("issuanceFence")),
+                    changedId
+                        ? UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+                        : UUID.fromString((String) originalLease.carrier().get("leaseId")),
+                    originalLease.leaseFence().longValueExact() + (changedId ? 0 : 1),
+                    "102",
+                    checkpointsSha256(originalLease.carrier().get("outboxCheckpoints")));
+            var codec =
+                org.mockito.Mockito.mockStatic(
+                    AccountGameplayAdmissionLeaseGrpcCodec.class,
+                    invocation -> {
+                      // Isolate the client guard; the real codec already rejects this mismatch.
+                      if (invocation.getMethod().getName()
+                          .equals("parseIssueOriginalNewCredentialResponse")) {
+                        return parsed;
+                      }
+                      return org.mockito.Mockito.CALLS_REAL_METHODS.answer(invocation);
+                    })) {
+          assertThatThrownBy(
+                  () -> client.issueOriginalNewBoundGameplayCredential(JWT, originalBytes))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("Account returned invalid original-new credential evidence")
+              .hasCauseInstanceOf(IllegalArgumentException.class)
+              .satisfies(
+                  failure -> {
+                    assertThat(failure.getCause())
+                        .hasMessage("Account credential result changed its original lease");
+                    assertThat(throwableText(failure))
+                        .doesNotContain(JWT, signedJwt, HexFormat.of().formatHex(handle));
+                  });
+          assertThatThrownBy(parsed::opaqueRebindHandle)
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("Credential result is closed");
+        }
+      }
+      java.util.Arrays.fill(originalBytes, (byte) 0);
     } finally {
       java.util.Arrays.fill(handle, (byte) 0);
       stop(server);
