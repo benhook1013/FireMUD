@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
@@ -1334,6 +1335,127 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
     return operation.status()
         == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED;
+  }
+
+  /**
+   * Exercises receipt readers and exact retirement replay after real negative cleanup completes.
+   */
+  public void assertCompletedNegativeReleaseAndRetirementReplay() {
+    var source = repository.readIssuerCleanupSource(transitionId);
+    assertThat(source.cleanupComplete()).isTrue();
+    var releaseRow =
+        dsl.fetchSingle(
+            "SELECT * FROM game_session_canonical_issuer_binding_local_release_operation WHERE transition_id = ?",
+            transitionId);
+    var retirementRow =
+        dsl.fetchSingle(
+            "SELECT * FROM game_session_canonical_issuer_binding_local_retirement WHERE transition_id = ?",
+            transitionId);
+    var release =
+        new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
+            .readCommittedRelease(transitionId);
+    assertThat(release.neverAdmitted()).isTrue();
+    assertThat(release.status())
+        .isEqualTo(CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED);
+    assertThat(release.completionInventoryRevision())
+        .isLessThan(source.transition().inventoryRevision());
+    assertThat(release.operationId()).isEqualTo(releaseRow.get("operation_id", UUID.class));
+    assertThat(release.exactOriginalMemberValueBytes())
+        .containsExactly(releaseRow.get("original_member_value_bytes", byte[].class));
+    assertThat(release.exactReleasedMemberValueBytes())
+        .containsExactly(releaseRow.get("released_member_value_bytes", byte[].class));
+    assertThat(release.exactPhysicalReadbackFieldSetBytes())
+        .containsExactly(releaseRow.get("physical_readback_field_set_bytes", byte[].class));
+    assertThat(release.physicalReadbackDigest())
+        .isEqualTo(releaseRow.get("physical_readback_field_set_digest", String.class));
+
+    if (releaseRow.get("original_local_operation_id", UUID.class) != null) {
+      var originalRow =
+          dsl.fetchSingle(
+              "SELECT * FROM game_session_canonical_issuer_binding_local_operation WHERE operation_id = ?",
+              release.originalOperationId());
+      var projection =
+          CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readProjection(
+              dsl,
+              originalRow,
+              originalSource.memberValue(),
+              source.transition().inventoryRevision(),
+              "ABORTED",
+              "TERMINAL",
+              "RELEASED",
+              "RELEASED",
+              release.operationId());
+      assertThat(projection.exactMemberValueBytes())
+          .containsExactly(release.exactReleasedMemberValueBytes());
+    }
+    // Retired originals are immutable history, rather than members of a live projection.
+    assertThatThrownBy(this::readCurrentOriginalPartitionWork)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not in the exact current projection");
+    var retirement = prepareIssuerRetirement(transitionId);
+    assertThat(retirement.status())
+        .isEqualTo(CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED);
+    assertThat(retirement.operationId())
+        .isEqualTo(retirementRow.get("retirement_operation_id", UUID.class));
+    var replay = retireIssuerCapacity(retirement);
+    assertThat(replay.scriptOutcome()).isEqualTo(2L);
+    assertThat(replay.exactAbsenceReadbackFieldSetBytes())
+        .containsExactly(retirementRow.get("exact_absence_readback_field_set_bytes", byte[].class));
+    assertThat(retirement.exactAbsenceReadbackFieldSetDigest())
+        .isEqualTo(retirementRow.get("exact_absence_readback_field_set_digest", String.class));
+    assertThat(originalIssuerCapacityAbsent()).isTrue();
+
+    // An unresolved cleanup cannot borrow the completed cleanup's advanced mutable revision.
+    var candidate = source.candidate();
+    var unresolved =
+        new net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry(
+            candidate.identity(),
+            candidate.bindingRef(),
+            candidate.bindingGeneration(),
+            candidate.accountIndexFence(),
+            candidate.issuerReservationId(),
+            candidate.transitionId(),
+            net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                .Lifecycle.TERMINAL_UNRESOLVED,
+            candidate.accountIndexState(),
+            candidate.issuerIndexState(),
+            candidate.inventoryRevision());
+    var negative = repository.readOriginalNewAbandonmentSource(transitionId);
+    var unresolvedSource =
+        CanonicalGameplayIssuerCleanupSource.negative(
+            new CanonicalGameplayOriginalNewAbandonmentSource(
+                negative.transition(),
+                negative.candidate(),
+                unresolved,
+                negative.reservation(),
+                negative.abandonmentId(),
+                negative.closureDigest(),
+                negative.state(),
+                negative.orphanCleanupId(),
+                negative.negativeResolutionId()));
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
+                    dsl, releaseRow, unresolvedSource, originalSource))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("phase differs");
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayAdmissionAbortSource(
+                    source.transition(),
+                    source.candidate(),
+                    source.reservation(),
+                    source.originalDecision(),
+                    source.orphanCleanupId()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not retained for exact cleanup");
+    releaseRow.set(releaseRow.field("completion_inventory_revision", BigDecimal.class), null);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
+                    dsl, releaseRow, source, originalSource))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("phase differs");
   }
 
   /** Adds the retirement script only for callers that exercise the new owner. */

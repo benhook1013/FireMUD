@@ -487,10 +487,17 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
         || (status == CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED
             && (source.reservation().lifecycle()
                     != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED
-                || !Objects.equals(source.reservation().inventoryRevision(), completionRevision)
+                || !(Objects.equals(source.reservation().inventoryRevision(), completionRevision)
+                    || (source.cleanupComplete()
+                        && completionRevision != null
+                        && source.reservation().inventoryRevision().compareTo(completionRevision)
+                            > 0))
                 || completionRevision == null
                 || completionRevision.compareTo(sourceRevision) <= 0))) {
       throw conflict("Stored issuer release phase differs from its current V29 reservation");
+    }
+    if (source.cleanupComplete()) {
+      requireCompletedNegativeRelease(transaction, row, source);
     }
     try {
       return new CanonicalGameplayIssuerBindingLocalReleaseOperation(
@@ -613,14 +620,25 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
       }
       return null;
     }
+    boolean completedNegative = "TERMINAL".equals(currentCandidateLifecycle);
+    if (completedNegative) {
+      var source =
+          CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+              transaction, uuid(row, "transition_id"), false);
+      requireCompletedNegativeRelease(transaction, row, source);
+      if (!source.transition().inventoryRevision().equals(currentInventoryRevision)) {
+        throw conflict("Completed negative projection differs from its retained source revision");
+      }
+    }
     if (!"RELEASED".equals(status)
         || !currentTransitionStatus.equals("ABORTED")
-        || !currentCandidateLifecycle.equals("TERMINAL_UNRESOLVED")
+        || (!currentCandidateLifecycle.equals("TERMINAL_UNRESOLVED") && !completedNegative)
         || !currentReservationLifecycle.equals("RELEASED")
         || !currentIssuerObligationStatus.equals("RELEASED")
         || !releaseId.equals(currentReleaseOperationId)
-        || !Objects.equals(
-            nullablePositive(row, "completion_inventory_revision"), currentInventoryRevision)
+        || (!completedNegative
+            && !Objects.equals(
+                nullablePositive(row, "completion_inventory_revision"), currentInventoryRevision))
         || currentInventoryRevision.compareTo(sourceRevision) <= 0) {
       throw conflict("Completed issuer release lacks its current V29 completion linkage");
     }
@@ -628,9 +646,37 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
         transaction,
         uuid(row, "transition_id"),
         bytes(row, "binding_ref"),
-        currentInventoryRevision,
+        positive(row, "completion_inventory_revision"),
         releaseId);
     return new ReleaseProjection(releaseId, releasedBytes, released);
+  }
+
+  private static void requireCompletedNegativeRelease(
+      DSLContext transaction, Record release, CanonicalGameplayIssuerCleanupSource source) {
+    BigInteger completionRevision = positive(release, "completion_inventory_revision");
+    if (!source.cleanupComplete()
+        || source.transition().inventoryRevision().compareTo(completionRevision) <= 0) {
+      throw conflict("Advanced release revision requires completed never-admitted cleanup");
+    }
+    CanonicalGameplayBindingInventoryRepository.requireCompletedIssuerLocalRelease(
+        transaction,
+        source.transition().transitionId(),
+        source.transition().bindingRef().bytes(),
+        completionRevision,
+        uuid(release, "operation_id"));
+    UUID localId = release.get("original_local_operation_id", UUID.class);
+    String validator =
+        localId == null
+            ? "gs_issuer_bootstrap_member_has_exact_retirement"
+            : "gs_issuer_local_operation_has_exact_retirement";
+    if (!Boolean.TRUE.equals(
+        transaction
+            .fetchSingle(
+                "SELECT " + validator + "(?)",
+                localId == null ? uuid(release, "original_bootstrap_member_operation_id") : localId)
+            .get(0, Boolean.class))) {
+      throw conflict("Completed negative release lacks its exact retained physical retirement");
+    }
   }
 
   record ReleaseProjection(
@@ -1081,9 +1127,10 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   private static void requireAbortedSource(CanonicalGameplayIssuerCleanupSource source) {
     if (!source.isAccountAborted()
         || source.transition().status() != CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED
-        || source.candidate().lifecycle()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
-                .Lifecycle.TERMINAL_UNRESOLVED
+        || (source.candidate().lifecycle()
+                != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                    .Lifecycle.TERMINAL_UNRESOLVED
+            && !source.cleanupComplete())
         || (source.reservation().lifecycle()
                 != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
             && source.reservation().lifecycle()
