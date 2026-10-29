@@ -65,7 +65,7 @@ ALTER TABLE game_session_canonical_binding_region_bridge_obligation
         AND session_id !~ '[[:cntrl:]]'
         AND region_id <> '00000000-0000-0000-0000-000000000000'::uuid
         AND region_epoch > 0
-        AND status IN ('REQUIRED', 'ACKNOWLEDGED')
+        AND status IN ('REQUIRED', 'ACKNOWLEDGED', 'NEVER_DISPATCHED')
         AND inventory_revision > 0
         AND (
             (bridge_operation_id IS NULL
@@ -117,7 +117,7 @@ ALTER TABLE game_session_canonical_binding_region_bridge_obligation
                 AND world_preparation_input_digest ~ '^sha256:[0-9a-f]{64}$')
         )
         AND (
-            (status = 'REQUIRED'
+            (status IN ('REQUIRED', 'NEVER_DISPATCHED')
                 AND redis_readback_digest IS NULL
                 AND acknowledged_at IS NULL)
             OR
