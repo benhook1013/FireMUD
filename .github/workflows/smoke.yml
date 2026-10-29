@@ -821,6 +821,7 @@ jobs:
               await withTransientGitHubRetry(
                 "runtime-images workflow lookup",
                 async () => {
+                  matchingRuns.length = 0;
                   for await (const response of github.paginate.iterator(
                     github.rest.actions.listWorkflowRuns,
                     workflowRunQuery

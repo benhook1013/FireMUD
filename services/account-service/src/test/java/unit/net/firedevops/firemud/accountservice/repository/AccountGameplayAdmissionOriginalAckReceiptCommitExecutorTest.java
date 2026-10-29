@@ -457,6 +457,7 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
     assertThat(exactReads[0]).isLessThan(finalCommits[0]);
     verify(capture).captureHistorical(fixture.evidence, fixture.decision);
     verify(fixture.pending).walUpperFence();
+    verify(flushJdbc.connection).prepareStatement(WAL_COVERAGE_SQL);
     verify(flushJdbc.fenceStatement).setString(1, WAL_UPPER_FENCE);
   }
 

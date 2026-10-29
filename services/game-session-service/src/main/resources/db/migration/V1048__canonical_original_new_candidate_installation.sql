@@ -17,7 +17,8 @@ ALTER TABLE game_session_canonical_binding_transition
             OR (original_new_candidate_bytes IS NOT NULL
                 AND octet_length(original_new_candidate_bytes) BETWEEN 1 AND 524288
                 AND original_new_candidate_digest IS NOT NULL
-                AND original_new_candidate_digest ~ '^sha256:[0-9a-f]{64}$'
+                AND original_new_candidate_digest
+                    = 'sha256:' || encode(sha256(original_new_candidate_bytes), 'hex')
                 AND original_new_candidate_state IS NOT NULL
                 AND original_new_candidate_state IN ('DISPATCH_POSSIBLE', 'READBACK_CONFIRMED')
                 AND ((original_new_candidate_state = 'DISPATCH_POSSIBLE'
@@ -36,6 +37,16 @@ ALTER TABLE game_session_canonical_binding_transition
 -- [jooq ignore start]
 CREATE FUNCTION guard_gs_original_new_candidate_installation() RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.original_new_candidate_bytes IS NOT NULL
+           OR NEW.original_new_candidate_digest IS NOT NULL
+           OR NEW.original_new_candidate_state IS NOT NULL
+           OR NEW.original_new_candidate_readback_digest IS NOT NULL THEN
+            RAISE EXCEPTION 'Original NEW candidate must be claimed by update of a PREPARED transition'
+                USING ERRCODE = '23514', CONSTRAINT = 'gs_original_new_candidate_immutable';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'TRUNCATE' THEN
         IF EXISTS (SELECT 1 FROM game_session_canonical_binding_transition
                     WHERE original_new_candidate_bytes IS NOT NULL) THEN
@@ -97,7 +108,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER gs_original_new_candidate_installation_guard
-    BEFORE UPDATE OR DELETE ON game_session_canonical_binding_transition
+    BEFORE INSERT OR UPDATE OR DELETE ON game_session_canonical_binding_transition
     FOR EACH ROW EXECUTE FUNCTION guard_gs_original_new_candidate_installation();
 
 CREATE TRIGGER gs_original_new_candidate_installation_retention
