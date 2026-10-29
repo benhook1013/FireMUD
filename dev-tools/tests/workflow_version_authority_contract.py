@@ -46,8 +46,8 @@ def main() -> int:
         return out
 
     node = (root / ".node-version").read_text().strip()
-    if not re.fullmatch(r"24\.\d+\.\d+", node):
-        fail(".node-version must pin an exact Node 24 release")
+    if not re.fullmatch(r"[1-9]\d*\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", node):
+        fail(".node-version must pin an exact Node release")
     python = (root / ".python-version").read_text().strip()
     if not re.fullmatch(r"3\.\d+\.\d+", python):
         fail(".python-version must pin an exact Python patch release")
