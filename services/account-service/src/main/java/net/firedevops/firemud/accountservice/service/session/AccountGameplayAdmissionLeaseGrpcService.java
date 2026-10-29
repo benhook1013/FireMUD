@@ -146,7 +146,13 @@ public final class AccountGameplayAdmissionLeaseGrpcService
                 .withDescription("Account original-new credential owner is unavailable")
                 .asRuntimeException();
           }
-          return () -> originalNewCredentialOwner.issue(parsed);
+          return () -> {
+            try {
+              return originalNewCredentialOwner.issue(parsed);
+            } catch (IllegalStateException unavailable) {
+              throw Status.UNAVAILABLE.asRuntimeException();
+            }
+          };
         });
   }
 

@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -35,6 +36,7 @@ import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
@@ -167,6 +169,84 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
     assertThat(admin.get(ascii(installed.sessionKey())))
         .containsExactly(installed.exactCandidateBytes());
+  }
+
+  @org.junit.jupiter.api.Test
+  void candidateDigestMustMatchTheExactFrozenBytesBeforeDispatch() {
+    byte[] candidate =
+        source
+            .repository()
+            .readOriginalNewCandidateInstallationSource(source.decision())
+            .candidate()
+            .canonicalBytes();
+    String sqlBefore = sourceSqlImage(source);
+
+    assertCandidateConstraint(
+        () ->
+            source
+                .dsl()
+                .execute(
+                    "UPDATE game_session_canonical_binding_transition"
+                        + " SET original_new_candidate_bytes = ?, original_new_candidate_digest = ?,"
+                        + " original_new_candidate_state = 'DISPATCH_POSSIBLE' WHERE transition_id = ?",
+                    candidate,
+                    "sha256:" + "0".repeat(64),
+                    TRANSITION_ID),
+        "chk_gs_original_new_candidate_installation");
+
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+    assertThat(admin.dbsize()).isZero();
+    assertThat(owner.installOnce(source.decision()).provisionalTransition().status().name())
+        .isEqualTo("PROVISIONAL");
+  }
+
+  @org.junit.jupiter.api.Test
+  void insertedTransitionCannotSkipTheOriginalCandidateClaim() {
+    byte[] candidate =
+        source
+            .repository()
+            .readOriginalNewCandidateInstallationSource(source.decision())
+            .candidate()
+            .canonicalBytes();
+    String sqlBefore = sourceSqlImage(source);
+    for (String state : List.of("DISPATCH_POSSIBLE", "READBACK_CONFIRMED")) {
+      String readback = state.equals("READBACK_CONFIRMED") ? "sha256:" + "1".repeat(64) : null;
+      assertCandidateConstraint(
+          () ->
+              source
+                  .dsl()
+                  .execute(
+                      "INSERT INTO game_session_canonical_binding_transition"
+                          + " SELECT (jsonb_populate_record(retained, jsonb_build_object("
+                          + " 'original_new_candidate_bytes', ?::bytea,"
+                          + " 'original_new_candidate_digest', 'sha256:' || encode(sha256(?::bytea), 'hex'),"
+                          + " 'original_new_candidate_state', ?::text,"
+                          + " 'original_new_candidate_readback_digest', ?::text))).*"
+                          + " FROM game_session_canonical_binding_transition retained WHERE transition_id = ?",
+                      candidate,
+                      candidate,
+                      state,
+                      readback,
+                      TRANSITION_ID),
+          "gs_original_new_candidate_immutable");
+      assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+      assertThat(admin.dbsize()).isZero();
+    }
+    assertThat(owner.installOnce(source.decision()).provisionalTransition().status().name())
+        .isEqualTo("PROVISIONAL");
+  }
+
+  private static void assertCandidateConstraint(Runnable write, String constraint) {
+    assertThatThrownBy(write::run)
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(Objects.requireNonNull(failure.getServerErrorMessage()).getConstraint())
+                  .isEqualTo(constraint);
+            });
   }
 
   @org.junit.jupiter.api.Test

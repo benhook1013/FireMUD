@@ -3013,6 +3013,36 @@ async function check(conclusion, expectedFailure, expectedFailureText) {
     throw new Error(`successful smoke step was rejected: ${JSON.stringify(failures)}`);
   }
 }
+async function checkPartialPaginationRetry() {
+  const originalIterator = github.paginate.iterator;
+  const stale = {
+    ...runtimeRun(99, runtimeTitle(baseSha, headSha, mergeSha)),
+    status: "in_progress",
+    conclusion: null,
+  };
+  const fresh = { ...stale, status: "completed", conclusion: "success" };
+  let attempts = 0;
+  const jobsBefore = jobQueries.length;
+  github.paginate.iterator = (method, input) => {
+    if (method !== listWorkflowRuns || input.event !== "pull_request") {
+      return originalIterator(method, input);
+    }
+    workflowRunQueries.push(input);
+    return (async function* partialPages() {
+      attempts++;
+      yield { data: [attempts === 1 ? stale : fresh] };
+      if (attempts === 1) throw { status: 503, message: "controlled pagination interruption" };
+    })();
+  };
+  try {
+    await check("success", false);
+    if (attempts !== 2 || jobQueries.length !== jobsBefore + 1 || jobQueries.at(-1).run_id !== 99) {
+      throw new Error("partial pagination retry must discard the stale candidate snapshot without another poll");
+    }
+  } finally {
+    github.paginate.iterator = originalIterator;
+  }
+}
 async function checkIdentityQuotaFailures() {
   const originalGet = github.rest.pulls.get;
   const originalCommit = github.rest.repos.getCommit;
@@ -3060,7 +3090,7 @@ async function checkIdentityQuotaFailures() {
     onSmokeSleep = originalSleep;
   }
 }
-checkIdentityQuotaFailures().then(() => {
+checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
   setExactEventRun(101);
   return check("skipped", true, "credential-free full-stack smoke step did not pass");
 })
