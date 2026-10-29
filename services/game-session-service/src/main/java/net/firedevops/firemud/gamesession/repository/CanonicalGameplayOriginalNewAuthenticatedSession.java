@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import tools.jackson.core.StreamReadConstraints;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.json.JsonFactory;
@@ -174,9 +175,13 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
         throw invalid();
       }
       if (tokenIssuedAtSeconds >= tokenExpiresAtSeconds
-          || tokenExpiresAtSeconds - tokenIssuedAtSeconds > 300L) throw invalid();
+          || tokenExpiresAtSeconds - tokenIssuedAtSeconds
+              > GameSessionAccountDelegationProfile.MAX_TOKEN_LIFETIME_SECONDS) throw invalid();
       long admissionAtSeconds = admissionAtMillis / 1000L;
-      if (tokenIssuedAtSeconds > safeAdd(admissionAtSeconds, 5L)
+      if (tokenIssuedAtSeconds
+              > safeAdd(
+                  admissionAtSeconds,
+                  GameSessionAccountDelegationProfile.ALLOWED_CLOCK_SKEW_SECONDS)
           || tokenExpiresAtSeconds <= admissionAtSeconds) throw invalid();
       if (new java.math.BigInteger((String) lease.carrier().get("expiresAt"))
               .compareTo(java.math.BigInteger.valueOf(admissionAtMillis))

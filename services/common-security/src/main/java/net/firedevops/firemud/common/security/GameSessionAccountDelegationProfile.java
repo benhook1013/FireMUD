@@ -22,6 +22,7 @@ public final class GameSessionAccountDelegationProfile {
   public static final String TOKEN_TYPE_CLAIM = "tokenType";
   public static final String TOKEN_PROFILE_CLAIM = "tokenProfile";
   public static final long MAX_TOKEN_LIFETIME_SECONDS = 300L;
+  public static final long ALLOWED_CLOCK_SKEW_SECONDS = 5L;
   public static final int MAX_COMPACT_JWT_BYTES = 16 * 1024;
   public static final int MAX_AUTHORITY_TUPLE_BYTES = 4 * 1024;
   public static final int MAX_REGISTRY_RECORD_BYTES = 16 * 1024;
