@@ -568,6 +568,19 @@ class EntityCharacterCreatePostgresIntegrationTest {
       assertThatThrownBy(() -> dsl.execute(mutation))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
     }
+    // Valid self-assignments bypass CHECK(projection_fence = 1); only the retained-history
+    // trigger may reject these, so removal of that guard must fail the test.
+    for (String immutableColumn : List.of("game_instance_id", "terminal_digest")) {
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE entity_player_created_runtime_projections SET "
+                          + immutableColumn
+                          + " = "
+                          + immutableColumn))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Entity assignment evidence cannot be removed");
+    }
     for (String mismatch :
         List.of("account_uuid", "tenant_uuid", "canonical_version_id", "character_uuid")) {
       assertThatThrownBy(
