@@ -611,3 +611,8 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: #3333 Hosted1 posted trigger comment 6495302463 at 00:22:47 NZDT. The authenticated provider replied six seconds later with “Action not completed” and a review-rate-limit explanation.
   - Observation: FireController retained `active / trigger_recovered` without a submitted review, so the observer could not establish execution and the publication fence unnecessarily delayed qualified local fixes. The operation's later local update timestamp was not provider progress. FireController Worker confirmed the missed rate-limit recognition and is settling the original attempt; no duplicate request was sent.
   - Expected pattern: Classify the original authenticated rate-limit reply, retain its retry boundary and actual lack of review coverage, and settle that attempt before another authorized request. A delivered trigger or an active controller record alone does not prove an executing provider review.
+
+- `2026-10-30`: Cross-reference retained helper-validation recurrences
+  - Context: The 2026-10-17 closed-validation-allowlist observation is the original process lesson; the 2026-10-27 and helper-validation portion of 2026-10-29 entries retain subsequent occurrences.
+  - Observation: These are recurrences of that same lesson, rather than distinct validation policies. Their dated evidence remains intact. The uppercase `R948` artifact-search observation is a separate lesson.
+  - Expected pattern: Apply the closed validation allowlist from the delegation workflow and preserve recurrence attribution without rewriting historical observations.
