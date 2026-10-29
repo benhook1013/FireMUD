@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -623,6 +624,7 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
       throw conflict(
           "Current source inventory no longer equals its complete frozen bootstrap cohort");
     }
+    Map<String, ArrayNode> comparisonsByTable = new HashMap<>();
     for (int index = 0; index < frozen.size(); index++) {
       var expected = frozen.get(index);
       var actual = current.get(index).cohortRow();
@@ -650,17 +652,28 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
             case ISSUER_OBLIGATION -> "game_session_canonical_binding_issuer_index_obligation";
             case REGION_OBLIGATION -> "game_session_canonical_binding_region_bridge_obligation";
           };
+      var pair =
+          comparisonsByTable
+              .computeIfAbsent(sourceTable, ignored -> JSON.createArrayNode())
+              .addObject();
+      pair.set("frozen", parseObject(expected.sourceRowJson()));
+      pair.set("current", parseObject(actual.sourceRowJson()));
+    }
+    // The inventory clock is held here. Round trips are bounded by the six source tables,
+    // independent of cohort size, including when the complete plan is rechecked per member.
+    for (var comparison : comparisonsByTable.entrySet()) {
+      String sourceTable = comparison.getKey();
       boolean sameValues =
           Boolean.TRUE.equals(
               transaction
                   .fetchSingle(
-                      "SELECT jsonb_populate_record(NULL::"
+                      "SELECT NOT EXISTS (SELECT 1 FROM jsonb_array_elements(?::jsonb) paired(value)"
+                          + " WHERE jsonb_populate_record(NULL::"
                           + sourceTable
-                          + ", ?::jsonb) IS NOT DISTINCT FROM jsonb_populate_record(NULL::"
+                          + ", value -> 'frozen') IS DISTINCT FROM jsonb_populate_record(NULL::"
                           + sourceTable
-                          + ", ?::jsonb)",
-                      expected.sourceRowJson(),
-                      actual.sourceRowJson())
+                          + ", value -> 'current'))",
+                      comparison.getValue().toString())
                   .get(0, Boolean.class));
       if (!sameValues) {
         throw conflict("Current source row differs from its exact original bootstrap cohort entry");
