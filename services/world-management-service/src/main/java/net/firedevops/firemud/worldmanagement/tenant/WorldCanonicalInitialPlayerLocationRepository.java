@@ -835,7 +835,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
             + "initial_admission_owner_proof_digest, pointer_audit_id, pointer_version, "
             + "initial_location_operation_id, initial_location_request_digest, "
             + "initial_lifecycle_evidence_bytes, initial_lifecycle_evidence_digest, entity_created_origin) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
         parsed.canonicalTenantId(),
         parsed.realmId(),
         parsed.worldSlug(),
