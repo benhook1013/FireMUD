@@ -280,8 +280,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
    * Tuple-consistent controlled upstream target; it does not claim a live initial-admission
    * producer.
    */
-  private static CanonicalPlayableTarget sealControlledInitialTarget(
-      CanonicalPlayableTarget original) {
+  static CanonicalPlayableTarget sealControlledInitialTarget(CanonicalPlayableTarget original) {
     var request =
         new WorldCanonicalInitialAdmissionHold.Request(
             original.targetNamespace(),
@@ -448,6 +447,10 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public Target target() {
+    return target(target);
+  }
+
+  static Target target(CanonicalPlayableTarget target) {
     return new Target(
         target.targetNamespace(),
         target.tenantSlug(),
@@ -1414,7 +1417,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             null,
             target);
     if (historicalProvisionalSetup) {
-      seedHistoricalLeaseBoundProvisional(prepared, decision);
+      seedHistoricalLeaseBoundProvisional(dsl, prepared, decision);
     } else {
       inventoryRepository.markProvisional(prepared, decision);
     }
@@ -1426,9 +1429,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
    * setup does not prove current provisional publication or Account lease issuance. The subsequent
    * bootstrap, default-ordered upgrade and retained abort still execute their owners.
    */
-  private void seedHistoricalLeaseBoundProvisional(
+  static void seedHistoricalLeaseBoundProvisional(
+      DSLContext dsl,
       CanonicalGameplayBindingProvisionalCasEvidence prepared,
       CanonicalGameplayAdmissionDecision decision) {
+    Objects.requireNonNull(dsl, "dsl");
     assertThat(prepared.expectedPrior()).isNull();
     assertThat(prepared.transition().status())
         .isEqualTo(

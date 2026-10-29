@@ -40,11 +40,13 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -1002,75 +1004,80 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
 
   @Test
   void forwardRetentionGuardsPreservePopulatedV1047EvidenceAndCompleteFlywayHistory() {
-    FixtureState state = fixtureState(MigrationVersion.fromVersion("1047"));
-    UUID operationId = state.fixture().originalOperationId();
-    state.owner().initializeAndRead(operationId);
-    UUID cutoffOperationId = UUID.randomUUID();
-    UUID cutoffRequestId = UUID.randomUUID();
-    var pending = state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
-    var before = retainedEvidenceImage(state.fixture().dsl());
-    before.values().forEach(rows -> assertThat(rows).isNotEmpty());
-    var historyBefore = state.fixture().migrationHistoryImage();
-    assertThat(
-            state
-                .fixture()
-                .dsl()
-                .fetchSingle(
-                    "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
-                .get(0, String.class))
-        .isEqualTo("1047");
+    runAtHistoricalFixtureFrontier(
+        MigrationVersion.fromVersion("1047"),
+        (dataSource, bootstrapCandidate) -> {
+          HistoricalAdmissionState state =
+              prepareHistoricalAdmission(dataSource, bootstrapCandidate);
+          UUID operationId = state.operation().operationId();
+          state.owner().initializeAndRead(operationId);
+          UUID cutoffOperationId = UUID.randomUUID();
+          UUID cutoffRequestId = UUID.randomUUID();
+          var pending = state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
+          var before = retainedEvidenceImage(state.dsl());
+          before.values().forEach(rows -> assertThat(rows).isNotEmpty());
+          var historyBefore = migrationHistoryImage(state.dsl());
+          assertThat(
+                  state
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
+                      .get(0, String.class))
+              .isEqualTo("1047");
 
-    assertThat(
-            state
-                .fixture()
-                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.1")))
-        .isEqualTo(1);
-    assertThat(retainedEvidenceImage(state.fixture().dsl())).isEqualTo(before);
-    var historyAfter = state.fixture().migrationHistoryImage();
-    assertThat(historyAfter).hasSize(historyBefore.size() + 1);
-    assertThat(historyAfter.subList(0, historyBefore.size()))
-        .containsExactlyElementsOf(historyBefore);
-    assertThat(
-            state
-                .fixture()
-                .dsl()
-                .fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1047.1'")
-                .get(0, String.class))
-        .isEqualTo("V1047.1__issuer_admission_retained_evidence_guards.sql");
-    assertThat(
-            state
-                .fixture()
-                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.1")))
-        .isZero();
-    assertThat(retainedEvidenceImage(state.fixture().dsl())).isEqualTo(before);
-    assertThat(state.fixture().migrationHistoryImage()).containsExactlyElementsOf(historyAfter);
+          assertThat(
+                  CanonicalGameplayAdmissionAbortCompositionFixture
+                      .upgradeWithDefaultGameSessionMigrations(
+                          MigrationVersion.fromVersion("1047.1"), dataSource))
+              .isEqualTo(1);
+          assertThat(retainedEvidenceImage(state.dsl())).isEqualTo(before);
+          var historyAfter = migrationHistoryImage(state.dsl());
+          assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+          assertThat(historyAfter.subList(0, historyBefore.size()))
+              .containsExactlyElementsOf(historyBefore);
+          assertThat(
+                  state
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT script FROM flyway_schema_history WHERE version = '1047.1'")
+                      .get(0, String.class))
+              .isEqualTo("V1047.1__issuer_admission_retained_evidence_guards.sql");
+          assertThat(
+                  CanonicalGameplayAdmissionAbortCompositionFixture
+                      .upgradeWithDefaultGameSessionMigrations(
+                          MigrationVersion.fromVersion("1047.1"), dataSource))
+              .isZero();
+          assertThat(retainedEvidenceImage(state.dsl())).isEqualTo(before);
+          assertThat(migrationHistoryImage(state.dsl())).containsExactlyElementsOf(historyAfter);
 
-    assertThat(state.repository().beginCutoff(cutoffOperationId, cutoffRequestId).exactBytes())
-        .containsExactly(pending.exactBytes());
-    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
-    var closed =
-        state
-            .owner()
-            .closeAndRead(
-                cutoffOperationId,
-                target.closedValue().tenantId(),
-                target.closedValue().playableStateNamespaceId());
-    assertThat(closed.scriptOutcome()).isEqualTo(3L);
-    assertThat(
-            state
-                .owner()
-                .closeAndRead(
-                    cutoffOperationId,
-                    target.closedValue().tenantId(),
-                    target.closedValue().playableStateNamespaceId())
-                .scriptOutcome())
-        .isEqualTo(2L);
-    var installed = state.repository().completeCutoff(cutoffOperationId);
-    assertThat(installed.state())
-        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
-    assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
-        .containsExactly(installed.exactBytes());
-    assertThat(countReceipt(state, operationId)).isEqualTo(1L);
+          assertThat(
+                  state.repository().beginCutoff(cutoffOperationId, cutoffRequestId).exactBytes())
+              .containsExactly(pending.exactBytes());
+          var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+          var closed =
+              state
+                  .owner()
+                  .closeAndRead(
+                      cutoffOperationId,
+                      target.closedValue().tenantId(),
+                      target.closedValue().playableStateNamespaceId());
+          assertThat(closed.scriptOutcome()).isEqualTo(3L);
+          assertThat(
+                  state
+                      .owner()
+                      .closeAndRead(
+                          cutoffOperationId,
+                          target.closedValue().tenantId(),
+                          target.closedValue().playableStateNamespaceId())
+                      .scriptOutcome())
+              .isEqualTo(2L);
+          var installed = state.repository().completeCutoff(cutoffOperationId);
+          assertThat(installed.state())
+              .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+          assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
+              .containsExactly(installed.exactBytes());
+          assertThat(countReceipt(state.dsl(), operationId)).isEqualTo(1L);
+        });
   }
 
   @ParameterizedTest
@@ -1167,83 +1174,95 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   @ValueSource(booleans = {false, true})
   void forwardLiveControlGuardsPreserveV1047_1RowsAndSameEpochCutoffCompletion(
       boolean cutoffBeforeUpgrade) {
-    FixtureState state = fixtureState(MigrationVersion.fromVersion("1047.1"));
-    var opened = state.owner().initializeAndRead(state.fixture().originalOperationId());
-    UUID cutoffOperationId = UUID.randomUUID();
-    UUID cutoffRequestId = UUID.randomUUID();
-    if (cutoffBeforeUpgrade) {
-      state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
-    }
-    var dsl = state.fixture().dsl();
-    var before = liveControlEvidenceImage(dsl);
-    var historyBefore = state.fixture().migrationHistoryImage();
-    assertThat(
-            dsl.fetchSingle(
-                    "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
-                .get(0, String.class))
-        .isEqualTo("1047.1");
+    runAtHistoricalFixtureFrontier(
+        MigrationVersion.fromVersion("1047.1"),
+        (dataSource, bootstrapCandidate) -> {
+          HistoricalAdmissionState state =
+              prepareHistoricalAdmission(dataSource, bootstrapCandidate);
+          var opened = state.owner().initializeAndRead(state.operation().operationId());
+          UUID cutoffOperationId = UUID.randomUUID();
+          UUID cutoffRequestId = UUID.randomUUID();
+          CanonicalGameplayIssuerAdmissionControlValue pending =
+              cutoffBeforeUpgrade
+                  ? state.repository().beginCutoff(cutoffOperationId, cutoffRequestId)
+                  : null;
+          var dsl = state.dsl();
+          var before = liveControlEvidenceImage(dsl);
+          var historyBefore = migrationHistoryImage(dsl);
+          assertThat(
+                  dsl.fetchSingle(
+                          "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
+                      .get(0, String.class))
+              .isEqualTo("1047.1");
 
-    assertThat(
-            state
-                .fixture()
-                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.2")))
-        .isEqualTo(1);
-    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
-    var historyAfter = state.fixture().migrationHistoryImage();
-    assertThat(historyAfter).hasSize(historyBefore.size() + 1);
-    assertThat(historyAfter.subList(0, historyBefore.size()))
-        .containsExactlyElementsOf(historyBefore);
-    assertThat(
-            dsl.fetchSingle("SELECT script FROM flyway_schema_history WHERE version = '1047.2'")
-                .get(0, String.class))
-        .isEqualTo("V1047.2__issuer_admission_live_control_guards.sql");
-    assertThat(
-            state
-                .fixture()
-                .upgradeWithDefaultGameSessionMigrations(MigrationVersion.fromVersion("1047.2")))
-        .isZero();
-    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
-    assertThat(state.fixture().migrationHistoryImage()).containsExactlyElementsOf(historyAfter);
+          assertThat(
+                  CanonicalGameplayAdmissionAbortCompositionFixture
+                      .upgradeWithDefaultGameSessionMigrations(
+                          MigrationVersion.fromVersion("1047.2"), dataSource))
+              .isEqualTo(1);
+          assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+          var historyAfter = migrationHistoryImage(dsl);
+          assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+          assertThat(historyAfter.subList(0, historyBefore.size()))
+              .containsExactlyElementsOf(historyBefore);
+          assertThat(
+                  dsl.fetchSingle(
+                          "SELECT script FROM flyway_schema_history WHERE version = '1047.2'")
+                      .get(0, String.class))
+              .isEqualTo("V1047.2__issuer_admission_live_control_guards.sql");
+          assertThat(
+                  CanonicalGameplayAdmissionAbortCompositionFixture
+                      .upgradeWithDefaultGameSessionMigrations(
+                          MigrationVersion.fromVersion("1047.2"), dataSource))
+              .isZero();
+          assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+          assertThat(migrationHistoryImage(dsl)).containsExactlyElementsOf(historyAfter);
 
-    var pending = state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
-    assertThat(pending.liveBarrierEpoch()).isEqualTo(opened.value().admissionEpoch().add(ONE));
-    var pendingImage = liveControlEvidenceImage(dsl);
-    assertThat(state.repository().beginCutoff(cutoffOperationId, cutoffRequestId).exactBytes())
-        .containsExactly(pending.exactBytes());
-    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(pendingImage);
-    var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
-    state
-        .owner()
-        .closeAndRead(
-            cutoffOperationId,
-            target.closedValue().tenantId(),
-            target.closedValue().playableStateNamespaceId());
-    String pendingProvenance =
-        dsl.fetchSingle(
-                "SELECT (to_jsonb(control) - ARRAY['state', 'control_exact_bytes',"
-                    + " 'control_exact_digest', 'updated_at'])::text FROM "
-                    + EVIDENCE_PREFIX
-                    + "control control")
-            .get(0, String.class);
-    var installed = state.repository().completeCutoff(cutoffOperationId);
-    assertThat(installed.state())
-        .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
-    assertThat(installed.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
-    assertThat(installed.currentOperationId()).isEqualTo(pending.currentOperationId());
-    assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
-    assertThat(
-            dsl.fetchSingle(
-                    "SELECT (to_jsonb(control) - ARRAY['state', 'control_exact_bytes',"
-                        + " 'control_exact_digest', 'updated_at'])::text FROM "
-                        + EVIDENCE_PREFIX
-                        + "control control")
-                .get(0, String.class))
-        .isEqualTo(pendingProvenance);
-    var installedImage = liveControlEvidenceImage(dsl);
-    assertThat(installedImage.get("epoch_counter")).isEqualTo(pendingImage.get("epoch_counter"));
-    assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
-        .containsExactly(installed.exactBytes());
-    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(installedImage);
+          if (pending == null) {
+            pending = state.repository().beginCutoff(cutoffOperationId, cutoffRequestId);
+          }
+          assertThat(pending.liveBarrierEpoch())
+              .isEqualTo(opened.value().admissionEpoch().add(ONE));
+          var pendingImage = liveControlEvidenceImage(dsl);
+          assertThat(
+                  state.repository().beginCutoff(cutoffOperationId, cutoffRequestId).exactBytes())
+              .containsExactly(pending.exactBytes());
+          assertThat(liveControlEvidenceImage(dsl)).isEqualTo(pendingImage);
+          var target = state.repository().readPreparedCutoffTargets(cutoffOperationId).getFirst();
+          state
+              .owner()
+              .closeAndRead(
+                  cutoffOperationId,
+                  target.closedValue().tenantId(),
+                  target.closedValue().playableStateNamespaceId());
+          String pendingProvenance =
+              dsl.fetchSingle(
+                      "SELECT (to_jsonb(control) - ARRAY['state', 'control_exact_bytes',"
+                          + " 'control_exact_digest', 'updated_at'])::text FROM "
+                          + EVIDENCE_PREFIX
+                          + "control control")
+                  .get(0, String.class);
+          var installed = state.repository().completeCutoff(cutoffOperationId);
+          assertThat(installed.state())
+              .isEqualTo(CanonicalGameplayIssuerAdmissionControlValue.State.INSTALLED);
+          assertThat(installed.liveBarrierEpoch()).isEqualTo(pending.liveBarrierEpoch());
+          assertThat(installed.currentOperationId()).isEqualTo(pending.currentOperationId());
+          assertThat(installed.cohortDigest()).isEqualTo(pending.cohortDigest());
+          assertThat(
+                  dsl.fetchSingle(
+                          "SELECT (to_jsonb(control) - ARRAY['state', 'control_exact_bytes',"
+                              + " 'control_exact_digest', 'updated_at'])::text FROM "
+                              + EVIDENCE_PREFIX
+                              + "control control")
+                      .get(0, String.class))
+              .isEqualTo(pendingProvenance);
+          var installedImage = liveControlEvidenceImage(dsl);
+          assertThat(installedImage.get("epoch_counter"))
+              .isEqualTo(pendingImage.get("epoch_counter"));
+          assertThat(state.repository().completeCutoff(cutoffOperationId).exactBytes())
+              .containsExactly(installed.exactBytes());
+          assertThat(liveControlEvidenceImage(dsl)).isEqualTo(installedImage);
+        });
   }
 
   @ParameterizedTest
@@ -1289,30 +1308,39 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void liveIssuerGuardUpgradeRejectsIncompatibleRetainedEpochPair(boolean missingControl) {
-    FixtureState state = fixtureState(MigrationVersion.fromVersion("1047.1"));
-    var dsl = state.fixture().dsl();
-    if (missingControl) {
-      assertThat(dsl.execute("DELETE FROM " + EVIDENCE_PREFIX + "control")).isEqualTo(1);
-    } else {
-      assertThat(
-              dsl.execute(
-                  "UPDATE "
-                      + EVIDENCE_PREFIX
-                      + "epoch_counter"
-                      + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1"))
-          .isEqualTo(1);
-    }
-    var before = liveControlEvidenceImage(dsl);
-    var historyBefore = state.fixture().migrationHistoryImage();
-    assertThatThrownBy(
-            () ->
-                state
-                    .fixture()
-                    .upgradeWithDefaultGameSessionMigrations(
-                        MigrationVersion.fromVersion("1047.2")))
-        .hasStackTraceContaining("Live issuer admission epoch counter and control");
-    assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
-    assertThat(state.fixture().migrationHistoryImage()).containsExactlyElementsOf(historyBefore);
+    runAtHistoricalFixtureFrontier(
+        MigrationVersion.fromVersion("1047.1"),
+        (dataSource, bootstrapCandidate) -> {
+          DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+          var currentState = currentIssuerState(bootstrapCandidate);
+          var source =
+              (CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource)
+                  () -> currentState;
+          var anchor = readInstalledAnchor(dsl, currentState);
+          new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+              .installInitialOpen(anchor, source);
+          if (missingControl) {
+            assertThat(dsl.execute("DELETE FROM " + EVIDENCE_PREFIX + "control")).isEqualTo(1);
+          } else {
+            assertThat(
+                    dsl.execute(
+                        "UPDATE "
+                            + EVIDENCE_PREFIX
+                            + "epoch_counter"
+                            + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1"))
+                .isEqualTo(1);
+          }
+          var before = liveControlEvidenceImage(dsl);
+          var historyBefore = migrationHistoryImage(dsl);
+          assertThatThrownBy(
+                  () ->
+                      CanonicalGameplayAdmissionAbortCompositionFixture
+                          .upgradeWithDefaultGameSessionMigrations(
+                              MigrationVersion.fromVersion("1047.2"), dataSource))
+              .hasStackTraceContaining("Live issuer admission epoch counter and control");
+          assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
+          assertThat(migrationHistoryImage(dsl)).containsExactlyElementsOf(historyBefore);
+        });
   }
 
   @ParameterizedTest
@@ -1484,11 +1512,170 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
         .isZero();
   }
 
-  private FixtureState fixtureState() {
-    return fixtureState(null);
+  private void runAtHistoricalFixtureFrontier(
+      MigrationVersion startVersion, HistoricalFixtureAction action) {
+    DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
+    accountDataSource.setDriverClassName("org.postgresql.Driver");
+    String jdbcUrl = POSTGRES.getJdbcUrl();
+    accountDataSource.setUrl(
+        jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=public");
+    accountDataSource.setUsername(POSTGRES.getUsername());
+    accountDataSource.setPassword(POSTGRES.getPassword());
+
+    Candidate bootstrapCandidate = candidate();
+    AtomicReference<DriverManagerDataSource> historicalDataSource = new AtomicReference<>();
+    HistoricalFixtureComplete completed = new HistoricalFixtureComplete();
+    try {
+      try {
+        // The fixture advances non-null targets to LATEST after this hook; stop after the
+        // historical-boundary assertions so they observe only the requested forward migration.
+        new CanonicalGameplayAdmissionAbortCompositionFixture(
+            accountDataSource,
+            bootstrapCandidate,
+            ownerClient,
+            0,
+            startVersion,
+            (dataSource, bootstrapIntent) -> {
+              historicalDataSource.set(dataSource);
+              action.run(dataSource, bootstrapCandidate);
+              throw completed;
+            });
+        throw new AssertionError("Historical fixture unexpectedly advanced beyond its hook");
+      } catch (HistoricalFixtureComplete expected) {
+        assertThat(expected).isSameAs(completed);
+      }
+    } finally {
+      DriverManagerDataSource dataSource = historicalDataSource.get();
+      if (dataSource != null) {
+        DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+        String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+        if (!schema.matches("gs_abort_composition_[a-z0-9]+")) {
+          throw new IllegalStateException("Unexpected historical fixture schema name");
+        }
+        dsl.execute("DROP SCHEMA \"" + schema + "\" CASCADE");
+      }
+    }
   }
 
-  private FixtureState fixtureState(MigrationVersion migrationTarget) {
+  private HistoricalAdmissionState prepareHistoricalAdmission(
+      DriverManagerDataSource dataSource, Candidate bootstrapCandidate) {
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    var currentState = currentIssuerState(bootstrapCandidate);
+    var sourceReader =
+        (CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource)
+            () -> currentState;
+    var anchor = readInstalledAnchor(dsl, currentState);
+    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+        .installInitialOpen(anchor, sourceReader);
+
+    UUID tenantId = UUID.randomUUID();
+    String targetNamespace = "test-hist-" + UUID.randomUUID().toString().substring(0, 8);
+    var runtimeTarget =
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+            dataSource, tenantId, targetNamespace);
+    CanonicalPlayableTarget target =
+        CanonicalGameplayAdmissionAbortCompositionFixture.sealControlledInitialTarget(
+            runtimeTarget.playableTarget());
+    Candidate bindingCandidate =
+        new Candidate(
+            UUID.randomUUID(),
+            tenantId,
+            runtimeTarget.playableStateNamespaceId(),
+            UUID.randomUUID(),
+            runtimeTarget.playableStateScope(),
+            runtimeTarget.gameInstanceUuid(),
+            runtimeTarget.gameInstanceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            ONE,
+            bootstrapCandidate.issuerId(),
+            bootstrapCandidate.issuerAuthGeneration(),
+            bootstrapCandidate.issuerIndexLayoutVersion(),
+            bootstrapCandidate.issuerIndexPartitionCount(),
+            bootstrapCandidate.issuerIndexPartitionCapacity());
+    CanonicalGameplayBindingIdentity bindingIdentity = identity(bindingCandidate);
+    UUID transitionId = UUID.randomUUID();
+    var operation =
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, sourceReader)
+            .beginOrResumeOrdinaryNew(
+                new CanonicalGameplayIssuerBindingLocalOperation.Request(
+                    UUID.randomUUID(), transitionId, bindingIdentity, null, null));
+    var localProjectionRepository =
+        new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, sourceReader);
+    var localOwner =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            ownerClient,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayIssuerBindingLocalRedisScriptContribution())),
+            localProjectionRepository,
+            sourceReader);
+    localOwner.projectAndRead(operation);
+
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var provisionalEvidence = inventory.readProvisionalCasEvidence(transitionId);
+    var lease =
+        controlledLeaseEvidence(
+            bindingIdentity,
+            operation.preparedTransition().bindingGeneration(),
+            CanonicalGameplayAdmissionAbortCompositionFixture.target(target));
+    CanonicalGameplayAdmissionDecision decision =
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            lease,
+            bindingIdentity,
+            operation.preparedTransition().bindingGeneration(),
+            null,
+            target);
+    CanonicalGameplayAdmissionAbortCompositionFixture.seedHistoricalLeaseBoundProvisional(
+        dsl, provisionalEvidence, decision);
+    var readback = localOwner.projectAndRead(operation);
+    new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, sourceReader)
+        .acknowledge(readback);
+
+    var repository =
+        new CanonicalGameplayIssuerAdmissionBarrierRepository(
+            dsl,
+            new CanonicalGameplayTenantGameplayTagRepository(dsl, targetNamespace, 1),
+            sourceReader);
+    var owner =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+            ownerClient,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution())),
+            repository,
+            sourceReader);
+    return new HistoricalAdmissionState(dsl, operation, repository, owner);
+  }
+
+  private static CanonicalGameplayIssuerInstalledAnchor readInstalledAnchor(
+      DSLContext dsl,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState) {
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          return CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, currentState);
+        });
+  }
+
+  private static List<String> migrationHistoryImage(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT to_jsonb(history_row)::text AS row_json FROM flyway_schema_history"
+                + " history_row ORDER BY installed_rank")
+        .getValues("row_json", String.class);
+  }
+
+  private static long countReceipt(DSLContext dsl, UUID operationId) {
+    return dsl.fetchSingle(
+            "SELECT count(*) AS receipt_count"
+                + " FROM game_session_canonical_issuer_admission_initializer_receipt"
+                + " WHERE operation_id = ?",
+            operationId)
+        .get("receipt_count", Long.class);
+  }
+
+  private FixtureState fixtureState() {
     Candidate candidate = candidate();
     DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
     accountDataSource.setDriverClassName("org.postgresql.Driver");
@@ -1499,7 +1686,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     accountDataSource.setPassword(POSTGRES.getPassword());
     fixture =
         new CanonicalGameplayAdmissionAbortCompositionFixture(
-            accountDataSource, candidate, ownerClient, 0, migrationTarget);
+            accountDataSource, candidate, ownerClient, 0);
     Candidate actualCandidate = fixture.candidate();
     CanonicalGameplayBindingIdentity identity = identity(actualCandidate);
     fixture.publish(controlledLeaseEvidence(identity, fixture.generation(), fixture.target()));
@@ -1888,5 +2075,20 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
           projectionRepository,
           sourceReader());
     }
+  }
+
+  private record HistoricalAdmissionState(
+      DSLContext dsl,
+      CanonicalGameplayIssuerBindingLocalOperation operation,
+      CanonicalGameplayIssuerAdmissionBarrierRepository repository,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner owner) {}
+
+  @FunctionalInterface
+  private interface HistoricalFixtureAction {
+    void run(DriverManagerDataSource dataSource, Candidate bootstrapCandidate);
+  }
+
+  private static final class HistoricalFixtureComplete extends RuntimeException {
+    private static final long serialVersionUID = 1L;
   }
 }
