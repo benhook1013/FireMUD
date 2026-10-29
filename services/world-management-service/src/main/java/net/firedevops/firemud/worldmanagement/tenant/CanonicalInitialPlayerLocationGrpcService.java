@@ -185,6 +185,9 @@ public final class CanonicalInitialPlayerLocationGrpcService
           Status.FAILED_PRECONDITION,
           "Exact initial-placement region evidence is unavailable");
       return;
+    } catch (RuntimeException failure) {
+      fail(responseObserver, Status.UNAVAILABLE, "World initial-player region read is unavailable");
+      return;
     }
 
     if (response.isEmpty()) {

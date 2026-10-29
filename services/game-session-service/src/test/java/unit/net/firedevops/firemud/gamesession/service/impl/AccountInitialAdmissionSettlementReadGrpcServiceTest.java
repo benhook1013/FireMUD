@@ -258,6 +258,65 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
     assertThat(unexpected.getCause()).isInstanceOf(UnsupportedOperationException.class);
   }
 
+  @Test
+  void responseOnNextFailurePropagatesWithoutASecondCallback() {
+    assertResponseCallbackFailure(true);
+  }
+
+  @Test
+  void responseOnCompletedFailurePropagatesWithoutASecondTerminalCallback() {
+    assertResponseCallbackFailure(false);
+  }
+
+  private void assertResponseCallbackFailure(boolean failOnNext) {
+    var input = new AccountInitialAdmissionSettlementReadInput(UUID.randomUUID(), protection());
+    var terminal =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            input.protection().request().worldAdmissionHoldIdentity(),
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+            null,
+            null,
+            "sha256:" + "c".repeat(64),
+            true,
+            TERMINAL);
+    when(owner.read(any()))
+        .thenReturn(
+            new AccountInitialAdmissionSettlementReadEvidence(
+                input.readRequestId(), input.protection(), terminal));
+    List<String> callbacks = new java.util.ArrayList<>();
+    var failure = new IllegalStateException("observer callback failed");
+    StreamObserver<GetAccountInitialAdmissionSettlementResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetAccountInitialAdmissionSettlementResponse value) {
+            callbacks.add("next");
+            if (failOnNext) throw failure;
+          }
+
+          @Override
+          public void onError(Throwable error) {
+            callbacks.add("error");
+          }
+
+          @Override
+          public void onCompleted() {
+            callbacks.add("completed");
+            throw failure;
+          }
+        };
+    var context =
+        Context.current()
+            .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "account-service"));
+    var request = AccountInitialAdmissionSettlementReadGrpcCodec.toRequest(input, NAMESPACE);
+    assertThatThrownBy(
+            () ->
+                context.run(
+                    () -> service().getAccountInitialAdmissionSettlement(request, observer)))
+        .isSameAs(failure);
+    assertThat(callbacks)
+        .containsExactlyElementsOf(failOnNext ? List.of("next") : List.of("next", "completed"));
+  }
+
   private AccountInitialAdmissionSettlementReadGrpcService service() {
     return new AccountInitialAdmissionSettlementReadGrpcService(owner, NAMESPACE);
   }
