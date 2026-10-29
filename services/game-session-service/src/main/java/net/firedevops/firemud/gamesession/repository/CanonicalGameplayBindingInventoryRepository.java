@@ -286,6 +286,436 @@ public final class CanonicalGameplayBindingInventoryRepository {
         });
   }
 
+  /** Irreversibly selects one still-PREPARED dispatch claim without inferring any Redis outcome. */
+  public CanonicalGameplayOriginalNewAbandonmentSource selectOriginalNewAbandonment(
+      UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision = lockInventoryRevision(transaction);
+          Record existing = findTransition(transaction, transitionId);
+          if (existing == null) throw conflict("Original NEW transition does not exist");
+          if (existing.get("original_new_abandonment_id", UUID.class) != null) {
+            return loadOriginalNewAbandonmentSource(transaction, transitionId, true);
+          }
+          CanonicalGameplayBindingProvisionalCasEvidence evidence =
+              loadProvisionalCasEvidence(transaction, transitionId, true);
+          if (evidence.transition().status()
+                  != CanonicalGameplayBindingTransitionSnapshot.Status.PREPARED
+              || evidence.expectedPrior() != null
+              || existing.get("admission_lease_id", UUID.class) != null
+              || !"DISPATCH_POSSIBLE"
+                  .equals(existing.get("original_new_candidate_state", String.class))
+              || existing.get("original_new_candidate_readback_digest", String.class) != null) {
+            throw conflict(
+                "Only an unresolved original NEW PREPARED dispatch may select abandonment");
+          }
+          byte[] bytes = existing.get("original_new_candidate_bytes", byte[].class);
+          if (bytes == null
+              || !CanonicalGameplayIssuerMemberV2Codec.sha256(bytes)
+                  .equals(existing.get("original_new_candidate_digest", String.class))) {
+            throw conflict("Abandonment requires the immutable original candidate bytes");
+          }
+          CanonicalGameplayOriginalNewCandidate candidate =
+              CanonicalGameplayOriginalNewCandidate.parseCanonical(bytes);
+          if (!candidate.matchesProvisionalSources(evidence)) {
+            throw conflict("Abandonment candidate differs from its original sources");
+          }
+          requireOriginalNewNeverDispatchedFollowups(transaction, transitionId);
+          BigInteger prior = evidence.transition().inventoryRevision();
+          BigInteger next = currentRevision.add(BigInteger.ONE);
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + TRANSITION
+                      + " SET original_new_abandonment_id = ?, original_new_abandonment_state = 'ABANDONMENT_SELECTED', inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'PREPARED' AND inventory_revision = ?"
+                      + " AND original_new_abandonment_id IS NULL AND original_new_candidate_state = 'DISPATCH_POSSIBLE'"
+                      + " AND original_new_candidate_readback_digest IS NULL",
+                  UUID.randomUUID(),
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW abandonment selection lost its exact source");
+          advanceOriginalNewAbandonmentRevision(transaction, transitionId, prior, next);
+          bumpInventoryClock(transaction, currentRevision, next);
+          return loadOriginalNewAbandonmentSource(transaction, transitionId, false);
+        });
+  }
+
+  public CanonicalGameplayOriginalNewAbandonmentSource readOriginalNewAbandonmentSource(
+      UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return loadOriginalNewAbandonmentSource(transaction, transitionId, false);
+        });
+  }
+
+  public CanonicalGameplayOriginalNewAbandonmentSource recordOriginalNewAbandonmentClosure(
+      CanonicalGameplayOriginalNewAbandonmentSource expected,
+      CanonicalGameplayOriginalNewCandidateClosureRedisOwner.Readback actual) {
+    Objects.requireNonNull(expected, "expected");
+    Objects.requireNonNull(actual, "owner-produced closure readback");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision = lockInventoryRevision(transaction);
+          var current =
+              loadOriginalNewAbandonmentSource(
+                  transaction, expected.transition().transitionId(), true);
+          if (!current.abandonmentId().equals(expected.abandonmentId())
+              || !current.candidate().equals(expected.candidate())
+              || !actual.matches(current)) {
+            throw conflict("Original NEW closure does not match its retained abandonment");
+          }
+          if (current.closureDigest() != null) {
+            if (!current.closureDigest().equals(actual.digest()))
+              throw conflict("Original NEW closure digest changed");
+            return current;
+          }
+          BigInteger prior = current.transition().inventoryRevision();
+          BigInteger next = currentRevision.add(BigInteger.ONE);
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + TRANSITION
+                      + " SET original_new_abandonment_state = 'NEVER_ADMITTED_CLOSED', original_new_abandonment_closure_digest = ?, inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'PREPARED' AND inventory_revision = ?"
+                      + " AND original_new_abandonment_id = ? AND original_new_abandonment_state = 'ABANDONMENT_SELECTED'",
+                  actual.digest(),
+                  decimal(next),
+                  current.transition().transitionId(),
+                  decimal(prior),
+                  current.abandonmentId()),
+              "Original NEW closure lost its selected abandonment");
+          advanceOriginalNewAbandonmentRevision(
+              transaction, current.transition().transitionId(), prior, next);
+          bumpInventoryClock(transaction, currentRevision, next);
+          return loadOriginalNewAbandonmentSource(
+              transaction, current.transition().transitionId(), false);
+        });
+  }
+
+  private static void requireOriginalNewNeverDispatchedFollowups(
+      DSLContext transaction, UUID transitionId) {
+    requireOriginalNewNeverDispatchedFollowups(transaction, transitionId, true);
+  }
+
+  private static void requireOriginalNewNeverDispatchedFollowups(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    String lock = forUpdate ? " FOR UPDATE" : "";
+    Record account =
+        transaction.fetchOne(
+            "SELECT * FROM "
+                + ACCOUNT_OBLIGATION
+                + " WHERE transition_id = ? AND obligation_ordinal = 0"
+                + lock,
+            transitionId);
+    Record region =
+        transaction.fetchOne(
+            "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?" + lock, transitionId);
+    if (account == null
+        || region == null
+        || !"REQUIRED".equals(account.get("status", String.class))
+        || !"REQUIRED".equals(account.get("projection_state", String.class))
+        || account.get("projection_member") != null
+        || account.get("projection_inventory_revision") != null
+        || !"REQUIRED".equals(region.get("status", String.class))
+        || region.get("bridge_operation_id") != null
+        || region.get("redis_readback_digest") != null
+        || transaction.fetchExists(
+            DSL.selectOne()
+                .from("game_session_canonical_account_member_repair_operation")
+                .where(DSL.field("transition_id").eq(transitionId)))
+        || transaction.fetchExists(
+            DSL.selectOne()
+                .from("game_session_region_timeline_preparation")
+                .where(DSL.field("transition_id").eq(transitionId)))) {
+      throw conflict("Original NEW abandonment cannot claim never-dispatched followups");
+    }
+  }
+
+  private static void advanceOriginalNewAbandonmentRevision(
+      DSLContext transaction, UUID transitionId, BigInteger prior, BigInteger next) {
+    for (String table :
+        List.of(INVENTORY, RESERVATION, ACCOUNT_OBLIGATION, ISSUER_OBLIGATION, REGION_OBLIGATION)) {
+      requireOne(
+          transaction.execute(
+              "UPDATE "
+                  + table
+                  + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+              decimal(next),
+              transitionId,
+              decimal(prior)),
+          "Original NEW abandonment lost an exact dependent source");
+    }
+  }
+
+  private static CanonicalGameplayOriginalNewAbandonmentSource loadOriginalNewAbandonmentSource(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    String lock = forUpdate ? " FOR UPDATE" : "";
+    Record row =
+        transaction.fetchOne(
+            "SELECT * FROM " + TRANSITION + " WHERE transition_id = ?" + lock, transitionId);
+    if (row == null
+        || row.get("original_new_abandonment_id", UUID.class) == null
+        || !"DISPATCH_POSSIBLE".equals(row.get("original_new_candidate_state", String.class))
+        || row.get("original_new_candidate_readback_digest") != null
+        || !List.of("PREPARED", "ABORTED").contains(row.get("status", String.class))) {
+      throw conflict("Exact selected original NEW abandonment source is unavailable");
+    }
+    if ("PREPARED".equals(row.get("status", String.class))) {
+      requireOriginalNewNeverDispatchedFollowups(transaction, transitionId, forUpdate);
+    }
+    byte[] bytes = row.get("original_new_candidate_bytes", byte[].class);
+    if (bytes == null
+        || !CanonicalGameplayIssuerMemberV2Codec.sha256(bytes)
+            .equals(row.get("original_new_candidate_digest", String.class))) {
+      throw conflict("Selected abandonment lost its immutable candidate");
+    }
+    var candidate = CanonicalGameplayOriginalNewCandidate.parseCanonical(bytes);
+    Record inventory =
+        transaction.fetchOne(
+            "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ?" + lock,
+            candidate.bindingIdentity().bindingRef().bytes());
+    Record reservation =
+        transaction.fetchOne(
+            "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?" + lock,
+            candidate.reservation().reservationId());
+    if (inventory == null || reservation == null)
+      throw conflict("Selected abandonment lost its inventory or reservation");
+    return new CanonicalGameplayOriginalNewAbandonmentSource(
+        toTransitionSnapshot(row, inventory, reservation),
+        candidate,
+        toInventoryEntry(inventory),
+        toReservation(reservation),
+        row.get("original_new_abandonment_id", UUID.class),
+        row.get("original_new_abandonment_closure_digest", String.class),
+        CanonicalGameplayOriginalNewAbandonmentSource.State.valueOf(
+            row.get("original_new_abandonment_state", String.class)),
+        row.get("original_new_abandonment_orphan_cleanup_id", UUID.class),
+        row.get("original_new_abandonment_resolution_id", UUID.class));
+  }
+
+  public CanonicalGameplayOriginalNewAbandonmentSource recordNeverAdmittedAccountAbort(
+      CanonicalGameplayOriginalNewAbandonmentSource expected,
+      CanonicalGameplayOriginalNewNeverAdmittedAbortOwner.AccountAbortReadback actual) {
+    Objects.requireNonNull(expected, "expected");
+    Objects.requireNonNull(actual, "authenticated Account negative readback");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger revision = lockInventoryRevision(transaction);
+          var current =
+              loadOriginalNewAbandonmentSource(
+                  transaction, expected.transition().transitionId(), true);
+          if (!current.abandonmentId().equals(expected.abandonmentId())
+              || !current.candidate().equals(expected.candidate())
+              || !actual.matches(current)
+              || current.state()
+                  != CanonicalGameplayOriginalNewAbandonmentSource.State.NEVER_ADMITTED_CLOSED) {
+            throw conflict(
+                "Account negative terminal does not match the closed original abandonment");
+          }
+          var evidence = actual.evidence();
+          if (current.orphanCleanupId() != null) {
+            if (!current.orphanCleanupId().equals(evidence.orphanCleanupId())
+                || !current.negativeResolutionId().equals(evidence.negativeResolutionId())) {
+              throw conflict("Account negative terminal retry changed retained evidence");
+            }
+            return current;
+          }
+          requireOriginalNewNeverDispatchedFollowups(
+              transaction, current.transition().transitionId());
+          BigInteger prior = current.transition().inventoryRevision();
+          BigInteger next = revision.add(BigInteger.ONE);
+          UUID transitionId = current.transition().transitionId();
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + TRANSITION
+                      + " SET status = 'ABORTED', original_new_abandonment_orphan_cleanup_id = ?, original_new_abandonment_resolution_id = ?, inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'PREPARED' AND inventory_revision = ? AND original_new_abandonment_id = ?"
+                      + " AND original_new_abandonment_state = 'NEVER_ADMITTED_CLOSED'",
+                  evidence.orphanCleanupId(),
+                  evidence.negativeResolutionId(),
+                  decimal(next),
+                  transitionId,
+                  decimal(prior),
+                  current.abandonmentId()),
+              "Original NEW negative terminal lost its selected source");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + INVENTORY
+                      + " SET lifecycle = 'TERMINAL_UNRESOLVED', inventory_revision = ? WHERE transition_id = ? AND lifecycle = 'CANDIDATE_PREPARED' AND inventory_revision = ?",
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW negative terminal lost its candidate");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + RESERVATION
+                      + " SET lifecycle = 'RELEASE_PENDING', inventory_revision = ? WHERE transition_id = ? AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW negative terminal lost its reservation");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + ACCOUNT_OBLIGATION
+                      + " SET status = 'NEVER_DISPATCHED', inventory_revision = ? WHERE transition_id = ? AND status = 'REQUIRED' AND inventory_revision = ?",
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW account obligation was not never dispatched");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + REGION_OBLIGATION
+                      + " SET status = 'NEVER_DISPATCHED', inventory_revision = ? WHERE transition_id = ? AND status = 'REQUIRED' AND bridge_operation_id IS NULL AND inventory_revision = ?",
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW region obligation was not never dispatched");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + ISSUER_OBLIGATION
+                      + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ? AND status = 'REQUIRED'",
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW negative terminal lost its issuer obligation");
+          bumpInventoryClock(transaction, revision, next);
+          return loadOriginalNewAbandonmentSource(transaction, transitionId, false);
+        });
+  }
+
+  /** Completes only after retained real issuer release and physical-retirement proof. */
+  public CanonicalGameplayOriginalNewAbandonmentSource completeOriginalNewAbandonmentCleanup(
+      UUID transitionId) {
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger revision = lockInventoryRevision(transaction);
+          var source = loadOriginalNewAbandonmentSource(transaction, transitionId, true);
+          if (source.orphanCleanupId() == null
+              || source.transition().status()
+                  != CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED) {
+            throw conflict(
+                "Original NEW cleanup requires an attributable negative Account terminal");
+          }
+          if (source.inventory().lifecycle()
+              == CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL) return source;
+          Record proof =
+              transaction.fetchOne(
+                  "SELECT r.retirement_operation_id FROM game_session_canonical_issuer_binding_local_retirement r"
+                      + " JOIN game_session_canonical_issuer_binding_local_release_operation release ON release.operation_id = r.release_operation_id"
+                      + " JOIN "
+                      + ISSUER_OBLIGATION
+                      + " obligation ON obligation.transition_id = release.transition_id"
+                      + " AND obligation.local_release_operation_id = release.operation_id"
+                      + " AND obligation.status = 'RELEASED' AND obligation.binding_ref = release.binding_ref"
+                      + " AND obligation.reservation_id = release.reservation_id"
+                      + " AND obligation.inventory_revision = release.completion_inventory_revision"
+                      + " WHERE release.transition_id = ? AND release.orphan_cleanup_id = ? AND release.status = 'RELEASED' AND r.status = 'RETIRED'",
+                  transitionId,
+                  source.orphanCleanupId());
+          if (proof == null
+              || source.reservation().lifecycle()
+                  != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED) {
+            throw conflict("Original NEW cleanup lacks real released and retired issuer evidence");
+          }
+          Record account =
+              transaction.fetchOne(
+                  "SELECT status FROM "
+                      + ACCOUNT_OBLIGATION
+                      + " WHERE transition_id = ? AND obligation_ordinal = 0",
+                  transitionId);
+          Record region =
+              transaction.fetchOne(
+                  "SELECT status FROM " + REGION_OBLIGATION + " WHERE transition_id = ?",
+                  transitionId);
+          if (account == null
+              || region == null
+              || !"NEVER_DISPATCHED".equals(account.get("status", String.class))
+              || !"NEVER_DISPATCHED".equals(region.get("status", String.class)))
+            throw conflict("Original NEW untouched followups lack terminal evidence");
+          BigInteger prior = source.transition().inventoryRevision();
+          BigInteger next = revision.add(BigInteger.ONE);
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + TRANSITION
+                      + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ? AND status = 'ABORTED'",
+                  decimal(next),
+                  transitionId,
+                  decimal(prior)),
+              "Original NEW cleanup lost its terminal source");
+          // Completed followup obligations retain their original evidence and revisions.
+          // Only the mutable inventory/reservation snapshots follow this terminal clock edge.
+          for (String table : List.of(INVENTORY, RESERVATION)) {
+            requireOne(
+                transaction.execute(
+                    "UPDATE "
+                        + table
+                        + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+                    decimal(next),
+                    transitionId,
+                    decimal(prior)),
+                "Original NEW completion lost its exact inventory or reservation");
+          }
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + INVENTORY
+                      + " SET lifecycle = 'TERMINAL' WHERE transition_id = ? AND lifecycle = 'TERMINAL_UNRESOLVED'",
+                  transitionId),
+              "Original NEW cleanup lost its unresolved inventory");
+          bumpInventoryClock(transaction, revision, next);
+          return loadOriginalNewAbandonmentSource(transaction, transitionId, false);
+        });
+  }
+
+  CanonicalGameplayIssuerCleanupSource readIssuerCleanupSource(UUID transitionId) {
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          return readIssuerCleanupSourceInTransaction(transaction, transitionId, false);
+        });
+  }
+
+  static CanonicalGameplayIssuerCleanupSource readIssuerCleanupSourceInTransaction(
+      DSLContext transaction, UUID transitionId, boolean forUpdate) {
+    Record row =
+        transaction.fetchOne(
+            "SELECT original_new_abandonment_id FROM "
+                + TRANSITION
+                + " WHERE transition_id = ?"
+                + (forUpdate ? " FOR UPDATE" : ""),
+            transitionId);
+    if (row != null && row.get("original_new_abandonment_id", UUID.class) != null) {
+      return CanonicalGameplayIssuerCleanupSource.negative(
+          loadOriginalNewAbandonmentSource(transaction, transitionId, forUpdate));
+    }
+    return CanonicalGameplayIssuerCleanupSource.positive(
+        loadFirstNewAdmissionAbortSource(transaction, transitionId, forUpdate, true));
+  }
+
   /**
    * Claims the one permitted original-NEW candidate installation. The immutable candidate and
    * DISPATCH_POSSIBLE marker commit together before any candidate Redis mutation. A returned create
@@ -2961,6 +3391,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if (transition == null) {
       throw conflict("Durable binding transition does not exist");
     }
+    if (transition.get("original_new_abandonment_id", UUID.class) != null) {
+      throw conflict("An irreversibly abandoned original NEW cannot issue positive work");
+    }
     byte[] candidateRef = transition.get("candidate_binding_ref", byte[].class);
     Record candidateRow =
         transaction.fetchOne(
@@ -3379,20 +3812,28 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !CanonicalGameplayIssuerMemberV2Codec.sha256(readbackBytes).equals(readbackDigest)) {
       throw conflict("Released issuer receipt contains malformed exact-value digests");
     }
+    UUID localId = release.get("original_local_operation_id", UUID.class);
+    UUID bootstrapId = release.get("original_bootstrap_member_operation_id", UUID.class);
+    if ((localId == null) == (bootstrapId == null))
+      throw conflict("Issuer release requires exactly one original source");
     Record original =
-        transaction.fetchOne(
-            "SELECT * FROM game_session_canonical_issuer_binding_local_operation"
-                + " WHERE operation_id = ? AND transition_id = ?",
-            release.get("original_local_operation_id", UUID.class),
-            transitionId);
+        localId != null
+            ? transaction.fetchOne(
+                "SELECT * FROM game_session_canonical_issuer_binding_local_operation WHERE operation_id = ? AND transition_id = ?",
+                localId,
+                transitionId)
+            : transaction.fetchOne(
+                "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE member_operation_id = ?",
+                bootstrapId);
     if (original == null
         || !Arrays.equals(originalBytes, original.get("member_value_bytes", byte[].class))
         || !Objects.equals(originalDigest, original.get("member_value_digest", String.class))
         || !Objects.equals(
             original.get("reservation_id", UUID.class), release.get("reservation_id", UUID.class))
-        || !Arrays.equals(original.get("binding_ref", byte[].class), bindingRef)) {
+        || (localId != null
+            && !Arrays.equals(original.get("binding_ref", byte[].class), bindingRef))) {
       throw conflict(
-          "Released issuer receipt no longer retains its immutable original V1034 operation");
+          "Released issuer receipt no longer retains its immutable original member operation");
     }
     CanonicalGameplayIssuerMemberV2Value originalValue;
     CanonicalGameplayIssuerMemberV2Value releasedValue;
@@ -3402,6 +3843,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
     } catch (RuntimeException malformed) {
       throw conflict("Released issuer receipt contains a malformed schema-v2 member");
     }
+    if (!originalValue.reservation().transitionId().equals(transitionId)
+        || !Arrays.equals(originalValue.owner().bindingRef().bytes(), bindingRef))
+      throw conflict("Issuer release original owner differs");
     BigInteger sourceRevision = readBigInteger(release, "source_inventory_revision");
     BigInteger operationFence = readBigInteger(release, "release_operation_fence");
     BigInteger generation = readBigInteger(release, "release_local_member_generation");

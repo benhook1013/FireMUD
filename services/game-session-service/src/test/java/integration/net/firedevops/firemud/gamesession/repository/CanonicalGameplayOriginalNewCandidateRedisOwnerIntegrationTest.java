@@ -121,6 +121,55 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
   }
 
   @org.junit.jupiter.api.Test
+  void selectedAbandonmentRetainsTheExactOriginalAndExcludesEveryPositiveCandidateRetry() {
+    var claim = source.repository().claimOriginalNewCandidateInstallation(source.decision());
+    var before = source.repository().readProvisionalCasEvidence(TRANSITION_ID);
+    var selected = source.repository().selectOriginalNewAbandonment(TRANSITION_ID);
+    var retry = source.repository().selectOriginalNewAbandonment(TRANSITION_ID);
+
+    assertThat(selected.candidate()).isEqualTo(claim.candidate());
+    assertThat(selected.state())
+        .isEqualTo(CanonicalGameplayOriginalNewAbandonmentSource.State.ABANDONMENT_SELECTED);
+    assertThat(selected.closureDigest()).isNull();
+    assertThat(selected.orphanCleanupId()).isNull();
+    assertThat(retry.abandonmentId()).isEqualTo(selected.abandonmentId());
+    assertThat(retry.transition().inventoryRevision())
+        .isEqualTo(selected.transition().inventoryRevision());
+    assertThat(source.repository().readOriginalNewAbandonmentSource(TRANSITION_ID).candidate())
+        .isEqualTo(claim.candidate());
+    assertThatThrownBy(() -> owner.installOnce(source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("irreversibly abandoned");
+    assertThatThrownBy(() -> source.repository().markProvisional(before, source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining("irreversibly abandoned");
+    assertThatThrownBy(() -> source.repository().beginAccountMemberRepair(TRANSITION_ID))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(
+            () ->
+                source
+                    .dsl()
+                    .execute(
+                        "UPDATE game_session_canonical_binding_transition SET status = 'PROVISIONAL' WHERE transition_id = ?",
+                        TRANSITION_ID))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(admin.dbsize()).isZero();
+  }
+
+  @org.junit.jupiter.api.Test
+  void abandonmentRefusesNeverClaimedAndAlreadyReadbackConfirmedOriginals() {
+    assertThatThrownBy(() -> source.repository().selectOriginalNewAbandonment(TRANSITION_ID))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    var installed = owner.installOnce(source.decision());
+    String sqlBefore = sourceSqlImage(source);
+    assertThatThrownBy(() -> source.repository().selectOriginalNewAbandonment(TRANSITION_ID))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+    assertThat(admin.get(ascii(installed.sessionKey())))
+        .containsExactly(installed.exactCandidateBytes());
+  }
+
+  @org.junit.jupiter.api.Test
   void failedScriptPreflightLeavesCreationUnclaimedAndTheSameOriginalCanRetry() {
     String sqlBefore = sourceSqlImage(source);
     configurePrincipal(false);

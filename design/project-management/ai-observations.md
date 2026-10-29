@@ -606,3 +606,44 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: The exact cause is unknown; the later backup start does not explain the earlier failures. The original keys and operation identities were retained, and same-role coordination remained available.
   - Outcome: The original operations recovered without another provider trigger. The tool owner deployed bounded checkout cleanup, retained all original captures and verified two 18-request foreground batches during cleanup and after deployment. No worker identity or connection change was needed.
   - Expected pattern: Retain exact request keys and report original diagnostic IDs to the tool owner. A connection transient does not authorize another review or changing worker identity.
+- `2026-10-29`: Migration guard assembly must preserve statement boundaries and the latest owner
+  - Context: The unpublished original-NEW negative cleanup migration extended several existing SQL guards.
+  - Observation: Replacing a repeated jOOQ marker inserted procedural definitions inside CHECK predicates, and an older copied issuer guard omitted later final-admission ACK enforcement. Root diff inspection found both before native validation or publication.
+  - Outcome: The migration now has one statement-level definition per function and preserves the latest V1050 issuer guard. jOOQ generation and native retained-data proof remain required before this candidate can qualify.
+  - Expected pattern: Extend the latest owning definition and inspect complete retained branches and SQL statement boundaries. Targeted parser-ignore markers do not make malformed or incomplete native SQL valid.
+
+- `2026-10-30`: A retained published tracker still contained merge markers
+  - Context: Current #3332 documentation validation read its published d4a checkpoint, whose tracker had conflict markers despite earlier proof paragraphs attributed to older checkpoints. The current #3331 parent did not contain them.
+  - Observation: The markers made a long proof paragraph parse as a Markdown heading and left two overlapping versions of candidate proof status. Earlier checkpoint evidence did not qualify this published file.
+  - Outcome: The local reconciliation preserves the final-admission proof paragraphs and the later R993 candidate result, removes the markers and duplicate outdated paragraph, and passes R1026 documentation lint. The failed R1025 aggregate remains retained; publication and native receiving qualification are separate work.
+  - Expected pattern: Check the actual receiving artifact and validation result before attributing completion to it, retaining each earlier result's original scope.
+
+- `2026-10-30`: A source-refresh operation ID was mistaken for a request key
+  - Context: A read-only observer needed the retained result of a queued FireController source refresh.
+  - Observation: It supplied the returned operation ID as a new idempotency key to source_refresh, creating another read-only provider refresh, then initially mistook the new ID for a controller mismatch. No paid review was repeated and no controller defect was established.
+  - Outcome: Root identified the supported source-refresh reader, corrected the observer to read by refresh_id, and retained the valid result without another trigger.
+  - Expected pattern: Keep the original request key distinct from its returned operation ID and use the retained-operation reader for completion.
+
+### 2026-10-30 — Preserve the resource-session descriptor through Python subprocesses
+
+A Python proof runner launched inside `run-locked-gradle.sh --resource-session` closed the inherited resource descriptor when invoking nested Gradle through the default `subprocess.run` behavior. The wrapper correctly refused admission before running tests (`Invalid inherited local resource session: invalid inherited lock descriptor`); the temporary version selections were restored by the runner’s guarded cleanup. Passing the existing `FIREMUD_LOCAL_RESOURCE_SESSION_FD` explicitly with `pass_fds` preserves the original verified lease without creating or bypassing one. The corrected invocation is being qualified; the failed invocation remains an unrun gate. Recovery: R1034 passed 28 native cases and the selected Node 26 frontend/OpenAPI consumers with the original verified descriptor passed through `pass_fds`.
+
+### 2026-10-30 — Verify the remote PR head ref before publishing a carry
+
+Gameplay guessed a #3320 remote branch name while publishing a reconciled local branch, creating an unused remote branch instead of advancing the PR head. The exact existing remote ref was then verified from the retained published SHA; one atomic push advanced the correct branch and deleted only the accidental branch under an exact-SHA lease and the User’s existing own-branch cleanup authorization. No source was lost. A compact controller pull includes `base_ref` but not `head_ref`; that was insufficient evidence for the guessed name. Verify the exact PR head ref before publication, especially when the local preparation branch has a different name.
+
+### 2026-10-30 — Controller server errors also block owner notifications
+
+The existing Gameplay connection returned `overloaded` on an active Hosted-operation wait, followed by `service_unavailable` because its identity check received an HTTP server error. An independent CLI-operation read and the attempt to notify FireController Worker failed at the same identity boundary before dispatch. The last confirmed review states remain active; failure to read or notify is not completion, cancellation or a failed provider trigger. Original operation IDs, alert request and idempotency key are retained for supported recovery, with no alternate identity or duplicate review request. Local work continues; service recovery and alert delivery remain unconfirmed.
+
+Recovery update for the controller incident: the original Gameplay operation read and the exact retained owner-alert send succeeded at 11:52 UTC; evidence, adjudication and finalization then worked on the unchanged binding. FireController Worker reported controlled rollout recovery on the original instance at 11:48:08 UTC, with no container restart. These facts distinguish recovered reads from the earlier failed observations; they do not retroactively qualify an unavailable read.
+
+- `2026-10-30`: A rate-limited Hosted trigger remained falsely active
+  - Context: #3333 Hosted1 posted trigger comment 6495302463 at 00:22:47 NZDT. The authenticated provider replied six seconds later with “Action not completed” and a review-rate-limit explanation.
+  - Observation: FireController retained `active / trigger_recovered` without a submitted review, so the observer could not establish execution and the publication fence unnecessarily delayed qualified local fixes. The operation's later local update timestamp was not provider progress. FireController Worker confirmed the missed rate-limit recognition and is settling the original attempt; no duplicate request was sent.
+  - Expected pattern: Classify the original authenticated rate-limit reply, retain its retry boundary and actual lack of review coverage, and settle that attempt before another authorized request. A delivered trigger or an active controller record alone does not prove an executing provider review.
+
+- `2026-10-30`: A read deadline blocked same-worker incident coordination
+  - Context: #3332 Hosted2 became uncertain with `hosted_observation_pending`; the existing bound connection then returned `deadline_exceeded` at identity verification.
+  - Observation: The controller-worker notification and main-job update were explicitly not dispatched. The observer also could not read the original CLI operation. An earlier rollout recovery does not establish the cause or recovery of this later incident.
+  - Expected pattern: Retain exact requests, keys and operation identities; retry original writes through the same binding after recovery. Unavailable observations do not authorize duplicate reviews or a different worker identity. Local proof and disjoint child reconciliation can continue under the existing publication fence.

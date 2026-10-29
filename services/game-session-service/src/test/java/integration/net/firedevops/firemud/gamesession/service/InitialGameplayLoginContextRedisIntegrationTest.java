@@ -472,7 +472,8 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       throws Exception {
     var original = coordinates();
     seed(original);
-    try (var wire = new AckResponseDropper(PRIMARY.getMappedPort(PORT))) {
+    var policy = new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 500);
+    try (var wire = new AckResponseDropper(PRIMARY.getMappedPort(PORT), policy)) {
       var uri =
           RedisURI.Builder.redis("127.0.0.1", wire.port())
               .withAuthentication(PRINCIPAL, PASSWORD)
@@ -487,14 +488,24 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       try {
         var account = mock(CanonicalGameplayLoginAccountClient.class);
         var authority = new ControlledAuthority();
-        var owner = cleanup(client(new TracedProvider(interruptedClient), authority, 1), account);
+        var owner =
+            cleanup(client(new TracedProvider(interruptedClient), authority, policy), account);
         owner.reserve(original);
-        assertThat(owner.abandonAndRetire(original).status())
-            .isEqualTo(InitialGameplayLoginCleanupOwner.Status.HELD);
-        assertThat(wire.dropped.await(5, TimeUnit.SECONDS))
-            .as("real WAITAOF response dropped on physical loopback socket")
-            .isTrue();
-        assertThat(wire.acknowledgedBeforeDrop.get())
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        do {
+          // Insufficient replies remain real HELD outcomes; retry only this original closure.
+          assertThat(owner.abandonAndRetire(original).status())
+              .isEqualTo(InitialGameplayLoginCleanupOwner.Status.HELD);
+          verify(account, never()).retireInitialGameplayLogin(any());
+          assertThat(authority.active).isFalse();
+        } while (wire.dropped.getCount() != 0 && System.nanoTime() < deadline);
+        assertThat(wire.dropped.getCount())
+            .as(
+                "sufficient WAITAOF response dropped on physical loopback socket; last response: %s",
+                wire.lastWaitAofResponse.get())
+            .isZero();
+        var acknowledged = Optional.ofNullable(wire.acknowledgedBeforeDrop.get()).orElseThrow();
+        assertThat(acknowledged.satisfies(policy))
             .as("actual local and replica AOF response was sufficient before network loss")
             .isTrue();
         verify(account, never()).retireInitialGameplayLogin(any());
@@ -857,9 +868,14 @@ class InitialGameplayLoginContextRedisIntegrationTest {
 
   private static InitialGameplayLoginContextRedisClient client(
       TracedProvider provider, ControlledAuthority authority, int replicas) {
+    return client(
+        provider, authority, new AcknowledgementPolicy(Profile.REPLICATED, 1, replicas, 500));
+  }
+
+  private static InitialGameplayLoginContextRedisClient client(
+      TracedProvider provider, ControlledAuthority authority, AcknowledgementPolicy policy) {
     return new InitialGameplayLoginContextRedisClient(
-        new InitialGameplayLoginRedisBinding(
-            BINDING, provider, new AcknowledgementPolicy(Profile.REPLICATED, 1, replicas, 500)),
+        new InitialGameplayLoginRedisBinding(BINDING, provider, policy),
         RedisScriptCatalog.loadInstalled(
             InitialGameplayLoginContextRedisIntegrationTest.class.getClassLoader()),
         authority);
@@ -942,19 +958,23 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     return false;
   }
 
-  /** Test-only RESP2 loopback relay drops the actual first WAITAOF response, never its request. */
+  /** Test-only RESP2 relay drops the first sufficient WAITAOF response, never its request. */
   private static final class AckResponseDropper implements AutoCloseable {
     private final ServerSocket listener;
     private final int upstreamPort;
+    private final AcknowledgementPolicy policy;
     private final ExecutorService workers = Executors.newCachedThreadPool();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean stopping = new AtomicBoolean();
     private final AtomicBoolean dropNext = new AtomicBoolean(true);
     private final CountDownLatch dropped = new CountDownLatch(1);
-    private final AtomicBoolean acknowledgedBeforeDrop = new AtomicBoolean();
+    private final AtomicReference<AofCounts> acknowledgedBeforeDrop = new AtomicReference<>();
+    private final AtomicReference<String> lastWaitAofResponse =
+        new AtomicReference<>("not observed");
 
-    private AckResponseDropper(int upstreamPort) throws IOException {
+    private AckResponseDropper(int upstreamPort, AcknowledgementPolicy policy) throws IOException {
       this.upstreamPort = upstreamPort;
+      this.policy = policy;
       listener = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
       workers.submit(
           () -> {
@@ -988,12 +1008,16 @@ class InitialGameplayLoginContextRedisIntegrationTest {
           byte[] response = frame(upstream.getInputStream());
           boolean waitAof =
               new String(request, StandardCharsets.US_ASCII).startsWith("*4\r\n$7\r\nWAITAOF\r\n");
-          if (waitAof && dropNext.compareAndSet(true, false)) {
-            // Read the genuine response first, then sever both sockets without delivering bytes.
-            acknowledgedBeforeDrop.set(
-                new String(response, StandardCharsets.US_ASCII).equals("*2\r\n:1\r\n:1\r\n"));
-            dropped.countDown();
-            return;
+          if (waitAof) {
+            var counts = aofCounts(response);
+            lastWaitAofResponse.set(counts.map(AofCounts::toString).orElse("non-count response"));
+            if (counts.filter(value -> value.satisfies(policy)).isPresent()
+                && dropNext.compareAndSet(true, false)) {
+              // Only a genuine sufficient ACK qualifies the network response-loss boundary.
+              acknowledgedBeforeDrop.set(counts.orElseThrow());
+              dropped.countDown();
+              return;
+            }
           }
           downstream.getOutputStream().write(response);
           downstream.getOutputStream().flush();
@@ -1002,6 +1026,29 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         // Connection interruption is the controlled boundary; never print AUTH or token frames.
       } finally {
         sockets.remove(downstream);
+      }
+    }
+
+    private static Optional<AofCounts> aofCounts(byte[] response) {
+      String[] fields = new String(response, StandardCharsets.US_ASCII).split("\r\n", -1);
+      if (fields.length != 4
+          || !fields[0].equals("*2")
+          || !fields[3].isEmpty()
+          || !fields[1].matches(":(0|[1-9][0-9]*)")
+          || !fields[2].matches(":(0|[1-9][0-9]*)")) return Optional.empty();
+      try {
+        return Optional.of(
+            new AofCounts(
+                Long.parseLong(fields[1].substring(1)), Long.parseLong(fields[2].substring(1))));
+      } catch (NumberFormatException malformed) {
+        return Optional.empty();
+      }
+    }
+
+    private record AofCounts(long local, long replicas) {
+      private boolean satisfies(AcknowledgementPolicy policy) {
+        return local >= policy.requiredLocalAofCount()
+            && replicas >= policy.requiredReplicaAofCount();
       }
     }
 

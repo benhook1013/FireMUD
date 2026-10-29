@@ -130,6 +130,11 @@ tasks.named<Test>("test") {
 }
 
 tasks.named<Test>("integrationTest") {
+    // Isolate fixture statics in separate JVMs; JUnit methods remain serial within each suite.
+    // Keep other platforms' existing single-fork behavior and respect a one-worker invocation.
+    if (System.getProperty("os.name").lowercase().startsWith("linux")) {
+        maxParallelForks = minOf(2, gradle.startParameter.maxWorkerCount)
+    }
     // Composition fixtures load Game Session and Common Saga migrations directly from the filesystem.
     inputs.dir(project(":game-session-service").file("src/main/resources/db/migration"))
         .withPathSensitivity(PathSensitivity.RELATIVE)

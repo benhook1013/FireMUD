@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.issuer-binding-local-add.v1",
   "resourcePath": "redis/lua/game-session-issuer-binding-local-add.lua",
-  "sha256": "f45adaf2c62acd186f5497da6035e190797f7a9a3a1f269ac9ff35936c5120e4",
+  "sha256": "8902bf95e61c5e9a2f51ea58104a4a280cbd066046d0640e9c5d8c86408a4ff4",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -18,7 +18,7 @@
     {"name": "partitionCount"},
     {"name": "partitionCapacity"},
     {"name": "baselineFieldCountAndExactFieldValuePairs"},
-    {"name": "registeredLocalOperationCountAndExactOperationTupleAndCurrentPhase"},
+    {"name": "currentOriginalMemberCountAndExactOperationTupleAndCurrentPhase"},
     {"name": "targetOperationAndRequiredFieldsAndCapacityCounts"}
   ],
   "category": "SESSION_ISSUER_INDEX",

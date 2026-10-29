@@ -146,6 +146,15 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
         throw new IllegalArgumentException("Region bridge source provenance is invalid");
       }
     }
+    if (status == Status.NEVER_DISPATCHED
+        && (prepared
+            || executorFence != null
+            || leaseTokenCorrelation != null
+            || redisReadbackDigest != null
+            || acknowledgedAt != null)) {
+      throw new IllegalArgumentException(
+          "Never-dispatched region work cannot carry bridge authority");
+    }
     boolean acknowledged = status == Status.ACKNOWLEDGED;
     if ((executorFence != null) != (leaseTokenCorrelation != null)
         || (acknowledged != (redisReadbackDigest != null))
@@ -198,6 +207,7 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
 
   public enum Status {
     REQUIRED,
+    NEVER_DISPATCHED,
     ACKNOWLEDGED
   }
 }

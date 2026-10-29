@@ -101,6 +101,11 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
   /** Reloads the immutable original registration only from the actual retained Account abort. */
   CanonicalGameplayIssuerBindingLocalOperation readOriginalForIssuerRelease(
       CanonicalGameplayAdmissionAbortSource abortSource) {
+    return readOriginalForIssuerRelease(CanonicalGameplayIssuerCleanupSource.positive(abortSource));
+  }
+
+  CanonicalGameplayIssuerBindingLocalOperation readOriginalForIssuerRelease(
+      CanonicalGameplayIssuerCleanupSource abortSource) {
     Objects.requireNonNull(abortSource, "Actual Account-aborted source required");
     requireNoAmbientTransaction();
     if (!abortSource.isAccountAborted()

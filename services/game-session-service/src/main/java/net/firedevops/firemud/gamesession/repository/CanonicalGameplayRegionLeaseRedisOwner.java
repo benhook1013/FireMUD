@@ -140,39 +140,70 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         absenceProofDigest(source, incarnation));
   }
 
-  LeaseGrant initializeOrResumeTimeline(
+  PreparedTimelineInitialization prepareTimelineInitialization(
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
-      CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit,
       Duration leaseTtl,
       RuntimeIdentity identity) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(preparation, "preparation");
+    CanonicalGameplayRegionRuntimeStatusRepository.Source source =
+        Objects.requireNonNull(preparation.source(), "timeline source");
+    UUID operationId = Objects.requireNonNull(preparation.operationId(), "timeline operation id");
+    String sourceDigest =
+        Objects.requireNonNull(preparation.sourceDigest(), "timeline source digest");
+    if (!sourceDigest.matches("[0-9a-f]{64}")) throw unavailable();
+    requirePositive(preparation.regionEpoch(), "regionEpoch");
     long ttlMillis = ttlMillis(leaseTtl);
     String ownerService = requireOwnerService(identity);
     String ownerInstance = requireOwnerInstance(identity);
-    boolean mayCreate = permit != null;
-    if (mayCreate
-        && (!permit.operationId().equals(preparation.operationId())
-            || !permit.sourceDigest().equals(preparation.sourceDigest()))) {
-      throw unavailable();
-    }
     LeaseGrant grant =
         new LeaseGrant(
-            preparation.source(),
+            source,
             preparation.regionEpoch(),
             UUID.randomUUID().toString(),
             ownerService,
             ownerInstance);
-    long outcome =
-        executeTimeline(
-            grant,
-            "INITIALIZE",
-            preparation.operationId(),
-            preparation.sourceDigest(),
-            ttlMillis,
-            mayCreate);
-    if (outcome != 1L && outcome != 2L) throw unavailable();
-    return grant;
+    RedisScriptDescriptor descriptor =
+        requireDescriptor(
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_ID,
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_PATH,
+            TIMELINE_ARGUMENTS);
+    byte[] script = scriptSource(descriptor);
+    byte[][] keys =
+        new byte[][] {
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  source.tenantId(), source.gameInstanceId(), source.regionId())),
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()))
+        };
+    byte[][] arguments =
+        new byte[][] {
+          ascii(TIMELINE_SCHEMA),
+          ascii("INITIALIZE"),
+          ascii(grant.token),
+          ascii(Long.toString(preparation.regionEpoch())),
+          ascii(operationId.toString()),
+          ascii(sourceDigest),
+          ascii(Long.toString(ttlMillis)),
+          ascii("0")
+        };
+    if (arguments.length != TIMELINE_ARGUMENTS.size()) throw unavailable();
+
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    try {
+      connection = redisClient.connect(ByteArrayCodec.INSTANCE);
+      RedisAsyncCommands<byte[], byte[]> commands = connection.async();
+      requirePrincipal(await(commands.aclWhoami()));
+      String loadedSha = await(commands.scriptLoad(script));
+      if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
+      return new PreparedTimelineInitialization(
+          connection, commands, loadedSha, keys, arguments, grant, preparation);
+    } catch (RuntimeException failure) {
+      if (connection != null) connection.close();
+      throw unavailable(failure);
+    }
   }
 
   void verifyInitializedTimeline(
@@ -248,6 +279,70 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         sourceDigest,
         ttlMillis,
         mayCreate);
+  }
+
+  /**
+   * Holds the one ACL-verified connection across the SQL creation-permission claim and its sole
+   * timeline EVALSHA. Closing without initialize leaves the timeline untouched.
+   */
+  static final class PreparedTimelineInitialization implements AutoCloseable {
+    private final StatefulRedisConnection<byte[], byte[]> connection;
+    private final RedisAsyncCommands<byte[], byte[]> commands;
+    private final String loadedSha;
+    private final byte[][] keys;
+    private final byte[][] arguments;
+    private final LeaseGrant grant;
+    private final CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
+    private boolean initialized;
+    private boolean closed;
+
+    private PreparedTimelineInitialization(
+        StatefulRedisConnection<byte[], byte[]> connection,
+        RedisAsyncCommands<byte[], byte[]> commands,
+        String loadedSha,
+        byte[][] keys,
+        byte[][] arguments,
+        LeaseGrant grant,
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+      this.connection = connection;
+      this.commands = commands;
+      this.loadedSha = loadedSha;
+      this.keys = keys;
+      this.arguments = arguments;
+      this.grant = grant;
+      this.preparation = preparation;
+    }
+
+    synchronized LeaseGrant initialize(
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+      requireNoAmbientTransaction();
+      if (closed || initialized) throw unavailable();
+      boolean mayCreate = permit != null;
+      if (mayCreate
+          && (!permit.operationId().equals(preparation.operationId())
+              || !permit.sourceDigest().equals(preparation.sourceDigest()))) {
+        throw unavailable();
+      }
+      initialized = true;
+      byte[][] evalArguments = arguments.clone();
+      evalArguments[evalArguments.length - 1] = ascii(mayCreate ? "1" : "0");
+      Long outcome;
+      try {
+        outcome = await(commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments));
+      } catch (RuntimeException failure) {
+        throw unavailable(failure);
+      }
+      if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();
+      return grant;
+    }
+
+    @Override
+    public synchronized void close() {
+      if (!closed) {
+        closed = true;
+        connection.close();
+      }
+    }
   }
 
   private long executeTimeline(

@@ -117,11 +117,30 @@ final class CanonicalGameplayRegionLeaseOwner {
                   .INSTALLED) {
         throw unavailable();
       }
-      Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit> permit =
-          statusRepository.beginInitialTimeline(preparation, clock.instant());
-      grant =
-          redisOwner.initializeOrResumeTimeline(
-              preparation, permit.orElse(null), leaseTtl, runtimeIdentity);
+      try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
+          redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
+        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
+            readCurrentProvisionalEvidence(transitionId);
+        bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
+        ResolvedBridgeSource beforeClaimWorld =
+            resolveExactBridgeSource(worldRequest, beforeClaimEvidence);
+        requireSameSource(source, beforeClaimWorld.source);
+        CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
+            readCurrentIncarnation(source);
+        requireSameIncarnation(incarnation, beforeClaimIncarnation);
+        if (!statusRepository.matchesTimelinePreparation(
+            preparation,
+            beforeClaimEvidence,
+            worldRequest,
+            beforeClaimWorld.resolvedRegion,
+            source,
+            beforeClaimIncarnation)) {
+          throw unavailable();
+        }
+        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+            permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
+        grant = session.initialize(permit.orElse(null));
+      }
       redisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(incarnation, readCurrentIncarnation(source));
       ResolvedBridgeSource afterInitWorld = resolveExactBridgeSource(worldRequest, evidence);

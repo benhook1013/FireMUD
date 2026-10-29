@@ -19,6 +19,7 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalLeaseRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredentialRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
@@ -170,6 +171,34 @@ public final class AccountGameplayAdmissionLeaseClient
     } catch (IllegalArgumentException malformed) {
       throw invalidEvidence(
           "Account returned invalid gameplay admission lease evidence", malformed);
+    }
+  }
+
+  /** Distinct negative-purpose abort; no positive PROVISIONAL decision is inferred or supplied. */
+  public AccountGameplayAdmissionNeverAdmittedGrpcCodec.AbortEvidence abortNeverAdmitted(
+      String presentedInitialGsACompactJwt,
+      AccountGameplayAdmissionLeaseEvidence originalLease,
+      UUID transitionId,
+      UUID abandonmentId) {
+    requireNoAmbientSql("Never-admitted Account abort requires no ambient SQL");
+    requireLeaseCorrelation(originalLease);
+    var wireRequest =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toRequest(
+            presentedInitialGsACompactJwt, originalLease, transitionId, abandonmentId);
+    var expected = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(wireRequest);
+    try {
+      var response =
+          AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+              expected,
+              requireInitializedStub("Account lease service is not initialized")
+                  .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                  .abortNeverAdmittedGameplayAdmissionLease(wireRequest));
+      requireLeaseCorrelation(response.originalLeaseEvidence());
+      return response;
+    } catch (StatusRuntimeException failure) {
+      throw statusFailure("Account never-admitted abort failed", failure);
+    } catch (IllegalArgumentException malformed) {
+      throw invalidEvidence("Account returned invalid never-admitted evidence", malformed);
     }
   }
 
