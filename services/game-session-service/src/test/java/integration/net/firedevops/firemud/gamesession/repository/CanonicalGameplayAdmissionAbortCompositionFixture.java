@@ -42,6 +42,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbor
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
