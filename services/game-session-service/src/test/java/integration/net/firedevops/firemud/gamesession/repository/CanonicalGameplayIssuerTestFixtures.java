@@ -10,11 +10,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
@@ -54,6 +56,42 @@ final class CanonicalGameplayIssuerTestFixtures {
     dataSource.setUsername(username);
     dataSource.setPassword(password);
     return dataSource;
+  }
+
+  /** Initializes every owned test connection after JDBC has applied its own startup timezone. */
+  static DriverManagerDataSource withSessionRendering(
+      DriverManagerDataSource original, String timeZone, String byteaOutput) {
+    if (!List.of("UTC", "Pacific/Auckland", "America/New_York").contains(timeZone)
+        || !List.of("hex", "escape").contains(byteaOutput)) {
+      throw new IllegalArgumentException("Unsupported fixture session rendering");
+    }
+    var configured =
+        new DriverManagerDataSource() {
+          @Override
+          protected Connection getConnectionFromDriver(Properties properties) throws SQLException {
+            Connection connection = super.getConnectionFromDriver(properties);
+            try (PreparedStatement settings =
+                connection.prepareStatement(
+                    "SELECT set_config('TimeZone', ?, false), set_config('bytea_output', ?, false)")) {
+              settings.setString(1, timeZone);
+              settings.setString(2, byteaOutput);
+              settings.execute();
+              return connection;
+            } catch (SQLException | RuntimeException failure) {
+              try {
+                connection.close();
+              } catch (SQLException cleanup) {
+                failure.addSuppressed(cleanup);
+              }
+              throw failure;
+            }
+          }
+        };
+    configured.setDriverClassName("org.postgresql.Driver");
+    configured.setUrl(original.getUrl());
+    configured.setUsername(original.getUsername());
+    configured.setPassword(original.getPassword());
+    return configured;
   }
 
   static void migrateSchema(

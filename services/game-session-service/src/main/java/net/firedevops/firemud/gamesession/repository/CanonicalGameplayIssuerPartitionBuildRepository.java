@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -112,9 +113,13 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
             bootstrapRequestId,
             currentInventoryRevision);
 
+    requireCurrentCohortMatches(
+        transaction,
+        intent.cohortRows(),
+        captureCurrentCohort(transaction, intent.inventorySnapshotRevision()));
+    // All plan identity, work references and digests remain derived from the original capture.
     List<IssuerCohortSourceRow> currentRows =
-        captureCurrentCohort(transaction, intent.inventorySnapshotRevision());
-    requireSameCohort(intent.cohortRows(), currentRows);
+        intent.cohortRows().stream().map(IssuerCohortSourceRow::new).toList();
     DerivedPlan derived = derivePlan(intent, currentRows);
 
     Record existing =
@@ -216,9 +221,13 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
             bootstrapOperationId,
             bootstrapRequestId,
             currentInventoryRevision);
+    requireCurrentCohortMatches(
+        transaction,
+        intent.cohortRows(),
+        captureCurrentCohort(transaction, intent.inventorySnapshotRevision()));
+    // All plan identity, work references and digests remain derived from the original capture.
     List<IssuerCohortSourceRow> currentRows =
-        captureCurrentCohort(transaction, intent.inventorySnapshotRevision());
-    requireSameCohort(intent.cohortRows(), currentRows);
+        intent.cohortRows().stream().map(IssuerCohortSourceRow::new).toList();
     DerivedPlan derived = derivePlan(intent, currentRows);
     Record buildPlanRow =
         transaction.fetchOne(
@@ -604,6 +613,59 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
                       sourceJson,
                       sha256(sourceJson.getBytes(StandardCharsets.UTF_8))));
             });
+  }
+
+  private static void requireCurrentCohortMatches(
+      DSLContext transaction,
+      List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> frozen,
+      List<IssuerCohortSourceRow> current) {
+    if (frozen.size() != current.size()) {
+      throw conflict(
+          "Current source inventory no longer equals its complete frozen bootstrap cohort");
+    }
+    for (int index = 0; index < frozen.size(); index++) {
+      var expected = frozen.get(index);
+      var actual = current.get(index).cohortRow();
+      Set<String> frozenKeys = new HashSet<>();
+      Set<String> currentKeys = new HashSet<>();
+      parseObject(expected.sourceRowJson()).fieldNames().forEachRemaining(frozenKeys::add);
+      parseObject(actual.sourceRowJson()).fieldNames().forEachRemaining(currentKeys::add);
+      if (expected.rowOrdinal() != index
+          || expected.kind() != actual.kind()
+          || !expected.sourceKey().equals(actual.sourceKey())
+          || !expected.sourceInventoryRevision().equals(actual.sourceInventoryRevision())
+          || !frozenKeys.equals(currentKeys)) {
+        throw conflict("Current source row differs from its exact original bootstrap cohort entry");
+      }
+      // Use the authoritative table row type, including native bytea/timestamptz equality.
+      // Exact JSON key sets above prevent populate_record from hiding missing or added fields.
+      String sourceTable =
+          switch (expected.kind()) {
+            case BINDING, UNRESOLVED_LEGACY_BINDING ->
+                "game_session_canonical_gameplay_binding_inventory";
+            case RESERVATION, UNRESOLVED_LEGACY_RESERVATION ->
+                "game_session_canonical_issuer_partition_reservation";
+            case TRANSITION -> "game_session_canonical_binding_transition";
+            case ACCOUNT_OBLIGATION -> "game_session_canonical_binding_account_index_obligation";
+            case ISSUER_OBLIGATION -> "game_session_canonical_binding_issuer_index_obligation";
+            case REGION_OBLIGATION -> "game_session_canonical_binding_region_bridge_obligation";
+          };
+      boolean sameValues =
+          Boolean.TRUE.equals(
+              transaction
+                  .fetchSingle(
+                      "SELECT jsonb_populate_record(NULL::"
+                          + sourceTable
+                          + ", ?::jsonb) IS NOT DISTINCT FROM jsonb_populate_record(NULL::"
+                          + sourceTable
+                          + ", ?::jsonb)",
+                      expected.sourceRowJson(),
+                      actual.sourceRowJson())
+                  .get(0, Boolean.class));
+      if (!sameValues) {
+        throw conflict("Current source row differs from its exact original bootstrap cohort entry");
+      }
+    }
   }
 
   private static void requireSameCohort(
@@ -1832,14 +1894,50 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
 
   private static byte[] bytea(JsonNode json, String field) {
     String value = text(json, field);
-    if (!value.startsWith("\\x") || (value.length() & 1) != 0) {
-      throw conflict("Cohort source row bytea field is not PostgreSQL hex text: " + field);
+    if (value.startsWith("\\x")) {
+      try {
+        return HexFormat.of().parseHex(value.substring(2));
+      } catch (IllegalArgumentException malformed) {
+        throw conflict("Cohort source row bytea field is malformed: " + field);
+      }
     }
-    try {
-      return HexFormat.of().parseHex(value.substring(2));
-    } catch (IllegalArgumentException malformed) {
-      throw conflict("Cohort source row bytea field is malformed: " + field);
+    // PostgreSQL escape output uses printable ASCII, doubled backslashes, or three octal digits.
+    // Decode bytes directly; a character-set conversion must not change binding reference identity.
+    ByteArrayOutputStream decoded = new ByteArrayOutputStream(value.length());
+    for (int index = 0; index < value.length(); index++) {
+      char next = value.charAt(index);
+      if (next == '\\') {
+        if (++index >= value.length()) {
+          throw conflict("Cohort source row bytea field is malformed: " + field);
+        }
+        char escaped = value.charAt(index);
+        if (escaped == '\\') {
+          decoded.write('\\');
+        } else {
+          if (index + 2 >= value.length()
+              || escaped < '0'
+              || escaped > '3'
+              || value.charAt(index + 1) < '0'
+              || value.charAt(index + 1) > '7'
+              || value.charAt(index + 2) < '0'
+              || value.charAt(index + 2) > '7') {
+            throw conflict("Cohort source row bytea field is malformed: " + field);
+          }
+          decoded.write(
+              (escaped - '0') * 64
+                  + (value.charAt(index + 1) - '0') * 8
+                  + value.charAt(index + 2)
+                  - '0');
+          index += 2;
+        }
+      } else {
+        if (next < 32 || next > 126) {
+          throw conflict("Cohort source row bytea field is malformed: " + field);
+        }
+        decoded.write(next);
+      }
     }
+    return decoded.toByteArray();
   }
 
   private static BigInteger readBigInteger(Record row, String field) {
