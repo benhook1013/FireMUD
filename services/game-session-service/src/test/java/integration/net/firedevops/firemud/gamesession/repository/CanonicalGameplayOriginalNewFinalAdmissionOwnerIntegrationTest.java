@@ -163,6 +163,51 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void requiredIssuerObligationDeleteRefusesExplicitlyAndRetainedCandidateStillFinalizes()
+      throws Exception {
+    String retainedObligationQuery =
+        "SELECT xmin::text || '/' || to_jsonb(obligation)::text"
+            + " FROM game_session_canonical_binding_issuer_index_obligation obligation"
+            + " WHERE transition_id = ? AND status = 'REQUIRED'";
+    String retainedObligation =
+        fixture.dsl().fetchSingle(retainedObligationQuery, fixture.transitionId()).get(0, String.class);
+    String retainedRows = sqlImage();
+    Map<String, String> retainedPhysical = physicalImage();
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "DELETE FROM game_session_canonical_binding_issuer_index_obligation"
+                            + " WHERE transition_id = ?",
+                        fixture.transitionId()))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getServerErrorMessage()).isNotNull();
+              assertThat(failure.getServerErrorMessage().getConstraint())
+                  .isEqualTo("gs_first_new_issuer_release_obligation_retained");
+            });
+    // A separate SQL read proves the row and its physical version survived, along with
+    // retained source/proof rows, allocation counters and the actual Redis bytes.
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(retainedObligationQuery, fixture.transitionId())
+                .get(0, String.class))
+        .isEqualTo(retainedObligation);
+    assertThat(sqlImage()).isEqualTo(retainedRows);
+    assertThat(physicalImage()).isEqualTo(retainedPhysical);
+
+    repairAccountMember();
+    assertSameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows();
+  }
+
+  @Test
   void alreadyPresentAccountProjectionFinalizesAndReadsWithItsOriginalRevision() throws Exception {
     var prepared = inventory.readProvisionalCasEvidence(fixture.transitionId());
     String member = CanonicalGameplayAccountIndexMember.of(prepared.candidate()).value();
@@ -929,6 +974,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             "game_session_region_runtime_status",
             "game_session_region_timeline_preparation",
             "game_session_canonical_binding_inventory_clock",
+            "game_session_canonical_issuer_layout_bootstrap_control",
+            "game_session_canonical_issuer_bootstrap_member_op_counter",
+            "game_session_canonical_issuer_bootstrap_coverage_counter",
+            "game_session_canonical_issuer_binding_local_ack_gen_counter",
+            "game_session_canonical_issuer_admission_epoch_counter",
+            "game_session_canonical_account_member_repair_control",
             "game_session_canonical_account_coverage_control",
             "game_session_canonical_tenant_gameplay_tag",
             "game_session_canonical_issuer_admission_initializer",
