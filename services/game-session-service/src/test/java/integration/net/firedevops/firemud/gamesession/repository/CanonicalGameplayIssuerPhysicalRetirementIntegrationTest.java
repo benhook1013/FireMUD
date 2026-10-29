@@ -1381,13 +1381,6 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest {
     return fixture.completeIssuerRelease(resumed, recoveredReadback);
   }
 
-  private static CanonicalGameplayIssuerBindingLocalReleaseOperation completeRelease(
-      CanonicalGameplayAdmissionAbortCompositionFixture fixture, String seed) {
-    var pending = fixture.prepareIssuerRelease(seed);
-    var readback = fixture.projectIssuerRelease(pending);
-    return fixture.completeIssuerRelease(pending, readback);
-  }
-
   private static String lifetimeSeed(int index) {
     return "lifetime-" + index;
   }
