@@ -508,7 +508,11 @@ Entry format:
 
 Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was recorded at 04:30:37, a 39-minute 19-second capture delay. FireController identified an optional `review_info_content` marker that broke standing-result parsing and unrelated CI-bot edits that masked the useful capture diagnostic. The owner deployed parser/diagnostic regression fixes in `2f1e5da5` and recovered the original zero-finding evidence without another trigger or spent reservation. Retain optional-marker and unrelated-comment cases in completion recovery tests; provider check success alone cannot establish a zero-finding native review.
 
-- 2026-10-29: FireController's #3310 source refresh returned `unproven / ci_provider_invalid_response_head_results` without an actionable diagnostic while the separately observed exact-candidate Validation and Runtime Images runs completed successfully. The PR payload also retained an older base SHA than the live branch and actual test-merge parents. No causal connection between these facts is established. Preserve the original refresh and exact CI tuple, report the interpretation/recovery gap to the controller owner, and keep native readiness unproven rather than inferring success or debugging the controller in the product lane. Owner response and recovery remain pending at this checkpoint.
+- `2026-10-29`: Keep source-refresh failure separate from independent CI proof
+  - Context: FireController's #3310 source refresh returned `unproven / ci_provider_invalid_response_head_results` without an actionable diagnostic while separately observed exact-candidate Validation and Runtime Images runs completed successfully.
+  - Observation: the PR payload also retained an older base SHA than the live branch and actual test-merge parents. No causal connection between these facts is established.
+  - Expected pattern: preserve the original refresh and exact CI tuple, report the interpretation/recovery gap to the controller owner, and keep native readiness unproven rather than inferring success or debugging the controller in the product lane.
+  - Outcome: owner response and recovery remained pending at this historical checkpoint.
 
 - `2026-10-29`: Check owner reachability before adjudicating a schema-level review claim
   - Context: #3320 CLI reported that a later issuer cutoff could strand an older CLOSED barrier because the SQL operation schema permits positive prior epochs.
@@ -520,12 +524,12 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: links and Markdown passed locally, but CI architecture-doc-contracts rejected the proof-cell documentation path; that column permits executable tests or canonical validation/smoke tooling. The test links were valid and remain retained.
   - Expected pattern: run the existing architecture-doc-contracts check when changing capability anchors; keep summary/gap links outside proof cells and retain direct executable proof links inside them. This is a selection correction, not a new validation tool.
 
-- 2026-10-29: Explicit source recovery does not diagnose an older failed observation
+- `2026-10-29`: Explicit source recovery does not diagnose an older failed observation
   - Context: The preceding #3310 observation records a provider-response failure whose raw payload was unavailable; that historical failure remains unproven.
   - Observation: A later explicit controller refresh (`review_refresh_6f0041f16c925a9298f9ecafd0341d81`) independently recovered the correct current head/base comparison, five required checks and zero unresolved threads. Controller release `be29e458` also fixed a reproduced overlapping check-page response when provider totals change, but that reproduction does not establish the cause of the older failure.
   - Expected pattern: Retain the failed observation, its uncertainty and the independently passing recovery separately. Use the controller owner's actionable diagnostics and a fresh supported source observation rather than retroactively assigning a cause or treating separate green CI as native readiness.
 
-- 2026-10-29: Distinguish a stale PR event base from a current merge-parent guard defect
+- `2026-10-29`: Distinguish a stale PR event base from a current merge-parent guard defect
   - Context: The #3310 runtime-images run rejected image-tag derivation after the event retained base `5128ff24`, while its exact test-merge commit had parents `[94662ef2, 0b368b8b]`. The second parent matched the requested PR head; a separately merged Renovate PR had advanced `develop` to the first parent.
   - Observation: The exact-parent guard correctly refused that stale event tuple before any image build or full-stack smoke. A failed current-head check did not establish a gameplay defect or a guard bug, and the event's PR base field was not the live branch tip.
   - Expected pattern: Compare the captured event tuple, actual merge parents and live parent ref before diagnosing the failure. Reconcile or use the supported fresh exact-tuple path; preserve the old failure and require new image/smoke proof without weakening the guard or rerunning an obsolete tuple.
