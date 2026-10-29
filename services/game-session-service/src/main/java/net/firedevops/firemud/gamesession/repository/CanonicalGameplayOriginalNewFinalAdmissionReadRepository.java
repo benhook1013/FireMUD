@@ -13,7 +13,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -842,8 +844,15 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
   private FinalResult parseAndMatchFinalSession(
       Selector selector, SourceSnapshot source, byte[] physical) {
     CanonicalGameplayOriginalNewCandidate expectedCandidate = source.candidate();
+    final FinalResult result;
+    final BigInteger leaseExpiryMillis;
+    // Parse immutable receipt consistency at its retained admission instant; this grants no
+    // current authority. Check the real clock separately without reclassifying malformed bytes.
     try (CanonicalGameplayOriginalNewAuthenticatedSession.Finalized finalized =
-        CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(physical, clock)) {
+        CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(
+            physical,
+            Clock.fixed(
+                Instant.ofEpochMilli(source.finalReceipt().admissionAtMillis()), ZoneOffset.UTC))) {
       CanonicalGameplayOriginalNewCandidate actualCandidate = finalized.candidate();
       if (!expectedCandidate.equals(actualCandidate)) {
         throw conflict("Finalized session candidate differs from the retained original candidate");
@@ -906,27 +915,28 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
         wipe(handle);
       }
 
-      long admissionAtMillis = finalized.admissionAtMillis();
-      long continuityExpiryMillis = finalized.continuityExpiresAtMillis();
-      long nowMillis = clock.millis();
-      BigInteger leaseExpiryMillis = positiveBigInteger(carrier.get("expiresAt"), "lease expiry");
-      if (nowMillis <= 0L
-          || admissionAtMillis > nowMillis
-          || BigInteger.valueOf(admissionAtMillis).compareTo(leaseExpiryMillis) > 0
-          || nowMillis >= continuityExpiryMillis) {
-        throw conflict("Finalized original admission is outside its retained current time bounds");
-      }
-      return new FinalResult(
-          selector,
-          admissionAtMillis,
-          continuityExpiryMillis,
-          finalized.canonicalSessionDurationMillis(),
-          sha256(physical));
+      leaseExpiryMillis = positiveBigInteger(carrier.get("expiresAt"), "lease expiry");
+      result =
+          new FinalResult(
+              selector,
+              finalized.admissionAtMillis(),
+              finalized.continuityExpiresAtMillis(),
+              finalized.canonicalSessionDurationMillis(),
+              sha256(physical));
     } catch (CanonicalGameplayBindingInventoryConflictException conflict) {
       throw conflict;
     } catch (RuntimeException malformed) {
       throw conflict("Physical finalized original session does not match its retained source");
     }
+    long nowMillis = clock.millis();
+    if (nowMillis <= 0L || result.admissionAtMillis() > nowMillis) {
+      throw unavailable("Current clock cannot observe the finalized original admission instant");
+    }
+    if (BigInteger.valueOf(result.admissionAtMillis()).compareTo(leaseExpiryMillis) > 0
+        || nowMillis >= result.continuityExpiresAtMillis()) {
+      throw conflict("Finalized original admission is outside its retained current time bounds");
+    }
+    return result;
   }
 
   private static RedisAsyncCommands<byte[], byte[]> requireCommands(
