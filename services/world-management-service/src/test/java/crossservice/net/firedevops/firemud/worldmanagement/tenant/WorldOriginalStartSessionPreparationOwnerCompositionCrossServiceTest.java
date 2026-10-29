@@ -2891,7 +2891,6 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     }
   }
 
-
   /**
    * Extends the retained 2973 COMMITTED hold through actual Entity assignment, World placement,
    * authenticated current World reads, and the selected Game Session first-NEW region owners.
