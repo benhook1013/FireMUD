@@ -240,8 +240,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
     SessionContext.clear();
 
-    SessionContext.setContext(
-        null, List.of(), Map.of(), true, "game-session-service", "instance");
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "instance");
     assertNeverAdmittedCode(
         request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
     SessionContext.clear();
@@ -281,7 +280,8 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             JWT, foreignLease, DECISION_ID, OTHER_ID);
     assertThat(
             AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(request)
-                .originalLeaseEvidence().canonicalJson())
+                .originalLeaseEvidence()
+                .canonicalJson())
         .isEqualTo(foreignLease.canonicalJson());
     assertNeverAdmittedCode(
         request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);

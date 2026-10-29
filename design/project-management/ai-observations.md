@@ -632,3 +632,15 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: It treated that result as already known and unchanged without handing it to the owning orchestrator. Root retained a pending state until a targeted inquiry around 04:25, delaying maintenance readiness by about 45 minutes. This recurs with the retained observer-priority lesson from 2026-10-27; it was reporting delay, not provider or controller latency.
   - Expected pattern: Treat a meaningful terminal result as unreported until its owning handoff is delivered. Prioritizing the front must not discard a successor's completed transition; retain one shared observer.
   - Outcome: Root inspected the complete 13-job Runtime and four-job Smoke inventories, verified actual build, smoke and authenticated cleanup, and sent Overseer the exact source and readiness evidence without a rerun.
+
+- `2026-10-30`: First fix recording compares against the prior recorded fix
+  - Context: The seven-finding #3331 Hosted fix batch used the published head as `expected_sha` because the exposed tool description did not define that field.
+  - Observation: The atomic batch returned `review_conflict` with unrelated identity/access advice and changed no records. The guard actually compares the finding's previously recorded fix SHA, which is empty on first recording; neither a source refresh nor an identity change repairs that mismatch.
+  - Expected pattern: Read the current finding record and guard its prior fix value, preserving the exact rejected request and distinguishing a comparison conflict from an access failure.
+  - Outcome: FireController's owner confirmed the supported empty-value guard; one corrected new-key batch recorded all seven fixes at revision 3 without another review or changed grant. The owner is improving the schema and conflict diagnostic.
+
+- `2026-10-30`: Original offered remedies must remain the finding's acceptance boundary
+  - Context: The original #3331 CLI finding offered complete pre-dispatch preparation or a recovery/abort path, while explicitly allowing genuine dispatch uncertainty to remain unresolved.
+  - Observation: Overseer broadened that acceptance criterion to the separate crash/bootstrap cleanup programme, leaving the already implemented pre-dispatch remedy falsely fix-pending and creating an unnecessary discovery hold.
+  - Expected pattern: Adjudicate the immutable finding against its offered remedies and verified source. Preserve additional useful recovery work and genuine held scope as separate implementation obligations.
+  - Outcome: A bounded independent source comparison and Gameplay ancestry/proof check confirmed the original remedy in `4a5dad20`; the accepted-fixed record was corrected without changing captures or counts. Authorized reviews resumed, while ordinary/installed cleanup and held pre-anchor retention remained separately owned.
