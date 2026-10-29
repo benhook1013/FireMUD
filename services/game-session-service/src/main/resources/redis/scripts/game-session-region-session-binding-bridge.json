@@ -1,0 +1,37 @@
+{
+  "scriptId": "game-session.region-session-binding-bridge.v1",
+  "resourcePath": "redis/lua/game-session-region-session-binding-bridge.lua",
+  "sha256": "b65358cd964d6147eeba69cc401d2b2caa1a307fa0720490c8f56959ec91fb1a",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {"name": "regionLease", "ownedPrefix": "tick-executor-lease:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionMeta", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "regionSessionBinding", "ownedPrefix": "tick:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [
+    {"name": "schema"},
+    {"name": "action"},
+    {"name": "leaseToken"},
+    {"name": "expectedRegionEpoch"},
+    {"name": "sessionId"},
+    {"name": "bindingGeneration"}
+  ],
+  "category": "TICK_LOCK",
+  "outcomes": [
+    {"code": "BINDING_APPLIED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "BINDING_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "BINDING_READBACK_MATCH", "category": "SUCCESS", "effect": "NON_MUTATING"},
+    {"code": "BINDING_PREIMAGE_ABSENT", "category": "SUCCESS", "effect": "NON_MUTATING"},
+    {"code": "BINDING_PREIMAGE_EXACT", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "STALE_OR_CONFLICT", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "REGION",
+  "lossClass": "STAGED_EFFECT_OR_RETRY",
+  "tailLossBehavior": "The script requires the same live opaque region lease and an already-established separate tick metadata epoch. It never initializes or resets metadata. A new SQL operation requires a lease- and epoch-checked absent binding preimage; a retained operation may retry only absence or its exact session and binding generation. A different or malformed region binding is preserved and refused.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "none"}],
+  "legacyPayloadShape": null
+}

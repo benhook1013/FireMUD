@@ -1052,8 +1052,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Account and Game Session need 60 minutes for full checks including PostgreSQL/Redis issuer suites, packaging and post-job cleanup; World and Game Design retain 30 minutes.
-    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'game-session-service') && 60 || (matrix.module == 'world-management-service' || matrix.module == 'game-design-service') && 30 || 20 }}
+    # Allow 90 minutes for the full Game Session native issuer suites; retain Account 60, World 40 and Game Design 30.
+    timeout-minutes: ${{ matrix.module == 'game-session-service' && 90 || matrix.module == 'account-service' && 60 || matrix.module == 'world-management-service' && 40 || matrix.module == 'game-design-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:

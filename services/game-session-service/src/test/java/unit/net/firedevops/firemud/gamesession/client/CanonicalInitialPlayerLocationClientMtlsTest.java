@@ -20,11 +20,14 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationLifecycleConsequence;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRoom;
@@ -105,6 +108,18 @@ class CanonicalInitialPlayerLocationClientMtlsTest {
             observer.onNext(response);
             observer.onCompleted();
           }
+
+          @Override
+          public void readInitialPlayerLocationRegion(
+              CanonicalInitialPlayerLocationRequest request,
+              StreamObserver<CanonicalInitialPlayerLocationRegionResponse> observer) {
+            handlerInvocations.incrementAndGet();
+            observedRequest.set(request);
+            var peer = GrpcPeerIdentity.current();
+            observedPeer.set(peer == null ? null : peer.uri());
+            observer.onNext(regionResponse(request));
+            observer.onCompleted();
+          }
         };
     Server server = server(identity, service);
     var endpoints = new ServiceEndpointsProperties();
@@ -118,7 +133,9 @@ class CanonicalInitialPlayerLocationClientMtlsTest {
       client.init();
       if (accepted) {
         assertThat(client.placeInitialPlayer(request)).isEqualTo(response);
-        assertThat(handlerInvocations).hasValue(1);
+        assertThat(client.readInitialPlayerLocationRegion(request))
+            .isEqualTo(regionResponse(request));
+        assertThat(handlerInvocations).hasValue(2);
         assertThat(observedRequest.get()).isEqualTo(request);
         assertThat(observedPeer.get()).isEqualTo(GAME_SESSION_PEER);
       } else {
@@ -208,6 +225,49 @@ class CanonicalInitialPlayerLocationClientMtlsTest {
                 .setCanonicalVersionUuid(request.getExpectedTarget().getCanonicalVersionUuid())
                 .setRoomTemplateUuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
         .setPrivateRuntimeRoomKey("9182")
+        .build();
+  }
+
+  private static CanonicalInitialPlayerLocationRegionResponse regionResponse(
+      CanonicalInitialPlayerLocationRequest request) {
+    var target = request.getExpectedTarget();
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(
+                java.util.UUID.fromString(request.getPlacementOperationUuid())),
+            NAMESPACE,
+            java.util.UUID.fromString(target.getCanonicalTenantUuid()),
+            target.getWorldSlug(),
+            java.util.UUID.fromString(target.getGameInstanceId()),
+            java.util.UUID.fromString(target.getPlayableStateNamespaceUuid()),
+            "SHARED",
+            true,
+            "control-plane-request-12",
+            java.util.UUID.fromString(target.getCanonicalVersionUuid()),
+            "sha256:" + "1".repeat(64),
+            "sha256:" + "2".repeat(64),
+            "sha256:" + "3".repeat(64));
+    var lifecycle =
+        CanonicalInitialPlayerLocationLifecycleConsequence.newBuilder()
+            .setCanonicalRequestBytes(
+                com.google.protobuf.ByteString.copyFrom(lifecycleRequest.canonicalBytes()))
+            .setLifecycleStatus("ACTIVE")
+            .setLifecycleEpoch(request.getActiveLifecycleEpoch())
+            .setRowVersion(4L)
+            .setCaptureUuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+            .setGraphSha256("4".repeat(64))
+            .setPreparationInputDigest("sha256:" + "5".repeat(64))
+            .build();
+    return CanonicalInitialPlayerLocationRegionResponse.newBuilder()
+        .setSchemaVersion(1)
+        .setPlacementResult(response(request))
+        .setExpectedTarget(target)
+        .setCanonicalRegionInstanceUuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+        .setOperationalRegionUuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+        .setPrivateWorldInstanceKey(7L)
+        .setObservedRuntimeRoomKey(9182L)
+        .setLifecycle(lifecycle)
         .build();
   }
 }

@@ -1241,6 +1241,24 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
         row.get("current_version_id", Long.class));
   }
 
+  /**
+   * Purpose-specific Human pre-admission lock for the original STARTING row. Ordinary admission
+   * readers remain RUNNING-only.
+   */
+  public CanonicalInitialAdmissionLaunchTarget lockStartingForHumanRuntimeCompletion(
+      String targetNamespace, UUID canonicalTenantId, UUID realmId, UUID canonicalGameInstanceId) {
+    CanonicalInitialAdmissionLaunchTarget target =
+        lockForInitialAdmission(
+            targetNamespace, canonicalTenantId, realmId, canonicalGameInstanceId, false);
+    CanonicalGameInstanceLaunchAssociation association = target.association();
+    if (association.currentGameInstanceStatus() != CurrentGameInstanceStatus.STARTING
+        || association.currentRowVersion() != association.capturedStartingRowVersion()) {
+      throw new IllegalStateException(
+          "Human runtime completion requires the exact captured STARTING owner row");
+    }
+    return target;
+  }
+
   /** Reads the exact launch association and current runtime row after owner commit. */
   public Optional<CanonicalInitialAdmissionLaunchTarget> readForInitialAdmission(
       String targetNamespace, UUID canonicalTenantId, UUID realmId, UUID canonicalGameInstanceId) {

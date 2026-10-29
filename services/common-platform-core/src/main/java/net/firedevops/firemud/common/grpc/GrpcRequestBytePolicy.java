@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import net.firedevops.firemud.account.v1.AccountStartSessionAdmissionProtectionServiceGrpc;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterRetirementEvidence;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterOwnerReadServiceGrpc;
 
@@ -53,6 +55,16 @@ public final class GrpcRequestBytePolicy {
                 CanonicalGameplayRosterOwnerReadServiceGrpc
                     .getConfirmCanonicalGameplayRosterRetirementAcknowledgementMethod(),
                 CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES)));
+  }
+
+  public static GrpcRequestBytePolicy accountStartSessionAdmissionProtectionAcquisition() {
+    return new GrpcRequestBytePolicy(
+        List.of(
+            new MethodBound(
+                AccountStartSessionAdmissionProtectionServiceGrpc
+                    .getAcquireStartSessionAdmissionProtectionMethod(),
+                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec
+                    .MAX_REQUEST_WIRE_BYTES)));
   }
 
   public int transportMaximumBytes() {

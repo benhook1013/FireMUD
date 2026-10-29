@@ -8,6 +8,7 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentR
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorCorePayload;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorRuntimeReference;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorResponse;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
@@ -16,6 +17,8 @@ import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentOutcom
 import net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentReceiptStatus;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorAssignmentReceiptResponse;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.entitymanagement.validation.CanonicalEntitySourceValues;
 
 /** Closed schema-1 codecs for the run-owned assignment and World-owned receipt read. */
@@ -84,6 +87,42 @@ final class PreseededActorAssignmentGrpcCodec {
       throw new IllegalStateException("Unsupported persisted assignment outcome");
     }
     return response.build();
+  }
+
+  static PreseededActorAssignmentReceiptRequest fromRuntimeReferenceRequest(
+      ReadPreseededActorRuntimeReferenceRequest request) {
+    if (request == null
+        || request.getSchemaVersion() != SCHEMA_VERSION
+        || !request.getUnknownFields().asMap().isEmpty()
+        || !request.hasExpectedTarget()) {
+      throw invalid("complete schema-1 runtime reference selector is required");
+    }
+    return new PreseededActorAssignmentReceiptRequest(
+        parseUuid(request.getAssignmentUuid(), "assignment_uuid"),
+        parseUuid(request.getCanonicalAccountUuid(), "canonical_account_uuid"),
+        parseUuid(request.getCharacterUuid(), "character_uuid"),
+        request.getIntentDigest(),
+        fromExpectedTarget(request.getExpectedTarget()));
+  }
+
+  static ReadPreseededActorRuntimeReferenceResponse toRuntimeReferenceResponse(
+      PreseededActorAssignmentReceiptRequest selector, PreseededActorRuntimeReference reference) {
+    var receipt = reference.assignmentReceipt();
+    // Reuse the original exact receipt validation without changing its schema or bytes.
+    toReceiptReadResponse(new ReceiptReadRequest(selector.assignmentUuid(), selector), receipt);
+    return ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+        .setSchemaVersion(SCHEMA_VERSION)
+        .setRuntimeEntityId(reference.runtimeEntityId().value())
+        .setProjectionGeneration(reference.projectionGeneration())
+        .setProjectionFence(reference.projectionFence())
+        .setAssignmentUuid(receipt.assignmentUuid().toString())
+        .setCanonicalAccountUuid(receipt.canonicalAccountUuid().toString())
+        .setCharacterUuid(receipt.characterUuid().toString())
+        .setIntentDigest(receipt.intentDigest())
+        .setExpectedTarget(toWireExpectedTarget(receipt.target()))
+        .setPublishedOwnerProofDigest(receipt.publishedOwnerProofDigest())
+        .setCorePayload(toWireCorePayload(receipt.corePayload()))
+        .build();
   }
 
   static ReceiptReadRequest fromReceiptReadRequest(
