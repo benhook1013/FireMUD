@@ -203,7 +203,8 @@ final class CanonicalGameplayIssuerPartitionRedisSupport {
   }
 
   void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive())
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive())
       throw failure("Issuer Redis operation cannot run inside an ambient SQL transaction", null);
   }
 
