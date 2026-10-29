@@ -2622,58 +2622,15 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         assertThat(accountRowAfterAbortedOwnerBeforeSettlement)
             .isEqualTo(accountRowBeforeSourceWrite);
 
-        try (var accountTerminalRead =
-            new GrpcAccountInitialAdmissionSettlementReadClient(
-                gsEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
-          accountTerminalRead.init();
-          var accountOwnerRead =
-              accountTerminalRead.read(
-                  new AccountInitialAdmissionSettlementReadInput(
-                      UUID.randomUUID(), accountProtection));
-          assertThat(accountOwnerRead.terminal()).isEqualTo(abortedWorldTerminal);
-          assertThat(accountOwnerRead.terminal().outcome())
-              .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
-          var accountSettlementOwner =
-              new AccountStartSessionAdmissionProtectionSettlementService(
-                  new AccountStartSessionAdmissionProtectionRepository(issuer.sourceDsl()),
-                  accountTerminalRead,
-                  accountManager(issuer.sourceDsl()),
-                  NAMESPACE);
-          var accountSettlement =
-              Context.current()
-                  .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
-                  .call(
-                      () ->
-                          accountSettlementOwner.settle(
-                              accountProtection.accountProtectionId(),
-                              accountProtection.accountProtectionFence()));
-          var accountSettlementReplay =
-              Context.current()
-                  .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
-                  .call(
-                      () ->
-                          accountSettlementOwner.settle(
-                              accountProtection.accountProtectionId(),
-                              accountProtection.accountProtectionFence()));
-          assertThat(accountSettlement.protection().canonicalBytes())
-              .containsExactly(accountProtection.canonicalBytes());
-          assertThat(accountSettlement.terminal()).isEqualTo(abortedWorldTerminal);
-          assertThat(accountSettlementReplay.canonicalBytes())
-              .containsExactly(accountSettlement.canonicalBytes());
-          var storedSettlement =
-              issuer
-                  .sourceDsl()
-                  .fetchSingle(
-                      "SELECT outcome,terminal_bytes,terminal_digest "
-                          + "FROM account_start_session_admission_protection_settlements "
-                          + "WHERE protection_id=?",
-                      accountProtection.accountProtectionId());
-          assertThat(storedSettlement.get("outcome", String.class)).isEqualTo("ABORTED");
-          assertThat(storedSettlement.get("terminal_bytes", byte[].class))
-              .containsExactly(accountSettlement.canonicalBytes());
-          assertThat(storedSettlement.get("terminal_digest", String.class))
-              .isEqualTo(accountSettlement.digest());
-        }
+        assertAccountAdmissionProtectionSettled(
+            issuer.sourceDsl(),
+            gsEndpoints,
+            pki,
+            factory,
+            gameSessionPeer,
+            accountProtection,
+            abortedWorldTerminal,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
 
         var releasedAccount =
             Objects.requireNonNull(
@@ -2828,76 +2785,35 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           .containsExactly(
               GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(worldTerminal));
 
-      try (var accountTerminalRead =
-          new GrpcAccountInitialAdmissionSettlementReadClient(
-              gsEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
-        accountTerminalRead.init();
-        var accountOwnerRead =
-            accountTerminalRead.read(
-                new AccountInitialAdmissionSettlementReadInput(
-                    UUID.randomUUID(), accountProtection));
-        assertThat(accountOwnerRead.terminal()).isEqualTo(worldTerminal);
-        var accountSettlementOwner =
-            new AccountStartSessionAdmissionProtectionSettlementService(
-                new AccountStartSessionAdmissionProtectionRepository(issuer.sourceDsl()),
-                accountTerminalRead,
-                accountManager(issuer.sourceDsl()),
-                NAMESPACE);
-        var accountSettlement =
-            Context.current()
-                .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
-                .call(
-                    () ->
-                        accountSettlementOwner.settle(
-                            accountProtection.accountProtectionId(),
-                            accountProtection.accountProtectionFence()));
-        assertThat(accountSettlement.protection().canonicalBytes())
-            .containsExactly(accountProtection.canonicalBytes());
-        assertThat(accountSettlement.terminal()).isEqualTo(worldTerminal);
-        var accountSettlementReplay =
-            Context.current()
-                .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
-                .call(
-                    () ->
-                        accountSettlementOwner.settle(
-                            accountProtection.accountProtectionId(),
-                            accountProtection.accountProtectionFence()));
-        assertThat(accountSettlementReplay.canonicalBytes())
-            .containsExactly(accountSettlement.canonicalBytes());
-        var storedSettlement =
-            issuer
-                .sourceDsl()
-                .fetchSingle(
-                    "SELECT outcome,terminal_bytes,terminal_digest "
-                        + "FROM account_start_session_admission_protection_settlements "
-                        + "WHERE protection_id=?",
-                    accountProtection.accountProtectionId());
-        assertThat(storedSettlement.get("outcome", String.class)).isEqualTo("COMMITTED");
-        assertThat(storedSettlement.get("terminal_bytes", byte[].class))
-            .containsExactly(accountSettlement.canonicalBytes());
-        assertThat(storedSettlement.get("terminal_digest", String.class))
-            .isEqualTo(accountSettlement.digest());
+      assertAccountAdmissionProtectionSettled(
+          issuer.sourceDsl(),
+          gsEndpoints,
+          pki,
+          factory,
+          gameSessionPeer,
+          accountProtection,
+          worldTerminal,
+          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
 
-        String settledAccountPassword = accountPasswordBeforeSourceWrite + "-settled";
-        var releasedAccount =
-            Objects.requireNonNull(
-                new TransactionTemplate(accountManager(issuer.sourceDsl()))
-                    .execute(
-                        ignored ->
-                            updateAccountPasswordThroughOwner(
-                                issuer.sourceDsl(), accountUuid, settledAccountPassword)),
-                "Settled Account owner update readback required");
-        assertThat(releasedAccount.getAccountUuid()).isEqualTo(accountUuid);
-        String accountPasswordAfterSettlement =
-            issuer
-                .sourceDsl()
-                .fetchSingle("SELECT password_hash FROM accounts WHERE account_uuid=?", accountUuid)
-                .get("password_hash", String.class);
-        assertThat(accountPasswordAfterSettlement).isEqualTo(settledAccountPassword);
-        assertThat(accountPasswordAfterSettlement).isNotEqualTo(accountPasswordBeforeSourceWrite);
-        String accountRowAfterSettlement = accountRowSnapshot(issuer.sourceDsl(), accountUuid);
-        assertThat(accountRowAfterSettlement).isNotEqualTo(accountRowBeforeSourceWrite);
-      }
+      String settledAccountPassword = accountPasswordBeforeSourceWrite + "-settled";
+      var releasedAccount =
+          Objects.requireNonNull(
+              new TransactionTemplate(accountManager(issuer.sourceDsl()))
+                  .execute(
+                      ignored ->
+                          updateAccountPasswordThroughOwner(
+                              issuer.sourceDsl(), accountUuid, settledAccountPassword)),
+              "Settled Account owner update readback required");
+      assertThat(releasedAccount.getAccountUuid()).isEqualTo(accountUuid);
+      String accountPasswordAfterSettlement =
+          issuer
+              .sourceDsl()
+              .fetchSingle("SELECT password_hash FROM accounts WHERE account_uuid=?", accountUuid)
+              .get("password_hash", String.class);
+      assertThat(accountPasswordAfterSettlement).isEqualTo(settledAccountPassword);
+      assertThat(accountPasswordAfterSettlement).isNotEqualTo(accountPasswordBeforeSourceWrite);
+      String accountRowAfterSettlement = accountRowSnapshot(issuer.sourceDsl(), accountUuid);
+      assertThat(accountRowAfterSettlement).isNotEqualTo(accountRowBeforeSourceWrite);
 
       var finalWorldState = worldHoldOwner.readState(identity, lifecycleRequest).orElseThrow();
       assertThat(finalWorldState.holdStatus().name()).isEqualTo("COMMITTED");
@@ -2914,6 +2830,67 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           accountUuid);
     }
   }
+
+  private static void assertAccountAdmissionProtectionSettled(
+      DSLContext accountSql,
+      ServiceEndpointsProperties gsEndpoints,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory,
+      GrpcPeerIdentity gameSessionPeer,
+      AccountStartSessionAdmissionProtectionEvidence accountProtection,
+      GameSessionCanonicalInitialAdmissionOwnerProof expectedTerminal,
+      GameSessionCanonicalInitialAdmissionOwnerProof.Outcome expectedOutcome)
+      throws Exception {
+    try (var accountTerminalRead =
+        new GrpcAccountInitialAdmissionSettlementReadClient(
+            gsEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
+      accountTerminalRead.init();
+      var accountOwnerRead =
+          accountTerminalRead.read(
+              new AccountInitialAdmissionSettlementReadInput(UUID.randomUUID(), accountProtection));
+      assertThat(accountOwnerRead.terminal()).isEqualTo(expectedTerminal);
+      assertThat(accountOwnerRead.terminal().outcome()).isEqualTo(expectedOutcome);
+      var accountSettlementOwner =
+          new AccountStartSessionAdmissionProtectionSettlementService(
+              new AccountStartSessionAdmissionProtectionRepository(accountSql),
+              accountTerminalRead,
+              accountManager(accountSql),
+              NAMESPACE);
+      var accountSettlement =
+          Context.current()
+              .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
+              .call(
+                  () ->
+                      accountSettlementOwner.settle(
+                          accountProtection.accountProtectionId(),
+                          accountProtection.accountProtectionFence()));
+      assertThat(accountSettlement.protection().canonicalBytes())
+          .containsExactly(accountProtection.canonicalBytes());
+      assertThat(accountSettlement.terminal()).isEqualTo(expectedTerminal);
+      var accountSettlementReplay =
+          Context.current()
+              .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
+              .call(
+                  () ->
+                      accountSettlementOwner.settle(
+                          accountProtection.accountProtectionId(),
+                          accountProtection.accountProtectionFence()));
+      assertThat(accountSettlementReplay.canonicalBytes())
+          .containsExactly(accountSettlement.canonicalBytes());
+      var storedSettlement =
+          accountSql.fetchSingle(
+              "SELECT outcome,terminal_bytes,terminal_digest "
+                  + "FROM account_start_session_admission_protection_settlements "
+                  + "WHERE protection_id=?",
+              accountProtection.accountProtectionId());
+      assertThat(storedSettlement.get("outcome", String.class)).isEqualTo(expectedOutcome.name());
+      assertThat(storedSettlement.get("terminal_bytes", byte[].class))
+          .containsExactly(accountSettlement.canonicalBytes());
+      assertThat(storedSettlement.get("terminal_digest", String.class))
+          .isEqualTo(accountSettlement.digest());
+    }
+  }
+
 
   /**
    * Extends the retained 2973 COMMITTED hold through actual Entity assignment, World placement,
