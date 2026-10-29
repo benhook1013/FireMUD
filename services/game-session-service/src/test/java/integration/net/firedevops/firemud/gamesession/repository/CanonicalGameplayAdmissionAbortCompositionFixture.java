@@ -42,6 +42,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbor
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
@@ -412,8 +413,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
    * Tuple-consistent controlled upstream target; it does not claim a live initial-admission
    * producer.
    */
-  private static CanonicalPlayableTarget sealControlledInitialTarget(
-      CanonicalPlayableTarget original) {
+  static CanonicalPlayableTarget sealControlledInitialTarget(CanonicalPlayableTarget original) {
     var request =
         new WorldCanonicalInitialAdmissionHold.Request(
             original.targetNamespace(),
@@ -580,6 +580,10 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public Target target() {
+    return target(target);
+  }
+
+  static Target target(CanonicalPlayableTarget target) {
     return new Target(
         target.targetNamespace(),
         target.tenantSlug(),
@@ -1740,7 +1744,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         new CanonicalGameplayAdmissionDecision(
             transitionId, lease, candidate, preparedTransition.bindingGeneration(), null, target);
     if (historicalProvisionalSetup) {
-      seedHistoricalLeaseBoundProvisional(preparedTransition, decision);
+      seedHistoricalLeaseBoundProvisional(dsl, preparedTransition, decision);
     } else {
       inventoryRepository.markProvisional(
           inventoryRepository.readProvisionalCasEvidence(transitionId), decision);
@@ -1753,9 +1757,19 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
    * setup does not prove current provisional publication or Account lease issuance. The subsequent
    * bootstrap, default-ordered upgrade and retained abort still execute their owners.
    */
-  private void seedHistoricalLeaseBoundProvisional(
+  static void seedHistoricalLeaseBoundProvisional(
+      DSLContext dsl,
+      CanonicalGameplayBindingProvisionalCasEvidence prepared,
+      CanonicalGameplayAdmissionDecision decision) {
+    assertThat(prepared.expectedPrior()).isNull();
+    seedHistoricalLeaseBoundProvisional(dsl, prepared.transition(), decision);
+  }
+
+  static void seedHistoricalLeaseBoundProvisional(
+      DSLContext dsl,
       CanonicalGameplayBindingTransitionSnapshot prepared,
       CanonicalGameplayAdmissionDecision decision) {
+    Objects.requireNonNull(dsl, "dsl");
     assertThat(prepared.expectedPriorBindingRef()).isNull();
     assertThat(prepared.expectedPriorBindingGeneration()).isNull();
     assertThat(prepared.status())
