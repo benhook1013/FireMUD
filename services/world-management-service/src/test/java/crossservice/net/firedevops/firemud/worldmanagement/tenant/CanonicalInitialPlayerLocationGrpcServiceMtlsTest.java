@@ -37,6 +37,7 @@ import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Outcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepository.Result;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc;
@@ -160,6 +161,66 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         .thenReturn(java.util.Map.of(canonicalRegion, operationalRegion));
     return new WorldCanonicalInitialPlayerLocationRepository.RegionResult(
         placement, 4L, 917L, canonicalRegion, operationalRegion, lifecycle);
+  }
+
+  @Test
+  void regionConversionRuntimeFailureUsesSanitizedUnavailableAndOneErrorCallback() {
+    var owner = mock(CanonicalInitialPlayerLocationService.class);
+    var retained = controlledRegionResult(false);
+    var privateFailure = new UnsupportedOperationException("private conversion detail");
+    when(retained.lifecycleEvidence().request()).thenThrow(privateFailure);
+    when(owner.readRegion(any())).thenReturn(Optional.of(retained));
+    var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+    var nextCalls = new int[1];
+    var errorCalls = new int[1];
+    var completedCalls = new int[1];
+    var errors = new Throwable[1];
+    StreamObserver<CanonicalInitialPlayerLocationRegionResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CanonicalInitialPlayerLocationRegionResponse response) {
+            nextCalls[0]++;
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            errorCalls[0]++;
+            errors[0] = failure;
+          }
+
+          @Override
+          public void onCompleted() {
+            completedCalls[0]++;
+          }
+        };
+
+    // This direct callback fixture isolates conversion failure mapping; it grants no World
+    // authority.
+    try (MockedStatic<CanonicalInitialPlayerLocationPeerInterceptor> peer =
+        mockStatic(CanonicalInitialPlayerLocationPeerInterceptor.class)) {
+      peer.when(CanonicalInitialPlayerLocationPeerInterceptor::currentVerifiedPeer)
+          .thenReturn(
+              new GrpcPeerIdentity(
+                  "spiffe://firemud/ns/firemud/sa/game-session-service",
+                  NAMESPACE,
+                  "game-session-service"));
+      peer.when(() -> CanonicalInitialPlayerLocationPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+          .thenCallRealMethod();
+
+      grpc.readInitialPlayerLocationRegion(request(), observer);
+    }
+
+    assertThat(nextCalls[0]).isZero();
+    assertThat(errorCalls[0]).isEqualTo(1);
+    assertThat(completedCalls[0]).isZero();
+    assertThat(errors[0]).isInstanceOf(StatusRuntimeException.class);
+    var status = Status.fromThrowable(errors[0]);
+    assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(status.getDescription())
+        .isEqualTo("World initial-player region read is unavailable");
+    assertThat(status.getDescription()).doesNotContain("private");
+    assertThat(status.getCause()).isNull();
+    verify(owner).readRegion(CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request()));
   }
 
   @Test
