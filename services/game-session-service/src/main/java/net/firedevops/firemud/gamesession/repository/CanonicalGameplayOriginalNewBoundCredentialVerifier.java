@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.ALLOWED_CLOCK_SKEW_SECONDS;
+
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -32,7 +34,6 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class CanonicalGameplayOriginalNewBoundCredentialVerifier {
   private static final JsonMapper JSON = JsonMapper.builder().build();
-  private static final long ALLOWED_CLOCK_SKEW_SECONDS = 5L;
   private static final ExplicitRouteProfilePolicy ORIGINAL_NEW_POLICY = policy();
 
   private final AccountAsymmetricJwtVerifier verifier;
