@@ -118,13 +118,22 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          // The release has a unique transition key; its operation is the retirement's unique
+          // release key. Resolve those two point identities instead of filtering retained history.
+          Record release =
+              transaction.fetchOne(
+                  "SELECT operation_id FROM "
+                      + RELEASE
+                      + " WHERE transition_id = ? AND issuer_id = ? AND status = 'RELEASED'",
+                  transitionId,
+                  ISSUER);
+          if (release == null) return null;
           Record retirement =
               transaction.fetchOne(
                   "SELECT * FROM "
                       + RETIREMENT
-                      + " WHERE issuer_id = ? AND transition_id = ? AND status = 'RETIRED'",
-                  ISSUER,
-                  transitionId);
+                      + " WHERE release_operation_id = ? AND status = 'RETIRED'",
+                  uuid(release, "operation_id"));
           if (retirement == null) return null;
           return readCompletedRetirementInTransaction(transaction, retirement);
         });
