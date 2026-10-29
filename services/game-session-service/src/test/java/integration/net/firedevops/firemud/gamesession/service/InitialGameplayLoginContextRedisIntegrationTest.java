@@ -301,7 +301,10 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var result = validatedResult(original, UUID.randomUUID());
     var qualification = new ControlledAuthority();
     var provider = new TracedProvider(writer);
-    var client = client(provider, qualification, 1);
+    // A positive durability proof allows replica fsync under shared-runner load.
+    // Insufficient-acknowledgement cases keep their separate short failure deadline.
+    var client =
+        client(provider, qualification, new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000));
     var installed = InitialGameplayLoginContextState.installed(original, result);
     provider.expectedReadback = installed.encode();
     var firstInstall = client.install(original, result);
