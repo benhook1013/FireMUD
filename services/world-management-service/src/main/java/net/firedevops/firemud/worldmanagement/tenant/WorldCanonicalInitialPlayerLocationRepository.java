@@ -234,12 +234,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
               requireReadOnlyRepeatableReadTransaction();
               Record operation = readOperation(operationId);
               if (operation == null) return null;
-              Request retainedRequest =
-                  new Request(
-                      operationId,
-                      required(operation, "request_digest", String.class),
-                      required(operation, "request_bytes", byte[].class),
-                      required(operation, "original_lifecycle_evidence_bytes", byte[].class));
+              Request retainedRequest = retainedRequest(operation, operationId);
               ParsedRequest parsed = parseRequest(retainedRequest);
               selector.requireMatches(parsed);
               return readInOwnerTransaction(retainedRequest)

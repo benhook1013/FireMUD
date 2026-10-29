@@ -2199,27 +2199,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static void migrateThrough1044_1(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1044.1"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1044.1");
   }
 
   private static void migrateThrough1044_2(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1044.2"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1044.2");
   }
 
   private static void migrateRemaining(TestSchema testSchema) {

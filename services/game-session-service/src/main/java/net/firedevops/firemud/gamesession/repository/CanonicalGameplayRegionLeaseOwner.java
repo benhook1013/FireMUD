@@ -115,11 +115,30 @@ final class CanonicalGameplayRegionLeaseOwner {
                   .INSTALLED) {
         throw unavailable();
       }
-      Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit> permit =
-          statusRepository.beginInitialTimeline(preparation, clock.instant());
-      grant =
-          redisOwner.initializeOrResumeTimeline(
-              preparation, permit.orElse(null), leaseTtl, runtimeIdentity);
+      try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
+          redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
+        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+            permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
+        CanonicalGameplayBindingProvisionalCasEvidence afterClaimEvidence =
+            readCurrentProvisionalEvidence(transitionId);
+        bindingInventory.requireSameProvisionalSource(evidence, afterClaimEvidence);
+        ResolvedBridgeSource afterClaimWorld =
+            resolveExactBridgeSource(worldRequest, afterClaimEvidence);
+        requireSameSource(source, afterClaimWorld.source);
+        CanonicalGameplayRegionIncarnationSource.StableEvidence afterClaimIncarnation =
+            readCurrentIncarnation(source);
+        requireSameIncarnation(incarnation, afterClaimIncarnation);
+        if (!statusRepository.matchesTimelinePreparation(
+            preparation,
+            afterClaimEvidence,
+            worldRequest,
+            afterClaimWorld.resolvedRegion,
+            source,
+            afterClaimIncarnation)) {
+          throw unavailable();
+        }
+        grant = session.initialize(permit.orElse(null));
+      }
       redisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(incarnation, readCurrentIncarnation(source));
       ResolvedBridgeSource afterInitWorld = resolveExactBridgeSource(worldRequest, evidence);
