@@ -688,3 +688,8 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: Overseer broadened that acceptance criterion to the separate crash/bootstrap cleanup programme, leaving the already implemented pre-dispatch remedy falsely fix-pending and creating an unnecessary discovery hold.
   - Expected pattern: Adjudicate the immutable finding against its offered remedies and verified source. Preserve additional useful recovery work and genuine held scope as separate implementation obligations.
   - Outcome: A bounded independent source comparison and Gameplay ancestry/proof check confirmed the original remedy in `4a5dad20`; the accepted-fixed record was corrected without changing captures or counts. Authorized reviews resumed, while ordinary/installed cleanup and held pre-anchor retention remained separately owned.
+
+- `2026-10-30`: Preserve primary migration-test failures through schema cleanup
+  - Context: R1074's World receipt migration test failed when its plain `finally` block could not connect to PostgreSQL for schema cleanup; the XML retained no suppressed exception.
+  - Observation: That cleanup failure could replace an earlier test-body exception, so the run cannot establish whether migration assertions completed. The underlying connection-refusal cause remains unknown.
+  - Expected pattern: Use standard try-with-resources cleanup so every schema teardown is attempted and cleanup exceptions remain suppressed beneath any primary failure. Retain the failed aggregate and qualify a normal focused retry separately; this diagnostic repair does not establish a database or readiness repair.

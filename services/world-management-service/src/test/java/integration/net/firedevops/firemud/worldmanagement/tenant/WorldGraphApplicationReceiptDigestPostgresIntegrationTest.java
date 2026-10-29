@@ -102,7 +102,9 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     DSLContext freshDsl = DSL.using(freshSource, SQLDialect.POSTGRES);
     DSLContext probeDsl = DSL.using(probeSource, SQLDialect.POSTGRES);
 
-    try {
+    try (AutoCloseable upgradeCleanup = () -> dropSchema(upgradeSource, upgradeSchema);
+        AutoCloseable freshCleanup = () -> dropSchema(freshSource, freshSchema);
+        AutoCloseable probeCleanup = () -> dropSchema(probeSource, probeSchema)) {
       Flyway through104211 =
           flyway(
               upgradeSource,
@@ -278,10 +280,6 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               persistFixture(
                   probeDsl, probeSchema, fixture(), Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH),
           "23514");
-    } finally {
-      dropSchema(upgradeSource, upgradeSchema);
-      dropSchema(freshSource, freshSchema);
-      dropSchema(probeSource, probeSchema);
     }
   }
 
