@@ -621,11 +621,6 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: FireController retained `active / trigger_recovered` without a submitted review, so the observer could not establish execution and the publication fence unnecessarily delayed qualified local fixes. The operation's later local update timestamp was not provider progress. FireController Worker confirmed the missed rate-limit recognition and is settling the original attempt; no duplicate request was sent.
   - Expected pattern: Classify the original authenticated rate-limit reply, retain its retry boundary and actual lack of review coverage, and settle that attempt before another authorized request. A delivered trigger or an active controller record alone does not prove an executing provider review.
 
-- `2026-10-30`: Cross-reference retained helper-validation recurrences
-  - Context: The 2026-10-17 closed-validation-allowlist observation is the original process lesson; the 2026-10-27 and helper-validation portion of 2026-10-29 entries retain subsequent occurrences.
-  - Observation: These are recurrences of that same lesson, rather than distinct validation policies. Their dated evidence remains intact. The uppercase `R948` artifact-search observation is a separate lesson.
-  - Expected pattern: Apply the closed validation allowlist from the delegation workflow and preserve recurrence attribution without rewriting historical observations.
-
 - `2026-10-30`: An observed terminal CI result still needs its owning handoff
   - Context: The shared observer first saw #3327's exact-head Runtime and Smoke success around 03:40 NZDT, after the provider jobs finished by 03:38:37.
   - Observation: It treated that result as already known and unchanged without handing it to the owning orchestrator. Root retained a pending state until a targeted inquiry around 04:25, delaying maintenance readiness by about 45 minutes. This recurs with the retained observer-priority lesson from 2026-10-27; it was reporting delay, not provider or controller latency.
