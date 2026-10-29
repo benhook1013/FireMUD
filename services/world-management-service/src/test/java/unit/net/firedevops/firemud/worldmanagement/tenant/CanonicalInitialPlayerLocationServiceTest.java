@@ -114,6 +114,7 @@ class CanonicalInitialPlayerLocationServiceTest {
         new CanonicalInitialPlayerLocationService(
             NAMESPACE, association, holds, location, gameSession, preseeded, created);
     assertThat(service.read(selection)).isEmpty();
+    verify(created).read(any());
     verifyNoInteractions(association, holds, gameSession, preseeded);
   }
 
