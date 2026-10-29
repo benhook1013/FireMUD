@@ -647,3 +647,8 @@ Recovery update for the controller incident: the original Gameplay operation rea
   - Context: #3332 Hosted2 became uncertain with `hosted_observation_pending`; the existing bound connection then returned `deadline_exceeded` at identity verification.
   - Observation: The controller-worker notification and main-job update were explicitly not dispatched. The observer also could not read the original CLI operation. An earlier rollout recovery does not establish the cause or recovery of this later incident.
   - Expected pattern: Retain exact requests, keys and operation identities; retry original writes through the same binding after recovery. Unavailable observations do not authorize duplicate reviews or a different worker identity. Local proof and disjoint child reconciliation can continue under the existing publication fence.
+
+- `2026-10-30`: A first page of CI jobs was mistaken for the complete run
+  - Context: The shared observer read 30 successful jobs for #3315 and inferred that the still-running workflow and pending gate were inconsistent.
+  - Observation: The GitHub connector returned only the first page. A bounded API read with per_page=100 showed 38 total jobs, including the still-running Game Session checks. Root initially repeated the incomplete inventory, then challenged pagination and corrected the User and Overseer; no callback defect or CI repair followed from the partial read.
+  - Expected pattern: Retain total_count, returned count and continuation evidence before declaring a workflow's job inventory complete. A full page is not evidence that no more jobs exist.
