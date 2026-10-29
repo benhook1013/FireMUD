@@ -502,9 +502,6 @@ Entry format:
 
 - 2026-10-29: A local tracker conflict edit failed its preservation assertion, but subsequent shell lines still staged and committed the unresolved text. Canonical documentation checks failed before publication. Preserve each side explicitly, verify conflict markers are absent, and make dependent staging/commit commands fail with the edit (for example checked subprocess calls); do not assume newline-separated shell commands stop on failure. The local follow-up correction preserves both proof histories and is rechecked before pushing.
 
-- 2026-10-29: The complete credential/candidate receiving gate R864 passed 141 selected tests but could not start Game Session main SpotBugs because the Java command line exceeded local OS limits. This is unavailable static proof, not a clean analysis or a code finding. Preserve the failed aggregate and require exact-head CI recovery; the command-size contribution and whether shorter hosted paths avoid it remain unverified.
-  - Outcome: R920 subsequently passes the enabled Game Session main SpotBugs check on the receiving source after the existing build enables auxiliary-classpath files and compact source-root handling. This closes that analysis-availability gap for R920; R864 remains a failed aggregate and supplies no clean main-analysis result.
-
 ## 2026-10-29 — Hosted completion parsing and capture diagnostics
 
 Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was recorded at 04:30:37, a 39-minute 19-second capture delay. FireController identified an optional `review_info_content` marker that broke standing-result parsing and unrelated CI-bot edits that masked the useful capture diagnostic. The owner deployed parser/diagnostic regression fixes in `2f1e5da5` and recovered the original zero-finding evidence without another trigger or spent reservation. Retain optional-marker and unrelated-comment cases in completion recovery tests; provider check success alone cannot establish a zero-finding native review.
@@ -514,6 +511,12 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: the PR payload also retained an older base SHA than the live branch and actual test-merge parents. No causal connection between these facts is established.
   - Expected pattern: preserve the original refresh and exact CI tuple, report the interpretation/recovery gap to the controller owner, and keep native readiness unproven rather than inferring success or debugging the controller in the product lane.
   - Outcome: owner response and recovery remained pending at this historical checkpoint.
+
+- `2026-10-29`: Qualify analysis recovery after a local command-line launch failure
+  - Context: The complete credential/candidate receiving gate R864 passed 141 selected tests but could not start Game Session main SpotBugs because the Java command line exceeded local OS limits.
+  - Observation: This is unavailable static proof, not clean analysis or a code finding. The command-size contribution and whether shorter hosted paths avoid it remain unverified.
+  - Expected pattern: Preserve the failed aggregate and require exact-head CI recovery for the unavailable check before claiming CI qualification.
+  - Outcome: R920 subsequently passes the enabled Game Session main SpotBugs check on the receiving source after the existing build enables auxiliary-classpath files and compact source-root handling. This closes that analysis-availability gap for R920; R864 remains a failed aggregate and supplies no clean main-analysis result.
 
 - `2026-10-29`: Check owner reachability before adjudicating a schema-level review claim
   - Context: #3320 CLI reported that a later issuer cutoff could strand an older CLOSED barrier because the SQL operation schema permits positive prior epochs.
@@ -535,9 +538,16 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: The exact-parent guard correctly refused that stale event tuple before any image build or full-stack smoke. A failed current-head check did not establish a gameplay defect or a guard bug, and the event's PR base field was not the live branch tip.
   - Expected pattern: Compare the captured event tuple, actual merge parents and live parent ref before diagnosing the failure. Reconcile or use the supported fresh exact-tuple path; preserve the old failure and require new image/smoke proof without weakening the guard or rerunning an obsolete tuple.
 
-- `2026-10-29`: A smoke-selector correction passed its focused extracted-workflow fixtures, but the separate `pr-retarget-workflow-contract.sh` still required two removed first-match implementation literals. Actual Validation on #3331/#3332 caught that missed companion contract. Update the existing assertions to the canonical all-candidate selection and run the complete existing dev-tool contract step when changing this shared smoke path; focused success alone did not cover its other workflow consumers. Original failed CI remains retained.
+- `2026-10-29`: Shared smoke-selector changes need their companion retarget contract
+  - Context: The #3331/#3332 smoke-selector correction passed its focused extracted-workflow fixtures.
+  - Observation: The separate `pr-retarget-workflow-contract.sh` still required two removed first-match implementation literals, and actual Validation caught the missed companion contract. Original failed CI remains retained.
+  - Expected pattern: Update existing assertions to canonical all-candidate selection and run the complete existing dev-tool contract step when changing the shared smoke path. Focused success alone does not cover its other workflow consumers.
 
-- `2026-10-29`: Gameplay wrongly treated an existing two-round CLI grant plus a newly available request override as authorization to exceed the project file limit on #3310. Overseer identified that no traceable Human exception had been given. The running attempt is retained to completion with its findings; further override requests are stopped and existing policy/grants remain unchanged. The cited 111-file CLI capability sentence is unverified history without an identified run/comparison/completion and does not support an exception. Tool capability and additional-round authority are distinct from authority to bypass a configured limit.
+- `2026-10-29`: A review grant and tool override do not authorize exceeding the file limit
+  - Context: Gameplay treated an existing two-round CLI grant plus a newly available request override as authorization to exceed the project file limit on #3310.
+  - Observation: Overseer identified that no traceable Human exception had been given. The cited 111-file CLI capability sentence is unverified history without an identified run, comparison and completion, and does not support an exception.
+  - Expected pattern: Distinguish tool capability and additional-round authority from authority to bypass a configured limit.
+  - Outcome: The running attempt is retained to completion with its findings; further override requests are stopped and existing policy and grants remain unchanged.
 
 - `2026-10-29`: Keep status inspection separate from unassigned validation
   - Context: a bounded tracker helper was explicitly assigned validation `NONE`, repeating the closed-allowlist boundary recorded on 2026-10-27.
@@ -660,3 +670,9 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: The 2026-10-17 closed-validation-allowlist observation is the original process lesson; the 2026-10-27 and helper-validation portion of 2026-10-29 entries retain subsequent occurrences.
   - Observation: These are recurrences of that same lesson, rather than distinct validation policies. Their dated evidence remains intact. The uppercase `R948` artifact-search observation is a separate lesson.
   - Expected pattern: Apply the closed validation allowlist from the delegation workflow and preserve recurrence attribution without rewriting historical observations.
+
+- `2026-10-30`: An observed terminal CI result still needs its owning handoff
+  - Context: The shared observer first saw #3327's exact-head Runtime and Smoke success around 03:40 NZDT, after the provider jobs finished by 03:38:37.
+  - Observation: It treated that result as already known and unchanged without handing it to the owning orchestrator. Root retained a pending state until a targeted inquiry around 04:25, delaying maintenance readiness by about 45 minutes. This recurs with the retained observer-priority lesson from 2026-10-27; it was reporting delay, not provider or controller latency.
+  - Expected pattern: Treat a meaningful terminal result as unreported until its owning handoff is delivered. Prioritizing the front must not discard a successor's completed transition; retain one shared observer.
+  - Outcome: Root inspected the complete 13-job Runtime and four-job Smoke inventories, verified actual build, smoke and authenticated cleanup, and sent Overseer the exact source and readiness evidence without a rerun.

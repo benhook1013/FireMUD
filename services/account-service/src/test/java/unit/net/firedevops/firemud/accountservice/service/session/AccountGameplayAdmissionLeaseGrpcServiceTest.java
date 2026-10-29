@@ -26,13 +26,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.ConfirmOriginalNewGameplayAdmissionRequest;
 import net.firedevops.firemud.account.v1.FinalizeGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.IssueOriginalNewGameplayCredentialRequest;
+import net.firedevops.firemud.account.v1.OriginalNewAdmissionConfirmationResponse;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseOwner;
+import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwner;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
@@ -60,8 +67,11 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
 
   private final AccountGameplayAdmissionLeaseOwner owner =
       mock(AccountGameplayAdmissionLeaseOwner.class);
+  private final AccountOriginalNewBoundGameplayCredentialOwner credentialOwner =
+      mock(AccountOriginalNewBoundGameplayCredentialOwner.class);
   private final AccountGameplayAdmissionLeaseGrpcService service =
-      AccountGameplayAdmissionLeaseManualFactory.createUnregisteredReceiver(owner, NAMESPACE);
+      AccountGameplayAdmissionLeaseManualFactory.createUnregisteredReceiver(
+          owner, credentialOwner, NAMESPACE);
 
   @AfterEach
   void clearThreadState() {
@@ -70,7 +80,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   }
 
   @Test
-  void authenticatesTheExactPeerBeforeInspectingEachOfTheFourRequests() {
+  void authenticatesTheExactPeerBeforeInspectingEachOfTheSixRequests() {
     for (Call call : callsWithDefaultRequests()) {
       assertCode(call, null, Status.Code.UNAUTHENTICATED);
       assertCode(call, peer(NAMESPACE, "world-management-service"), Status.Code.PERMISSION_DENIED);
@@ -85,7 +95,25 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
       assertCode(call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
       SessionContext.clear();
     }
-    verifyNoInteractions(owner);
+    for (ConfirmationCall call : confirmationCallsWithDefaultRequests()) {
+      assertConfirmationCode(call, null, Status.Code.UNAUTHENTICATED);
+      assertConfirmationCode(
+          call, peer(NAMESPACE, "world-management-service"), Status.Code.PERMISSION_DENIED);
+      assertConfirmationCode(
+          call, peer("other", "game-session-service"), Status.Code.PERMISSION_DENIED);
+
+      SessionContext.setContext("123", List.of(), Map.of());
+      assertConfirmationCode(
+          call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+      SessionContext.clear();
+
+      SessionContext.setContext(
+          null, List.of(), Map.of(), true, "game-session-service", "instance");
+      assertConfirmationCode(
+          call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+      SessionContext.clear();
+    }
+    verifyNoInteractions(owner, credentialOwner);
   }
 
   @Test
@@ -104,6 +132,15 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         Status.Code.INVALID_ARGUMENT);
     assertCode(
         observer -> service.abortGameplayAdmissionLease(null, observer),
+        peer(NAMESPACE, "game-session-service"),
+        Status.Code.INVALID_ARGUMENT);
+
+    assertCode(
+        observer -> service.issueOriginalNewGameplayCredential(null, observer),
+        peer(NAMESPACE, "game-session-service"),
+        Status.Code.INVALID_ARGUMENT);
+    assertConfirmationCode(
+        observer -> service.confirmOriginalNewGameplayAdmission(null, observer),
         peer(NAMESPACE, "game-session-service"),
         Status.Code.INVALID_ARGUMENT);
 
@@ -147,6 +184,23 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         peer(NAMESPACE, "game-session-service"),
         Status.Code.INVALID_ARGUMENT);
 
+    var oversizedIssue =
+        IssueOriginalNewGameplayCredentialRequest.newBuilder()
+            .addOriginalLeaseEvidenceUtf8(oversizedOriginalBytes)
+            .build();
+    var oversizedConfirmation =
+        ConfirmOriginalNewGameplayAdmissionRequest.newBuilder()
+            .addOriginalLeaseEvidenceUtf8(oversizedOriginalBytes)
+            .build();
+    assertCode(
+        observer -> service.issueOriginalNewGameplayCredential(oversizedIssue, observer),
+        peer(NAMESPACE, "game-session-service"),
+        Status.Code.INVALID_ARGUMENT);
+    assertConfirmationCode(
+        observer -> service.confirmOriginalNewGameplayAdmission(oversizedConfirmation, observer),
+        peer(NAMESPACE, "game-session-service"),
+        Status.Code.INVALID_ARGUMENT);
+
     var malformedAcquire =
         AcquireGameplayAdmissionLeaseRequest.newBuilder().addSchemaVersion(1).build();
     var malformedFinalize = FinalizeGameplayAdmissionLeaseRequest.newBuilder().build();
@@ -157,10 +211,96 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             observer -> service.acquireGameplayAdmissionLease(malformedAcquire, observer),
             observer -> service.finalizeGameplayAdmissionLease(malformedFinalize, observer),
             observer -> service.readGameplayAdmissionLease(malformedRead, observer),
-            observer -> service.abortGameplayAdmissionLease(malformedAbort, observer))) {
+            observer -> service.abortGameplayAdmissionLease(malformedAbort, observer),
+            observer ->
+                service.issueOriginalNewGameplayCredential(
+                    IssueOriginalNewGameplayCredentialRequest.getDefaultInstance(), observer))) {
       assertCode(call, peer(NAMESPACE, "game-session-service"), Status.Code.INVALID_ARGUMENT);
     }
-    verifyNoInteractions(owner);
+    assertConfirmationCode(
+        observer ->
+            service.confirmOriginalNewGameplayAdmission(
+                ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer),
+        peer(NAMESPACE, "game-session-service"),
+        Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  @Test
+  void neverAdmittedAbortAuthenticatesTheExactPeerBeforeInspectingItsRequest() {
+    var request = AbortNeverAdmittedGameplayAdmissionLeaseRequest.getDefaultInstance();
+    assertNeverAdmittedCode(request, null, Status.Code.UNAUTHENTICATED);
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "world-management-service"), Status.Code.PERMISSION_DENIED);
+    assertNeverAdmittedCode(
+        request, peer("other", "game-session-service"), Status.Code.PERMISSION_DENIED);
+
+    SessionContext.setContext("123", List.of(), Map.of());
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+    SessionContext.clear();
+
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-session-service", "instance");
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+    SessionContext.clear();
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  @Test
+  void neverAdmittedAbortRejectsNullOversizedAndMalformedWireBeforeCallingEitherOwner() {
+    var peer = peer(NAMESPACE, "game-session-service");
+    assertNeverAdmittedCode(null, peer, Status.Code.INVALID_ARGUMENT);
+    var oversized =
+        AbortNeverAdmittedGameplayAdmissionLeaseRequest.newBuilder()
+            .addOriginalLeaseEvidenceUtf8(
+                ByteString.copyFrom(
+                    new byte[AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES + 1]))
+            .build();
+    assertNeverAdmittedCode(oversized, peer, Status.Code.INVALID_ARGUMENT);
+    assertNeverAdmittedCode(
+        AbortNeverAdmittedGameplayAdmissionLeaseRequest.getDefaultInstance(),
+        peer,
+        Status.Code.INVALID_ARGUMENT);
+    var malformed =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toRequest(
+                JWT, lease(NAMESPACE), DECISION_ID, OTHER_ID)
+            .toBuilder()
+            .addSchemaVersion(1)
+            .build();
+    assertNeverAdmittedCode(malformed, peer, Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  @Test
+  void neverAdmittedAbortRejectsAStructurallyValidForeignNamespaceLeaseBeforeCallingEitherOwner() {
+    var foreignLease = lease("other");
+    var request =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toRequest(
+            JWT, foreignLease, DECISION_ID, OTHER_ID);
+    assertThat(
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(request)
+                .originalLeaseEvidence().canonicalJson())
+        .isEqualTo(foreignLease.canonicalJson());
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  private void assertNeverAdmittedCode(
+      AbortNeverAdmittedGameplayAdmissionLeaseRequest request,
+      GrpcPeerIdentity peer,
+      Status.Code expected) {
+    var observer = new Capture<AbortNeverAdmittedGameplayAdmissionLeaseResponse>();
+    withPeer(peer, () -> service.abortNeverAdmittedGameplayAdmissionLease(request, observer));
+    assertThat(observer.code()).isEqualTo(expected);
+    assertThat(observer.description)
+        .isEqualTo("Account gameplay admission lease operation denied or unavailable");
+    assertThat(observer.failureHadCause).isFalse();
+    assertThat(observer.errors).isEqualTo(1);
+    assertThat(observer.responses).isZero();
+    assertThat(observer.completed).isFalse();
   }
 
   @Test
@@ -186,7 +326,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
                 AcquireGameplayAdmissionLeaseRequest.getDefaultInstance(), observer),
         peer(NAMESPACE, "game-session-service"),
         Status.Code.FAILED_PRECONDITION);
-    verifyNoInteractions(owner);
+    verifyNoInteractions(owner, credentialOwner);
   }
 
   @Test
@@ -199,6 +339,12 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     var foreignRead = AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(JWT, originalBytes);
     var foreignAbort =
         AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(JWT, originalBytes, null);
+    var foreignIssue =
+        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+            JWT, originalBytes);
+    var foreignConfirmation =
+        AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
+            JWT, originalBytes);
     var peer = peer(NAMESPACE, "game-session-service");
 
     assertCode(
@@ -217,7 +363,15 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         observer -> service.abortGameplayAdmissionLease(foreignAbort, observer),
         peer,
         Status.Code.PERMISSION_DENIED);
-    verifyNoInteractions(owner);
+    assertCode(
+        observer -> service.issueOriginalNewGameplayCredential(foreignIssue, observer),
+        peer,
+        Status.Code.PERMISSION_DENIED);
+    assertConfirmationCode(
+        observer -> service.confirmOriginalNewGameplayAdmission(foreignConfirmation, observer),
+        peer,
+        Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(owner, credentialOwner);
   }
 
   @Test
@@ -233,7 +387,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         codec
             .when(() -> AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(request))
             .thenThrow(parserFailure);
-        var failed = new Capture();
+        var failed = new Capture<AccountGameplayAdmissionLeaseResponse>();
         withPeer(
             peer(NAMESPACE, "game-session-service"),
             () -> service.acquireGameplayAdmissionLease(request, failed));
@@ -248,7 +402,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         codec.verify(() -> AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(request));
       }
     }
-    verifyNoInteractions(owner);
+    verifyNoInteractions(owner, credentialOwner);
   }
 
   @Test
@@ -259,7 +413,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             Status.FAILED_PRECONDITION
                 .withDescription("private token detail")
                 .asRuntimeException());
-    var failed = new Capture();
+    var failed = new Capture<AccountGameplayAdmissionLeaseResponse>();
     withPeer(
         peer(NAMESPACE, "game-session-service"),
         () -> service.acquireGameplayAdmissionLease(request, failed));
@@ -296,6 +450,39 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         .isSameAs(callbackFailure);
   }
 
+  @Test
+  void originalNewCredentialOwnerUnavailabilityIsSanitizedUnavailable() {
+    assertCredentialIssuanceFailure(
+        new IllegalStateException("private owner detail " + JWT), Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void unexpectedOriginalNewCredentialOwnerFailureRemainsSanitizedInternal() {
+    assertCredentialIssuanceFailure(
+        new NullPointerException("private owner detail " + JWT), Status.Code.INTERNAL);
+  }
+
+  private void assertCredentialIssuanceFailure(RuntimeException failure, Status.Code expected) {
+    var request =
+        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+            JWT, lease(NAMESPACE).canonicalJson().getBytes(StandardCharsets.UTF_8));
+    when(credentialOwner.issue(any())).thenThrow(failure);
+    var observer = new Capture<AccountGameplayAdmissionLeaseResponse>();
+    withPeer(
+        peer(NAMESPACE, "game-session-service"),
+        () -> service.issueOriginalNewGameplayCredential(request, observer));
+    assertThat(observer.code()).isEqualTo(expected);
+    assertThat(observer.description)
+        .isEqualTo("Account gameplay admission lease operation denied or unavailable")
+        .doesNotContain(JWT, "private owner detail");
+    assertThat(observer.failureHadCause).isFalse();
+    assertThat(observer.errors).isEqualTo(1);
+    assertThat(observer.responses).isZero();
+    assertThat(observer.completed).isFalse();
+    verify(credentialOwner).issue(any());
+    verifyNoInteractions(owner);
+  }
+
   private List<Call> callsWithDefaultRequests() {
     return List.of(
         observer ->
@@ -309,11 +496,31 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
                 ReadGameplayAdmissionLeaseRequest.getDefaultInstance(), observer),
         observer ->
             service.abortGameplayAdmissionLease(
-                AbortGameplayAdmissionLeaseRequest.getDefaultInstance(), observer));
+                AbortGameplayAdmissionLeaseRequest.getDefaultInstance(), observer),
+        observer ->
+            service.issueOriginalNewGameplayCredential(
+                IssueOriginalNewGameplayCredentialRequest.getDefaultInstance(), observer));
+  }
+
+  private List<ConfirmationCall> confirmationCallsWithDefaultRequests() {
+    return List.of(
+        observer ->
+            service.confirmOriginalNewGameplayAdmission(
+                ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer));
+  }
+
+  private void assertConfirmationCode(
+      ConfirmationCall call, GrpcPeerIdentity peer, Status.Code expected) {
+    var observer = new Capture<OriginalNewAdmissionConfirmationResponse>();
+    withPeer(peer, () -> call.invoke(observer));
+    assertThat(observer.code()).isEqualTo(expected);
+    assertThat(observer.responses).isZero();
+    assertThat(observer.errors).isEqualTo(1);
+    assertThat(observer.completed).isFalse();
   }
 
   private void assertCode(Call call, GrpcPeerIdentity peer, Status.Code expected) {
-    var observer = new Capture();
+    var observer = new Capture<AccountGameplayAdmissionLeaseResponse>();
     withPeer(peer, () -> call.invoke(observer));
     assertThat(observer.code()).isEqualTo(expected);
   }
@@ -502,8 +709,11 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     void invoke(StreamObserver<AccountGameplayAdmissionLeaseResponse> observer);
   }
 
-  private static final class Capture
-      implements StreamObserver<AccountGameplayAdmissionLeaseResponse> {
+  private interface ConfirmationCall {
+    void invoke(StreamObserver<OriginalNewAdmissionConfirmationResponse> observer);
+  }
+
+  private static final class Capture<T> implements StreamObserver<T> {
     private Status.Code code;
     private String description;
     private boolean failureHadCause;
@@ -512,7 +722,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     private boolean completed;
 
     @Override
-    public void onNext(AccountGameplayAdmissionLeaseResponse value) {
+    public void onNext(T value) {
       responses++;
     }
 
