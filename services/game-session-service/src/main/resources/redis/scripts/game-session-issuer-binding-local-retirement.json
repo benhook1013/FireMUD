@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.issuer-binding-local-retirement.v1",
   "resourcePath": "redis/lua/game-session-issuer-binding-local-retirement.lua",
-  "sha256": "6454e04296ca915004d53175dc70d1b113ed1e0a4bf612ea4b0b6516da51e756",
+  "sha256": "65afdf95a21a25ea872c97dfe79fb808740389c0fd877249b47ba4605f739e8e",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",

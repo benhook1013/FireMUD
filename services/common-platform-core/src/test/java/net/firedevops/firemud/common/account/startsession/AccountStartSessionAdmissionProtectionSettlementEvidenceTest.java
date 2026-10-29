@@ -34,7 +34,7 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
   void committedAndDefinitiveAbortedRoundTripExactEnvelopeDigestAndDefensiveBytes()
       throws Exception {
     for (Outcome outcome : List.of(Outcome.COMMITTED, Outcome.ABORTED)) {
-      var fixture = AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(outcome, false);
+      var fixture = AccountInitialAdmissionSettlementTestFixtures.evidence(outcome);
       var value =
           AccountStartSessionAdmissionProtectionSettlementEvidence.create(
               fixture.protection(), fixture.terminal());
@@ -78,8 +78,7 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
 
   @Test
   void pendingMismatchedHoldAndWrongNextPointerCannotSettle() {
-    var fixture =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false);
+    var fixture = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     var terminal = fixture.terminal();
     var pending =
         new GameSessionCanonicalInitialAdmissionOwnerProof(
@@ -118,8 +117,7 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
 
   @Test
   void expectedClosedCommitMustUseExactlyPriorPointerPlusOne() {
-    var fixture =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false);
+    var fixture = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     var prior = fixture.terminal().holdIdentity();
     var request = prior.request();
     var closedHold =
@@ -193,8 +191,7 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
 
   @Test
   void rejectsUnknownDuplicateTrailingNoncanonicalAndUnsupportedShape() throws Exception {
-    var fixture =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false);
+    var fixture = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     byte[] bytes =
         AccountStartSessionAdmissionProtectionSettlementEvidence.create(
                 fixture.protection(), fixture.terminal())
@@ -223,8 +220,7 @@ class AccountStartSessionAdmissionProtectionSettlementEvidenceTest {
 
   @Test
   void rejectsMalformedNoncanonicalBase64TruncatedAndOversizedProofs() throws Exception {
-    var fixture =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.ABORTED, false);
+    var fixture = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.ABORTED);
     byte[] bytes =
         AccountStartSessionAdmissionProtectionSettlementEvidence.create(
                 fixture.protection(), fixture.terminal())

@@ -650,6 +650,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     migrateRemaining(schema);
     assertThat(
             dsl.fetch(
+                    "SELECT operation_id FROM game_session_canonical_issuer_current_local_operation")
+                .getValues(0, UUID.class))
+        .isEmpty();
+    assertThat(
+            dsl.fetch(
                     "SELECT (to_jsonb(mutation) - 'bootstrap_operation_id')::text"
                         + " FROM game_session_canonical_issuer_partition_mutation mutation ORDER BY mutation_id")
                 .getValues(0, String.class))

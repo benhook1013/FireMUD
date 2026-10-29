@@ -415,21 +415,20 @@ final class CanonicalGameplayIssuerPartitionMutationRepository {
     List<CanonicalGameplayIssuerPartitionMutation> mutations = new ArrayList<>();
     for (Record row :
         transaction.fetch(
-            "SELECT * FROM "
+            "SELECT mutation.* FROM game_session_canonical_issuer_current_local_operation membership"
+                + " JOIN game_session_canonical_issuer_binding_local_operation operation"
+                + " ON operation.operation_id = membership.operation_id JOIN "
                 + MUTATION
-                + " WHERE issuer_id = ? AND bootstrap_operation_id = ? AND partition_id = ?"
-                + " AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')"
-                + " AND owner_operation_id IN (SELECT operation.operation_id"
-                + " FROM game_session_canonical_issuer_binding_local_operation operation"
-                + " WHERE operation.issuer_id = ? AND operation.partition_id = ?"
-                + " AND NOT EXISTS (SELECT 1 FROM game_session_canonical_issuer_binding_local_retirement retirement"
-                + " WHERE retirement.original_local_operation_id = operation.operation_id"
-                + " AND retirement.status = 'RETIRED'))"
-                + " ORDER BY mutation_id",
+                + " mutation ON mutation.owner_operation_id = operation.operation_id"
+                + " AND mutation.issuer_id = membership.issuer_id"
+                + " AND mutation.bootstrap_operation_id = membership.anchor_bootstrap_operation_id"
+                + " AND mutation.partition_id = membership.partition_id"
+                + " WHERE membership.issuer_id = ? AND membership.anchor_bootstrap_operation_id = ?"
+                + " AND membership.partition_id = ?"
+                + " AND mutation.mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')"
+                + " ORDER BY mutation.mutation_id",
             ISSUER,
             bootstrapOperationId,
-            partitionId,
-            ISSUER,
             partitionId)) {
       mutations.add(readMutation(row));
     }
