@@ -188,7 +188,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       probeCurrent.validate();
       assertThat(probeCurrent.info().pending()).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1044");
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1044.1");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);
@@ -197,6 +197,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       assertThat(migrationHistory(upgradeDsl, "1042.12")).isEqualTo(history104212Before);
       assertThat(migrationHistory(upgradeDsl, "1042.13")).isNotNull();
       assertThat(migrationHistory(upgradeDsl, "1044")).isNotNull();
+      assertThat(migrationHistory(upgradeDsl, "1044.1")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.12")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.13")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1044")).isNotNull();
