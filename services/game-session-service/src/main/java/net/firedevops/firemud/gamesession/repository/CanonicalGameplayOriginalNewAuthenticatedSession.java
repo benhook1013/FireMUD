@@ -1,12 +1,5 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -22,6 +15,13 @@ import java.util.regex.Pattern;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import tools.jackson.core.StreamReadConstraints;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Strict in-memory ORIGINAL_NEW gameplay-session payload template and schema-2 reader.
@@ -52,8 +52,10 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
                   .build())
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .build();
-  private static final ObjectMapper JSON =
-      new ObjectMapper(JSON_FACTORY).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final JsonMapper JSON =
+      JsonMapper.builder(JSON_FACTORY)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
   private static final Set<String> SESSION_FIELDS =
       Set.of(
           "schemaVersion",
@@ -257,15 +259,15 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       if (!ADMISSION_AT_PLACEHOLDER.equals(requiredText(root, "admissionAt"))
           || !CONTINUITY_PLACEHOLDER.equals(requiredText(root, "continuityBindingExpiresAt")))
         throw invalid();
-      root.fieldNames()
-          .forEachRemaining(
+      root.propertyNames()
+          .forEach(
               name -> {
                 if (!name.equals("admissionAt") && !name.equals("continuityBindingExpiresAt")) {
                   JsonNode value = root.get(name);
                   if (containsPlaceholder(value)) throw invalid();
                 }
               });
-    } catch (IOException | RuntimeException malformed) {
+    } catch (RuntimeException malformed) {
       throw invalid();
     }
   }
@@ -276,7 +278,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
           || CONTINUITY_PLACEHOLDER.equals(value.textValue());
     }
     if (value.isObject()) {
-      var fields = value.fields();
+      var fields = value.properties().iterator();
       while (fields.hasNext()) if (containsPlaceholder(fields.next().getValue())) return true;
     } else if (value.isArray()) {
       for (JsonNode item : value) if (containsPlaceholder(item)) return true;
@@ -369,7 +371,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
 
   private static void requireExactFields(ObjectNode object, Set<String> expected) {
     Set<String> actual = new java.util.HashSet<>();
-    object.fieldNames().forEachRemaining(actual::add);
+    actual.addAll(object.propertyNames());
     if (!actual.equals(expected)) throw invalid();
   }
 
