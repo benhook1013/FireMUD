@@ -116,6 +116,15 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
 
   @Test
   void lostSqlConfirmationRecoversOnlyAfterFreshExactControlledFinalReadback() throws Exception {
+    exerciseFinalConfirmation(false);
+  }
+
+  @Test
+  void loginCallerRevokedDuringFinalReadCannotActivateThePendingCredential() throws Exception {
+    exerciseFinalConfirmation(true);
+  }
+
+  private void exerciseFinalConfirmation(boolean revokeCallerDuringFinalRead) throws Exception {
     DSLContext dsl =
         DSL.using(
             new TransactionAwareDataSourceProxy(sourceFixture.dataSource), SQLDialect.POSTGRES);
@@ -152,6 +161,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
     AccountResponseEnvelopeCryptography responseCryptography =
         testResponseCryptography(temporaryDirectory.resolve("original-new-response-keyring"));
     AtomicInteger finalReadCalls = new AtomicInteger();
+    AtomicInteger callerRevocations = new AtomicInteger();
     AtomicReference<ExpectedOriginalAdmission> expectedAdmission = new AtomicReference<>();
     AtomicReference<FinalReadMode> finalReadMode = new AtomicReference<>(FinalReadMode.EXACT);
     List<ExpectedOriginalAdmission> finalReadExpectations = new ArrayList<>();
@@ -180,6 +190,33 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           when(readback.canonicalSessionDurationMillis()).thenReturn(SESSION_DURATION_MILLIS);
           when(readback.canonicalReadbackSha256()).thenReturn("f".repeat(64));
           finalReadResults.add(readback);
+          if (revokeCallerDuringFinalRead) {
+            // The normal revocation owner lawfully changes the genuine LOGIN identity fence
+            // after Account began its reverse read, without changing the original NEW lineage.
+            var loginIdentity =
+                new TokenIdentity(
+                    initialIdentity.accountId(),
+                    initialIdentity.operationId(),
+                    initialIdentity.requestId(),
+                    sourceFixture.committedCandidate.tokenSha256(),
+                    initialIdentity.tokenJti(),
+                    initialIdentity.notBeforeEpochSecond(),
+                    1L,
+                    sourceFixture.committedCandidate.authoritySnapshot().issuanceFence());
+            UUID revocationRequestId = UUID.randomUUID();
+            var revocation =
+                serializable.execute(
+                    status ->
+                        new AccountGameplayTokenIdentityFenceRepository(dsl)
+                            .beginRevocationIntent(
+                                loginIdentity,
+                                revocationRequestId,
+                                AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                                    loginIdentity, revocationRequestId)));
+            assertThat(revocation).isNotNull();
+            assertThat(revocation.tokenIdentityFence()).isEqualTo(2L);
+            callerRevocations.incrementAndGet();
+          }
           return readback;
         };
     var owner =
@@ -287,6 +324,44 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           Math.addExact(
               Math.multiplyExact(committed.expiresAtEpochSecond(), 1_000L),
               REDIS_CLEANUP_MARGIN_MILLIS);
+      if (revokeCallerDuringFinalRead) {
+        String issuanceBefore =
+            dsl.fetchSingle(
+                    "SELECT xmin::text || ':' || to_jsonb(issuance)::text"
+                        + " FROM account_original_new_bound_gameplay_issuances issuance")
+                .get(0, String.class);
+        assertFinalConfirmationUnavailable(owner, peer, loginJwt, originalLease);
+        assertThat(finalReadCalls.get()).isEqualTo(1);
+        assertThat(callerRevocations.get()).isEqualTo(1);
+        Genesis retained = assertUnconfirmed(dsl, serializable, originalLease);
+        assertThat(retained.committedRegistryReceiptSha256())
+            .isEqualTo(committed.committedRegistryReceiptSha256());
+        assertThat(retained.expiresAtEpochSecond()).isEqualTo(committed.expiresAtEpochSecond());
+        byte[] expectedPending = committed.pendingRegistryRecordBytes();
+        byte[] retainedPending = retained.pendingRegistryRecordBytes();
+        byte[] expectedEnvelope = committed.encryptedResultEnvelopeBytes();
+        byte[] retainedEnvelope = retained.encryptedResultEnvelopeBytes();
+        try {
+          assertThat(MessageDigest.isEqual(expectedPending, retainedPending)).isTrue();
+          assertThat(MessageDigest.isEqual(expectedEnvelope, retainedEnvelope)).isTrue();
+          redisFixture
+              .client()
+              .requirePendingRecord(retained.tokenHash(), retainedPending, exactRedisExpiryMillis);
+        } finally {
+          Arrays.fill(expectedPending, (byte) 0);
+          Arrays.fill(retainedPending, (byte) 0);
+          Arrays.fill(expectedEnvelope, (byte) 0);
+          Arrays.fill(retainedEnvelope, (byte) 0);
+        }
+        assertThat(
+                dsl.fetchSingle(
+                        "SELECT xmin::text || ':' || to_jsonb(issuance)::text"
+                            + " FROM account_original_new_bound_gameplay_issuances issuance")
+                    .get(0, String.class))
+            .isEqualTo(issuanceBefore);
+        assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+        return;
+      }
       installOwnedConfirmationUpdateFailure(dsl);
       try {
         assertThatThrownBy(
