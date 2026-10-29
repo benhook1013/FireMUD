@@ -2152,11 +2152,16 @@ public final class CanonicalGameplayBindingInventoryRepository {
           requireNoActiveAccountControl(
               lockExistingAccountCoverageControl(
                   transaction, candidate.bindingIdentity().accountId()));
-          lockLeaseBoundRuntimeBeforeTransition(
-              transaction,
-              candidate.transition().transitionId(),
-              candidate.bindingIdentity().bindingRef().bytes(),
-              candidate.targetEvidence());
+          String runtimeStatus =
+              lockLeaseBoundRuntimeBeforeTransition(
+                  transaction,
+                  candidate.transition().transitionId(),
+                  candidate.bindingIdentity().bindingRef().bytes(),
+                  candidate.targetEvidence());
+          if (!"RUNNING".equals(runtimeStatus)) {
+            throw conflict(
+                "Original NEW final admission commit requires its current RUNNING runtime");
+          }
           Record row =
               transaction.fetchOne(
                   "SELECT * FROM " + TRANSITION + " WHERE transition_id = ? FOR UPDATE",
