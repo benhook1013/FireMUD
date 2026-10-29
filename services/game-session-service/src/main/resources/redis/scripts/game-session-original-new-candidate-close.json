@@ -1,0 +1,102 @@
+{
+  "scriptId": "game-session.original-new-candidate-close.v1",
+  "resourcePath": "redis/lua/game-session-original-new-candidate-close.lua",
+  "sha256": "f9524c0d0a42c1fd81cbb15bd1e55d91ef60fcb847369371e24b0d63f93b2371",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "session",
+      "ownedPrefix": "session:game:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "characterIndex",
+      "ownedPrefix": "session:game:index:character:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "accountTenantIndex",
+      "ownedPrefix": "session:game:index:account-tenant:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "tenantIndex",
+      "ownedPrefix": "session:game:index:tenant:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "purpose"
+    },
+    {
+      "name": "tenantId"
+    },
+    {
+      "name": "accountId"
+    },
+    {
+      "name": "playableStateNamespaceId"
+    },
+    {
+      "name": "characterId"
+    },
+    {
+      "name": "gameInstanceId"
+    },
+    {
+      "name": "sessionId"
+    },
+    {
+      "name": "bindingGeneration"
+    },
+    {
+      "name": "tenantGameplayTag"
+    },
+    {
+      "name": "candidateBytes"
+    },
+    {
+      "name": "abandonmentId"
+    },
+    {
+      "name": "candidateDigest"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "ORIGINAL_CANDIDATE_CLOSED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "ORIGINAL_CLOSURE_REPLAYED",
+      "category": "SUCCESS",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "EXISTING_STATE_REFUSED",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "Requires an irreversible exact-original SQL abandonment selection and external reset/restore/promotion exclusion held through current physical readback and Account negative-purpose continuation. Closes only absent or exact candidate state, preserving foreign owners and unrelated members. Retains a no-TTL negative-purpose fence at the original session key so a delayed create EVAL is refused. Never deletes this fence, recreates a candidate, produces PROVISIONAL evidence, admits gameplay, or independently settles issuer capacity. Lost state, malformed or partial projections, reset, or lost qualification remains non-admitting uncertainty; no SQL receipt substitutes for current physical closure.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "none"
+    }
+  ],
+  "legacyPayloadShape": null
+}

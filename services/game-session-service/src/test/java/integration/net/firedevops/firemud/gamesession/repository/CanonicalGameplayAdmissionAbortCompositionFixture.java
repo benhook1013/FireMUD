@@ -105,6 +105,9 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   private byte[] issuerAcknowledgementBytes;
   private final RedisClient issuerRedisClient;
   private final RedisScriptCatalog issuerCatalog;
+  private final ControlledClosureQualification closureQualification =
+      new ControlledClosureQualification();
+  private CanonicalGameplayTenantGameplayTagRepository.Assignment negativeAssignment;
   private final Map<String, CanonicalGameplayIssuerBindingLocalOperation> otherOperations =
       new HashMap<>();
   private final Map<String, AccountGameplayAdmissionLeaseEvidence> otherLeases = new HashMap<>();
@@ -239,7 +242,12 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             List.of(
                 new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
                 new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
-                new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution()));
+                new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
+                new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewCandidateClosureRedisScriptContribution()));
     var partitionOwner =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
             issuerRedisClient, issuerCatalog, issuerSource);
@@ -498,6 +506,144 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
       currentIssuerSource() {
     return issuerSource;
+  }
+
+  /**
+   * Commit actual candidate dispatch claim, then model process loss before its sole CREATE EVAL.
+   */
+  public void claimOriginalNewCandidateWithoutDispatch(
+      AccountGameplayAdmissionLeaseEvidence lease) {
+    var decision =
+        new CanonicalGameplayAdmissionDecision(
+            transitionId, lease, identity, generation, null, target);
+    var claim = repository.claimOriginalNewCandidateInstallation(decision);
+    assertThat(claim.consumeCreatePermission()).isTrue();
+    negativeAssignment =
+        new CanonicalGameplayTenantGameplayTagRepository(dsl, "test", 1)
+            .assignmentForTransition(transitionId);
+    assertThat(claim.candidate().leaseEvidence().canonicalJson()).isEqualTo(lease.canonicalJson());
+    assertThat(
+            repository
+                .readOriginalNewCandidateInstallationSource(decision)
+                .consumeCreatePermission())
+        .isFalse();
+  }
+
+  public CanonicalGameplayOriginalNewCandidateClosureRedisOwner negativeClosure() {
+    return CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.createClosure(
+        issuerRedisClient,
+        issuerCatalog,
+        repository,
+        new CanonicalGameplayTenantGameplayTagRepository(dsl, "test", 1),
+        closureQualification);
+  }
+
+  public CanonicalGameplayOriginalNewNeverAdmittedAbortOwner neverAdmittedOwner(
+      net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient accountClient) {
+    return CanonicalGameplayAdmissionAbortManualFactory.createUnregisteredNeverAdmittedOwner(
+        dsl,
+        issuerRedisClient,
+        issuerCatalog,
+        new CanonicalGameplayTenantGameplayTagRepository(dsl, "test", 1),
+        issuerSource,
+        closureQualification,
+        accountClient);
+  }
+
+  public CanonicalGameplayOriginalNewAbandonmentSource abandonmentSource() {
+    return repository.readOriginalNewAbandonmentSource(transitionId);
+  }
+
+  public void withdrawControlledClosureQualification() {
+    closureQualification.available.set(false);
+  }
+
+  public int heldClosureQualifications() {
+    return closureQualification.held.get();
+  }
+
+  public int maximumConcurrentClosureQualifications() {
+    return closureQualification.maximum.get();
+  }
+
+  /** Reads the persistent negative fence using the exact same application role as its owner. */
+  public String negativeFence() {
+    byte[] key =
+        CanonicalGameplaySessionRedisKeys.session(
+                Objects.requireNonNull(negativeAssignment), identity.bindingRef())
+            .getBytes(StandardCharsets.US_ASCII);
+    try (var connection = issuerRedisClient.connect(ByteArrayCodec.INSTANCE)) {
+      assertThat(connection.sync().aclWhoami()).isEqualTo("gamesession_coord_app");
+      assertThat(connection.sync().pttl(key)).isEqualTo(-1L);
+      return new String(connection.sync().get(key), StandardCharsets.US_ASCII);
+    }
+  }
+
+  public boolean originalIssuerCapacityAbsent() {
+    byte[] capacityField =
+        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
+                localOperation.reservation().reservationId())
+            .getBytes(StandardCharsets.UTF_8);
+    try (var connection = issuerRedisClient.connect(ByteArrayCodec.INSTANCE)) {
+      return connection.sync().hget(issuerPartitionKey(), capacityField) == null
+          && connection.sync().hget(issuerPartitionKey(), identity.bindingRef().bytes()) == null;
+    }
+  }
+
+  /**
+   * Controlled external qualification input for this fixture only. Overlapping protected reads
+   * model the same held maintenance exclusion, including the Account reverse mTLS callback. These
+   * local controls do not prove a production reset/restore/promotion exclusion provider.
+   */
+  private final class ControlledClosureQualification
+      implements CanonicalGameplayOriginalNewClosureQualification {
+    private final java.util.concurrent.atomic.AtomicBoolean available =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
+    private final java.util.concurrent.atomic.AtomicInteger held =
+        new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger maximum =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override
+    public java.util.Optional<Lease> acquire(String scope, String protectedBindingId) {
+      String expected = java.util.HexFormat.of().formatHex(identity.bindingRef().bytes());
+      if (!available.get()
+          || !"session:game:*".equals(scope)
+          || !expected.equals(protectedBindingId)) return java.util.Optional.empty();
+      int active = held.incrementAndGet();
+      maximum.accumulateAndGet(active, Math::max);
+      return java.util.Optional.of(
+          new Lease() {
+            private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean();
+
+            @Override
+            public String scope() {
+              return scope;
+            }
+
+            @Override
+            public String protectedBindingId() {
+              return protectedBindingId;
+            }
+
+            @Override
+            public long fence() {
+              return 1L;
+            }
+
+            @Override
+            public void requireCurrent() {
+              if (closed.get() || !available.get())
+                throw new IllegalStateException("Controlled closure qualification withdrawn");
+            }
+
+            @Override
+            public void close() {
+              if (closed.compareAndSet(false, true)) held.decrementAndGet();
+            }
+          });
+    }
   }
 
   public void publish(AccountGameplayAdmissionLeaseEvidence lease) {

@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -55,17 +54,16 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     CanonicalGameplayIssuerBindingLocalReleaseOperation release =
         releaseRepository.readCommittedRelease(transitionId);
     var before = readCurrentIssuerState();
-    requireSourceMatchesRelease(release.abortSource(), release);
+    requireSourceMatchesRelease(release.cleanupSource(), release);
     CanonicalGameplayIssuerBindingLocalRetirementOperation prepared =
         dsl.transactionResult(
             configuration -> {
               DSLContext transaction = org.jooq.impl.DSL.using(configuration);
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              CanonicalGameplayAdmissionAbortSource currentSource =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, true);
-              requireSameReleaseSource(release.abortSource(), currentSource, release);
+              CanonicalGameplayIssuerCleanupSource currentSource =
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, true);
+              requireSameReleaseSource(release.cleanupSource(), currentSource, release);
               requireExactCommittedReleaseRow(transaction, release);
               protectCurrentReferences(transaction, release);
               BigInteger partitionId = release.releasedMemberValue().reservation().partitionId();
@@ -430,11 +428,10 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               DSLContext transaction = org.jooq.impl.DSL.using(configuration);
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               CanonicalGameplayIssuerBindingLocalReleaseOperation release = expected.release();
-              CanonicalGameplayAdmissionAbortSource source =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, release.abortSource().transition().transitionId(), true);
-              requireSameReleaseSource(release.abortSource(), source, release);
+              CanonicalGameplayIssuerCleanupSource source =
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, release.cleanupSource().transition().transitionId(), true);
+              requireSameReleaseSource(release.cleanupSource(), source, release);
               requireExactCommittedReleaseRow(transaction, release);
               protectCurrentReferences(transaction, release);
               Record row =
@@ -538,7 +535,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
             "SELECT * FROM "
                 + ISSUER_OBLIGATION
                 + " WHERE transition_id = ? AND binding_ref = ? FOR UPDATE",
-            release.abortSource().transition().transitionId(),
+            release.cleanupSource().transition().transitionId(),
             bindingRef);
     if (reservation == null
         || !"RELEASED".equals(text(reservation, "lifecycle"))
@@ -547,7 +544,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         || !"TERMINAL_UNRESOLVED".equals(text(candidate, "lifecycle"))
         || !number(candidate, "inventory_revision").equals(release.completionInventoryRevision())
         || !uuid(candidate, "transition_id")
-            .equals(release.abortSource().transition().transitionId())
+            .equals(release.cleanupSource().transition().transitionId())
         || obligation == null
         || !"RELEASED".equals(text(obligation, "status"))
         || !uuid(obligation, "local_release_operation_id").equals(release.operationId())
@@ -617,7 +614,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
             .equals(release.releasedMemberValue().reservation().partitionId())
         || !uuid(row, "release_operation_id").equals(release.operationId())
         || !uuid(row, "original_local_operation_id").equals(release.originalOperationId())
-        || !uuid(row, "transition_id").equals(release.abortSource().transition().transitionId())
+        || !uuid(row, "transition_id").equals(release.cleanupSource().transition().transitionId())
         || !uuid(row, "reservation_id")
             .equals(release.releasedMemberValue().reservation().reservationId())
         || !Arrays.equals(
@@ -750,7 +747,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         release.operationId().toString().getBytes(StandardCharsets.US_ASCII),
         release.originalOperationId().toString().getBytes(StandardCharsets.US_ASCII),
         release
-            .abortSource()
+            .cleanupSource()
             .transition()
             .transitionId()
             .toString()
@@ -833,8 +830,8 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
   }
 
   private static void requireSameReleaseSource(
-      CanonicalGameplayAdmissionAbortSource expected,
-      CanonicalGameplayAdmissionAbortSource actual,
+      CanonicalGameplayIssuerCleanupSource expected,
+      CanonicalGameplayIssuerCleanupSource actual,
       CanonicalGameplayIssuerBindingLocalReleaseOperation release) {
     if (!expected.transition().equals(actual.transition())
         || !expected.candidate().equals(actual.candidate())
@@ -875,7 +872,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
   }
 
   private static void requireSourceMatchesRelease(
-      CanonicalGameplayAdmissionAbortSource source,
+      CanonicalGameplayIssuerCleanupSource source,
       CanonicalGameplayIssuerBindingLocalReleaseOperation release) {
     requireSameReleaseSource(source, source, release);
   }

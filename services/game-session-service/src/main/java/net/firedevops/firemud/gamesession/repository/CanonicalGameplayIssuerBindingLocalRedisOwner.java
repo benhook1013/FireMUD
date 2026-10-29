@@ -94,9 +94,33 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
   /** Writes only the exact target reservation and SQL-qualified target binding field. */
   public Readback projectAndRead(CanonicalGameplayIssuerBindingLocalOperation operation) {
     Objects.requireNonNull(operation, "SQL-issued local issuer operation is required");
+    requireNoAmbientTransaction();
+    try {
+      return projectAndRead(operation, projectionRepository.prepareAddMutationWork(operation));
+    } catch (RuntimeException failure) {
+      if (failure instanceof IllegalStateException state
+          && state.getMessage() != null
+          && state.getMessage().startsWith("Issuer binding-local projection is unavailable"))
+        throw state;
+      throw unavailable(failure);
+    }
+  }
+
+  /** Finishes only an already-issued original capacity mutation for negative cleanup. */
+  public void reconcileNeverAdmittedCapacity(
+      CanonicalGameplayIssuerBindingLocalOperation operation) {
+    Objects.requireNonNull(operation, "original operation");
+    requireNoAmbientTransaction();
+    var work = projectionRepository.prepareNeverAdmittedCapacityMutationWork(operation);
+    if (work.isPresent()) projectAndRead(operation, work.orElseThrow());
+  }
+
+  private Readback projectAndRead(
+      CanonicalGameplayIssuerBindingLocalOperation operation,
+      CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work) {
+    Objects.requireNonNull(operation, "SQL-issued local issuer operation is required");
     try {
       requireNoAmbientTransaction();
-      var work = projectionRepository.prepareAddMutationWork(operation);
       requireFreshCurrentState(work);
       if (!work.targetEntry().registeredOperationId().equals(operation.operationId())) {
         throw unavailable();

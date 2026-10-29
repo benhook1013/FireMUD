@@ -330,6 +330,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     var mutation = operation.physicalMutation();
     args.add(ascii(mutation.expectedRevision().toString()));
     args.add(ascii(mutation.successorRevision().toString()));
+    args.add(ascii(operation.neverAdmitted() ? "1" : "0"));
     return args.toArray(byte[][]::new);
   }
 

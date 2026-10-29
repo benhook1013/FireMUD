@@ -570,3 +570,25 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: Publication in an unmerged PR was assumed to freeze those artifacts, although neither was in the immutable receiving parent and no authorized retained/live application was known. That unsupported assumption delayed the complete upgrade repair.
   - Outcome: The owning migration contract and Overseer confirmed normal in-PR candidate correction, preserving all receiving-parent checksums and original evidence. R1010 subsequently passes populated actual-parent V1040.4 upgrade and changed-session owner proof; publication alone is not retained applied-state evidence.
   - Expected pattern: Establish actual receiving-parent and applied-state obligations before choosing forward-only migration repair. A later migration cannot repair an earlier migration that fails before it executes; concrete retained applied-state evidence must be resolved rather than rewritten.
+
+- `2026-10-29`: Migration guard assembly must preserve statement boundaries and the latest owner
+  - Context: The unpublished original-NEW negative cleanup migration extended several existing SQL guards.
+  - Observation: Replacing a repeated jOOQ marker inserted procedural definitions inside CHECK predicates, and an older copied issuer guard omitted later final-admission ACK enforcement. Root diff inspection found both before native validation or publication.
+  - Outcome: The migration now has one statement-level definition per function and preserves the latest V1050 issuer guard. jOOQ generation and native retained-data proof remain required before this candidate can qualify.
+  - Expected pattern: Extend the latest owning definition and inspect complete retained branches and SQL statement boundaries. Targeted parser-ignore markers do not make malformed or incomplete native SQL valid.
+
+- `2026-10-30`: A retained published tracker still contained merge markers
+  - Context: Current #3332 documentation validation read its published d4a checkpoint, whose tracker had conflict markers despite earlier proof paragraphs attributed to older checkpoints. The current #3331 parent did not contain them.
+  - Observation: The markers made a long proof paragraph parse as a Markdown heading and left two overlapping versions of candidate proof status. Earlier checkpoint evidence did not qualify this published file.
+  - Outcome: The local reconciliation preserves the final-admission proof paragraphs and the later R993 candidate result, removes the markers and duplicate outdated paragraph, and passes R1026 documentation lint. The failed R1025 aggregate remains retained; publication and native receiving qualification are separate work.
+  - Expected pattern: Check the actual receiving artifact and validation result before attributing completion to it, retaining each earlier result's original scope.
+
+- `2026-10-30`: A source-refresh operation ID was mistaken for a request key
+  - Context: A read-only observer needed the retained result of a queued FireController source refresh.
+  - Observation: It supplied the returned operation ID as a new idempotency key to source_refresh, creating another read-only provider refresh, then initially mistook the new ID for a controller mismatch. No paid review was repeated and no controller defect was established.
+  - Outcome: Root identified the supported source-refresh reader, corrected the observer to read by refresh_id, and retained the valid result without another trigger.
+  - Expected pattern: Keep the original request key distinct from its returned operation ID and use the retained-operation reader for completion.
+
+### 2026-10-30 — Preserve the resource-session descriptor through Python subprocesses
+
+A Python proof runner launched inside `run-locked-gradle.sh --resource-session` closed the inherited resource descriptor when invoking nested Gradle through the default `subprocess.run` behavior. The wrapper correctly refused admission before running tests (`Invalid inherited local resource session: invalid inherited lock descriptor`); the temporary version selections were restored by the runner’s guarded cleanup. Passing the existing `FIREMUD_LOCAL_RESOURCE_SESSION_FD` explicitly with `pass_fds` preserves the original verified lease without creating or bypassing one. The corrected invocation is being qualified; the failed invocation remains an unrun gate.

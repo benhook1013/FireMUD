@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.issuer-binding-local-release.v1",
   "resourcePath": "redis/lua/game-session-issuer-binding-local-release.lua",
-  "sha256": "2ffdd169b68b368f9b4ea3ae24039d4c6ae0375767f8d5dc5357621fdf506dac",
+  "sha256": "2ade5b792477d5e2c623db3d65fcd6d976f236c29be0b5a92b633183e507c31b",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -29,7 +29,7 @@
     {"code": "INVALID_ARGUMENTS_OR_CAPACITY", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
   ],
   "resetSensitivity": "CLUSTER",
-  "tailLossBehavior": "The one-key release requires the exact installed v2 anchor, complete immutable baseline, current SQL registered local operations, and a genuine Account-aborted first-NEW source. It writes only the SQL-issued RELEASED reservation bytes, removes only that operation's exact original binding field, and atomically advances the partition-local opaque physical revision. The terminal V2 value retains its original reservation coverage tuple and installed anchor; its inventoryRevision is the frozen SQL release-preparation source revision P. A later durable SQL receipt advances the current inventory clock to fresh revision R and links P, exact postimage, independent readback, and the original operation. Missing baseline/header/revision, legacy or malformed values, unknown fields, conflicting or newer members, wrong reservation/anchor/incarnation, or changed source fail closed. RELEASE_PENDING remains capacity-counted until exact readback and guarded SQL completion; a completed RELEASED capacity remains in the bounded physical projection until exact original-operation retirement. The physical revision rejects a stale prepared release after retirement. No coverage acknowledgement, barrier, or admission authority is produced.",
+  "tailLossBehavior": "The one-key release requires the exact installed v2 anchor, complete immutable baseline, current SQL registered local operations, and a genuine Account-aborted first-NEW source or a distinct authenticated never-admitted negative terminal. The final source-kind argument selects capacity-only negative cleanup; it never creates an admitting binding. It writes only the SQL-issued RELEASED reservation bytes, removes only that operation's exact original binding field, and atomically advances the partition-local opaque physical revision. The terminal V2 value retains its original reservation coverage tuple and installed anchor; its inventoryRevision is the frozen SQL release-preparation source revision P. A later durable SQL receipt advances the current inventory clock to fresh revision R and links P, exact postimage, independent readback, and the original operation. Missing baseline/header/revision, legacy or malformed values, unknown fields, conflicting or newer members, wrong reservation/anchor/incarnation, or changed source fail closed. RELEASE_PENDING remains capacity-counted until exact readback and guarded SQL completion; a completed RELEASED capacity remains in the bounded physical projection until exact original-operation retirement. The physical revision rejects a stale prepared release after retirement. No coverage acknowledgement, barrier, or admission authority is produced.",
   "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
   "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
   "supportedCoexistence": [

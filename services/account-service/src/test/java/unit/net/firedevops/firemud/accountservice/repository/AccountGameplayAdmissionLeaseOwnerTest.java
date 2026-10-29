@@ -54,6 +54,12 @@ class AccountGameplayAdmissionLeaseOwnerTest {
           assertStatus(
               Status.Code.UNAUTHENTICATED,
               () -> owner.abort(AbortGameplayAdmissionLeaseRequest.getDefaultInstance()));
+          assertStatus(
+              Status.Code.UNAUTHENTICATED,
+              () ->
+                  owner.abortNeverAdmitted(
+                      net.firedevops.firemud.account.v1
+                          .AbortNeverAdmittedGameplayAdmissionLeaseRequest.getDefaultInstance()));
         });
 
     verifyNoInteractions(callerVerifier, decisionClient, dataSource);
@@ -79,6 +85,12 @@ class AccountGameplayAdmissionLeaseOwnerTest {
           assertStatus(
               Status.Code.PERMISSION_DENIED,
               () -> owner.abort(AbortGameplayAdmissionLeaseRequest.getDefaultInstance()));
+          assertStatus(
+              Status.Code.PERMISSION_DENIED,
+              () ->
+                  owner.abortNeverAdmitted(
+                      net.firedevops.firemud.account.v1
+                          .AbortNeverAdmittedGameplayAdmissionLeaseRequest.getDefaultInstance()));
         });
 
     verifyNoInteractions(callerVerifier, decisionClient, dataSource);

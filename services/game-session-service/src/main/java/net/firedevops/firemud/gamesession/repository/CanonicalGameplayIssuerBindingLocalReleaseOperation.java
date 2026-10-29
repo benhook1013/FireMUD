@@ -16,7 +16,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
     RELEASED
   }
 
-  private final CanonicalGameplayAdmissionAbortSource abortSource;
+  private final CanonicalGameplayIssuerCleanupSource abortSource;
   private final CanonicalGameplayIssuerBindingLocalOperation originalOperation;
   private final UUID operationId;
   private final BigInteger operationFence;
@@ -32,7 +32,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
   private final Status status;
 
   CanonicalGameplayIssuerBindingLocalReleaseOperation(
-      CanonicalGameplayAdmissionAbortSource abortSource,
+      CanonicalGameplayIssuerCleanupSource abortSource,
       CanonicalGameplayIssuerBindingLocalOperation originalOperation,
       UUID operationId,
       BigInteger operationFence,
@@ -205,7 +205,15 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
   }
 
   public CanonicalGameplayAdmissionAbortSource abortSource() {
+    return abortSource.positiveSource();
+  }
+
+  CanonicalGameplayIssuerCleanupSource cleanupSource() {
     return abortSource;
+  }
+
+  public boolean neverAdmitted() {
+    return abortSource.neverAdmitted();
   }
 
   CanonicalGameplayIssuerBindingLocalOperation originalOperation() {

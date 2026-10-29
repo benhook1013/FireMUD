@@ -73,6 +73,24 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     return readPreparedPartitionWork(target, true, true);
   }
 
+  java.util.Optional<PreparedPartitionWork> prepareNeverAdmittedCapacityMutationWork(
+      CanonicalGameplayIssuerBindingLocalOperation target) {
+    var source =
+        new CanonicalGameplayBindingInventoryRepository(dsl)
+            .readIssuerCleanupSource(target.request().transitionId());
+    if (!source.neverAdmitted()) throw unavailable("Capacity cleanup requires a negative terminal");
+    var existing =
+        dsl.fetchOne(
+            "SELECT mutation_kind FROM game_session_canonical_issuer_partition_mutation"
+                + " WHERE owner_operation_id = ? AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')",
+            target.operationId());
+    if (existing == null) return java.util.Optional.empty();
+    if (!"ADD_CAPACITY".equals(existing.get("mutation_kind", String.class))) {
+      throw unavailable("Never-admitted cleanup cannot adopt an issued binding mutation");
+    }
+    return java.util.Optional.of(readPreparedPartitionWork(target, true, false));
+  }
+
   private PreparedPartitionWork readPreparedPartitionWork(
       CanonicalGameplayIssuerBindingLocalOperation target,
       boolean prepareAddMutation,
@@ -298,6 +316,9 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
               ? CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING
               : CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY;
       physicalMutation = sources.mutations().get(new MutationKey(kind, target.operationId()));
+      if (!requireCurrentTargetAccountControl && physicalMutation == null) {
+        throw unavailable("Negative cleanup cannot issue a new ADD mutation");
+      }
       // A completed ADD is a historical receipt. Later release changes the current projection,
       // not the frozen intended change; its replay performs independent current readback only.
       if (physicalMutation == null
@@ -618,6 +639,10 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         || issuerObligation == null) {
       throw unavailable("The local issuer operation is missing its current V29 source rows");
     }
+    if (transitionRow.get("original_new_abandonment_id", UUID.class) != null
+        && requireCurrentAccountControl) {
+      throw unavailable("An abandoned original NEW cannot issue ordinary ADD work");
+    }
     CurrentPhase phase =
         verifyCurrentSourceRows(
             transaction,
@@ -743,6 +768,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
           "The issuer operation's frozen candidate differs from the current V29 source");
     }
 
+    boolean negative = transitionRow.get("original_new_abandonment_id", UUID.class) != null;
     boolean bindingPresent;
     boolean counted;
     UUID projectedOperationId = uuid(operationRow, "operation_id");
@@ -777,6 +803,18 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       requireOriginalNewNativeAcknowledgement(
           transaction, operationRow, member, transitionRow, currentRevision);
       bindingPresent = true;
+      counted = true;
+    } else if (negative
+        && "ABORTED".equals(transitionStatus)
+        && "TERMINAL_UNRESOLVED".equals(candidateLifecycle)
+        && "RELEASE_PENDING".equals(reservationLifecycle)
+        && "REQUIRED".equals(issuerStatus)
+        && releaseOperationId == null) {
+      var cleanup =
+          CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+              transaction, uuid(transitionRow, "transition_id"), false);
+      if (!cleanup.neverAdmitted()) throw unavailable("Exact negative terminal is unavailable");
+      bindingPresent = false;
       counted = true;
     } else if ("ABORTED".equals(transitionStatus)
         && "TERMINAL_UNRESOLVED".equals(candidateLifecycle)

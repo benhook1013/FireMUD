@@ -16,6 +16,9 @@ public final class CanonicalGameplayAdmissionDecisionReadWorkloadGuard
   public static final String METHOD =
       "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/"
           + "GetCanonicalGameplayAdmissionDecision";
+  public static final String NEVER_ADMITTED_METHOD =
+      "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/"
+          + "GetOriginalNewNeverAdmittedDecision";
 
   private final String workloadNamespace;
 
@@ -49,7 +52,8 @@ public final class CanonicalGameplayAdmissionDecisionReadWorkloadGuard
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     Objects.requireNonNull(call, "gRPC server call required");
-    if (!METHOD.equals(call.getMethodDescriptor().getFullMethodName())) {
+    String method = call.getMethodDescriptor().getFullMethodName();
+    if (!METHOD.equals(method) && !NEVER_ADMITTED_METHOD.equals(method)) {
       call.close(
           Status.PERMISSION_DENIED.withDescription("Exact Account decision-read method required"),
           new Metadata());

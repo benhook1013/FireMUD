@@ -7,7 +7,6 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import org.jooq.DSLContext;
@@ -52,8 +51,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   CanonicalGameplayIssuerBindingLocalReleaseOperation prepareOrResume(UUID transitionId) {
     Objects.requireNonNull(transitionId, "transitionId");
     requireNoAmbientTransaction();
-    var sourceBefore =
-        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId);
+    var sourceBefore = inventoryRepository.readIssuerCleanupSource(transitionId);
     requireAbortedSource(sourceBefore);
     var issuerStateBefore = readCurrentIssuerState();
     var original = localOperationRepository.readOriginalForIssuerRelease(sourceBefore);
@@ -64,9 +62,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
               BigInteger currentRevision =
                   CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               var source =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, true);
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, true);
               requireSameAbortSource(sourceBefore, source);
               Record existing =
                   transaction.fetchOne(
@@ -88,9 +85,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
               advanceAbortSourceRevision(
                   transaction, source, priorRevision, sourceRevision, currentRevision);
               source =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, false);
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, false);
               var counters =
                   CanonicalGameplayIssuerBindingLocalOperationRepository.allocateLocalCounters(
                       transaction,
@@ -148,8 +144,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     requireSameAbortIdentity(
-        sourceBefore,
-        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId));
+        sourceBefore, inventoryRepository.readIssuerCleanupSource(transitionId));
     return operation;
   }
 
@@ -157,8 +152,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   CanonicalGameplayIssuerBindingLocalReleaseOperation readCommittedRelease(UUID transitionId) {
     Objects.requireNonNull(transitionId, "transitionId");
     requireNoAmbientTransaction();
-    CanonicalGameplayAdmissionAbortSource sourceBefore =
-        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId);
+    CanonicalGameplayIssuerCleanupSource sourceBefore =
+        inventoryRepository.readIssuerCleanupSource(transitionId);
     requireAbortedSource(sourceBefore);
     var issuerStateBefore = readCurrentIssuerState();
     CanonicalGameplayIssuerBindingLocalOperation original =
@@ -168,10 +163,9 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
             configuration -> {
               DSLContext transaction = org.jooq.impl.DSL.using(configuration);
               transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              CanonicalGameplayAdmissionAbortSource source =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, false);
+              CanonicalGameplayIssuerCleanupSource source =
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, false);
               requireSameAbortSource(sourceBefore, source);
               Record existing =
                   transaction.fetchOne(
@@ -191,8 +185,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     requireSameAbortSource(
-        committed.abortSource(),
-        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(transitionId));
+        committed.cleanupSource(), inventoryRepository.readIssuerCleanupSource(transitionId));
     return committed;
   }
 
@@ -215,11 +208,10 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
               DSLContext transaction = org.jooq.impl.DSL.using(configuration);
               BigInteger currentRevision =
                   CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              UUID transitionId = expected.abortSource().transition().transitionId();
+              UUID transitionId = expected.cleanupSource().transition().transitionId();
               var source =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, true);
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, true);
               requireExactReleaseSource(expected, source);
               Record releaseRow =
                   transaction.fetchOne(
@@ -336,7 +328,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                           + TRANSITION
                           + " SET inventory_revision = ?"
                           + " WHERE transition_id = ? AND status = 'ABORTED'"
-                          + " AND admission_orphan_cleanup_id = ? AND inventory_revision = ?"
+                          + " AND COALESCE(admission_orphan_cleanup_id, original_new_abandonment_orphan_cleanup_id) = ? AND inventory_revision = ?"
                           + " AND candidate_binding_ref = ? AND candidate_binding_generation = ?"
                           + " AND issuer_reservation_id = ?",
                       decimal(completionRevision),
@@ -377,9 +369,8 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                       decimal(currentRevision)),
                   "Issuer release lost the current inventory-clock compare-and-set");
               var completedSource =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, false);
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, false);
               Record completedRow =
                   transaction.fetchOne(
                       "SELECT * FROM " + RELEASE + " WHERE operation_id = ?",
@@ -390,19 +381,19 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                   transaction, completedRow, completedSource, expected.originalOperation());
             });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
-    CanonicalGameplayAdmissionAbortSource sourceAfter =
-        inventoryRepository.readRetainedDefinitiveFirstNewAccountAbortSource(
-            completed.abortSource().transition().transitionId());
+    CanonicalGameplayIssuerCleanupSource sourceAfter =
+        inventoryRepository.readIssuerCleanupSource(
+            completed.cleanupSource().transition().transitionId());
     // The decision is reparsed on each read and deliberately has no object-identity equality.
     // Compare the complete durable value source and its exact original lease/target instead.
-    requireSameAbortSource(completed.abortSource(), sourceAfter);
+    requireSameAbortSource(completed.cleanupSource(), sourceAfter);
     return completed;
   }
 
   private CanonicalGameplayIssuerBindingLocalReleaseOperation readOperation(
       DSLContext transaction,
       Record row,
-      CanonicalGameplayAdmissionAbortSource source,
+      CanonicalGameplayIssuerCleanupSource source,
       CanonicalGameplayIssuerBindingLocalOperation original) {
     if (!ISSUER.equals(text(row, "issuer_id"))
         || !uuid(row, "transition_id").equals(source.transition().transitionId())
@@ -543,7 +534,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
     String status = text(row, "status");
     Record transition =
         transaction.fetchOne(
-            "SELECT admission_orphan_cleanup_id, candidate_binding_ref,"
+            "SELECT COALESCE(admission_orphan_cleanup_id, original_new_abandonment_orphan_cleanup_id) AS admission_orphan_cleanup_id, candidate_binding_ref,"
                 + " candidate_binding_generation FROM "
                 + TRANSITION
                 + " WHERE transition_id = ?",
@@ -655,7 +646,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
 
   private static void insertRelease(
       DSLContext transaction,
-      CanonicalGameplayAdmissionAbortSource source,
+      CanonicalGameplayIssuerCleanupSource source,
       CanonicalGameplayIssuerBindingLocalOperation original,
       UUID operationId,
       BigInteger operationFence,
@@ -712,7 +703,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
 
   private static void advanceAbortSourceRevision(
       DSLContext transaction,
-      CanonicalGameplayAdmissionAbortSource source,
+      CanonicalGameplayIssuerCleanupSource source,
       BigInteger priorRevision,
       BigInteger nextRevision,
       BigInteger clockRevision) {
@@ -725,7 +716,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                 + TRANSITION
                 + " SET inventory_revision = ?"
                 + " WHERE transition_id = ? AND status = 'ABORTED'"
-                + " AND admission_orphan_cleanup_id = ? AND inventory_revision = ?"
+                + " AND COALESCE(admission_orphan_cleanup_id, original_new_abandonment_orphan_cleanup_id) = ? AND inventory_revision = ?"
                 + " AND candidate_binding_ref = ? AND candidate_binding_generation = ?"
                 + " AND issuer_reservation_id = ? AND expected_prior_binding_ref IS NULL"
                 + " AND expected_prior_binding_generation IS NULL",
@@ -779,7 +770,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
                 + ACCOUNT_OBLIGATION
                 + " SET inventory_revision = ?"
                 + " WHERE transition_id = ? AND inventory_revision = ?"
-                + " AND status IN ('REQUIRED', 'ACKNOWLEDGED')",
+                + " AND status IN ('REQUIRED', 'ACKNOWLEDGED', 'NEVER_DISPATCHED')",
             decimal(nextRevision),
             transitionId,
             decimal(priorRevision)),
@@ -801,7 +792,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
             "UPDATE "
                 + REGION_OBLIGATION
                 + " SET inventory_revision = ?"
-                + " WHERE transition_id = ? AND status = 'REQUIRED' AND inventory_revision = ?",
+                + " WHERE transition_id = ? AND status IN ('REQUIRED', 'NEVER_DISPATCHED') AND inventory_revision = ?",
             decimal(nextRevision),
             transitionId,
             decimal(priorRevision)),
@@ -883,9 +874,9 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
 
   private static void requireExactReleaseSource(
       CanonicalGameplayIssuerBindingLocalReleaseOperation expected,
-      CanonicalGameplayAdmissionAbortSource current) {
+      CanonicalGameplayIssuerCleanupSource current) {
     requireAbortedSource(current);
-    var originalSource = expected.abortSource();
+    var originalSource = expected.cleanupSource();
     var originalReservation = originalSource.reservation();
     var currentReservation = current.reservation();
     boolean currentMatchesPending =
@@ -940,7 +931,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
 
   private static boolean sameOperationSource(
       CanonicalGameplayIssuerBindingLocalOperation original,
-      CanonicalGameplayAdmissionAbortSource source) {
+      CanonicalGameplayIssuerCleanupSource source) {
     return original.request().transitionId().equals(source.transition().transitionId())
         && original.request().candidate().equals(source.candidate().identity())
         && original.reservation().reservationId().equals(source.reservation().reservationId())
@@ -993,8 +984,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   }
 
   private static void requireSameAbortSource(
-      CanonicalGameplayAdmissionAbortSource expected,
-      CanonicalGameplayAdmissionAbortSource current) {
+      CanonicalGameplayIssuerCleanupSource expected, CanonicalGameplayIssuerCleanupSource current) {
     if (!expected.transition().equals(current.transition())
         || !expected.candidate().equals(current.candidate())
         || !expected
@@ -1035,8 +1025,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
   }
 
   private static void requireSameAbortIdentity(
-      CanonicalGameplayAdmissionAbortSource expected,
-      CanonicalGameplayAdmissionAbortSource current) {
+      CanonicalGameplayIssuerCleanupSource expected, CanonicalGameplayIssuerCleanupSource current) {
     if (!expected.transition().transitionId().equals(current.transition().transitionId())
         || expected.transition().status() != current.transition().status()
         || !expected.orphanCleanupId().equals(current.orphanCleanupId())
@@ -1085,7 +1074,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
     }
   }
 
-  private static void requireAbortedSource(CanonicalGameplayAdmissionAbortSource source) {
+  private static void requireAbortedSource(CanonicalGameplayIssuerCleanupSource source) {
     if (!source.isAccountAborted()
         || source.transition().status() != CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED
         || source.candidate().lifecycle()

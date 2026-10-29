@@ -55,6 +55,21 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
         });
   }
 
+  /** Topology-only retained lookup for one irreversibly selected original negative continuation. */
+  Assignment assignmentForOriginalNewAbandonment(UUID transitionId, UUID abandonmentId) {
+    requireNonNil(transitionId, "transitionId");
+    requireNonNil(abandonmentId, "abandonmentId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          BindingTarget source = loadBindingTarget(transaction, transitionId, abandonmentId);
+          requireTenantClaim(transaction, source.tenantId());
+          return resolveMapping(
+              transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
+        });
+  }
+
   /**
    * Resolves one still-current V1027 acquisition-intent target. A REQUIRED row is only a durable
    * target; returning its tag does not mean that a Redis barrier was written or read back.
@@ -234,6 +249,22 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
   }
 
   private BindingTarget loadBindingTarget(DSLContext transaction, UUID transitionId) {
+    return loadBindingTarget(transaction, transitionId, null);
+  }
+
+  private BindingTarget loadBindingTarget(
+      DSLContext transaction, UUID transitionId, UUID abandonmentId) {
+    boolean negative = abandonmentId != null;
+    String negativeSelector =
+        negative
+            ? " AND transition.original_new_abandonment_id = ?"
+                + " AND transition.original_new_abandonment_state IN ('ABANDONMENT_SELECTED', 'NEVER_ADMITTED_CLOSED')"
+                + " AND transition.original_new_candidate_state = 'DISPATCH_POSSIBLE'"
+                + " AND transition.original_new_candidate_readback_digest IS NULL"
+                + " AND transition.expected_prior_binding_ref IS NULL"
+                + " AND transition.expected_prior_binding_generation IS NULL"
+                + " AND transition.admission_lease_id IS NULL"
+            : "";
     Record row =
         transaction.fetchOne(
             "SELECT transition.transition_id, transition.tenant_id AS transition_tenant_id,"
@@ -254,8 +285,10 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
                 + " JOIN game_session_canonical_gameplay_binding_inventory inventory"
                 + " ON inventory.transition_id = transition.transition_id"
                 + " AND inventory.binding_ref = transition.candidate_binding_ref"
-                + " WHERE transition.transition_id = ? FOR UPDATE OF transition, inventory",
-            transitionId);
+                + " WHERE transition.transition_id = ?"
+                + negativeSelector
+                + " FOR UPDATE OF transition, inventory",
+            negative ? new Object[] {transitionId, abandonmentId} : new Object[] {transitionId});
     if (row == null) {
       throw conflict("The exact durable canonical binding transition is unavailable");
     }
@@ -280,8 +313,11 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
             .equals(requiredUuid(row, "account_index_fence"))
         || !requiredUuid(row, "transition_reservation_id")
             .equals(requiredUuid(row, "inventory_reservation_id"))
-        || !TRANSITION_STATES.contains(transitionState)
-        || !INVENTORY_STATES.contains(inventoryState)
+        || !(negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES).contains(transitionState)
+        || !(negative
+                ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
+                : INVENTORY_STATES)
+            .contains(inventoryState)
         || !transitionRefMatches(
             transitionRefBytes, inventoryRefBytes, tenantId, gameInstanceId, sessionId)
         || !requiredBigInteger(row, "candidate_binding_generation")
@@ -294,7 +330,9 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
     if (("PREPARED".equals(transitionState) && !"CANDIDATE_PREPARED".equals(inventoryState))
         || ("PROVISIONAL".equals(transitionState) && !"PROVISIONAL".equals(inventoryState))
-        || ("COMMITTED".equals(transitionState) && !"ACTIVE".equals(inventoryState))) {
+        || ("COMMITTED".equals(transitionState) && !"ACTIVE".equals(inventoryState))
+        || ("ABORTED".equals(transitionState)
+            && !Set.of("TERMINAL_UNRESOLVED", "TERMINAL").contains(inventoryState))) {
       throw conflict("The durable transition and candidate inventory lifecycle disagree");
     }
 
