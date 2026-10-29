@@ -221,6 +221,31 @@ BEGIN
 END;
 $migration$;
 
+-- Immutable completed retirement remains valid when exact negative cleanup advances only
+-- the mutable reservation/inventory to TERMINAL. Preserve all existing receipt and physical proof.
+DO $migration$
+DECLARE
+    original text;
+    anchor text := 'reservation.inventory_revision = release.completion_inventory_revision';
+    replacement text := '(reservation.inventory_revision = release.completion_inventory_revision
+            OR (reservation.inventory_revision > release.completion_inventory_revision
+                AND original_new_negative_terminal(retirement.transition_id)
+                AND EXISTS (
+                    SELECT 1 FROM game_session_canonical_gameplay_binding_inventory terminal
+                    WHERE terminal.binding_ref = retirement.binding_ref
+                      AND terminal.transition_id = retirement.transition_id
+                      AND terminal.lifecycle = ''TERMINAL''
+                      AND terminal.inventory_revision = reservation.inventory_revision)))';
+BEGIN
+    SELECT pg_get_functiondef(format('%I.gs_issuer_local_operation_has_exact_retirement(uuid)', current_schema())::regprocedure)
+      INTO STRICT original;
+    IF (length(original) - length(replace(original, anchor, ''))) / length(anchor) <> 1 THEN
+        RAISE EXCEPTION 'Expected exact ordinary retirement completion revision predicate';
+    END IF;
+    EXECUTE replace(original, anchor, replacement);
+END;
+$migration$;
+
 CREATE OR REPLACE FUNCTION require_first_new_abort_reservation_release()
 RETURNS trigger
 LANGUAGE plpgsql

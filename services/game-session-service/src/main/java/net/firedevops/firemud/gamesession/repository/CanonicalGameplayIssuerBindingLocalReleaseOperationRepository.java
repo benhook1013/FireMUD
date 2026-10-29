@@ -156,8 +156,7 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
         inventoryRepository.readIssuerCleanupSource(transitionId);
     requireAbortedSource(sourceBefore);
     var issuerStateBefore = readCurrentIssuerState();
-    CanonicalGameplayIssuerOriginalMemberSource original =
-        originalSources.read(sourceBefore);
+    CanonicalGameplayIssuerOriginalMemberSource original = originalSources.read(sourceBefore);
     CanonicalGameplayIssuerBindingLocalReleaseOperation committed =
         dsl.transactionResult(
             configuration -> {
@@ -399,8 +398,11 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
         || !uuid(row, "transition_id").equals(source.transition().transitionId())
         || !uuid(row, "orphan_cleanup_id").equals(source.orphanCleanupId())
         || !uuid(row, "reservation_id").equals(source.reservation().reservationId())
-        || !Objects.equals(row.get("original_local_operation_id", UUID.class), original.localOperationId())
-        || !Objects.equals(row.get("original_bootstrap_member_operation_id", UUID.class), original.bootstrapMemberOperationId())
+        || !Objects.equals(
+            row.get("original_local_operation_id", UUID.class), original.localOperationId())
+        || !Objects.equals(
+            row.get("original_bootstrap_member_operation_id", UUID.class),
+            original.bootstrapMemberOperationId())
         || !Arrays.equals(bytes(row, "binding_ref"), source.transition().bindingRef().bytes())
         || !positive(row, "binding_generation").equals(source.transition().bindingGeneration())
         || !nonnegative(row, "partition_id").equals(source.reservation().partitionId())

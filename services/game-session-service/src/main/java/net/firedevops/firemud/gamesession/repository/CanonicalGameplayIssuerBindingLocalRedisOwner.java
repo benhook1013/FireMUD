@@ -367,8 +367,7 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
         baseline.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList();
     List<byte[]> arguments = new ArrayList<>();
     arguments.add(ascii(anchor.issuerId()));
-    arguments.add(
-        ascii(work.targetSource().memberValue().reservation().partitionId().toString()));
+    arguments.add(ascii(work.targetSource().memberValue().reservation().partitionId().toString()));
     arguments.add(ascii(anchor.partitionCount().toString()));
     arguments.add(ascii(anchor.partitionCapacity().toString()));
     arguments.add(ascii(Integer.toString(baselineEntries.size())));

@@ -99,7 +99,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
             original.sourceCheckpoint(),
             original.incarnation());
 
-    if ((originalOperation instanceof CanonicalGameplayIssuerOriginalMemberSource.InstalledBootstrap && !abortSource.neverAdmitted())
+    if ((originalOperation instanceof CanonicalGameplayIssuerOriginalMemberSource.InstalledBootstrap
+            && !abortSource.neverAdmitted())
         || !abortSource.isAccountAborted()
         || abortSource.transition().status()
             != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
@@ -107,10 +108,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
         || abortSource.candidate().lifecycle()
             != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
                 .Lifecycle.TERMINAL_UNRESOLVED
-        || !abortSource
-            .transition()
-            .transitionId()
-            .equals(originalOperation.transitionId())
+        || !abortSource.transition().transitionId().equals(originalOperation.transitionId())
         || !sourceReservation.reservationId().equals(original.reservation().reservationId())
         || !sourceReservation.transitionId().equals(original.reservation().transitionId())
         || !sourceReservation.owner().equals(original.owner())
