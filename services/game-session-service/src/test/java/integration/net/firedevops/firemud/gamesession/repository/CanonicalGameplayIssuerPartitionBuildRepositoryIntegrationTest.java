@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
@@ -27,9 +28,12 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -739,7 +743,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       TestSchema testSchema = newTestSchema("gs_build_native_");
       try {
         var captureSchema = sessionSchema(testSchema, "UTC", captureFormat);
-        var fixture = pendingFixture(captureSchema);
+        var fixture = pendingFixture(captureSchema, 24);
         var prepareSchema =
             sessionSchema(
                 testSchema, "Pacific/Auckland", captureFormat.equals("hex") ? "escape" : "hex");
@@ -770,16 +774,41 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
             rowImagesWithXmin(
                 testSchema.dsl(), "game_session_canonical_issuer_partition_build_member_work");
         var readSchema = sessionSchema(testSchema, "America/New_York", captureFormat);
+        AtomicInteger readQueries = new AtomicInteger();
+        var measuredConfiguration = readSchema.dsl().configuration().derive();
+        measuredConfiguration.set(
+            new DefaultExecuteListenerProvider(
+                new DefaultExecuteListener() {
+                  @Override
+                  public void executeStart(ExecuteContext context) {
+                    readQueries.incrementAndGet();
+                  }
+                }));
+        DSLContext measuredReader = DSL.using(measuredConfiguration);
         var readPlan =
-            readSchema
-                .dsl()
-                .transactionResult(
-                    configuration -> {
-                      DSLContext transaction = DSL.using(configuration);
-                      return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                          .readPreparedPlanInTransaction(
-                              transaction, fixture.intent().operationId(), fixture.requestId());
-                    });
+            measuredReader.transactionResult(
+                configuration -> {
+                  DSLContext transaction = DSL.using(configuration);
+                  return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                      .readPreparedPlanInTransaction(
+                          transaction, fixture.intent().operationId(), fixture.requestId());
+                });
+        // Count all actual SQL executions, not query strings: even the complete owner read
+        // must use fewer round trips than this cohort has rows.
+        assertThat(plan.cohortRows().size()).isGreaterThan(24);
+        assertThat(readQueries.get()).isPositive().isLessThan(plan.cohortRows().size());
+        readQueries.set(0);
+        var member =
+            measuredReader.transactionResult(
+                configuration -> {
+                  DSLContext transaction = DSL.using(configuration);
+                  return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                      .readPreparedMemberWorkInTransaction(
+                          transaction, fixture.intent().operationId(), fixture.requestId(), 0);
+                });
+        assertThat(member.work().memberOperationId())
+            .isEqualTo(plan.memberWorks().get(0).memberOperationId());
+        assertThat(readQueries.get()).isPositive().isLessThan(plan.cohortRows().size());
         assertThat(readPlan.buildOperationId()).isEqualTo(plan.buildOperationId());
         assertThat(readPlan.planDigest()).isEqualTo(plan.planDigest());
         assertThat(readPlan.cohortRows())
@@ -1793,9 +1822,28 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static Fixture pendingFixture(TestSchema testSchema) {
+    return pendingFixture(testSchema, 0);
+  }
+
+  private static Fixture pendingFixture(TestSchema testSchema, int extraReservations) {
     establishActualLegacyDisposition(testSchema.dsl());
     var prepared =
         prepareActualBinding(new CanonicalGameplayBindingInventoryRepository(testSchema.dsl()));
+    for (int index = 0; index < extraReservations; index++) {
+      insertReservationOnly(
+          testSchema.dsl(),
+          prepared.candidate(),
+          prepared.inventoryRevision(),
+          UUID.randomUUID(),
+          BigInteger.valueOf(17),
+          BigInteger.valueOf(19),
+          LAYOUT_VERSION,
+          PARTITION_COUNT,
+          PARTITION_CAPACITY,
+          false,
+          "RESERVED",
+          UUID.randomUUID());
+    }
     UUID requestId = UUID.randomUUID();
     var intent =
         new CanonicalGameplayIssuerLayoutBootstrapRepository(testSchema.dsl())
