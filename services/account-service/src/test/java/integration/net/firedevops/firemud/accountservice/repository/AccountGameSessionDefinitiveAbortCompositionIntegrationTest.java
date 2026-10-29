@@ -13,7 +13,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -379,6 +381,106 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
       assertThat(session.accountOperationImage()).isEqualTo(accountPending);
       assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retainedNegativeSettlementResumesIssuerCleanupAfterPresentedCallerExpires(
+      boolean installedBootstrap) throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      var retained = session.gs.abandonmentSource();
+      assertThat(retained.transition().status().name()).isEqualTo("ABORTED");
+      assertThat(retained.orphanCleanupId()).isNotNull();
+      assertThat(retained.negativeResolutionId()).isNotNull();
+      assertThat(retained.cleanupComplete()).isFalse();
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
+      String account = session.accountOperationImage();
+      String resolution = session.negativeResolutionImage();
+      String fence = session.gs.negativeFence();
+
+      session.restartAccountAfterPresentedCallerExpiry();
+      // The actual receiving verifier now rejects the unchanged original signed JWT.
+      assertThatThrownBy(
+              () ->
+                  session.client.abortNeverAdmitted(
+                      session.jwt,
+                      session.lease,
+                      session.gs.transitionId(),
+                      retained.abandonmentId()))
+          .isInstanceOf(IllegalStateException.class);
+      var expiredAccount = spy(session.client);
+      var recreatedOwner = session.gs.neverAdmittedOwner(expiredAccount);
+      byte[] pendingIssuer = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(() -> recreatedOwner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(pendingIssuer);
+      session.gs.restoreIssuerState();
+
+      var completed = recreatedOwner.abort(session.gs.transitionId(), session.jwt);
+      assertThat(completed.cleanupComplete()).isTrue();
+      assertThat(completed.abandonmentId()).isEqualTo(retained.abandonmentId());
+      assertThat(completed.orphanCleanupId()).isEqualTo(retained.orphanCleanupId());
+      assertThat(completed.negativeResolutionId()).isEqualTo(retained.negativeResolutionId());
+      assertThat(completed.closureDigest()).isEqualTo(retained.closureDigest());
+      assertThat(completed.candidate().canonicalBytes())
+          .containsExactly(retained.candidate().canonicalBytes());
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      if (installedBootstrap) session.gs.assertUnaffectedBootstrapFieldsPresent();
+      session.assertNeverAdmittedExactRetryPreservesState();
+
+      String terminalRows = session.completedNegativeCleanupCurrentImage();
+      String history = session.issuerCleanupHistoryImage();
+      byte[] retiredIssuer = session.gs.issuerPartitionFieldSetBytes();
+      session.gs.withdrawControlledClosureQualification();
+      assertThatThrownBy(() -> recreatedOwner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.completedNegativeCleanupCurrentImage()).isEqualTo(terminalRows);
+      assertThat(session.issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(retiredIssuer);
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+      org.mockito.Mockito.verify(expiredAccount, org.mockito.Mockito.never())
+          .abortNeverAdmitted(any(), any(), any(), any());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void expiredPresentedCallerCannotEstablishDurableNegativeSettlement(boolean installedBootstrap)
+      throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      String account = session.accountOperationImage();
+      session.restartAccountAfterPresentedCallerExpiry();
+      var expiredAccount = spy(session.client);
+      var owner = session.gs.neverAdmittedOwner(expiredAccount);
+      assertThatThrownBy(() -> owner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(IllegalStateException.class);
+      var closed = session.gs.abandonmentSource();
+      assertThat(closed.closureDigest()).isNotNull();
+      assertThat(closed.orphanCleanupId()).isNull();
+      assertThat(closed.negativeResolutionId()).isNull();
+      assertThat(closed.cleanupComplete()).isFalse();
+      String closedRows = session.completedNegativeCleanupCurrentImage();
+      String history = session.issuerCleanupHistoryImage();
+      String fence = session.gs.negativeFence();
+      byte[] issuerFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(() -> owner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(IllegalStateException.class);
+      org.mockito.Mockito.verify(expiredAccount, org.mockito.Mockito.times(2))
+          .abortNeverAdmitted(any(), any(), any(), any());
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.completedNegativeCleanupCurrentImage()).isEqualTo(closedRows);
+      assertThat(session.issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(issuerFields);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
       assertThat(session.gs.heldClosureQualifications()).isZero();
     }
   }
@@ -1368,6 +1470,27 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     }
 
     private void restartAccount() throws Exception {
+      restartAccount(verifier);
+    }
+
+    private void restartAccountAfterPresentedCallerExpiry() throws Exception {
+      var expiredClock =
+          Clock.fixed(
+              Instant.ofEpochSecond(
+                  accountFixture.committedCandidate.identity().expiresAtEpochSecond() + 6L),
+              ZoneOffset.UTC);
+      var expiredVerifier =
+          new AccountGameplayAdmissionCallerVerifier(
+              accountFixture.signerFixture.trustedJwksSource(),
+              accountFixture.committedIssuanceOwner,
+              expiredClock);
+      assertThatThrownBy(() -> expiredVerifier.verifyPresentedCompactToken(jwt))
+          .isInstanceOf(IllegalStateException.class);
+      restartAccount(expiredVerifier);
+    }
+
+    private void restartAccount(AccountGameplayAdmissionCallerVerifier receivingVerifier)
+        throws Exception {
       if (client != null) client.close();
       if (accountServer != null) {
         accountServer.shutdownNow();
@@ -1376,7 +1499,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       }
       var owner =
           new AccountGameplayAdmissionLeaseOwner(
-              verifier, reverse, "test", accountFixture.dataSource);
+              receivingVerifier, reverse, "test", accountFixture.dataSource);
       accountServer =
           AccountGameplayAdmissionLeaseManualFactory.createUnregisteredServer(
               "127.0.0.1:0",

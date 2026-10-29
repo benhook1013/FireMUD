@@ -6,6 +6,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import org.jooq.DSLContext;
 
@@ -60,15 +61,25 @@ public final class CanonicalGameplayOriginalNewNeverAdmittedAbortOwner {
         physical -> {
           var selected = inventory.readOriginalNewAbandonmentSource(transitionId);
           if (!physical.matches(selected)) throw unavailable();
-          var response =
-              account.abortNeverAdmitted(
-                  presentedInitialGsACompactJwt,
-                  selected.candidate().leaseEvidence(),
-                  transitionId,
-                  selected.abandonmentId());
-          var actual = new AccountAbortReadback(response, physical);
-          var terminal = inventory.recordNeverAdmittedAccountAbort(selected, actual);
-          if (!actual.matches(terminal)) throw unavailable();
+          var terminal = selected;
+          if (selected.orphanCleanupId() == null || selected.negativeResolutionId() == null) {
+            var response =
+                account.abortNeverAdmitted(
+                    presentedInitialGsACompactJwt,
+                    selected.candidate().leaseEvidence(),
+                    transitionId,
+                    selected.abandonmentId());
+            var actual = new AccountAbortReadback(response, physical);
+            terminal = inventory.recordNeverAdmittedAccountAbort(selected, actual);
+            if (!actual.matches(terminal)) throw unavailable();
+          } else if (selected.transition().status()
+                  != CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED
+              || selected.state()
+                  != CanonicalGameplayOriginalNewAbandonmentSource.State.NEVER_ADMITTED_CLOSED) {
+            throw unavailable();
+          }
+          // An already authenticated durable negative result authorizes only its original cleanup.
+          // Keep the live physical closure qualification while resuming it after caller expiry.
           if (terminal.inventory().lifecycle()
               == CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL) {
             return terminal;
