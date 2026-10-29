@@ -75,6 +75,9 @@ public final class GameSessionCharacterCreatePublicSourceService {
   private final WorldCanonicalInstanceLifecycleClient world;
   private final GameDesignPublishedRealmPolicyClient publishedPolicies;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "The injected durable SQL owner is intentionally shared, not copied.")
   public GameSessionCharacterCreatePublicSourceService(
       String namespace,
       CanonicalPlayerRouteReadService routes,

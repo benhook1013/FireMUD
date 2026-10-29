@@ -48,7 +48,10 @@ class CommunicationWebSocketCrossServiceTest {
         "game_session_canonical_instance_launch_no_truncate"),
     AUTHORED_ACTOR_CORE(
         "gs_original_start_session_authored_actor_core_retention",
-        "gs_original_start_session_actor_core_retention_no_truncate");
+        "gs_original_start_session_actor_core_retention_no_truncate"),
+    HUMAN_RUNTIME_COMPLETION(
+        "game_session_canonical_human_runtime_completion",
+        "game_session_canonical_human_runtime_completion_no_truncate");
 
     private final String tableName;
     private final String triggerName;
@@ -285,8 +288,7 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void freshGameplayBaselineRestoresAlwaysEnabledLaunchAndActorCoreTruncateGuards()
-      throws Exception {
+  void freshGameplayBaselineRestoresAlwaysEnabledTruncateGuards() throws Exception {
     ensureTestServicesStarted();
     prepareGameInstance();
     JdbcTemplate jdbc = STACK.jdbc();
@@ -309,6 +311,7 @@ class CommunicationWebSocketCrossServiceTest {
         assertThat(truncateGuardState(jdbc, guard)).isEqualTo("A");
       }
       assertOrdinaryTruncateIsRejected(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE);
+      assertOrdinaryTruncateIsRejected(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION);
     } finally {
       originalStates.forEach((guard, state) -> setTruncateGuardState(jdbc, guard, state));
     }

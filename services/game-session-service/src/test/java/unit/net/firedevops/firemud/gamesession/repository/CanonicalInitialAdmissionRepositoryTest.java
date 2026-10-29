@@ -2,8 +2,13 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -26,6 +31,73 @@ import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class CanonicalInitialAdmissionRepositoryTest {
+  @Test
+  void completeCreationSourcePreservesActualPointerTimestamp() {
+    var fields = completeOpenFields();
+    var repository = completeSourceRepository(fields, fields);
+    var source = repository.readCurrentOpenSourceForRealm("gameplay", uuid(1), uuid(2));
+    assertThat(source.updatedAt()).isEqualTo(Instant.parse("2026-10-24T00:00:00.123456Z"));
+    assertThat(source.updatedAt()).isNotEqualTo(source.snapshot().ownerProof().terminalAt());
+    assertThat(source.tenantId()).isEqualTo(uuid(1));
+    assertThat(source.realmId()).isEqualTo(uuid(2));
+    assertThat(source.canonicalGameInstanceId()).isEqualTo(uuid(4));
+    assertThat(source.pointerVersion()).isEqualTo(73);
+  }
+
+  @Test
+  void completeCreationSourceRejectsTimestampOnlyReplacementAcrossQualifiedRead() {
+    var before = completeOpenFields();
+    var after = completeOpenFields();
+    after.put(
+        "updated_at",
+        java.sql.Timestamp.valueOf(java.time.LocalDateTime.parse("2026-10-24T00:00:00.123457")));
+    var repository = completeSourceRepository(before, after);
+    assertThatThrownBy(() -> repository.readCurrentOpenSourceForRealm("gameplay", uuid(1), uuid(2)))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalInitialAdmissionReconciliationRequiredException.class);
+  }
+
+  private static Map<String, Object> completeOpenFields() {
+    var fields = validOpenFields();
+    fields.put("id", 1L);
+    fields.put("tenant_id", 1L);
+    fields.put("game_instance_id", 2L);
+    fields.put("runtime_version_id", 3L);
+    fields.put(
+        "updated_at",
+        java.sql.Timestamp.valueOf(java.time.LocalDateTime.parse("2026-10-24T00:00:00.123456")));
+    return fields;
+  }
+
+  private static CanonicalInitialAdmissionRepository completeSourceRepository(
+      Map<String, Object> before, Map<String, Object> after) {
+    var dsl = mock(DSLContext.class);
+    var catalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
+    var pointers = mock(GameSessionCanonicalAdmissionPointerRepository.class);
+    var repository = spy(new CanonicalInitialAdmissionRepository(dsl, catalog, pointers));
+    var first = mock(org.jooq.Record.class);
+    var second = mock(org.jooq.Record.class);
+    when(first.intoMap()).thenReturn(before);
+    when(second.intoMap()).thenReturn(after);
+    org.jooq.Result<org.jooq.Record> firstRows =
+        org.jooq.impl.DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(new org.jooq.Field<?>[0]);
+    org.jooq.Result<org.jooq.Record> secondRows =
+        org.jooq.impl.DSL.using(org.jooq.SQLDialect.POSTGRES).newResult(new org.jooq.Field<?>[0]);
+    firstRows.add(first);
+    secondRows.add(second);
+    when(dsl.fetch(anyString(), eq("gameplay"), eq(uuid(1)), eq(uuid(2))))
+        .thenReturn(firstRows, secondRows);
+    var proof = committedProof();
+    String digest =
+        CanonicalInitialAdmissionRepository.snapshotDigestOrReconciliation(
+            new CanonicalInitialAdmissionRepository.CurrentOpenPointer(before), proof);
+    doReturn(new CanonicalInitialAdmissionRepository.CurrentOpenSnapshot(proof, digest))
+        .when(repository)
+        .readCurrentOpenSnapshotForRealm("gameplay", uuid(1), uuid(2));
+    return repository;
+  }
+
   @Test
   void incompleteHumanReserveCommitAndAbortDenyBeforeAnyOwnerStorageInteraction() {
     var dsl = mock(DSLContext.class);
