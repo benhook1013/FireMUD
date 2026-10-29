@@ -32,7 +32,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionReadRepositoryTest {
             dsl, redis, tags, NAMESPACE, Clock.systemUTC());
 
     assertThatThrownBy(() -> repository.readActualOriginalFinalAdmission(selector(), "other"))
-        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Original NEW read namespace differs from the configured workload");
 
     verifyNoInteractions(dsl, redis, tags);
   }

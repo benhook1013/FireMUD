@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.charactercreate;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Objects;
 import net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateRequest;
 import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
@@ -68,14 +69,14 @@ public final class EntityPlayerCreatedRuntimeReferenceService {
             .setOperationId(origin.getCreationOperationUuid())
             .setMutationDigest(origin.getMutationDigest())
             .build();
-    EntityCharacterCreateTerminal terminal =
-        creationRepository
-            .read(originalRequest)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Original PLAYER_CREATED runtime evidence is unavailable")
-                        .asRuntimeException());
+    EntityCharacterCreateTerminal terminal;
+    try {
+      terminal = creationRepository.read(originalRequest).orElseThrow(() -> unavailable());
+    } catch (StatusRuntimeException failure) {
+      // The shared writer reports digest reuse as a conflict; this read exposes one refusal.
+      if (failure.getStatus().getCode() == Status.Code.ALREADY_EXISTS) throw unavailable();
+      throw failure;
+    }
     CharacterCreateOperatorAction action =
         EntityCharacterCreateBindings.requireOriginal(
             terminal.getOriginalRequest().getOriginal(), terminal.getAccountOriginal());

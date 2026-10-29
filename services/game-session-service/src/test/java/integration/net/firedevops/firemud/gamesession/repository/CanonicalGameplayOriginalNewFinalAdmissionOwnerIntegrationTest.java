@@ -19,6 +19,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -170,7 +172,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             + " FROM game_session_canonical_binding_issuer_index_obligation obligation"
             + " WHERE transition_id = ? AND status = 'REQUIRED'";
     String retainedObligation =
-        fixture.dsl().fetchSingle(retainedObligationQuery, fixture.transitionId()).get(0, String.class);
+        fixture
+            .dsl()
+            .fetchSingle(retainedObligationQuery, fixture.transitionId())
+            .get(0, String.class);
     String retainedRows = sqlImage();
     Map<String, String> retainedPhysical = physicalImage();
 
@@ -205,6 +210,95 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
     repairAccountMember();
     assertSameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows();
+  }
+
+  @Test
+  void committedReceiptSurvivesDeleteRefusalAndClockUnavailabilityUntilCatchup() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+      inventory.commitOriginalNewFinalAdmission(actual);
+      String retainedReceiptQuery =
+          "SELECT xmin::text || '/' || to_jsonb(transition)::text"
+              + " FROM game_session_canonical_binding_transition transition WHERE transition_id = ?";
+      String retainedReceipt =
+          fixture
+              .dsl()
+              .fetchSingle(retainedReceiptQuery, fixture.transitionId())
+              .get(0, String.class);
+      String retainedRows = sqlImage();
+      Map<String, String> retainedPhysical = physicalImage();
+
+      // The candidate BEFORE DELETE guard is the first refusal, before retained-child FKs.
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "DELETE FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                          fixture.transitionId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_candidate_retained",
+                      "Original NEW candidate transition retention is held"));
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(retainedReceiptQuery, fixture.transitionId())
+                  .get(0, String.class))
+          .isEqualTo(retainedReceipt);
+      assertThat(sqlImage()).isEqualTo(retainedRows);
+      assertThat(physicalImage()).isEqualTo(retainedPhysical);
+
+      for (long unobservableNow :
+          List.of(actual.admissionAtMillis() - 1L, actual.admissionAtMillis() - 5_001L, 0L)) {
+        var unavailableReader =
+            reader(Clock.fixed(Instant.ofEpochMilli(unobservableNow), ZoneOffset.UTC));
+        assertThatThrownBy(
+                () ->
+                    unavailableReader.readActualOriginalFinalAdmission(
+                        credential.selector(), "test"))
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Current clock cannot observe the finalized original admission instant");
+        assertThat(sqlImage()).isEqualTo(retainedRows);
+        assertThat(physicalImage()).isEqualTo(retainedPhysical);
+      }
+      var observed =
+          reader(Clock.fixed(Instant.ofEpochMilli(actual.admissionAtMillis()), ZoneOffset.UTC))
+              .readActualOriginalFinalAdmission(credential.selector(), "test");
+      assertThat(observed.admissionAtMillis()).isEqualTo(actual.admissionAtMillis());
+      assertThat(observed.continuityExpiresAtMillis())
+          .isEqualTo(actual.continuityExpiresAtMillis());
+      assertThat(observed.canonicalSessionSha256()).isEqualTo(actual.finalSessionSha256());
+      var expiredReader =
+          reader(
+              Clock.fixed(
+                  Instant.ofEpochMilli(actual.continuityExpiresAtMillis()), ZoneOffset.UTC));
+      assertThatThrownBy(
+              () -> expiredReader.readActualOriginalFinalAdmission(credential.selector(), "test"))
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Finalized original admission is outside its retained current time bounds");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(retainedReceiptQuery, fixture.transitionId())
+                  .get(0, String.class))
+          .isEqualTo(retainedReceipt);
+      assertThat(sqlImage()).isEqualTo(retainedRows);
+      assertThat(physicalImage()).isEqualTo(retainedPhysical);
+    }
   }
 
   @Test
@@ -273,7 +367,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       String beforeCommitRows = sqlImage();
       assertThatThrownBy(
               () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Original NEW transition is not final-readable");
       assertThat(sqlImage()).isEqualTo(beforeCommitRows);
       // The native issuer receipt already exists, but provisional physical final readback is
       // insufficient to settle the issuer obligation before its matching SQL final commit.
@@ -286,7 +381,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                               + " SET status = 'ACKNOWLEDGED', inventory_revision = inventory_revision + 1"
                               + " WHERE transition_id = ?",
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_issuer_obligation_source",
+                      "Final issuer obligation requires matching committed original NEW and native acknowledgement"));
       assertThat(sqlImage()).isEqualTo(beforeCommitRows);
       // SQL cannot terminalize the genuine provisional source without its complete receipt.
       assertThatThrownBy(
@@ -298,7 +400,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                               + " SET status = 'COMMITTED', inventory_revision = inventory_revision + 1"
                               + " WHERE transition_id = ?",
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_binding_runtime_fence_terminal_owner_required",
+                      "A lease-bound runtime fence cannot be released without definitive first-NEW Account abort evidence"));
       assertThat(sqlImage()).isEqualTo(beforeCommitRows);
       // Even genuine final readback values cannot authorize changing the original source.
       assertThatThrownBy(
@@ -317,7 +426,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                           actual.canonicalSessionDurationMillis(),
                           UUID.randomUUID(),
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_final_transition_source_immutable",
+                      "Original NEW final commit cannot change its original transition source"));
       assertThat(sqlImage()).isEqualTo(beforeCommitRows);
       // The pending source fences the actual runtime writer, so a stopped precommit row cannot
       // be produced through this fixture without bypassing the existing owner guard.
@@ -329,7 +445,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   decision.candidate().gameInstanceId())
               .get(0, String.class);
       assertThatThrownBy(fixture::stopRuntime)
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_binding_runtime_row_mutation_fenced",
+                      "Game Instance runtime row is fenced by an unresolved lease-bound binding decision"));
       assertThat(
               fixture
                   .dsl()
@@ -378,7 +501,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                       CanonicalGameplayBindingIssuerIndexObligation.Status.ACKNOWLEDGED,
                       committedIssuerObligation.inventoryRevision(),
                       UUID.randomUUID()))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isExactlyInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Issuer release linkage must match its obligation status");
       assertThatThrownBy(
               () ->
                   new CanonicalGameplayBindingIssuerIndexObligation(
@@ -389,7 +513,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                       CanonicalGameplayBindingIssuerIndexObligation.Status.RELEASED,
                       committedIssuerObligation.inventoryRevision(),
                       null))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isExactlyInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Issuer release linkage must match its obligation status");
       var committedSource = inventory.readOriginalNewFinalAdmissionSource(decision);
       var committedTransition =
           committedInventory.transitions().stream()
@@ -501,7 +626,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                           "UPDATE game_session_canonical_binding_issuer_index_obligation SET status = 'REQUIRED'"
                               + " WHERE transition_id = ?",
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_issuer_obligation_retained",
+                      "Final original NEW issuer acknowledgement is retained and immutable"));
       assertThatThrownBy(
               () ->
                   fixture
@@ -511,7 +643,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                               + " SET acknowledgement_generation = acknowledgement_generation + 1"
                               + " WHERE transition_id = ?",
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      null,
+                      "issuer binding-local acknowledgements are immutable"));
       assertThat(sqlImage()).isEqualTo(rows);
       // Once committed, the actual receipt and every original transition field remain immutable.
       assertThatThrownBy(
@@ -523,7 +662,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                               + " WHERE transition_id = ?",
                           UUID.randomUUID(),
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_final_terminal_source_immutable",
+                      "Committed original NEW final source is immutable"));
       assertThatThrownBy(
               () ->
                   fixture
@@ -533,7 +679,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                               + " original_new_admission_at_ms = NULL, original_new_continuity_expires_at_ms = NULL,"
                               + " original_new_session_duration_ms = NULL WHERE transition_id = ?",
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_final_terminal_source_immutable",
+                      "Committed original NEW final source is immutable"));
       assertThatThrownBy(
               () ->
                   fixture
@@ -542,14 +695,23 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                           "UPDATE game_session_canonical_binding_transition SET inventory_revision = inventory_revision - 1"
                               + " WHERE transition_id = ?",
                           fixture.transitionId()))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure ->
+                  assertGuardRefusal(
+                      failure,
+                      "23514",
+                      "gs_original_new_final_terminal_source_immutable",
+                      "Committed original NEW final source is immutable"));
       assertThat(sqlImage()).isEqualTo(rows);
       Map<String, String> physical = physicalImage();
       assertThatThrownBy(
               () ->
                   reader()
                       .readActualOriginalFinalAdmission(credential.wrongTokenSelector(), "test"))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage(
+              "Finalized session authentication values differ from Account's original anchors");
       assertThat(sqlImage()).isEqualTo(rows);
       assertThat(physicalImage()).isEqualTo(physical);
       var recoveredInventory = new CanonicalGameplayBindingInventoryRepository(fixture.dsl());
@@ -581,10 +743,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     String rows = sqlImage();
     Map<String, String> physical = physicalImage();
     assertThatThrownBy(() -> inventory.readOriginalNewFinalAdmissionSource(decision))
-        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Original NEW region acknowledgement differs from its controller");
     var recovered = new CanonicalGameplayBindingInventoryRepository(fixture.dsl());
     assertThatThrownBy(() -> recovered.readOriginalNewFinalAdmissionSource(decision))
-        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Original NEW region acknowledgement differs from its controller");
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
     bridge();
@@ -624,7 +788,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     finalOwner()
                         .finalizeOriginalNewOnce(
                             committed, template, accountOpen, issuerOpen, deadline()))
-            .isInstanceOf(IllegalStateException.class);
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW final admission Redis readback is unavailable");
         assertThat(admin.exists(ascii(key))).isZero();
         assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(finalBytes);
         assertThat(sqlImage()).isEqualTo(rows);
@@ -636,7 +801,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   finalOwner()
                       .finalizeOriginalNewOnce(
                           committed, template, accountOpen, issuerOpen, deadline()))
-          .isInstanceOf(IllegalStateException.class);
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThat(admin.hget(ascii(accountOpen.key()), ascii("state")))
           .containsExactly(ascii("CLOSED"));
       assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(finalBytes);
@@ -647,10 +813,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   finalOwner()
                       .finalizeOriginalNewOnce(
                           committed, template, accountOpen, issuerOpen, deadline()))
-          .isInstanceOf(IllegalStateException.class);
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThatThrownBy(
               () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Finalized canonical session is absent, non-string, or expiring");
       assertThat(admin.dbsize()).isZero();
       assertThat(sqlImage()).isEqualTo(rows);
     }
@@ -683,7 +851,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     finalOwner()
                         .finalizeOriginalNewOnce(
                             source, template, accountOpen, issuerOpen, deadline()))
-            .isInstanceOf(IllegalStateException.class);
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW final admission Redis readback is unavailable");
         assertThat(admin.exists(ascii(key))).isZero();
         assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidateBytes);
         assertThat(sqlImage()).isEqualTo(rows);
@@ -695,17 +864,21 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   finalOwner()
                       .finalizeOriginalNewOnce(
                           source, template, accountOpen, issuerOpen, deadline()))
-          .isInstanceOf(IllegalStateException.class);
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThat(admin.hget(ascii(issuerKey(issuerOpen)), ascii("state")))
           .containsExactly(ascii("CLOSED"));
       assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidateBytes);
       assertThat(sqlImage()).isEqualTo(rows);
       fixture.moveIssuerSourceCheckpoint();
-      assertThatThrownBy(this::issuerOpen).isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(this::issuerOpen)
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Issuer tenant admission barrier is unavailable");
       assertThat(sqlImage()).isEqualTo(rows);
       assertThatThrownBy(
               () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Original NEW transition is not final-readable");
     }
   }
 
@@ -812,10 +985,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   finalOwner()
                       .finalizeOriginalNewOnce(
                           committed, template, accountOpen, issuerOpen, deadline()))
-          .isInstanceOf(IllegalStateException.class);
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThatThrownBy(
               () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Finalized session differs from the committed original controller receipt");
       assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(changedBytes);
       assertThat(sqlImage()).isEqualTo(rows);
       admin.set(ascii(installation.sessionKey()), actual.exactCanonicalBytes());
@@ -833,18 +1008,34 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
                       .commitOriginalNewFinalAdmission(actual))
-          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessage("Original NEW final admission commit requires its current RUNNING runtime");
       assertThatThrownBy(
               () ->
                   new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
                       .readOriginalNewFinalAdmissionSource(decision))
-          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+          .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Original NEW final admission source requires its current RUNNING runtime");
       assertThat(sqlImage()).isEqualTo(stoppedRows);
       assertThat(physicalImage()).isEqualTo(stoppedPhysical);
       assertThat(admin.get(ascii(installation.sessionKey())))
           .containsExactly(actual.exactCanonicalBytes());
     }
+  }
+
+  private static void assertGuardRefusal(
+      Throwable failure, String sqlState, String constraint, String message) {
+    assertThat(failure)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            postgresFailure -> {
+              assertThat(postgresFailure.getSQLState()).isEqualTo(sqlState);
+              assertThat(postgresFailure.getServerErrorMessage()).isNotNull();
+              assertThat(postgresFailure.getServerErrorMessage().getConstraint())
+                  .isEqualTo(constraint);
+              assertThat(postgresFailure.getServerErrorMessage().getMessage()).isEqualTo(message);
+            });
   }
 
   private void repairAccountMember() {
@@ -951,12 +1142,16 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   private CanonicalGameplayOriginalNewFinalAdmissionReadRepository reader() {
+    return reader(CLOCK);
+  }
+
+  private CanonicalGameplayOriginalNewFinalAdmissionReadRepository reader(Clock readClock) {
     return new CanonicalGameplayOriginalNewFinalAdmissionReadRepository(
         fixture.dsl(),
         ownerClient,
         new CanonicalGameplayTenantGameplayTagRepository(fixture.dsl(), "test", 1),
         "test",
-        CLOCK);
+        readClock);
   }
 
   private String sqlImage() {
