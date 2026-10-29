@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -22,6 +21,7 @@ import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.Verif
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Verifies the Account-signed, tenant-bound ORIGINAL_NEW credential and its exact lease anchors.
@@ -31,7 +31,7 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
  * with their owning readers and the final session CAS.
  */
 public final class CanonicalGameplayOriginalNewBoundCredentialVerifier {
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final long ALLOWED_CLOCK_SKEW_SECONDS = 5L;
   private static final ExplicitRouteProfilePolicy ORIGINAL_NEW_POLICY = policy();
 
