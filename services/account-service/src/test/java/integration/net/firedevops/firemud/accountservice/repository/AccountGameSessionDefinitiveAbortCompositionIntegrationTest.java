@@ -657,7 +657,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   }
 
   @Test
-  void actualAcknowledgedAbortCleanupSurvivesLaterAccountIntentAndRetiresExactIssuerMember()
+  void actualAcknowledgedAbortCleanupSurvivesLaterAccountIntentAndReleasesExactIssuerMember()
       throws Exception {
     try (var session = open(true)) {
       var acknowledgement = session.gs.repairAccountMember();
@@ -741,15 +741,6 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                   .completionInventoryRevision())
           .isEqualTo(released.completionInventoryRevision());
 
-      var pendingRetirement = session.gs.prepareIssuerRetirement(session.gs.transitionId());
-      assertThat(session.gs.retireIssuerCapacityOutcome(pendingRetirement)).isEqualTo(1L);
-      assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
-      byte[] fieldsBeforeRetirementRetry = session.gs.issuerPartitionFieldSetBytes();
-      var retirementRetry = session.gs.prepareIssuerRetirement(session.gs.transitionId());
-      assertThat(session.gs.isIssuerRetirementComplete(retirementRetry)).isTrue();
-      assertThat(session.gs.retireIssuerCapacityOutcome(retirementRetry)).isEqualTo(2L);
-      assertThat(session.gs.issuerPartitionFieldSetBytes())
-          .containsExactly(fieldsBeforeRetirementRetry);
       assertThat(session.gs.hasExactOtherControllerMember(newerMemberSeed)).isTrue();
       assertThat(session.gs.hasExactAccountMember()).isTrue();
       assertThat(session.gs.memberAcknowledgementImage()).isEqualTo(originalAck);

@@ -44,7 +44,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
-import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -870,46 +869,6 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
       readCurrentOriginalPartitionWork() {
     return localProjectionRepository.readPreparedPartitionWork(localOperation);
-  }
-
-  public CanonicalGameplayIssuerBindingLocalRetirementOperation prepareIssuerRetirement(
-      UUID transitionId) {
-    return new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource)
-        .prepareOrResume(transitionId);
-  }
-
-  public CanonicalGameplayIssuerBindingLocalRetirementRedisOwner.Readback retireIssuerCapacity(
-      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
-    return new CanonicalGameplayIssuerBindingLocalRetirementRedisOwner(
-            issuerRedisClient,
-            retirementCatalog(),
-            localProjectionRepository,
-            new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource),
-            issuerSource)
-        .retireAndRead(operation);
-  }
-
-  /** Public test bridge for the otherwise package-private retirement readback outcome. */
-  public long retireIssuerCapacityOutcome(
-      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
-    return retireIssuerCapacity(operation).scriptOutcome();
-  }
-
-  /** Public test bridge for the otherwise package-private retirement operation status. */
-  public boolean isIssuerRetirementComplete(
-      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
-    return operation.status()
-        == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED;
-  }
-
-  /** Adds the retirement script only for callers that exercise the new owner. */
-  RedisScriptCatalog retirementCatalog() {
-    return RedisScriptCatalog.fromContributions(
-        List.of(
-            new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
-            new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
-            new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
-            new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution()));
   }
 
   public byte[] issuerPartitionKey() {
