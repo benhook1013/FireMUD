@@ -727,6 +727,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   /**
    * Reads the guarded source without claiming dispatch, so fresh Redis work can preflight first.
+   * The transaction locks the inventory clock and account-coverage control and can insert a missing
+   * coverage-control row; it is not a read-only database operation.
    */
   OriginalNewCandidateInstallationClaim readOriginalNewCandidateInstallationSource(
       CanonicalGameplayAdmissionDecision originalDecision) {

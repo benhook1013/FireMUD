@@ -946,9 +946,14 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     }
     OriginalNewCredential result =
         fromWireOriginalNewCredential(one(response.getOriginalNewCredentialList(), "originalNew"));
-    validateOriginalNewCredential(
-        operation.originalLeaseEvidence(), operation.originalAckReceipt(), result);
-    return result;
+    try {
+      validateOriginalNewCredential(
+          operation.originalLeaseEvidence(), operation.originalAckReceipt(), result);
+      return result;
+    } catch (RuntimeException rejected) {
+      result.close();
+      throw rejected;
+    }
   }
 
   /** Builds the redacted internal result value for Account's protected envelope recovery path. */
@@ -971,7 +976,7 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     }
     return new OriginalNewCredential(
         compactJwt(signedBoundGsACompactJwt),
-        Objects.requireNonNull(opaqueRebindHandle).clone(),
+        opaqueRebindHandle,
         highEntropyUuid(lineageId),
         highEntropyUuid(tokenJti),
         digest(tokenSha256),
