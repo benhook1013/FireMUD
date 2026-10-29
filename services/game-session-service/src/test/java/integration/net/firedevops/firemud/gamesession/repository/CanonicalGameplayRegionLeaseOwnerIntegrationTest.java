@@ -28,6 +28,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -247,7 +248,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
 
-      world.setAfterRead(2, incarnationSource::changeRecoveryEvidence);
+      // Reads one and two are the initial source read and the new post-claim revalidation; read
+      // three runs after EVALSHA, where this case exercises recovery-evidence drift.
+      world.setAfterRead(3, incarnationSource::changeRecoveryEvidence);
       Throwable recoveryDriftFailure =
           catchThrowable(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()));
       assertThat(recoveryDriftFailure).isInstanceOf(IllegalStateException.class);
@@ -295,18 +298,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().hdel(ascii(initialMetaKey), ascii("current_tick_id"))).isEqualTo(1L);
       assertThatThrownBy(
               () ->
-                  redisOwner.initializeOrResumeTimeline(
-                      preparation,
-                      null,
-                      Duration.ofSeconds(30),
-                      new RuntimeIdentity(
-                          "game-session-service",
-                          "instance-a",
-                          "localhost",
-                          NOW,
-                          "controlled-test",
-                          "controlled-sha",
-                          "controlled-image")))
+                  initializeTimelineWithoutCreationPermission(
+                      redisOwner, preparation, "instance-a"))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")
           .satisfies(failure -> assertThat(failure.getCause()).isNull());
@@ -531,6 +524,133 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
       assertThat(redis.admin().type(redisKey)).isEqualTo("string");
       assertThat(redis.admin().pttl(redisKey)).isPositive();
+    }
+  }
+
+  @Test
+  void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var validRedisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var bindingEvidence = provisionalEvidence(world.request());
+      var bindingInventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(bindingInventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(bindingEvidence);
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          statusRepository.prepareInitialTimeline(
+              bindingEvidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              validRedisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      var missingDescriptorOwner =
+          owner(
+              bindingInventory,
+              statusRepository,
+              new CanonicalGameplayRegionLeaseRedisOwner(
+                  redis.ownerClient(), RedisScriptCatalog.fromContributions(List.of())),
+              world,
+              "missing-descriptor",
+              incarnationSource);
+      assertThatThrownBy(
+              () -> missingDescriptorOwner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      RedisClient unavailableClient =
+          RedisClient.create(
+              RedisURI.Builder.redis("127.0.0.1", 1).withTimeout(Duration.ofMillis(250)).build());
+      unavailableClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
+      try {
+        var connectionFailureOwner =
+            owner(
+                bindingInventory,
+                statusRepository,
+                new CanonicalGameplayRegionLeaseRedisOwner(unavailableClient, redis.catalog()),
+                world,
+                "connection-refused",
+                incarnationSource);
+        assertThatThrownBy(
+                () -> connectionFailureOwner.installForTransition(TRANSITION_ID, world.request()))
+            .isInstanceOf(IllegalStateException.class);
+      } finally {
+        unavailableClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      }
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      RedisClient wrongPrincipalClient =
+          redis.additionalClient("gamesession_coord_wrong", UUID.randomUUID().toString(), true);
+      var principalFailureOwner =
+          owner(
+              bindingInventory,
+              statusRepository,
+              new CanonicalGameplayRegionLeaseRedisOwner(wrongPrincipalClient, redis.catalog()),
+              world,
+              "wrong-principal",
+              incarnationSource);
+      assertThatThrownBy(
+              () -> principalFailureOwner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      redis.setOwnerScriptLoadAllowed(false);
+      try {
+        var scriptLoadFailureOwner =
+            owner(
+                bindingInventory,
+                statusRepository,
+                validRedisOwner,
+                world,
+                "script-load-denied",
+                incarnationSource);
+        assertThatThrownBy(
+                () -> scriptLoadFailureOwner.installForTransition(TRANSITION_ID, world.request()))
+            .isInstanceOf(IllegalStateException.class);
+      } finally {
+        redis.setOwnerScriptLoadAllowed(true);
+      }
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      var validOwner =
+          owner(
+              bindingInventory,
+              statusRepository,
+              validRedisOwner,
+              world,
+              "valid-after-preflight-refusal",
+              incarnationSource);
+      var installation = validOwner.installForTransition(TRANSITION_ID, world.request());
+      assertThat(installation).isNotNull();
+      assertThat(statusRepository.findTimelinePreparation(source).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED);
+      String leaseKey =
+          CanonicalGameplayRegionRedisKeys.lease(
+              source.tenantId(), source.gameInstanceId(), source.regionId());
+      String metaKey =
+          CanonicalGameplayRegionRedisKeys.meta(
+              source.tenantId(), source.gameInstanceId(), source.regionId());
+      assertThat(redis.admin().type(ascii(leaseKey))).isEqualTo("string");
+      assertThat(redis.admin().type(ascii(metaKey))).isEqualTo("hash");
+    } finally {
+      dropSchema(testSchema.schema());
     }
   }
 
@@ -1131,6 +1251,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
+  private static void initializeTimelineWithoutCreationPermission(
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      String instanceId) {
+    try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
+        redisOwner.prepareTimelineInitialization(
+            preparation,
+            Duration.ofSeconds(30),
+            new RuntimeIdentity(
+                "game-session-service",
+                instanceId,
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image"))) {
+      session.initialize(null);
+    }
+  }
+
   private static CanonicalGameplayBindingProvisionalCasEvidence provisionalEvidence(
       CanonicalInitialPlayerLocationRequest request) {
     return provisionalEvidence(
@@ -1337,6 +1477,43 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     return value.getBytes(StandardCharsets.US_ASCII);
   }
 
+  private static void assertPreparedTimelineUnchanged(
+      DSLContext dsl,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      RedisFixture redis,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+    var observed = statusRepository.findTimelinePreparation(source).orElseThrow();
+    assertThat(observed.operationId()).isEqualTo(preparation.operationId());
+    assertThat(observed.sourceDigest()).isEqualTo(preparation.sourceDigest());
+    assertThat(observed.phase())
+        .isEqualTo(
+            CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.PREPARED);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT phase FROM game_session_region_timeline_preparation"
+                        + " WHERE initialization_operation_id = ?",
+                    preparation.operationId())
+                .get("phase", String.class))
+        .isEqualTo("PREPARED");
+    assertThat(
+            redis
+                .admin()
+                .type(
+                    ascii(
+                        CanonicalGameplayRegionRedisKeys.lease(
+                            source.tenantId(), source.gameInstanceId(), source.regionId()))))
+        .isEqualTo("none");
+    assertThat(
+            redis
+                .admin()
+                .type(
+                    ascii(
+                        CanonicalGameplayRegionRedisKeys.meta(
+                            source.tenantId(), source.gameInstanceId(), source.regionId()))))
+        .isEqualTo("none");
+  }
+
   private static final class WorldFixture {
     private final WorldCanonicalInstanceLifecycleEvidence original;
     private final CanonicalInitialPlayerLocationRequest request;
@@ -1500,6 +1677,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     private final StatefulRedisConnection<byte[], byte[]> adminConnection;
     private final RedisCommands<byte[], byte[]> admin;
     private final RedisScriptCatalog catalog;
+    private final List<RedisClient> additionalClients = new ArrayList<>();
 
     private RedisFixture(
         RedisClient administrator,
@@ -1520,28 +1698,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           administrator.connect(ByteArrayCodec.INSTANCE);
       RedisCommands<byte[], byte[]> admin = adminConnection.sync();
       admin.flushdb();
-      admin.aclSetuser(
-          PRINCIPAL,
-          new AclSetuserArgs()
-              .reset()
-              .on()
-              .addPassword(PASSWORD)
-              .keyPattern("tick-executor-lease:*")
-              .keyPattern("tick:*")
-              .addCommand(CommandType.HELLO)
-              .addCommand(CommandType.PING)
-              .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
-              .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
-              .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
-              .addCommand(CommandType.EVALSHA)
-              .addCommand(CommandType.TYPE)
-              .addCommand(CommandType.HGET)
-              .addCommand(CommandType.HSET)
-              .addCommand(CommandType.HLEN)
-              .addCommand(CommandType.PTTL)
-              .addCommand(CommandType.GET)
-              .addCommand(CommandType.SET)
-              .addCommand(CommandType.PEXPIRE));
+      admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, true));
       RedisClient ownerClient = createClient(PRINCIPAL, PASSWORD);
       RedisScriptCatalog catalog =
           RedisScriptCatalog.fromContributions(
@@ -1571,9 +1728,46 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       return catalog;
     }
 
+    RedisClient additionalClient(String username, String password, boolean allowScriptLoad) {
+      admin.aclSetuser(username, ownerArguments(password, allowScriptLoad));
+      RedisClient client = createClient(username, password);
+      additionalClients.add(client);
+      return client;
+    }
+
+    void setOwnerScriptLoadAllowed(boolean allowed) {
+      admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, allowed));
+    }
+
+    private static AclSetuserArgs ownerArguments(String password, boolean allowScriptLoad) {
+      AclSetuserArgs args =
+          new AclSetuserArgs()
+              .reset()
+              .on()
+              .addPassword(password)
+              .keyPattern("tick-executor-lease:*")
+              .keyPattern("tick:*")
+              .addCommand(CommandType.HELLO)
+              .addCommand(CommandType.PING)
+              .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+              .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+              .addCommand(CommandType.EVALSHA)
+              .addCommand(CommandType.TYPE)
+              .addCommand(CommandType.HGET)
+              .addCommand(CommandType.HSET)
+              .addCommand(CommandType.HLEN)
+              .addCommand(CommandType.PTTL)
+              .addCommand(CommandType.GET)
+              .addCommand(CommandType.SET)
+              .addCommand(CommandType.PEXPIRE);
+      if (allowScriptLoad) args.addCommand(CommandType.SCRIPT, CommandKeyword.LOAD);
+      return args;
+    }
+
     @Override
     public void close() {
       adminConnection.close();
+      additionalClients.forEach(client -> client.shutdown(Duration.ZERO, Duration.ofSeconds(2)));
       ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
       administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
     }
