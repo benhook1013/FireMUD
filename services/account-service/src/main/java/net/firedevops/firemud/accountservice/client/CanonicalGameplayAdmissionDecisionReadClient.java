@@ -99,6 +99,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
         || SessionContext.getServiceName() != null
         || SessionContext.getServiceInstanceId() != null)
       throw new IllegalStateException("Never-admitted read requires workload-only caller context");
+    Objects.requireNonNull(lease, "Original NEW lease evidence required");
     if (!workloadNamespace.equals(lease.carrier().get("targetNamespace")))
       throw new IllegalArgumentException(
           "Never-admitted read requires configured workload namespace");
@@ -116,7 +117,8 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
       return AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
           expected, response);
     } catch (RuntimeException malformed) {
-      throw new IllegalStateException("Game Session negative closure evidence unavailable");
+      throw new IllegalStateException(
+          "Game Session negative closure evidence unavailable", malformed);
     }
   }
 

@@ -656,3 +656,7 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: The shared observer read 30 successful jobs for #3315 and inferred that the still-running workflow and pending gate were inconsistent.
   - Observation: The GitHub connector returned only the first page. A bounded API read with per_page=100 showed 38 total jobs, including the still-running Game Session checks. Root initially repeated the incomplete inventory, then challenged pagination and corrected the User and Overseer; no callback defect or CI repair followed from the partial read.
   - Expected pattern: Retain total_count, returned count and continuation evidence before declaring a workflow's job inventory complete. A full page is not evidence that no more jobs exist.
+- `2026-10-30`: Cross-reference retained helper-validation recurrences
+  - Context: The 2026-10-17 closed-validation-allowlist observation is the original process lesson; the 2026-10-27 and helper-validation portion of 2026-10-29 entries retain subsequent occurrences.
+  - Observation: These are recurrences of that same lesson, rather than distinct validation policies. Their dated evidence remains intact. The uppercase `R948` artifact-search observation is a separate lesson.
+  - Expected pattern: Apply the closed validation allowlist from the delegation workflow and preserve recurrence attribution without rewriting historical observations.
