@@ -158,6 +158,150 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     assertThat(admin.dbsize()).isZero();
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"HISTORICAL", "ACQUISITION_INTENT", "ACTIVE"})
+  void postCreateAccountMovementAllowsOnlyExactRetainedAbandonment(String nextControl) {
+    var original = source.repository().readProvisionalCasEvidence(TRANSITION_ID);
+    var candidate =
+        source
+            .repository()
+            .readOriginalNewCandidateInstallationSource(source.decision())
+            .candidate();
+    var repository = org.mockito.Mockito.spy(source.repository());
+    int[] claims = {0};
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (++claims[0] == 2) moveAccountControlAfterCandidateCreate(nextControl);
+              return invocation.callRealMethod();
+            })
+        .when(repository)
+        .claimOriginalNewCandidateInstallation(source.decision());
+    var racingOwner =
+        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
+            ownerClient,
+            RedisScriptCatalog.loadInstalled(getClass().getClassLoader()),
+            repository,
+            source.tenantTags());
+
+    // The second claim occurs only after real CREATE and independent physical readback.
+    assertThatThrownBy(() -> racingOwner.installOnce(source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(claims[0]).isEqualTo(2);
+    var assignment = source.tenantTags().assignmentForTransition(TRANSITION_ID);
+    String key =
+        CanonicalGameplaySessionRedisKeys.session(
+            assignment, candidate.bindingIdentity().bindingRef());
+    assertThat(admin.get(ascii(key))).containsExactly(candidate.canonicalBytes());
+    assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
+    String retained = sourceSqlImage(source);
+    String control = accountControlImage();
+    assertThatThrownBy(() -> source.repository().readProvisionalCasEvidence(TRANSITION_ID))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(
+            () -> source.repository().claimOriginalNewCandidateInstallation(source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(() -> owner.installOnce(source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(() -> source.repository().markProvisional(original, source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(sourceSqlImage(source)).isEqualTo(retained);
+
+    var selected = source.repository().selectOriginalNewAbandonment(TRANSITION_ID);
+    var retry = source.repository().selectOriginalNewAbandonment(TRANSITION_ID);
+    assertThat(selected.candidate()).isEqualTo(candidate);
+    assertThat(selected.transition().status().name()).isEqualTo("PREPARED");
+    assertThat(selected.state().name()).isEqualTo("ABANDONMENT_SELECTED");
+    assertThat(retry.abandonmentId()).isEqualTo(selected.abandonmentId());
+    assertThat(retry.transition().inventoryRevision())
+        .isEqualTo(selected.transition().inventoryRevision());
+    assertThat(accountControlImage()).isEqualTo(control);
+    String refusal =
+        switch (nextControl) {
+          case "ACQUISITION_INTENT" -> "Account-fence acquisition intent blocks";
+          case "ACTIVE" -> "Account-wide admission fence blocks";
+          default -> "irreversibly abandoned";
+        };
+    assertThatThrownBy(() -> owner.installOnce(source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessageContaining(refusal);
+    assertThatThrownBy(() -> source.repository().beginAccountMemberRepair(TRANSITION_ID))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(admin.get(ascii(key))).containsExactly(candidate.canonicalBytes());
+  }
+
+  private String accountControlImage() {
+    return source
+        .dsl()
+        .fetchSingle(
+            "SELECT to_jsonb(control)::text FROM game_session_canonical_account_coverage_control control WHERE account_id = ?",
+            source.identity().accountId())
+        .get(0, String.class);
+  }
+
+  private void moveAccountControlAfterCandidateCreate(String nextControl) {
+    if ("ACQUISITION_INTENT".equals(nextControl)) {
+      new CanonicalGameplayAccountAdmissionBarrierRepository(source.dsl())
+          .beginFenceIntent(source.identity().accountId(), UUID.randomUUID());
+      return;
+    }
+    // Coverage operations are controlled upstream SQL inputs, not acquisition-producer proof.
+    boolean historical = "HISTORICAL".equals(nextControl);
+    java.math.BigDecimal snapshot =
+        source
+            .dsl()
+            .fetchSingle(
+                "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id = 1")
+            .get(0, java.math.BigDecimal.class);
+    java.math.BigDecimal generation =
+        Objects.requireNonNull(snapshot).add(java.math.BigDecimal.ONE);
+    UUID operation = UUID.randomUUID();
+    UUID admissionFence = UUID.randomUUID();
+    UUID coverageFence = UUID.randomUUID();
+    source
+        .dsl()
+        .transaction(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+              transaction.execute(
+                  "INSERT INTO game_session_canonical_account_coverage_operation"
+                      + " (operation_id, request_id, account_id, legacy_cohort_id, legacy_owner_operation_id,"
+                      + " legacy_writer_fence, legacy_source_snapshot_revision, legacy_canonical_inventory_revision,"
+                      + " legacy_namespace_index_readback_revision, legacy_evidence_digest, lifecycle, operation_fence,"
+                      + " coverage_fence, account_admission_fence, historical_account_admission_fence, resolved_scope_kind,"
+                      + " snapshot_state, inventory_snapshot_revision, coverage_generation, redis_member_count, redis_member_set_digest)"
+                      + " SELECT ?, ?, ?, cohort_id, owner_operation_id, legacy_writer_fence, source_snapshot_revision,"
+                      + " canonical_inventory_revision, namespace_index_readback_revision, evidence_digest, ?, 1,"
+                      + " ?, ?, ?, 'ACCOUNT_WIDE', 'COMPLETE', ?, ?, ?, ?"
+                      + " FROM game_session_canonical_binding_legacy_disposition WHERE singleton_id = 1",
+                  operation,
+                  UUID.randomUUID(),
+                  source.identity().accountId(),
+                  nextControl,
+                  coverageFence,
+                  historical ? null : admissionFence,
+                  historical ? admissionFence : null,
+                  historical ? snapshot : null,
+                  historical ? generation : null,
+                  historical ? 0L : null,
+                  historical ? "sha256:" + "0".repeat(64) : null);
+              transaction.execute(
+                  "UPDATE game_session_canonical_account_coverage_control SET state = ?,"
+                      + " last_operation_fence = 1, current_operation_id = ?, current_operation_fence = 1,"
+                      + " account_admission_fence = ?, historical_account_admission_fence = ?, coverage_fence = ?,"
+                      + " inventory_snapshot_revision = ?, coverage_generation = ? WHERE account_id = ?",
+                  nextControl,
+                  operation,
+                  historical ? null : admissionFence,
+                  historical ? admissionFence : null,
+                  coverageFence,
+                  historical ? snapshot : null,
+                  historical ? generation : null,
+                  source.identity().accountId());
+            });
+  }
+
   @org.junit.jupiter.api.Test
   void abandonmentRefusesNeverClaimedAndAlreadyReadbackConfirmedOriginals() {
     assertThatThrownBy(() -> source.repository().selectOriginalNewAbandonment(TRANSITION_ID))

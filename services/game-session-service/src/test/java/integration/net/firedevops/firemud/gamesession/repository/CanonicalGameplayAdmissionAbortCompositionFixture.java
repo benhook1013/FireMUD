@@ -1051,6 +1051,12 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .prepareOrResume(transitionId);
   }
 
+  /** Drops the return after the real SQL release preparation commits its original intent. */
+  public void prepareIssuerReleaseAndLoseReply() {
+    prepareIssuerRelease();
+    throw new IllegalStateException("controlled lost issuer release preparation reply");
+  }
+
   public CanonicalGameplayIssuerBindingLocalReleaseOperation prepareIssuerRelease(String seed) {
     return new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
         .prepareOrResume(otherOperation(seed).request().transitionId());
