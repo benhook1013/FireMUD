@@ -131,7 +131,8 @@ public final class AccountGameplayAdmissionLeaseGrpcService
           return () -> {
             try {
               return originalNewCredentialOwner.issue(parsed);
-            } catch (IllegalStateException unavailable) {
+            } catch (IllegalStateException
+                | org.springframework.transaction.TransactionSystemException unavailable) {
               throw Status.UNAVAILABLE.asRuntimeException();
             }
           };
