@@ -618,7 +618,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
       LuaInvocation invocation = retirementInvocation(fixture, pendingRetirement);
 
-      administratorCommands.hdel(partitionKey, new byte[][] {baselineCapacityField});
+      byte[][] baselineCapacityFields = {baselineCapacityField};
+      administratorCommands.hdel(partitionKey, baselineCapacityFields);
       byte[] missingBaseline = physicalFieldSet(partitionKey);
       assertThat(evaluate(invocation)).isEqualTo(-1L);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(missingBaseline);
@@ -724,7 +725,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
   @Test
   void currentMembershipRejectsPrematureDeletionMutationTruncateAndDeferredSourceMismatch() {
     // A seeded baseline needs its own physical layout; sibling cases retain their issuer hashes.
-    try (var fixture = newFixture(BigInteger.valueOf(11), BigInteger.ONE, 1)) {
+    try (var fixture = newFixture(BigInteger.valueOf(17), BigInteger.ONE, 1)) {
       UUID originalId = fixture.originalOperationId();
       List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
       String originalBefore = localOperationImage(fixture.dsl(), originalId);
