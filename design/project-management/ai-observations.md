@@ -588,3 +588,9 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: R993 acquired the freed slot first, and R992 exhausted its admission budget before Gradle or tests ran. Submitting the front retry earlier did not reserve execution priority; the initial queueing assumption delayed its proof.
   - Outcome: R996 subsequently passes the exact front case under the ordinary guard. R992 remains an unexecuted admission failure, not a failed native test or successful retry.
   - Expected pattern: Observe admission of the priority proof before launching another heavier waiter. Serialize subsequent qualification at the orchestrator when order matters rather than assuming fairness from resource exclusion.
+
+- `2026-10-29`: A published candidate migration was incorrectly treated as an applied artifact
+  - Context: #3341 needed a native timestamp/binary comparison correction in candidate V1040.5/.6. The initial forward-only approach could not cross V1040.5's earlier populated backfill.
+  - Observation: Publication in an unmerged PR was assumed to freeze those artifacts, although neither was in the immutable receiving parent and no authorized retained/live application was known. That unsupported assumption delayed the complete upgrade repair.
+  - Outcome: The owning migration contract and Overseer confirmed normal in-PR candidate correction, preserving all receiving-parent checksums and original evidence. R1010 subsequently passes populated actual-parent V1040.4 upgrade and changed-session owner proof; publication alone is not retained applied-state evidence.
+  - Expected pattern: Establish actual receiving-parent and applied-state obligations before choosing forward-only migration repair. A later migration cannot repair an earlier migration that fails before it executes; concrete retained applied-state evidence must be resolved rather than rewritten.

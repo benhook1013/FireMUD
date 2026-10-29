@@ -248,8 +248,13 @@ BEGIN
            AND cohort.source_kind = 'RESERVATION'
            AND cohort.source_key = reservation_identity::text
            AND cohort.source_inventory_revision <= reservation.inventory_revision
-           AND (cohort.source_row_json::jsonb - 'lifecycle' - 'inventory_revision')
-               = (to_jsonb(reservation) - 'lifecycle' - 'inventory_revision')) THEN
+           -- Session rendering is not source identity: compare timestamp and binary values natively.
+           AND (cohort.source_row_json::jsonb ->> 'binding_ref')::bytea = reservation.binding_ref
+           AND (cohort.source_row_json::jsonb ->> 'created_at')::timestamptz = reservation.created_at
+           AND (cohort.source_row_json::jsonb - 'lifecycle' - 'inventory_revision'
+                - 'binding_ref' - 'created_at')
+               = (to_jsonb(reservation) - 'lifecycle' - 'inventory_revision'
+                  - 'binding_ref' - 'created_at')) THEN
         RETURN;
     END IF;
     RAISE EXCEPTION 'Installed issuer reservation requires exact bootstrap or current local-operation membership'
