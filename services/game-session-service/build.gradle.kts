@@ -184,8 +184,6 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/game-session-issuer-binding-local-add.json")
         include("redis/lua/game-session-issuer-binding-local-release.lua")
         include("redis/scripts/game-session-issuer-binding-local-release.json")
-        include("redis/lua/game-session-issuer-binding-local-retirement.lua")
-        include("redis/scripts/game-session-issuer-binding-local-retirement.json")
     }
 }
 

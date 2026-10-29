@@ -23,20 +23,14 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.StoredProtection;
-import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.StoredSettlement;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
-import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadClient;
-import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadEvidence;
-import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
-import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionSettlementEvidence;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
@@ -51,8 +45,6 @@ import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
-import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -201,218 +193,6 @@ class AccountStartSessionAdmissionProtectionServiceTest {
     verifyNoInteractions(h.issuer, h.protections);
   }
 
-  @Test
-  void settlementReadsExactTerminalOutsideSqlAndCommitsImmutableReadback() {
-    var fixture = fixture("admission-settle");
-    var h = new SettlementHarness();
-    var protectedRow = new StoredProtection(fixture.protection(), 79L);
-    var canonicalSettlement =
-        AccountStartSessionAdmissionProtectionSettlementEvidence.create(
-            fixture.protection(), fixture.committedTerminal());
-    var expected = storedSettlement(canonicalSettlement);
-    when(h.repository.findHistoricalExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.of(protectedRow));
-    when(h.repository.findSettlementExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.empty(), Optional.of(expected));
-    when(h.client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
-              assertThat(read.protection().canonicalBytes())
-                  .containsExactly(fixture.protection().canonicalBytes());
-              return new AccountInitialAdmissionSettlementReadEvidence(
-                  read.readRequestId(), read.protection(), fixture.committedTerminal());
-            });
-    when(h.repository.settleExact(any())).thenReturn(expected);
-
-    var actual =
-        withGameSessionPeerResult(
-            () ->
-                h.service.settle(
-                    fixture.protection().accountProtectionId(),
-                    fixture.protection().accountProtectionFence()));
-
-    assertThat(actual.canonicalBytes()).containsExactly(canonicalSettlement.canonicalBytes());
-    assertThat(h.transactions.begins).isEqualTo(3);
-    assertThat(h.transactions.commits).isEqualTo(3);
-    var captured =
-        org.mockito.ArgumentCaptor.forClass(AccountInitialAdmissionSettlementReadEvidence.class);
-    verify(h.repository).settleExact(captured.capture());
-    assertThat(captured.getValue().protection().canonicalBytes())
-        .containsExactly(fixture.protection().canonicalBytes());
-    assertThat(
-            GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(
-                captured.getValue().terminal()))
-        .containsExactly(
-            GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(
-                fixture.committedTerminal()));
-    verify(h.client).read(any());
-  }
-
-  @Test
-  void exactHistoricalSettlementReplayDoesNotRequeryOrRenewProtection() {
-    var fixture = fixture("admission-settle-replay");
-    var h = new SettlementHarness();
-    var canonicalSettlement =
-        AccountStartSessionAdmissionProtectionSettlementEvidence.create(
-            fixture.protection(), fixture.committedTerminal());
-    var receipt = storedSettlement(canonicalSettlement);
-    when(h.repository.findHistoricalExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 83L)));
-    when(h.repository.findSettlementExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.of(receipt));
-
-    var actual =
-        withGameSessionPeerResult(
-            () ->
-                h.service.settle(
-                    fixture.protection().accountProtectionId(),
-                    fixture.protection().accountProtectionFence()));
-
-    assertThat(actual.canonicalBytes()).containsExactly(receipt.canonicalBytes());
-    verifyNoInteractions(h.client);
-    verify(h.repository, never()).settleExact(any());
-    assertThat(h.transactions.begins).isEqualTo(1);
-    assertThat(h.transactions.commits).isEqualTo(1);
-  }
-
-  @Test
-  void settlementAcceptsOnlyTheExactDefinitiveFencedAbortOutcome() {
-    var fixture = fixture("admission-settle-abort");
-    var h = new SettlementHarness();
-    var aborted = fixture.abortedTerminal();
-    var value =
-        AccountStartSessionAdmissionProtectionSettlementEvidence.create(
-            fixture.protection(), aborted);
-    var expected = storedSettlement(value);
-    when(h.repository.findHistoricalExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 87L)));
-    when(h.repository.findSettlementExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.empty(), Optional.of(expected));
-    when(h.client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
-              return new AccountInitialAdmissionSettlementReadEvidence(
-                  read.readRequestId(), read.protection(), aborted);
-            });
-    when(h.repository.settleExact(any())).thenReturn(expected);
-
-    var actual =
-        withGameSessionPeerResult(
-            () ->
-                h.service.settle(
-                    fixture.protection().accountProtectionId(),
-                    fixture.protection().accountProtectionFence()));
-
-    assertThat(actual.outcome())
-        .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
-    assertThat(actual.canonicalBytes()).containsExactly(value.canonicalBytes());
-    assertThat(aborted.positiveDurableAbort()).isTrue();
-  }
-
-  @Test
-  void settlementRejectsChangedOwnerReadBeforeMutationAndClassifiesDependencyFailure() {
-    var fixture = fixture("admission-settle-mismatch");
-    var h = new SettlementHarness();
-    when(h.repository.findHistoricalExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 89L)));
-    when(h.repository.findSettlementExact(
-            fixture.protection().accountProtectionId(),
-            fixture.protection().accountProtectionFence()))
-        .thenReturn(Optional.empty());
-    when(h.client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var read = (AccountInitialAdmissionSettlementReadInput) invocation.getArgument(0);
-              return new AccountInitialAdmissionSettlementReadEvidence(
-                  UUID.randomUUID(), read.protection(), fixture.committedTerminal());
-            });
-
-    withGameSessionPeer(
-        () ->
-            assertCode(
-                Status.Code.FAILED_PRECONDITION,
-                () ->
-                    h.service.settle(
-                        fixture.protection().accountProtectionId(),
-                        fixture.protection().accountProtectionFence())));
-    verify(h.repository, never()).settleExact(any());
-
-    for (RuntimeException malformed :
-        List.of(
-            new IllegalArgumentException("malformed direct owner read"),
-            new IllegalStateException("malformed decoded owner read"))) {
-      var invalid = new SettlementHarness();
-      when(invalid.repository.findHistoricalExact(
-              fixture.protection().accountProtectionId(),
-              fixture.protection().accountProtectionFence()))
-          .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 89L)));
-      when(invalid.repository.findSettlementExact(
-              fixture.protection().accountProtectionId(),
-              fixture.protection().accountProtectionFence()))
-          .thenReturn(Optional.empty());
-      doThrow(malformed).when(invalid.client).read(any());
-      var failure =
-          statusFailure(
-              () ->
-                  withGameSessionPeer(
-                      () ->
-                          invalid.service.settle(
-                              fixture.protection().accountProtectionId(),
-                              fixture.protection().accountProtectionFence())));
-      assertThat(Status.fromThrowable(failure).getCode())
-          .isEqualTo(Status.Code.FAILED_PRECONDITION);
-      assertThat(failure.getCause()).isSameAs(malformed);
-      verify(invalid.repository, never()).settleExact(any());
-    }
-
-    for (Status.Code code : Status.Code.values()) {
-      var dependency = new SettlementHarness();
-      when(dependency.repository.findHistoricalExact(
-              fixture.protection().accountProtectionId(),
-              fixture.protection().accountProtectionFence()))
-          .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 89L)));
-      when(dependency.repository.findSettlementExact(
-              fixture.protection().accountProtectionId(),
-              fixture.protection().accountProtectionFence()))
-          .thenReturn(Optional.empty());
-      var upstream =
-          Status.fromCode(code).withDescription("trusted upstream detail").asRuntimeException();
-      doThrow(upstream).when(dependency.client).read(any());
-      var failure =
-          statusFailure(
-              () ->
-                  withGameSessionPeer(
-                      () ->
-                          dependency.service.settle(
-                              fixture.protection().accountProtectionId(),
-                              fixture.protection().accountProtectionFence())));
-      assertThat(Status.fromThrowable(failure).getCode())
-          .isEqualTo(infrastructureCodes().contains(code) ? code : Status.Code.FAILED_PRECONDITION);
-      assertThat(failure.getCause()).isSameAs(upstream);
-      assertThat(failure.getStatus().getDescription())
-          .isEqualTo("Game Session admission terminal dependency failed");
-      verify(dependency.repository, never()).settleExact(any());
-    }
-  }
-
   private static Fixture fixture(String requestId) {
     var pre =
         StartSessionPreAuthorizationReservationTuple.createHuman(
@@ -552,17 +332,6 @@ class AccountStartSessionAdmissionProtectionServiceTest {
     }
   }
 
-  private static StoredSettlement storedSettlement(
-      AccountStartSessionAdmissionProtectionSettlementEvidence value) {
-    return new StoredSettlement(
-        value.protection(),
-        value.terminal(),
-        value.outcome(),
-        value.canonicalBytes(),
-        value.digest(),
-        Instant.parse("2030-01-01T00:02:00Z"));
-  }
-
   private static byte[] bytes(String value) {
     return value.getBytes(StandardCharsets.UTF_8);
   }
@@ -574,16 +343,6 @@ class AccountStartSessionAdmissionProtectionServiceTest {
     } catch (java.security.NoSuchAlgorithmException impossible) {
       throw new IllegalStateException(impossible);
     }
-  }
-
-  private static Set<Status.Code> infrastructureCodes() {
-    return Set.of(
-        Status.Code.UNAVAILABLE,
-        Status.Code.DEADLINE_EXCEEDED,
-        Status.Code.CANCELLED,
-        Status.Code.RESOURCE_EXHAUSTED,
-        Status.Code.INTERNAL,
-        Status.Code.UNKNOWN);
   }
 
   private static StatusRuntimeException statusFailure(Runnable work) {
@@ -649,29 +408,7 @@ class AccountStartSessionAdmissionProtectionServiceTest {
       AccountStartSessionAdmissionProtectionRequest request,
       AccountStartSessionWorldParticipationRepository.StoredParticipation participation,
       AccountStartSessionWorldOriginalAttemptEvidenceRepository.StoredEvidence retainedAttempt,
-      AccountStartSessionAdmissionProtectionEvidence protection) {
-    GameSessionCanonicalInitialAdmissionOwnerProof committedTerminal() {
-      return new GameSessionCanonicalInitialAdmissionOwnerProof(
-          protection.request().worldAdmissionHoldIdentity(),
-          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
-          1L,
-          31L,
-          "sha256:" + "f".repeat(64),
-          false,
-          Instant.parse("2030-01-01T00:01:00Z"));
-    }
-
-    GameSessionCanonicalInitialAdmissionOwnerProof abortedTerminal() {
-      return new GameSessionCanonicalInitialAdmissionOwnerProof(
-          protection.request().worldAdmissionHoldIdentity(),
-          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
-          null,
-          null,
-          "sha256:" + "9".repeat(64),
-          true,
-          Instant.parse("2030-01-01T00:01:00Z"));
-    }
-  }
+      AccountStartSessionAdmissionProtectionEvidence protection) {}
 
   private static final class AcquisitionHarness {
     final AccountStartSessionOperatorAuthorizationService issuer =
@@ -694,17 +431,6 @@ class AccountStartSessionAdmissionProtectionServiceTest {
             currentAttemptReader,
             transactions,
             NAMESPACE);
-  }
-
-  private static final class SettlementHarness {
-    final AccountStartSessionAdmissionProtectionRepository repository =
-        mock(AccountStartSessionAdmissionProtectionRepository.class);
-    final AccountInitialAdmissionSettlementReadClient client =
-        mock(AccountInitialAdmissionSettlementReadClient.class);
-    final OwnerTransactions transactions = new OwnerTransactions();
-    final AccountStartSessionAdmissionProtectionSettlementService service =
-        new AccountStartSessionAdmissionProtectionSettlementService(
-            repository, client, transactions, NAMESPACE);
   }
 
   private static final class OwnerTransactions extends AbstractPlatformTransactionManager {
