@@ -75,6 +75,95 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build();
 
+  // Shared with focused native schema proof; it does not establish positive owner authority.
+  static final String INITIAL_REGION_MAPPING_SQL =
+      "SELECT o.operation_id,o.world_instance_id AS operation_world_instance_id,"
+          + "o.request_digest AS operation_request_digest,"
+          + "o.request_bytes,o.original_lifecycle_evidence_bytes,o.result_bytes,o.result_digest,"
+          + "l.canonical_tenant_id AS location_tenant_id,l.realm_id AS location_realm_id,"
+          + "l.playable_state_namespace_id AS location_namespace_id,"
+          + "l.canonical_game_instance_id AS location_game_instance_id,"
+          + "l.world_instance_id AS location_world_instance_id,"
+          + "l.canonical_account_id,l.character_id,l.entity_assignment_operation_id,"
+          + "l.entity_assignment_digest,l.canonical_version_id,l.active_lifecycle_epoch,"
+          + "l.initial_room_template_id,l.initial_runtime_room_instance_id,"
+          + "l.runtime_room_instance_id,l.initial_location_operation_id,"
+          + "l.initial_location_request_digest,l.initial_lifecycle_evidence_bytes,"
+          + "l.initial_lifecycle_evidence_digest,"
+          + "w.id AS current_world_instance_id,w.tenant_id AS private_tenant_key,"
+          + "w.game_instance_id AS private_game_instance_key,w.status AS current_lifecycle_status,"
+          + "w.lifecycle_epoch AS current_lifecycle_epoch,w.row_version AS current_lifecycle_row_version,"
+          + "rmi.id AS room_row_id,rmi.room_instance_row_id AS runtime_room_key,"
+          + "rmi.template_room_id AS room_template_private_key,rmi.zone_instance_id AS room_zone_row_id,"
+          + "rmi.region_instance_id AS room_region_row_id,rmi.tenant_id AS room_tenant_key,"
+          + "rmi.game_instance_id AS room_game_instance_key,rt.zone_id AS room_template_zone_key,"
+          + "zi.id AS zone_row_id,zi.zone_instance_id AS runtime_zone_key,"
+          + "zi.template_zone_id AS zone_template_private_key,zi.region_instance_id AS zone_region_row_id,"
+          + "zi.canonical_zone_instance_id,zi.tenant_id AS zone_tenant_key,"
+          + "zi.game_instance_id AS zone_game_instance_key,z.region_id AS zone_template_region_key,"
+          + "ri.id AS region_row_id,ri.canonical_region_instance_id,ri.operational_region_id,"
+          + "ri.tenant_id AS region_tenant_key,ri.game_instance_id AS region_game_instance_key,"
+          + "ri.world_instance_id AS region_world_instance_id,"
+          + "room_map.id AS room_mapping_id,room_map.world_instance_id AS room_mapping_world_id,"
+          + "room_map.canonical_game_instance_id AS room_mapping_game_instance_id,"
+          + "room_map.template_id AS room_mapping_template_id,"
+          + "room_map.template_private_row_key AS room_mapping_template_private_key,"
+          + "room_map.runtime_row_id AS room_mapping_runtime_row_id,"
+          + "room_map.runtime_room_instance_id AS room_mapping_runtime_room_key,"
+          + "zone_map.id AS zone_mapping_id,zone_map.world_instance_id AS zone_mapping_world_id,"
+          + "zone_map.canonical_game_instance_id AS zone_mapping_game_instance_id,"
+          + "zone_map.template_id AS zone_mapping_template_id,"
+          + "zone_map.template_private_row_key AS zone_mapping_template_private_key,"
+          + "zone_map.runtime_row_id AS zone_mapping_runtime_row_id,"
+          + "zone_map.runtime_identity AS zone_mapping_runtime_identity,"
+          + "region_map.id AS region_mapping_id,region_map.world_instance_id AS region_mapping_world_id,"
+          + "region_map.canonical_game_instance_id AS region_mapping_game_instance_id,"
+          + "region_map.template_id AS region_mapping_template_id,"
+          + "region_map.template_private_row_key AS region_mapping_template_private_key,"
+          + "region_map.runtime_row_id AS region_mapping_runtime_row_id,"
+          + "region_map.runtime_identity AS region_mapping_runtime_identity "
+          + "FROM world_canonical_initial_player_location_operation o "
+          + "JOIN character_location l ON l.initial_location_operation_id=o.operation_id "
+          + "JOIN world_instance w ON w.id=o.world_instance_id "
+          + "AND w.id=l.world_instance_id AND w.canonical_game_instance_id=l.canonical_game_instance_id "
+          + "JOIN room_instance rmi ON rmi.tenant_id=w.tenant_id "
+          + "AND rmi.game_instance_id=w.game_instance_id "
+          + "AND rmi.room_instance_row_id=l.runtime_room_instance_id "
+          + "JOIN room rt ON rt.id=rmi.template_room_id AND rt.tenant_id=w.tenant_id "
+          + "AND rt.version_id=w.version_id "
+          + "JOIN zone_instance zi ON zi.id=rmi.zone_instance_id "
+          + "AND zi.tenant_id=w.tenant_id AND zi.game_instance_id=w.game_instance_id "
+          + "AND zi.region_instance_id=rmi.region_instance_id "
+          + "JOIN zone z ON z.id=zi.template_zone_id AND z.id=rt.zone_id "
+          + "AND z.tenant_id=w.tenant_id AND z.version_id=w.version_id "
+          + "JOIN region_instance ri ON ri.id=zi.region_instance_id "
+          + "AND ri.id=rmi.region_instance_id AND ri.world_instance_id=w.id "
+          + "AND ri.tenant_id=w.tenant_id AND ri.game_instance_id=w.game_instance_id "
+          + "JOIN region template_region ON template_region.id=z.region_id "
+          + "AND template_region.tenant_id=w.tenant_id AND template_region.version_id=w.version_id "
+          + "JOIN world_canonical_instance_topology_identity room_map "
+          + "ON room_map.world_instance_id=w.id AND room_map.canonical_game_instance_id=w.canonical_game_instance_id "
+          + "AND room_map.family='ROOM' AND room_map.runtime_row_id=rmi.id "
+          + "AND room_map.runtime_room_instance_id=rmi.room_instance_row_id "
+          + "AND room_map.template_id=? AND room_map.template_private_row_key=rmi.template_room_id "
+          + "JOIN world_canonical_instance_topology_identity zone_map "
+          + "ON zone_map.world_instance_id=w.id AND zone_map.canonical_game_instance_id=w.canonical_game_instance_id "
+          + "AND zone_map.family='ZONE' AND zone_map.runtime_row_id=zi.id "
+          + "AND zone_map.template_private_row_key=zi.template_zone_id "
+          + "AND zone_map.runtime_identity=zi.canonical_zone_instance_id "
+          + "JOIN world_canonical_instance_topology_identity region_map "
+          + "ON region_map.world_instance_id=w.id AND region_map.canonical_game_instance_id=w.canonical_game_instance_id "
+          + "AND region_map.family='REGION' AND region_map.runtime_row_id=ri.id "
+          + "AND region_map.template_private_row_key=template_region.id "
+          + "AND region_map.runtime_identity=ri.canonical_region_instance_id "
+          + "WHERE o.operation_id=? AND o.outcome='APPLIED' AND l.canonical_tenant_id=? "
+          + "AND l.realm_id=? AND l.playable_state_namespace_id=? AND l.canonical_game_instance_id=? "
+          + "AND l.canonical_account_id=? AND l.character_id=? "
+          + "AND l.entity_assignment_operation_id=? AND l.entity_assignment_digest=? "
+          + "AND l.canonical_version_id=? AND l.active_lifecycle_epoch=? "
+          + "AND l.initial_room_template_id=? AND l.initial_runtime_room_instance_id=l.runtime_room_instance_id "
+          + "AND l.initial_runtime_room_instance_id=? AND w.status='ACTIVE' AND w.lifecycle_epoch=?";
+
   private final DSLContext dsl;
   private final TransactionTemplate readTransaction;
   private final TransactionTemplate writeTransaction;
@@ -145,12 +234,7 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
               requireReadOnlyRepeatableReadTransaction();
               Record operation = readOperation(operationId);
               if (operation == null) return null;
-              Request retainedRequest =
-                  new Request(
-                      operationId,
-                      required(operation, "request_digest", String.class),
-                      required(operation, "request_bytes", byte[].class),
-                      required(operation, "original_lifecycle_evidence_bytes", byte[].class));
+              Request retainedRequest = retainedRequest(operation, operationId);
               ParsedRequest parsed = parseRequest(retainedRequest);
               selector.requireMatches(parsed);
               return readInOwnerTransaction(retainedRequest)
@@ -159,6 +243,216 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
                           invalidReadback(
                               "Retained World initial-location operation disappeared during readback"));
             }));
+  }
+
+  /**
+   * Reads the retained initial placement and its current same-room region consequence in one
+   * read-only repeatable-read World owner snapshot. The Entity receipt remains a caller-side
+   * authenticated read and must be completed before invoking this method.
+   */
+  public Optional<RegionResult> readInitialPlayerLocationRegion(RequestSelector selector) {
+    Objects.requireNonNull(selector, "selector");
+    requireNoActiveTransaction("World canonical initial-location region read");
+    return Optional.ofNullable(
+        readTransaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadTransaction();
+              Record operation = readOperation(selector.operationId());
+              if (operation == null) return null;
+              Request retainedRequest = retainedRequest(operation, selector.operationId());
+              ParsedRequest parsed = parseRequest(retainedRequest);
+              selector.requireMatches(parsed);
+              Result placement =
+                  readInOwnerTransaction(retainedRequest)
+                      .orElseThrow(
+                          () ->
+                              invalidReadback(
+                                  "Retained World initial-location operation disappeared during region read"));
+              if (placement.outcome() != Outcome.APPLIED
+                  || placement.startLocation() == null
+                  || placement.runtimeRoomInstanceId() == null) {
+                throw invalidReadback(
+                    "Initial-location region consequence requires the retained APPLIED placement");
+              }
+
+              WorldCanonicalInstanceLifecycleEvidence retainedLifecycle =
+                  WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                      retainedRequest.originalLifecycleEvidenceBytes());
+              WorldCanonicalInstanceLifecycleEvidence currentLifecycle;
+              try {
+                currentLifecycle =
+                    lifecycleRepository
+                        .readForCurrentLocationInOwnerTransaction(retainedLifecycle.request())
+                        .orElse(null);
+              } catch (
+                  WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException
+                      invalid) {
+                throw invalidReadback(
+                    "Current World lifecycle evidence is inconsistent with initial placement",
+                    invalid);
+              }
+              requireCurrentLifecycle(retainedLifecycle, currentLifecycle, placement, parsed);
+              RegionMapping mapping =
+                  readInitialRegionMapping(retainedRequest, placement, parsed, currentLifecycle);
+              return new RegionResult(
+                  placement,
+                  mapping.worldInstanceId(),
+                  mapping.runtimeRoomInstanceId(),
+                  mapping.canonicalRegionInstanceId(),
+                  mapping.operationalRegionId(),
+                  currentLifecycle);
+            }));
+  }
+
+  private Request retainedRequest(Record operation, UUID operationId) {
+    return new Request(
+        operationId,
+        required(operation, "request_digest", String.class),
+        required(operation, "request_bytes", byte[].class),
+        required(operation, "original_lifecycle_evidence_bytes", byte[].class));
+  }
+
+  private void requireCurrentLifecycle(
+      WorldCanonicalInstanceLifecycleEvidence retained,
+      WorldCanonicalInstanceLifecycleEvidence current,
+      Result placement,
+      ParsedRequest parsed) {
+    if (current == null
+        || !"ACTIVE".equals(current.lifecycleStatus())
+        || current.lifecycleEpoch() != parsed.activeLifecycleEvidence().lifecycleEpoch()
+        || !current.request().equals(retained.request())
+        || !current.startLocation().equals(placement.startLocation())
+        || current.runtimeRoomInstanceId() != placement.runtimeRoomInstanceId()
+        || !current.captureId().equals(retained.captureId())
+        || !current.graphSha256().equals(retained.graphSha256())
+        || !current.preparationInputDigest().equals(retained.preparationInputDigest())
+        || !current
+            .operationalRegionAssignments()
+            .equals(retained.operationalRegionAssignments())) {
+      throw invalidReadback(
+          "Current World lifecycle, graph, room, or region assignments differ from retained initial placement");
+    }
+  }
+
+  private RegionMapping readInitialRegionMapping(
+      Request retainedRequest,
+      Result placement,
+      ParsedRequest parsed,
+      WorldCanonicalInstanceLifecycleEvidence currentLifecycle) {
+    var rows =
+        dsl.fetch(
+            INITIAL_REGION_MAPPING_SQL,
+            placement.startLocation().roomTemplateId(),
+            parsed.operationId(),
+            parsed.canonicalTenantId(),
+            parsed.realmId(),
+            parsed.playableStateNamespaceId(),
+            parsed.canonicalGameInstanceId(),
+            parsed.canonicalAccountId(),
+            parsed.characterId(),
+            parsed.entityAssignmentOperationId(),
+            parsed.entityAssignmentDigest(),
+            parsed.canonicalVersionId(),
+            parsed.activeLifecycleEvidence().lifecycleEpoch(),
+            placement.startLocation().roomTemplateId(),
+            placement.runtimeRoomInstanceId(),
+            currentLifecycle.lifecycleEpoch());
+    if (rows.size() != 1) {
+      throw invalidReadback(
+          "Current initial room has no unique exact ROOM-to-ZONE-to-REGION mapping");
+    }
+    Record row = rows.getFirst();
+    long worldInstanceId = required(row, "current_world_instance_id", Long.class);
+    long runtimeRoomKey = required(row, "runtime_room_key", Long.class);
+    UUID canonicalRegionId = required(row, "canonical_region_instance_id", UUID.class);
+    UUID mappedCanonicalRegionId = required(row, "region_mapping_runtime_identity", UUID.class);
+    UUID operationalRegionId = required(row, "operational_region_id", UUID.class);
+    if (!required(row, "operation_id", UUID.class).equals(parsed.operationId())
+        || required(row, "operation_world_instance_id", Long.class) != worldInstanceId
+        || !required(row, "operation_request_digest", String.class)
+            .equals(placement.requestDigest())
+        || !Arrays.equals(required(row, "request_bytes", byte[].class), placement.requestBytes())
+        || !Arrays.equals(required(row, "result_bytes", byte[].class), placement.resultBytes())
+        || !required(row, "result_digest", String.class).equals(placement.resultDigest())
+        || !Arrays.equals(
+            required(row, "original_lifecycle_evidence_bytes", byte[].class),
+            retainedRequest.originalLifecycleEvidenceBytes())
+        || !required(row, "location_tenant_id", UUID.class).equals(parsed.canonicalTenantId())
+        || !required(row, "location_realm_id", UUID.class).equals(parsed.realmId())
+        || !required(row, "location_namespace_id", UUID.class)
+            .equals(parsed.playableStateNamespaceId())
+        || !required(row, "location_game_instance_id", UUID.class)
+            .equals(parsed.canonicalGameInstanceId())
+        || !required(row, "location_world_instance_id", Long.class).equals(worldInstanceId)
+        || !required(row, "canonical_account_id", UUID.class).equals(parsed.canonicalAccountId())
+        || !required(row, "character_id", UUID.class).equals(parsed.characterId())
+        || !required(row, "entity_assignment_operation_id", UUID.class)
+            .equals(parsed.entityAssignmentOperationId())
+        || !required(row, "entity_assignment_digest", String.class)
+            .equals(parsed.entityAssignmentDigest())
+        || !required(row, "canonical_version_id", UUID.class).equals(parsed.canonicalVersionId())
+        || required(row, "active_lifecycle_epoch", Long.class) != currentLifecycle.lifecycleEpoch()
+        || !required(row, "initial_room_template_id", UUID.class)
+            .equals(placement.startLocation().roomTemplateId())
+        || required(row, "initial_runtime_room_instance_id", Long.class) != runtimeRoomKey
+        || required(row, "runtime_room_instance_id", Long.class) != runtimeRoomKey
+        || !required(row, "initial_location_operation_id", UUID.class).equals(parsed.operationId())
+        || !required(row, "initial_location_request_digest", String.class)
+            .equals(placement.requestDigest())
+        || !Arrays.equals(
+            required(row, "initial_lifecycle_evidence_bytes", byte[].class),
+            retainedRequest.originalLifecycleEvidenceBytes())
+        || !required(row, "initial_lifecycle_evidence_digest", String.class)
+            .equals(prefixedDigest(retainedRequest.originalLifecycleEvidenceBytes()))
+        || required(row, "current_lifecycle_row_version", Long.class)
+            != currentLifecycle.rowVersion()
+        || !sameLong(row, "private_tenant_key", "room_tenant_key")
+        || !sameLong(row, "private_game_instance_key", "room_game_instance_key")
+        || !sameLong(row, "private_tenant_key", "zone_tenant_key")
+        || !sameLong(row, "private_game_instance_key", "zone_game_instance_key")
+        || !sameLong(row, "private_tenant_key", "region_tenant_key")
+        || !sameLong(row, "private_game_instance_key", "region_game_instance_key")
+        || !sameLong(row, "current_world_instance_id", "region_world_instance_id")
+        || required(row, "room_mapping_world_id", Long.class) != worldInstanceId
+        || required(row, "zone_mapping_world_id", Long.class) != worldInstanceId
+        || required(row, "region_mapping_world_id", Long.class) != worldInstanceId
+        || !required(row, "room_mapping_game_instance_id", UUID.class)
+            .equals(parsed.canonicalGameInstanceId())
+        || !required(row, "zone_mapping_game_instance_id", UUID.class)
+            .equals(parsed.canonicalGameInstanceId())
+        || !required(row, "region_mapping_game_instance_id", UUID.class)
+            .equals(parsed.canonicalGameInstanceId())
+        || !required(row, "room_mapping_template_id", UUID.class)
+            .equals(placement.startLocation().roomTemplateId())
+        || !sameLong(row, "room_mapping_template_private_key", "room_template_private_key")
+        || !sameLong(row, "room_mapping_runtime_row_id", "room_row_id")
+        || required(row, "room_mapping_runtime_room_key", Long.class) != runtimeRoomKey
+        || !sameLong(row, "room_zone_row_id", "zone_row_id")
+        || !sameLong(row, "room_region_row_id", "region_row_id")
+        || !sameLong(row, "room_template_zone_key", "zone_template_private_key")
+        || !sameLong(row, "zone_mapping_template_private_key", "zone_template_private_key")
+        || !sameLong(row, "zone_mapping_runtime_row_id", "zone_row_id")
+        || !required(row, "zone_mapping_runtime_identity", UUID.class)
+            .equals(required(row, "canonical_zone_instance_id", UUID.class))
+        || !sameLong(row, "zone_template_region_key", "region_mapping_template_private_key")
+        || !sameLong(row, "region_mapping_runtime_row_id", "region_row_id")
+        || canonicalRegionId.equals(operationalRegionId)
+        || !canonicalRegionId.equals(mappedCanonicalRegionId)
+        || !operationalRegionId.equals(
+            currentLifecycle.operationalRegionAssignments().get(canonicalRegionId))) {
+      throw invalidReadback(
+          "Current initial room, runtime topology, and canonical region assignment disagree");
+    }
+    if (required(row, "room_mapping_id", Long.class) <= 0
+        || required(row, "zone_mapping_id", Long.class) <= 0
+        || required(row, "region_mapping_id", Long.class) <= 0
+        || !"ACTIVE".equals(required(row, "current_lifecycle_status", String.class))
+        || required(row, "current_lifecycle_epoch", Long.class)
+            != currentLifecycle.lifecycleEpoch()) {
+      throw invalidReadback("Current World region consequence has incomplete owner identity");
+    }
+    return new RegionMapping(
+        worldInstanceId, runtimeRoomKey, canonicalRegionId, operationalRegionId);
   }
 
   private boolean storeInOwnerTransaction(Request request) {
@@ -876,6 +1170,11 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     return value;
   }
 
+  private static boolean sameLong(Record row, String left, String right) {
+    return required(row, left, Long.class).longValue()
+        == required(row, right, Long.class).longValue();
+  }
+
   private static void requireNoActiveTransaction(String label) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(label + " requires an independent owner transaction");
@@ -933,6 +1232,39 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     CONFLICT,
     UNREGISTERED
   }
+
+  /** Fresh region consequence of one retained APPLIED initial placement. */
+  public record RegionResult(
+      Result placementResult,
+      long privateWorldInstanceKey,
+      long runtimeRoomInstanceKey,
+      UUID canonicalRegionInstanceId,
+      UUID operationalRegionId,
+      WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence) {
+    public RegionResult {
+      Objects.requireNonNull(placementResult, "placementResult");
+      Objects.requireNonNull(canonicalRegionInstanceId, "canonicalRegionInstanceId");
+      Objects.requireNonNull(operationalRegionId, "operationalRegionId");
+      Objects.requireNonNull(lifecycleEvidence, "lifecycleEvidence");
+      if (placementResult.outcome() != Outcome.APPLIED
+          || privateWorldInstanceKey <= 0
+          || runtimeRoomInstanceKey <= 0
+          || placementResult.runtimeRoomInstanceId() == null
+          || placementResult.runtimeRoomInstanceId() != runtimeRoomInstanceKey
+          || canonicalRegionInstanceId.equals(operationalRegionId)
+          || !operationalRegionId.equals(
+              lifecycleEvidence.operationalRegionAssignments().get(canonicalRegionInstanceId))) {
+        throw new IllegalArgumentException(
+            "World initial-location region consequence is inconsistent");
+      }
+    }
+  }
+
+  private record RegionMapping(
+      long worldInstanceId,
+      long runtimeRoomInstanceId,
+      UUID canonicalRegionInstanceId,
+      UUID operationalRegionId) {}
 
   /** Exact original owner request and lifecycle proof bytes; the tuple is comparison input only. */
   public record Request(

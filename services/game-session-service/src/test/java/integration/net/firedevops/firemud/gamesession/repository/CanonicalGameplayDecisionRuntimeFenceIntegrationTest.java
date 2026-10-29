@@ -3,13 +3,9 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.DriverManager;
-import java.sql.Timestamp;
 import java.util.UUID;
-import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
-import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -254,6 +250,72 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
   }
 
   @Test
+  void freshSourceBoundRuntimeWithoutHumanCompletionCannotLoseRunOwnedLaunchProvenance() {
+    String schema = "gs_runtime_fence_runowned_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrate(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
+      byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
+
+      // A fresh source-bound RUNNING row cannot be stripped of its run-owned launch association.
+      // The V26 deferred guard rejects that impossible setup before V1044's lease-bound fence runs.
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE game_instances SET row_version = row_version + 1,"
+                          + " run_owned_start_request_id = NULL,"
+                          + " run_owned_start_request_digest = NULL,"
+                          + " run_owned_start_published_release_bundle_ref = NULL,"
+                          + " run_owned_start_preparing_epoch = NULL,"
+                          + " run_owned_start_active_epoch = NULL"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      target.gameSessionTenantId(),
+                      target.gameInstanceId()))
+          .hasMessageContaining(
+              "Fresh Game Session instance requires one exact complete launch association");
+
+      var runtimeReadback =
+          dsl.fetchSingle(
+              "SELECT status, row_version, run_owned_start_request_id,"
+                  + " run_owned_start_request_digest, run_owned_start_published_release_bundle_ref,"
+                  + " run_owned_start_preparing_epoch, run_owned_start_active_epoch"
+                  + " FROM game_instances WHERE tenant_id = ? AND id = ?",
+              target.gameSessionTenantId(),
+              target.gameInstanceId());
+      assertThat(runtimeReadback.get("status", String.class)).isEqualTo("RUNNING");
+      assertThat(runtimeReadback.get("row_version", Long.class)).isEqualTo(1L);
+      assertThat(runtimeReadback.get("run_owned_start_request_id", String.class))
+          .isEqualTo(target.controlPlaneRequestId());
+      assertThat(runtimeReadback.get("run_owned_start_request_digest", String.class)).isNotNull();
+      assertThat(runtimeReadback.get("run_owned_start_published_release_bundle_ref", String.class))
+          .isEqualTo(target.publishedReleaseBundleRef());
+      assertThat(runtimeReadback.get("run_owned_start_preparing_epoch", Long.class)).isNotNull();
+      assertThat(runtimeReadback.get("run_owned_start_active_epoch", Long.class)).isNotNull();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS actual_count"
+                          + " FROM game_session_canonical_human_runtime_completion"
+                          + " WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      target.targetNamespace(),
+                      target.initialAdmissionRequestId())
+                  .get("actual_count", Long.class))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition"
+                          + " WHERE candidate_binding_ref = ?",
+                      candidateRef)
+                  .get("status", String.class))
+          .isEqualTo("PREPARED");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
   void mismatchedCandidateTenantRuntimeOrCanonicalInstanceCannotAcquireFence() {
     String schema = "gs_runtime_fence_candidate_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
@@ -379,6 +441,137 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
     }
   }
 
+  @Test
+  void regionExecutorFenceForwardMigrationPreservesIssuedAndNullRequiredSources() {
+    String schema = "gs_executor_forward_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = dataSource(schema);
+    try {
+      migrateToRegionFencePredecessor(schema, dataSource);
+      DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      var target = CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
+      long issuedFence =
+          dsl.fetchSingle("SELECT nextval('game_session_region_executor_fence_seq') AS fence")
+              .get("fence", Long.class);
+      assertThat(issuedFence).isPositive();
+      seedRequiredRegionSource(dsl, target, Long.toString(issuedFence));
+      seedRequiredRegionSource(dsl, target, null);
+      seedRequiredRegionSource(dsl, target, Long.toString(Long.MAX_VALUE));
+      var before = requiredRegionSourceImages(dsl);
+
+      migrate(schema, dataSource);
+
+      assertThat(requiredRegionSourceImages(dsl)).isEqualTo(before);
+      assertThat(regionExecutorFenceType(dsl, schema)).isEqualTo("bigint");
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS count FROM game_session_canonical_binding_region_bridge_obligation"
+                          + " WHERE status = 'ACKNOWLEDGED'")
+                  .get("count", Long.class))
+          .isZero();
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void regionExecutorFenceForwardMigrationRefusesFractionalOverflowAndNonfiniteRetainedSources() {
+    for (String invalid : java.util.List.of("1.5", "9223372036854775808", "NaN", "Infinity")) {
+      String schema = "gs_executor_refuse_" + UUID.randomUUID().toString().replace("-", "");
+      DriverManagerDataSource dataSource = dataSource(schema);
+      try {
+        migrateToRegionFencePredecessor(schema, dataSource);
+        DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+        var target = CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
+        seedRequiredRegionSource(dsl, target, invalid);
+        var before = requiredRegionSourceImages(dsl);
+
+        assertThatThrownBy(() -> migrate(schema, dataSource))
+            .as("retained executor fence %s", invalid)
+            .hasStackTraceContaining(
+                "Retained region executor fence must be an exact positive BIGINT");
+
+        assertThat(requiredRegionSourceImages(dsl)).isEqualTo(before);
+        assertThat(regionExecutorFenceType(dsl, schema)).isEqualTo("numeric");
+      } finally {
+        dropSchema(schema);
+      }
+    }
+  }
+
+  private static void migrateToRegionFencePredecessor(
+      String schema, DriverManagerDataSource dataSource) {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target("1044.1")
+        .load()
+        .migrate();
+  }
+
+  private static java.util.List<String> requiredRegionSourceImages(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT to_jsonb(obligation)::text AS image"
+                + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                + " ORDER BY transition_id")
+        .getValues("image", String.class);
+  }
+
+  private static String regionExecutorFenceType(DSLContext dsl, String schema) {
+    return dsl.fetchSingle(
+            "SELECT data_type FROM information_schema.columns WHERE table_schema = ?"
+                + " AND table_name = 'game_session_canonical_binding_region_bridge_obligation'"
+                + " AND column_name = 'executor_fence'",
+            schema)
+        .get("data_type", String.class);
+  }
+
+  /**
+   * Controlled REQUIRED staging rows prove retained storage only; none asserts bridge ACK
+   * authority.
+   */
+  private static void seedRequiredRegionSource(
+      DSLContext dsl,
+      CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target,
+      String fence) {
+    byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
+    dsl.execute(
+        "INSERT INTO game_session_canonical_binding_region_bridge_obligation"
+            + " (transition_id, binding_ref, binding_generation, account_id, tenant_id,"
+            + " game_instance_id, runtime_game_instance_id, session_id, region_id, region_epoch,"
+            + " status, inventory_revision) SELECT transition_id, binding_ref, binding_generation,"
+            + " account_id, tenant_id, game_instance_id, runtime_game_instance_id, session_id,"
+            + " region_id, region_epoch, 'REQUIRED', inventory_revision"
+            + " FROM game_session_canonical_gameplay_binding_inventory WHERE binding_ref = ?",
+        candidateRef);
+    if (fence != null) {
+      dsl.execute(
+          "UPDATE game_session_canonical_binding_region_bridge_obligation SET"
+              + " bridge_operation_id = ?, bridge_preimage_state = 'ABSENT', runtime_entity_id = 1,"
+              + " entity_projection_generation = 1, entity_projection_fence = 1,"
+              + " entity_workload_namespace = 'controlled-storage-input', assignment_uuid = ?,"
+              + " assignment_intent_digest = ?, entity_reference_digest = ?, world_source_digest = ?,"
+              + " canonical_region_id = ?, world_lifecycle_epoch = 2, world_lifecycle_row_version = 0,"
+              + " world_capture_id = ?, world_graph_sha256 = ?, world_preparation_input_digest = ?,"
+              + " executor_fence = cast(? as numeric), lease_token_correlation = ?"
+              + " WHERE binding_ref = ?",
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          RAW_SHA256,
+          RAW_SHA256,
+          RAW_SHA256,
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          RAW_SHA256,
+          "sha256:" + RAW_SHA256,
+          fence,
+          RAW_SHA256,
+          candidateRef);
+    }
+  }
+
   private static void migrate(String schema, DriverManagerDataSource dataSource) {
     Flyway.configure()
         .dataSource(dataSource)
@@ -462,7 +655,6 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       DSLContext dsl,
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target,
       CandidateMismatch mismatch) {
-    CanonicalPlayableTarget playableTarget = target.playableTarget();
     UUID candidateTenant =
         mismatch == CandidateMismatch.TENANT ? UUID.randomUUID() : target.canonicalTenantId();
     long candidateRuntimeId =
@@ -473,117 +665,20 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
         mismatch == CandidateMismatch.CANONICAL_GAME_INSTANCE_UUID
             ? UUID.randomUUID()
             : target.gameInstanceUuid();
-    UUID transitionId = UUID.randomUUID();
-    UUID accountId = UUID.randomUUID();
-    UUID characterId = UUID.randomUUID();
-    UUID regionId = UUID.randomUUID();
-    String issuerId = GameSessionAccountDelegationProfile.ISSUER;
-    UUID accountIndexFence = UUID.randomUUID();
-    UUID issuerReservationId = UUID.randomUUID();
-    byte[] candidateRef = UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8);
-
-    dsl.execute(
-        "INSERT INTO game_session_canonical_gameplay_binding_inventory"
-            + " (binding_ref, account_id, tenant_id, playable_state_namespace_id, character_id,"
-            + " playable_state_scope, game_instance_id, runtime_game_instance_id, session_id,"
-            + " binding_generation, region_id, region_epoch, issuer_id, issuer_auth_generation,"
-            + " issuer_index_layout_version, issuer_index_partition_count,"
-            + " issuer_index_partition_capacity, issuer_partition_id, account_index_fence,"
-            + " issuer_reservation_id, transition_id, lifecycle, account_index_state,"
-            + " issuer_index_state, inventory_revision)"
-            + " VALUES (?, ?, ?, ?, ?, 'SHARED', ?, ?, ?, 1, ?, 12, ?, 1, 1, 1, 1, 0, ?, ?, ?,"
-            + " 'CANDIDATE_PREPARED', 'REPAIR_REQUIRED', 'REPAIR_REQUIRED', 1)",
-        candidateRef,
-        accountId,
+    return CanonicalGameplayBindingRuntimeTestFixtures.seedCandidateAndPreparedTransition(
+        dsl,
+        target.playableTarget(),
         candidateTenant,
-        playableTarget.playableStateNamespaceId(),
-        characterId,
-        candidateGameInstanceUuid,
         candidateRuntimeId,
-        UUID.randomUUID().toString(),
-        regionId,
-        issuerId,
-        accountIndexFence,
-        issuerReservationId,
-        transitionId);
-    dsl.execute(
-        "INSERT INTO game_session_canonical_binding_transition"
-            + " (transition_id, tenant_id, playable_state_namespace_id, character_id,"
-            + " expected_prior_binding_ref, expected_prior_binding_generation, candidate_binding_ref,"
-            + " candidate_binding_generation, candidate_account_index_fence, issuer_reservation_id,"
-            + " status, inventory_revision)"
-            + " VALUES (?, ?, ?, ?, NULL, NULL, ?, 1, ?, ?, 'PREPARED', 1)",
-        transitionId,
-        target.canonicalTenantId(),
-        playableTarget.playableStateNamespaceId(),
-        characterId,
-        candidateRef,
-        accountIndexFence,
-        issuerReservationId);
-    return candidateRef;
+        candidateGameInstanceUuid);
   }
 
   private static void markProvisional(
       DSLContext dsl,
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget,
       byte[] candidateRef) {
-    CanonicalPlayableTarget target = runtimeTarget.playableTarget();
-    dsl.execute(
-        "UPDATE game_session_canonical_binding_transition SET"
-            + " status = 'PROVISIONAL', admission_request_id = ?, admission_lease_id = ?,"
-            + " admission_lease_fence = 1, admission_lease_kind = 'NEW_BINDING',"
-            + " admission_lease_digest = ?, admission_lease_evidence = '{}',"
-            + " admission_lease_expires_at = 9999999999999,"
-            + " admission_target_namespace = ?, admission_target_tenant_slug = ?,"
-            + " admission_target_tenant_id = ?, admission_target_world_slug = ?,"
-            + " admission_target_world_display_name = ?, admission_target_realm_id = ?,"
-            + " admission_target_realm_slug = ?, admission_target_realm_display_name = ?,"
-            + " admission_target_game_session_tenant_id = ?, admission_target_game_instance_id = ?,"
-            + " admission_target_playable_state_namespace_id = ?, admission_target_playable_state_scope = ?,"
-            + " admission_target_canonical_game_instance_id = ?, admission_target_canonical_version_id = ?,"
-            + " admission_target_runtime_version_id = ?, admission_target_catalog_revision = ?,"
-            + " admission_target_pointer_version = ?, admission_target_pointer_snapshot_digest = ?,"
-            + " admission_target_active_world_epoch = ?, admission_target_initial_admission_request_id = ?,"
-            + " admission_target_initial_admission_request_digest = ?,"
-            + " admission_target_origin_kind = 'NO_PRIOR_POINTER',"
-            + " admission_target_hold_id = ?, admission_target_hold_fence = ?,"
-            + " admission_target_hold_binding_digest = ?, admission_target_audit_event_id = ?,"
-            + " admission_target_owner_proof_digest = ?, admission_target_owner_proof_outcome = 'COMMITTED',"
-            + " admission_target_positive_durable_abort = FALSE, admission_target_terminal_at = ?,"
-            + " admission_target_character_creation_policy = ?"
-            + " WHERE candidate_binding_ref = ?",
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        RAW_SHA256,
-        target.targetNamespace(),
-        target.tenantSlug(),
-        target.canonicalTenantId(),
-        target.worldSlug(),
-        target.worldDisplayName(),
-        target.realmId(),
-        target.realmSlug(),
-        target.realmDisplayName(),
-        target.gameSessionTenantId(),
-        target.gameInstanceId(),
-        target.playableStateNamespaceId(),
-        target.playableStateScope(),
-        target.canonicalGameInstanceId(),
-        target.canonicalVersionId(),
-        target.runtimeVersionId(),
-        target.catalogRevision(),
-        target.pointerVersion(),
-        target.admissionPointerSnapshotDigest(),
-        target.activeWorldEpoch(),
-        target.initialAdmissionRequestId(),
-        target.initialAdmissionRequestDigest(),
-        target.holdId(),
-        target.holdFence(),
-        target.holdBindingDigest(),
-        target.auditEventId(),
-        target.ownerProofDigest(),
-        Timestamp.from(target.ownerProofTerminalAt()),
-        target.characterCreationPolicy(),
-        candidateRef);
+    CanonicalGameplayBindingRuntimeTestFixtures.markProvisional(
+        dsl, runtimeTarget.playableTarget(), candidateRef);
   }
 
   private static void assertLaunchPreparationCatalogMismatchRejected(
