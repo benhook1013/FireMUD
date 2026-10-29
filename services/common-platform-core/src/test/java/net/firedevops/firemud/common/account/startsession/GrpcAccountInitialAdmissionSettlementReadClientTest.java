@@ -131,7 +131,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
   @Test
   void actualMtlsPreservesDefinitiveAbortAndRejectsInvalidOwnerResponses() throws Exception {
     var evidence =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.ABORTED, false);
+        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.ABORTED);
     var response = AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(evidence);
     responder.set(input -> response);
     start("gs");
@@ -161,7 +161,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
   @Test
   void nativeTransportStatusesRemainUnchangedAndNoAutomaticRetryOccurs() throws Exception {
     var evidence =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false);
+        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     start("gs");
     client = newClient("account", NAMESPACE);
     client.init();
@@ -191,7 +191,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     client = newClient("account", NAMESPACE);
     client.init();
     var input =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false)
+        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED)
             .input();
     assertThatThrownBy(() -> client.read(input))
         .satisfies(
@@ -207,7 +207,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     client = newClient("entity", NAMESPACE);
     client.init();
     var input =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false)
+        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED)
             .input();
     assertThatThrownBy(() -> client.read(input))
         .satisfies(
@@ -220,7 +220,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
   @Test
   void localNamespaceAndSqlFailBeforeAnyRpc() throws Exception {
     var evidence =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false);
+        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     start("gs");
     client = newClient("account", "other");
     assertThatThrownBy(() -> client.read(evidence.input()))
@@ -271,7 +271,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
             factory,
             NAMESPACE);
     var input =
-        AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, false)
+        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED)
             .input();
     assertThatThrownBy(() -> client.read(input))
         .isInstanceOf(IllegalStateException.class)

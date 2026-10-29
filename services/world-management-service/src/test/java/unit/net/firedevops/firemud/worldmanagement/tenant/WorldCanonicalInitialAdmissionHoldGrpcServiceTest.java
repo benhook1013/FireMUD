@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -20,8 +20,6 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldGrpcService;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwner;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;

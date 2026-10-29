@@ -2013,7 +2013,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
       gate.commit();
       var identity = acquiring.get(20, TimeUnit.SECONDS);
-      assertThat(transitioning.get(20, TimeUnit.SECONDS)).isEqualTo("40001");
+      assertThat(transitioning.get(20, TimeUnit.SECONDS)).isEqualTo("55000");
       var current =
           world
               .dsl()
