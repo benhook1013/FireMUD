@@ -724,7 +724,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           server("game-session-service", pki, gameSessionReceivers.toArray(BindableService[]::new));
       var gsEndpoints = new ServiceEndpointsProperties();
       gsEndpoints.setGameSessionService("localhost:" + gsServer.getPort());
-      try (var currentAttempt =
+      // Keep the World listener bound while its mutually dependent Account owners are assembled.
+      // Both clients copy endpoints in their constructors, so publish the actual port first.
+      try (var boundWorld = new DeferredWorldServer(pki);
+          var currentAttempt =
               new GrpcOriginalStartSessionCurrentAttemptClient(
                   gsEndpoints, pki.client("account-service"), factory, NAMESPACE);
           var launchAssociation =
@@ -761,12 +764,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               .isEqualTo(beforeAuthenticatedRead);
         }
 
-        int accountPort = availablePort();
-        int worldPort = availablePort();
         var accountEndpoints = new ServiceEndpointsProperties();
-        accountEndpoints.setAccountService("localhost:" + accountPort);
         var worldEndpoints = new ServiceEndpointsProperties();
-        worldEndpoints.setWorldManagementService("localhost:" + worldPort);
+        worldEndpoints.setWorldManagementService("localhost:" + boundWorld.server().getPort());
         var accountWorldTerminalRead =
             new WorldStartSessionExecutionTerminalReadClient(
                 worldEndpoints, pki.client("account-service"), factory, NAMESPACE);
@@ -811,7 +811,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             buildServer(
                 "account-service",
                 pki,
-                accountPort,
+                0,
                 () -> accountActivationSettlementReceiver,
                 new AccountStartSessionWorldParticipationAcquisitionGrpcService(
                     issuer.worldParticipationAcquisitionService(currentAttempt), NAMESPACE),
@@ -829,6 +829,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         accountManager(issuer.sourceDsl()),
                         NAMESPACE),
                     NAMESPACE));
+        accountEndpoints.setAccountService("localhost:" + accountServer.getPort());
         try (var acquisition =
                 new AccountStartSessionWorldParticipationAcquisitionClient(
                     accountEndpoints, pki.client("world-management-service"), factory, NAMESPACE);
@@ -1006,13 +1007,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             worldReceivers.add(
                 new WorldCanonicalInitialAdmissionHoldGrpcService(canonicalHoldOwner, NAMESPACE));
           }
-          Server worldServer =
-              buildServer(
-                  "world-management-service",
-                  pki,
-                  worldPort,
-                  () -> socket,
-                  worldReceivers.toArray(BindableService[]::new));
+          boundWorld.addService(socket);
+          for (var receiver : worldReceivers) boundWorld.addService(receiver.bindService());
+          Server worldServer = boundWorld.server();
           accountWorldTerminalRead.init();
           accountActivationTerminalRead.init();
           worldProtectedActivation.init();
@@ -1761,7 +1758,6 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           } finally {
             channel.shutdownNow();
             assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
-            shutdown(worldServer);
           }
         } finally {
           shutdown(accountServer);
@@ -4509,6 +4505,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       java.util.function.Supplier<ServerServiceDefinition> additionalService,
       BindableService... receivers)
       throws Exception {
+    return buildServer(service, pki, port, additionalService, null, receivers);
+  }
+
+  private static Server buildServer(
+      String service,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      int port,
+      java.util.function.Supplier<ServerServiceDefinition> additionalService,
+      io.grpc.util.MutableHandlerRegistry deferredServices,
+      BindableService... receivers)
+      throws Exception {
     var identity = pki.server(service);
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
@@ -4517,6 +4524,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    if (deferredServices != null) builder.fallbackHandlerRegistry(deferredServices);
     if (Arrays.stream(receivers)
         .anyMatch(AccountInitialAdmissionSettlementReadGrpcService.class::isInstance)) {
       builder.maxInboundMessageSize(
@@ -4530,18 +4538,39 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     return builder.build().start();
   }
 
+  /** Owns the early kernel-assigned World socket through all owner-assembly failure paths. */
+  private static final class DeferredWorldServer implements AutoCloseable {
+    private final io.grpc.util.MutableHandlerRegistry services =
+        new io.grpc.util.MutableHandlerRegistry();
+    private final Server server;
+
+    private DeferredWorldServer(WorldOriginalStartSessionPreparationProofPki pki) throws Exception {
+      server = buildServer("world-management-service", pki, 0, null, services);
+    }
+
+    private Server server() {
+      return server;
+    }
+
+    private void addService(ServerServiceDefinition service) {
+      if (services.addService(
+              ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor())) != null) {
+        throw new IllegalArgumentException("Duplicate deferred World service");
+      }
+    }
+
+    @Override
+    public void close() throws InterruptedException {
+      shutdown(server);
+    }
+  }
+
   private static DataSourceTransactionManager accountManager(DSLContext account) {
     // Reuse this fixture's actual schema datasource; no second Account schema or owner rows.
     var provider =
         (org.jooq.impl.DataSourceConnectionProvider) account.configuration().connectionProvider();
     var source = (TransactionAwareDataSourceProxy) provider.dataSource();
     return new DataSourceTransactionManager(Objects.requireNonNull(source.getTargetDataSource()));
-  }
-
-  private static int availablePort() throws java.io.IOException {
-    try (var socket = new java.net.ServerSocket(0)) {
-      return socket.getLocalPort();
-    }
   }
 
   private static void shutdown(Server server) throws InterruptedException {
