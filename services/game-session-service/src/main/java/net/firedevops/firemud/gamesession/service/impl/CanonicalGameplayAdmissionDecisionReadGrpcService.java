@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import io.lettuce.core.RedisCommandTimeoutException;
+import io.lettuce.core.RedisConnectionException;
 import java.sql.SQLException;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
@@ -114,26 +116,47 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
                         .originalLeaseEvidence()
                         .canonicalJson()
                         .equals(source.candidate().leaseEvidence().canonicalJson())) {
-                  throw new IllegalStateException("Negative decision differs from original source");
+                  throw new CanonicalGameplayBindingInventoryConflictException(
+                      "Negative decision differs from original source");
                 }
-                var candidate = source.candidate();
-                var evidence =
-                    new AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence(
-                        candidate.leaseEvidence(),
-                        selector.transitionId(),
-                        source.abandonmentId(),
-                        CanonicalGameplayOriginalNewCandidateClosureRedisOwner.candidateDigest(
-                                candidate)
-                            .substring(7),
-                        actual.digest().substring(7),
-                        toCandidate(candidate.bindingIdentity()),
-                        toTarget(candidate.targetEvidence()),
-                        candidate.transition().bindingGeneration());
-                return AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(
-                    selector, evidence);
+                String closureDigest = actual.digest();
+                try {
+                  var candidate = source.candidate();
+                  var evidence =
+                      new AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence(
+                          candidate.leaseEvidence(),
+                          selector.transitionId(),
+                          source.abandonmentId(),
+                          CanonicalGameplayOriginalNewCandidateClosureRedisOwner.candidateDigest(
+                                  candidate)
+                              .substring(7),
+                          closureDigest.substring(7),
+                          toCandidate(candidate.bindingIdentity()),
+                          toTarget(candidate.targetEvidence()),
+                          candidate.transition().bindingGeneration());
+                  return AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(
+                      selector, evidence);
+                } catch (RuntimeException responseEncodingFailure) {
+                  throw new IllegalStateException(
+                      "Negative decision response encoding failed", responseEncodingFailure);
+                }
               });
-    } catch (RuntimeException unavailable) {
+    } catch (CanonicalGameplayOriginalNewCandidateClosureRedisOwner.UnavailableException
+        | CannotCreateTransactionException
+        | DataAccessResourceFailureException
+        | TransientDataAccessException
+        | RedisConnectionException
+        | RedisCommandTimeoutException unavailable) {
       fail(observer, Status.UNAVAILABLE);
+      return;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+      return;
+    } catch (CanonicalGameplayBindingInventoryConflictException conflict) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
+    } catch (RuntimeException unexpectedFailure) {
+      fail(observer, Status.INTERNAL);
       return;
     }
     try {

@@ -73,13 +73,16 @@ public final class CanonicalGameplayOriginalNewCandidateClosureRedisOwner {
     var source = inventory.readOriginalNewAbandonmentSource(transitionId);
     if (source.state()
         != CanonicalGameplayOriginalNewAbandonmentSource.State.NEVER_ADMITTED_CLOSED) {
-      throw unavailable();
+      throw new CanonicalGameplayBindingInventoryConflictException(
+          "Original NEW source has no retained negative closure");
     }
     try (var held = acquire(source)) {
       var assignment = assignment(source);
       Readback actual = readPhysical(source, assignment, keys(source, assignment), held);
       var current = inventory.readOriginalNewAbandonmentSource(transitionId);
-      if (!actual.matches(current)) throw unavailable();
+      if (!actual.matches(current))
+        throw new CanonicalGameplayBindingInventoryConflictException(
+            "Original NEW closure differs from its retained source");
       T result = continuation.apply(actual);
       held.requireCurrent();
       return result;
@@ -255,7 +258,9 @@ public final class CanonicalGameplayOriginalNewCandidateClosureRedisOwner {
       CanonicalGameplayOriginalNewAbandonmentSource expected,
       CanonicalGameplayOriginalNewAbandonmentSource actual) {
     if (!expected.abandonmentId().equals(actual.abandonmentId())
-        || !expected.candidate().equals(actual.candidate())) throw unavailable();
+        || !expected.candidate().equals(actual.candidate()))
+      throw new CanonicalGameplayBindingInventoryConflictException(
+          "Original NEW closure selection changed");
   }
 
   private static void requirePrincipal(RedisAsyncCommands<byte[], byte[]> commands) {
@@ -299,8 +304,19 @@ public final class CanonicalGameplayOriginalNewCandidateClosureRedisOwner {
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
   }
 
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException("Original NEW negative closure is unavailable");
+  private static UnavailableException unavailable() {
+    return new UnavailableException();
+  }
+
+  /**
+   * Missing physical closure or continuously held external qualification, never source conflict.
+   */
+  public static final class UnavailableException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    public UnavailableException() {
+      super("Original NEW negative closure is unavailable");
+    }
   }
 
   /** Owner-produced proof valid only inside the continuously qualified continuation. */
@@ -383,7 +399,11 @@ public final class CanonicalGameplayOriginalNewCandidateClosureRedisOwner {
           || lease.fence() != fence
           || !FAMILY_SCOPE.equals(lease.scope())
           || !protectedBinding.equals(lease.protectedBindingId())) throw unavailable();
-      lease.requireCurrent();
+      try {
+        lease.requireCurrent();
+      } catch (IllegalStateException withdrawn) {
+        throw unavailable();
+      }
     }
 
     @Override
