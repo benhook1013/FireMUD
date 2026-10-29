@@ -14,7 +14,7 @@ public final class CanonicalGameplayOriginalNewNeverAdmittedAbortOwner {
   private final CanonicalGameplayBindingInventoryRepository inventory;
   private final CanonicalGameplayOriginalNewCandidateClosureRedisOwner closure;
   private final AccountGameplayAdmissionLeaseClient account;
-  private final CanonicalGameplayIssuerBindingLocalOperationRepository originals;
+  private final CanonicalGameplayIssuerOriginalMemberSourceRepository originals;
   private final CanonicalGameplayIssuerBindingLocalRedisOwner issuer;
   private final CanonicalGameplayIssuerBindingLocalReleaseOperationRepository releases;
   private final CanonicalGameplayIssuerBindingLocalReleaseRedisOwner releaseRedis;
@@ -34,7 +34,7 @@ public final class CanonicalGameplayOriginalNewNeverAdmittedAbortOwner {
         new CanonicalGameplayOriginalNewCandidateClosureRedisOwner(
             redis, catalog, inventory, tags, qualification);
     this.account = Objects.requireNonNull(account);
-    this.originals = new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource);
+    this.originals = new CanonicalGameplayIssuerOriginalMemberSourceRepository(dsl, issuerSource);
     var projections =
         new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource);
     this.issuer =
@@ -77,8 +77,10 @@ public final class CanonicalGameplayOriginalNewNeverAdmittedAbortOwner {
           if (!source.neverAdmitted()) throw unavailable();
           // Finish only the original issued capacity intent. A missing original source is unknown,
           // never evidence of absent capacity or permission to invent a replacement operation.
-          var original = originals.readOriginalForIssuerRelease(source);
-          issuer.reconcileNeverAdmittedCapacity(original);
+          var original = originals.read(source);
+          if (original instanceof CanonicalGameplayIssuerOriginalMemberSource.OrdinaryLocal local) {
+            issuer.reconcileNeverAdmittedCapacity(local.operation());
+          }
           var release = releases.prepareOrResume(transitionId);
           releases.completeWithReadback(release, releaseRedis.releaseAndRead(release));
           var retirement = retirements.prepareOrResume(transitionId);

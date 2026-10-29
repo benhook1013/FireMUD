@@ -193,7 +193,7 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
     }
   }
 
-  private static CanonicalGameplayIssuerBootstrapMemberOperation loadAndRequireExactOperation(
+  static CanonicalGameplayIssuerBootstrapMemberOperation loadAndRequireExactOperation(
       Record row,
       CanonicalGameplayIssuerPartitionBuildRepository.PreparedMemberWork prepared,
       CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation) {

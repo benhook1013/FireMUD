@@ -100,7 +100,9 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       issuerSource;
   private final CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState
       initialIssuerState;
-  private final CanonicalGameplayIssuerBindingLocalOperation localOperation;
+  private final Optional<CanonicalGameplayIssuerBindingLocalOperation> localOperation;
+  private final CanonicalGameplayIssuerOriginalMemberSource originalSource;
+  private final Optional<CanonicalGameplayIssuerBootstrapPartitionWork> originalBootstrapWork;
   private final CanonicalGameplayIssuerBindingLocalProjectionRepository localProjectionRepository;
   private byte[] issuerAcknowledgementBytes;
   private final RedisClient issuerRedisClient;
@@ -155,6 +157,22 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       MigrationVersion migrationTarget,
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap) {
+    this(accountDataSource, accountCandidate, issuerRedisClient, seedBootstrapMemberCount,
+        migrationTarget, afterBootstrap, false);
+  }
+
+  /** Genuine original preparation precedes the actual installed bootstrap; no local row is made. */
+  public CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource, Candidate accountCandidate,
+      RedisClient issuerRedisClient, boolean originalInBootstrap) {
+    this(accountDataSource, accountCandidate, issuerRedisClient, originalInBootstrap ? 1 : 0, null, (data, intent) -> {}, originalInBootstrap);
+  }
+
+  private CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource, Candidate accountCandidate,
+      RedisClient issuerRedisClient, int seedBootstrapMemberCount, MigrationVersion migrationTarget,
+      BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent> afterBootstrap,
+      boolean originalInBootstrap) {
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
@@ -203,6 +221,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       seedQualifiedBootstrapMembers(seedBootstrapMemberCount, migrationTarget);
     }
     repository = new CanonicalGameplayBindingInventoryRepository(dsl);
+    if (originalInBootstrap) {
+      repository.prepare(new CanonicalGameplayBindingTransitionRequest(transitionId, UUID.randomUUID(), identity,
+          new CanonicalIssuerReservationFenceEvidence(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+              BigInteger.ONE, BigInteger.TWO, BigInteger.ONE), null, null));
+    }
     BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
     BigInteger partitionCount = identity.issuerIndexPartitionCount();
     BigInteger partitionCapacity = identity.issuerIndexPartitionCapacity();
@@ -251,6 +274,18 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var partitionOwner =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
             issuerRedisClient, issuerCatalog, issuerSource);
+    if (originalInBootstrap) {
+      new CanonicalGameplayIssuerPartitionBuildRepository(dsl).prepareInitialBuildPlan(bootstrapIntent.operationId(), bootstrapRequestId);
+      var incarnation = initialIssuerState.incarnation();
+      originalBootstrapWork = Optional.of(new CanonicalGameplayIssuerBootstrapMemberOperationRepository(dsl).preparePartitionWork(
+          bootstrapIntent.operationId(), bootstrapRequestId,
+          repository.readProvisionalCasEvidence(transitionId).candidateReservation().partitionId(), sourceCheckpoint,
+          new CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation(
+              incarnation.attestorBinding(), incarnation.acceptedAttestationDigest(), incarnation.targetDeploymentEvidence(),
+              incarnation.coordOpsRoAclDigest(), incarnation.coordRedisConfigObservedDigest())));
+    } else {
+      originalBootstrapWork = Optional.empty();
+    }
     CanonicalGameplayIssuerInstalledAnchor installedAnchor =
         new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
             .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
@@ -260,22 +295,43 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     }
     new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
         .installInitialOpen(installedAnchor, issuerSource);
-    var request =
-        new CanonicalGameplayIssuerBindingLocalOperation.Request(
-            UUID.randomUUID(), transitionId, identity, null, null);
-    localOperation =
-        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
-            .beginOrResumeOrdinaryNew(request);
-    generation = localOperation.preparedTransition().bindingGeneration();
-    localProjectionRepository =
-        new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource);
-    new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-        .projectAndRead(localOperation);
+    localProjectionRepository = new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource);
+    if (originalInBootstrap) {
+      localOperation = Optional.empty();
+      generation = repository.readProvisionalCasEvidence(transitionId).transition().bindingGeneration();
+      var originalReservationId = repository.readProvisionalCasEvidence(transitionId).candidateReservation().reservationId();
+      originalSource = dsl.transactionResult(configuration -> {
+        var transaction = DSL.using(configuration);
+        CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+        var row = transaction.fetchSingle(
+            "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
+            installedAnchor.bootstrapOperationId(), originalReservationId);
+        return CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
+            transaction, installedAnchor, initialIssuerState, row);
+      });
+    } else {
+      var request = new CanonicalGameplayIssuerBindingLocalOperation.Request(UUID.randomUUID(), transitionId, identity, null, null);
+      var operation = new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource).beginOrResumeOrdinaryNew(request);
+      localOperation = Optional.of(operation);
+      originalSource = CanonicalGameplayIssuerOriginalMemberSource.ordinary(operation);
+      generation = operation.preparedTransition().bindingGeneration();
+      new CanonicalGameplayIssuerBindingLocalRedisOwner(issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource).projectAndRead(operation);
+    }
+  }
+
+  /** Executes the actual frozen original bootstrap Lua for stale-writer refusal proof. */
+  public void replayOriginalBootstrapPartition() {
+    new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(issuerRedisClient, issuerCatalog, issuerSource)
+        .buildAndRead(originalBootstrapWork.orElseThrow());
+  }
+
+  public void retireIssuerCapacityAndLoseReply(CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    retireIssuerCapacity(operation);
+    throw new IllegalStateException("controlled lost retirement reply after actual completion");
   }
 
   public CanonicalGameplayIssuerInstalledAnchor retryOriginalIssuerBootstrap() {
-    CanonicalGameplayIssuerInstalledAnchor originalAnchor = localOperation.anchor();
+    CanonicalGameplayIssuerInstalledAnchor originalAnchor = originalSource.anchor();
     var partitionOwner =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
             issuerRedisClient, issuerCatalog, issuerSource);
@@ -579,10 +635,26 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     }
   }
 
+  /** Every unaffected frozen bootstrap field remains physically mandatory after cleanup. */
+  public void assertUnaffectedBootstrapFieldsPresent() {
+    String targetCapacity = CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(originalSource.reservation().reservationId());
+    try (var connection = issuerRedisClient.connect(ByteArrayCodec.INSTANCE)) {
+      for (BigInteger partition = BigInteger.ZERO; partition.compareTo(originalSource.anchor().partitionCount()) < 0; partition = partition.add(BigInteger.ONE)) {
+        var proof = CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(dsl, originalSource.anchor(), partition);
+        var fields = CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(proof.exactPhysicalFieldSetBytes());
+        byte[] key = CanonicalGameplayIssuerRedisKeys.forPartition(originalSource.memberValue().layoutDescriptor(), partition).getBytes(StandardCharsets.US_ASCII);
+        for (var field : fields.entrySet()) {
+          if (field.getKey().equals(targetCapacity) || field.getKey().equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) continue;
+          assertThat(connection.sync().hget(key, field.getKey().getBytes(StandardCharsets.UTF_8))).containsExactly(field.getValue());
+        }
+      }
+    }
+  }
+
   public boolean originalIssuerCapacityAbsent() {
     byte[] capacityField =
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
-                localOperation.reservation().reservationId())
+                originalSource.reservation().reservationId())
             .getBytes(StandardCharsets.UTF_8);
     try (var connection = issuerRedisClient.connect(ByteArrayCodec.INSTANCE)) {
       return connection.sync().hget(issuerPartitionKey(), capacityField) == null
@@ -659,7 +731,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var physicalReadback =
         new CanonicalGameplayIssuerBindingLocalRedisOwner(
                 issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-            .projectAndRead(localOperation);
+            .projectAndRead(localOperation.orElseThrow());
     var acknowledgement =
         new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
             .acknowledge(physicalReadback);
@@ -920,10 +992,10 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var completed =
         new CanonicalGameplayIssuerBindingLocalReleaseOperationRepository(dsl, issuerSource)
             .completeWithReadback(operation, readback);
-    if (operation.originalOperation().operationId().equals(localOperation.operationId())) {
+    if (!operation.neverAdmitted() && operation.originalOperationId().equals(originalSource.operationId())) {
       var historicalAcknowledgement =
           new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
-              .readHistorical(localOperation.operationId());
+              .readHistorical(originalSource.operationId());
       if (issuerAcknowledgementBytes == null
           || historicalAcknowledgement == null
           || !java.util.Arrays.equals(
@@ -966,7 +1038,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     } while (!other
         .bindingRef()
         .partitionId(identity.issuerIndexPartitionCount())
-        .equals(localOperation.reservation().partitionId()));
+        .equals(originalSource.reservation().partitionId()));
     var operation =
         new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
             .beginOrResumeOrdinaryNew(
@@ -1136,7 +1208,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
       readCurrentOriginalPartitionWork() {
-    return localProjectionRepository.readPreparedPartitionWork(localOperation);
+    return localProjectionRepository.readPreparedPartitionWork(originalSource);
   }
 
   public CanonicalGameplayIssuerBindingLocalRetirementOperation prepareIssuerRetirement(
@@ -1180,7 +1252,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public byte[] issuerPartitionKey() {
-    return CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+    return CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
         .getBytes(StandardCharsets.US_ASCII);
   }
 
@@ -1190,23 +1262,27 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public BigInteger originalPartitionId() {
-    return localOperation.reservation().partitionId();
+    return originalSource.reservation().partitionId();
+  }
+
+  private CanonicalGameplayIssuerBootstrapCoverageRepository.InstalledAnchorPartitionProof originalBaselineProof() {
+    return CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(dsl, originalSource.anchor(), originalSource.reservation().partitionId());
   }
 
   public int originalBaselineReservationCount() {
-    return localOperation.baselinePartitionProof().physicalReservationCount();
+    return originalBaselineProof().physicalReservationCount();
   }
 
   public int originalBaselineCountedCapacity() {
-    return localOperation.baselinePartitionProof().physicalCountedCapacityCount();
+    return originalBaselineProof().physicalCountedCapacityCount();
   }
 
   public int originalBaselineBindingCount() {
-    return localOperation.baselinePartitionProof().physicalBindingCount();
+    return originalBaselineProof().physicalBindingCount();
   }
 
   public BigInteger preparedLocalCountedReservations() {
-    var work = localProjectionRepository.readPreparedPartitionWork(localOperation);
+    var work = localProjectionRepository.readPreparedPartitionWork(originalSource);
     return BigInteger.valueOf(
         work.localEntries().stream()
             .filter(
@@ -1215,7 +1291,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                         .memberValue()
                         .reservation()
                         .partitionId()
-                        .equals(localOperation.reservation().partitionId()))
+                        .equals(originalSource.reservation().partitionId()))
             .filter(
                 CanonicalGameplayIssuerBindingLocalProjectionRepository.LocalEntry
                     ::countsTowardCapacity)
@@ -1273,7 +1349,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public byte[] readReleaseCapacityValue(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation) {
     byte[] key =
-        CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
             .getBytes(StandardCharsets.US_ASCII);
     String field =
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
@@ -1287,7 +1363,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public byte[] readReleaseBindingValue(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation) {
     byte[] key =
-        CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
             .getBytes(StandardCharsets.US_ASCII);
     byte[] field = operation.releasedMemberValue().owner().bindingRef().bytes();
     try (var connection =
@@ -1309,7 +1385,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public void installConflictingReleaseCapacity(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation, byte[] conflictingBytes) {
     byte[] key =
-        CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
             .getBytes(StandardCharsets.US_ASCII);
     byte[] field =
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
@@ -1324,7 +1400,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public void restoreOriginalReleaseCapacity(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation) {
     byte[] key =
-        CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
             .getBytes(StandardCharsets.US_ASCII);
     byte[] field =
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
@@ -1340,7 +1416,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public void installConflictingReleaseBinding(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation) {
     byte[] key =
-        CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
             .getBytes(StandardCharsets.US_ASCII);
     byte[] field = operation.releasedMemberValue().owner().bindingRef().bytes();
     try (var connection =
@@ -1353,7 +1429,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   public void restoreOriginalReleaseBinding(
       CanonicalGameplayIssuerBindingLocalReleaseOperation operation) {
     byte[] key =
-        CanonicalGameplayIssuerRedisKeys.forMember(localOperation.memberValue())
+        CanonicalGameplayIssuerRedisKeys.forMember(originalSource.memberValue())
             .getBytes(StandardCharsets.US_ASCII);
     byte[] field = operation.originalOperation().memberValue().owner().bindingRef().bytes();
     try (var connection =
@@ -1434,11 +1510,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public UUID originalOperationId() {
-    return localOperation.operationId();
+    return originalSource.operationId();
   }
 
   public byte[] originalMemberValueBytes() {
-    return localOperation.exactMemberValueBytes();
+    return originalSource.exactMemberValueBytes();
   }
 
   private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(

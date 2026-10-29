@@ -38,7 +38,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
           new RedisScriptDescriptor.ArgumentSpec("partitionCapacity"),
           new RedisScriptDescriptor.ArgumentSpec("baselineFieldCountAndExactFieldValuePairs"),
           new RedisScriptDescriptor.ArgumentSpec(
-              "registeredLocalOperationCountAndExactOperationTupleAndCurrentPhase"),
+              "currentOriginalMemberCountAndExactOperationTupleAndCurrentPhase"),
           new RedisScriptDescriptor.ArgumentSpec(
               "originalAndReleasedMemberOperationAndCapacityProof"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> EXPECTED_OUTCOMES =
@@ -97,7 +97,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
         return new Readback(
             operation.operationId(), 2L, operation.exactPhysicalReadbackFieldSetBytes());
       }
-      var original = operation.originalOperation();
+      var original = operation.originalSource();
       var work = projectionRepository.readPreparedPartitionWork(original);
       CanonicalGameplayIssuerPartitionMutation mutation = operation.physicalMutation();
       if (mutation.status()
@@ -236,8 +236,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
           physicalBindings++;
         }
       }
-      int baselineReservations = work.baselineProof().physicalReservationCount();
-      int baselineBindings = work.baselineProof().physicalBindingCount();
+      int baselineReservations = work.effectiveBaselineReservationCount();
+      int baselineBindings = work.effectiveBaselineBindingCount();
       int registeredReservations =
           Math.toIntExact(
               work.localEntries().stream()
@@ -317,7 +317,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       args.add(ascii(entry.capacityMustBePresent() ? "1" : "0"));
       args.add(ascii(entry.bindingMustBePresent() ? "1" : "0"));
     }
-    args.add(ascii(operation.originalOperation().operationId().toString()));
+    args.add(ascii(operation.originalSource().operationId().toString()));
     args.add(ascii(operation.operationId().toString()));
     args.add(ascii(operation.releasedMemberValue().reservation().reservationId().toString()));
     args.add(operation.releasedMemberValue().owner().bindingRef().bytes());
@@ -336,7 +336,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
 
   private static byte[] exactPartitionKey(
       CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work) {
-    String key = CanonicalGameplayIssuerRedisKeys.forMember(work.targetOperation().memberValue());
+    String key = CanonicalGameplayIssuerRedisKeys.forMember(work.targetSource().memberValue());
     if (!key.startsWith(KEY_PREFIX) || key.length() > 512)
       throw unavailable("Issuer key is not canonical");
     return key.getBytes(StandardCharsets.US_ASCII);
