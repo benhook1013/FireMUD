@@ -170,7 +170,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             + " FROM game_session_canonical_binding_issuer_index_obligation obligation"
             + " WHERE transition_id = ? AND status = 'REQUIRED'";
     String retainedObligation =
-        fixture.dsl().fetchSingle(retainedObligationQuery, fixture.transitionId()).get(0, String.class);
+        fixture
+            .dsl()
+            .fetchSingle(retainedObligationQuery, fixture.transitionId())
+            .get(0, String.class);
     String retainedRows = sqlImage();
     Map<String, String> retainedPhysical = physicalImage();
 
