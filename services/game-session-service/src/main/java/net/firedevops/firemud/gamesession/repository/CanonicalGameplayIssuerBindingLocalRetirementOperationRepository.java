@@ -482,16 +482,14 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     UUID operationId = original.operationId();
     if (count(
                 transaction,
-                "SELECT COUNT(*) FROM "
+                "SELECT COUNT(*) FROM game_session_canonical_issuer_current_local_operation membership"
+                    + " JOIN "
                     + LOCAL_OPERATION
-                    + " operation WHERE operation.issuer_id = ?"
-                    + " AND operation.binding_ref = ? AND operation.operation_id <> ?"
-                    + " AND NOT EXISTS (SELECT 1 FROM "
-                    + RETIREMENT
-                    + " retired"
-                    + " WHERE retired.original_local_operation_id = operation.operation_id"
-                    + " AND retired.status = 'RETIRED')",
+                    + " operation ON operation.operation_id = membership.operation_id"
+                    + " WHERE membership.issuer_id = ? AND membership.anchor_bootstrap_operation_id = ?"
+                    + " AND operation.binding_ref = ? AND operation.operation_id <> ?",
                 ISSUER,
+                original.anchor().bootstrapOperationId(),
                 bindingRef,
                 operationId)
             != 0
@@ -499,14 +497,22 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
                 transaction,
                 "SELECT COUNT(*) FROM "
                     + RESERVATION
-                    + " reservation WHERE reservation.issuer_id = ?"
-                    + " AND reservation.binding_ref = ? AND reservation.reservation_id <> ?"
-                    + " AND NOT EXISTS (SELECT 1 FROM "
-                    + RETIREMENT
-                    + " retired"
-                    + " WHERE retired.reservation_id = reservation.reservation_id"
-                    + " AND retired.status = 'RETIRED')",
+                    + " reservation WHERE reservation.issuer_id = ? AND reservation.lifecycle <> 'RELEASED'"
+                    + " AND reservation.binding_ref = ? AND reservation.reservation_id <> ?",
                 ISSUER,
+                bindingRef,
+                reservationId)
+            != 0
+        || count(
+                transaction,
+                "SELECT COUNT(*) FROM game_session_canonical_issuer_bootstrap_member_operation bootstrap"
+                    + " JOIN "
+                    + RESERVATION
+                    + " reservation ON reservation.reservation_id = bootstrap.reservation_id"
+                    + " WHERE bootstrap.issuer_id = ? AND bootstrap.bootstrap_operation_id = ?"
+                    + " AND reservation.binding_ref = ? AND reservation.reservation_id <> ?",
+                ISSUER,
+                original.anchor().bootstrapOperationId(),
                 bindingRef,
                 reservationId)
             != 0) {
