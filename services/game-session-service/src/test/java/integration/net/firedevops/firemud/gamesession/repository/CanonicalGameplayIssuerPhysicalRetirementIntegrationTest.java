@@ -877,6 +877,198 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
   }
 
   @Test
+  void bootstrapMembershipPreservesNativeAttributesAcrossSessionRenderingChanges() {
+    try (var fixture =
+        newFixture(
+            controlledCandidate(BigInteger.valueOf(23), BigInteger.ONE),
+            1,
+            MigrationVersion.fromVersion("1040.4"),
+            this::upgradeRetainedBootstrapWithChangedSession)) {
+      assertThat(fixture.originalBaselineReservationCount()).isOne();
+      String baselineSourceSql =
+          " FROM game_session_canonical_issuer_installed_anchor anchor"
+              + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
+              + " ON cohort.build_operation_id = anchor.build_operation_id"
+              + " AND cohort.source_operation_id = anchor.bootstrap_operation_id"
+              + " AND cohort.issuer_id = anchor.issuer_id"
+              + " AND cohort.source_kind = 'RESERVATION'";
+      UUID baselineReservationId =
+          fixture
+              .dsl()
+              .fetchSingle("SELECT cohort.source_key::uuid" + baselineSourceSql)
+              .get(0, UUID.class);
+      String retainedOwnerSql =
+          "SELECT jsonb_build_object('cohort', to_jsonb(cohort), 'anchor', to_jsonb(anchor))::text"
+              + baselineSourceSql;
+      String retainedOwnerBefore = fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class);
+      String reservationBefore = reservationImage(fixture.dsl(), baselineReservationId);
+      String historyBefore = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      List<String> migrationHistoryAfter = fixture.migrationHistoryImage();
+      List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
+      byte[] partitionBefore = physicalFieldSet(fixture.issuerPartitionKey());
+
+      Map<String, String> timestampRenderings = new HashMap<>();
+      Map<String, String> binaryRenderings = new HashMap<>();
+      for (String timeZone : List.of("UTC", "Pacific/Auckland", "America/New_York")) {
+        for (String byteaOutput : List.of("hex", "escape")) {
+          fixture
+              .dsl()
+              .transaction(
+                  configuration -> {
+                    DSLContext transaction = DSL.using(configuration);
+                    // LOCAL settings and the guard use this transaction's same owned connection.
+                    transaction.execute("SET LOCAL TimeZone = '" + timeZone + "'");
+                    transaction.execute("SET LOCAL bytea_output = '" + byteaOutput + "'");
+                    var rendered =
+                        transaction.fetchSingle(
+                            "SELECT to_jsonb(created_at)::text, to_jsonb(binding_ref)::text FROM"
+                                + " game_session_canonical_issuer_partition_reservation"
+                                + " WHERE reservation_id = ?",
+                            baselineReservationId);
+                    timestampRenderings.put(timeZone, rendered.get(0, String.class));
+                    binaryRenderings.put(byteaOutput, rendered.get(1, String.class));
+                    transaction.fetch(
+                        "SELECT gs_require_issuer_reservation_current_membership(?)",
+                        baselineReservationId);
+                  });
+        }
+      }
+      assertThat(timestampRenderings.values()).doesNotHaveDuplicates();
+      assertThat(binaryRenderings.values()).doesNotHaveDuplicates();
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .transaction(
+                          configuration -> {
+                            DSLContext transaction = DSL.using(configuration);
+                            transaction.execute("SET LOCAL TimeZone = 'Pacific/Auckland'");
+                            transaction.execute("SET LOCAL bytea_output = 'escape'");
+                            assertThat(
+                                    transaction.execute(
+                                        "UPDATE game_session_canonical_issuer_partition_reservation"
+                                            + " SET coverage_fence = coverage_fence + 1"
+                                            + " WHERE reservation_id = ?",
+                                        baselineReservationId))
+                                .isOne();
+                            transaction.fetch(
+                                "SELECT gs_require_issuer_reservation_current_membership(?)",
+                                baselineReservationId);
+                          }))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
+          .hasMessageContaining(
+              "Installed issuer reservation requires exact bootstrap or current local-operation membership");
+      assertThat(fixture.migrationHistoryImage()).containsExactlyElementsOf(migrationHistoryAfter);
+      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(historyBefore);
+      assertThat(fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class))
+          .isEqualTo(retainedOwnerBefore);
+      assertThat(reservationImage(fixture.dsl(), baselineReservationId))
+          .isEqualTo(reservationBefore);
+      assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);
+      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(partitionBefore);
+      String immutableReservationSql =
+          "SELECT (to_jsonb(reservation) - 'lifecycle' - 'inventory_revision')::text FROM"
+              + " game_session_canonical_issuer_partition_reservation reservation"
+              + " WHERE reservation_id = ?";
+      String immutableReservationBefore =
+          fixture
+              .dsl()
+              .fetchSingle(immutableReservationSql, baselineReservationId)
+              .get(0, String.class);
+      var aborted =
+          fixture.recordBootstrapAccountAbort(baselineReservationId, "Pacific/Auckland", "escape");
+      assertThat(aborted.isAccountAborted()).isTrue();
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT lifecycle FROM game_session_canonical_issuer_partition_reservation WHERE reservation_id = ?",
+                      baselineReservationId)
+                  .get(0, String.class))
+          .isEqualTo("RELEASE_PENDING");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(immutableReservationSql, baselineReservationId)
+                  .get(0, String.class))
+          .isEqualTo(immutableReservationBefore);
+      assertThat(fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class))
+          .isEqualTo(retainedOwnerBefore);
+      String afterAbort = reservationImage(fixture.dsl(), baselineReservationId);
+      String afterAbortHistory = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      assertThat(
+              fixture
+                  .recordBootstrapAccountAbort(baselineReservationId, "America/New_York", "hex")
+                  .orphanCleanupId())
+          .isEqualTo(aborted.orphanCleanupId());
+      assertThat(reservationImage(fixture.dsl(), baselineReservationId)).isEqualTo(afterAbort);
+      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(afterAbortHistory);
+      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(partitionBefore);
+    }
+  }
+
+  private void upgradeRetainedBootstrapWithChangedSession(
+      org.springframework.jdbc.datasource.DriverManagerDataSource dataSource,
+      CanonicalGameplayIssuerLayoutBootstrapIntent intent) {
+    DSLContext parent = DSL.using(dataSource, org.jooq.SQLDialect.POSTGRES);
+    assertThat(
+            parent
+                .fetchSingle(
+                    "SELECT to_regclass('game_session_canonical_issuer_current_local_operation')::text")
+                .get(0, String.class))
+        .isNull();
+    String history = durableHistoryImage(parent, NIL_UUID);
+    String anchor = anchorAndPartitionProofImage(parent);
+    List<String> cohort =
+        parent
+            .fetch(
+                "SELECT xmin::text || ':' || to_jsonb(retained_row)::text FROM"
+                    + " game_session_canonical_issuer_partition_build_cohort_row retained_row ORDER BY source_row_ordinal")
+            .getValues(0, String.class);
+    List<String> before =
+        parent
+            .fetch(
+                "SELECT to_jsonb(retained_row)::text FROM flyway_schema_history retained_row ORDER BY installed_rank")
+            .getValues(0, String.class);
+    byte[] partitionKey =
+        CanonicalGameplayIssuerRedisKeys.forPartition(intent.layoutDescriptor(), BigInteger.ZERO)
+            .getBytes(StandardCharsets.US_ASCII);
+    byte[] physical = physicalFieldSet(partitionKey);
+    var changed =
+        CanonicalGameplayIssuerTestFixtures.withSessionRendering(
+            dataSource, "America/New_York", "escape");
+    var settings =
+        DSL.using(changed, org.jooq.SQLDialect.POSTGRES)
+            .fetchSingle("SELECT current_setting('TimeZone'), current_setting('bytea_output')");
+    assertThat(settings.get(0, String.class)).isEqualTo("America/New_York");
+    assertThat(settings.get(1, String.class)).isEqualTo("escape");
+    assertThat(
+            CanonicalGameplayAdmissionAbortCompositionFixture
+                .upgradeWithDefaultGameSessionMigrations(
+                    MigrationVersion.fromVersion("1040.6"), changed))
+        .isEqualTo(2);
+    List<String> after =
+        parent
+            .fetch(
+                "SELECT to_jsonb(retained_row)::text FROM flyway_schema_history retained_row ORDER BY installed_rank")
+            .getValues(0, String.class);
+    assertThat(after).hasSize(before.size() + 2);
+    assertThat(after.subList(0, before.size())).containsExactlyElementsOf(before);
+    assertThat(durableHistoryImage(parent, NIL_UUID)).isEqualTo(history);
+    assertThat(anchorAndPartitionProofImage(parent)).isEqualTo(anchor);
+    assertThat(
+            parent
+                .fetch(
+                    "SELECT xmin::text || ':' || to_jsonb(retained_row)::text FROM"
+                        + " game_session_canonical_issuer_partition_build_cohort_row retained_row ORDER BY source_row_ordinal")
+                .getValues(0, String.class))
+        .containsExactlyElementsOf(cohort);
+    assertThat(physicalFieldSet(partitionKey)).isEqualTo(physical);
+  }
+
+  @Test
   void currentMembershipRejectsPrematureDeletionMutationTruncateAndDeferredSourceMismatch() {
     // A seeded baseline needs its own physical layout; sibling cases retain their issuer hashes.
     try (var fixture = newFixture(BigInteger.valueOf(17), BigInteger.ONE, 1)) {
