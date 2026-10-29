@@ -130,8 +130,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
 
   @Test
   void actualMtlsPreservesDefinitiveAbortAndRejectsInvalidOwnerResponses() throws Exception {
-    var evidence =
-        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.ABORTED);
+    var evidence = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.ABORTED);
     var response = AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(evidence);
     responder.set(input -> response);
     start("gs");
@@ -160,8 +159,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
 
   @Test
   void nativeTransportStatusesRemainUnchangedAndNoAutomaticRetryOccurs() throws Exception {
-    var evidence =
-        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
+    var evidence = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     start("gs");
     client = newClient("account", NAMESPACE);
     client.init();
@@ -190,9 +188,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     start(identity);
     client = newClient("account", NAMESPACE);
     client.init();
-    var input =
-        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED)
-            .input();
+    var input = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED).input();
     assertThatThrownBy(() -> client.read(input))
         .satisfies(
             error ->
@@ -206,9 +202,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     start("gs");
     client = newClient("entity", NAMESPACE);
     client.init();
-    var input =
-        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED)
-            .input();
+    var input = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED).input();
     assertThatThrownBy(() -> client.read(input))
         .satisfies(
             error ->
@@ -219,8 +213,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
 
   @Test
   void localNamespaceAndSqlFailBeforeAnyRpc() throws Exception {
-    var evidence =
-        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
+    var evidence = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED);
     start("gs");
     client = newClient("account", "other");
     assertThatThrownBy(() -> client.read(evidence.input()))
@@ -270,9 +263,7 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
             LoopbackMtlsTestPki.placeholderTls(directory),
             factory,
             NAMESPACE);
-    var input =
-        AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED)
-            .input();
+    var input = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED).input();
     assertThatThrownBy(() -> client.read(input))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");

@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdenti
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
@@ -578,6 +579,39 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       byte[] beforeRetirementRetry = physicalFieldSet(partitionKey);
       assertThat(fixture.retireIssuerCapacity(retirementRetry).scriptOutcome()).isEqualTo(2L);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeRetirementRetry);
+
+      String historyBeforeCompletedRead = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      String headBeforeCompletedRead =
+          partitionHeadImage(fixture.dsl(), fixture.originalPartitionId());
+      fixture.moveIssuerSourceCheckpoint();
+      fixture.moveIssuerIncarnation();
+      var historicalRetry = fixture.prepareIssuerRetirement(fixture.transitionId());
+      assertThat(historicalRetry.operationId()).isEqualTo(retirementRetry.operationId());
+      assertThat(historicalRetry.exactAbsenceReadbackFieldSetBytes())
+          .isEqualTo(retirementRetry.exactAbsenceReadbackFieldSetBytes());
+
+      var unavailableCurrentIssuerRepository =
+          new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(
+              fixture.dsl(),
+              () -> {
+                throw new AssertionError(
+                    "Completed history must not read current issuer authority");
+              });
+      var unavailableAuthorityRetry =
+          unavailableCurrentIssuerRepository.prepareOrResume(fixture.transitionId());
+      assertThat(unavailableAuthorityRetry.status())
+          .isEqualTo(CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED);
+      assertThat(unavailableAuthorityRetry.operationId()).isEqualTo(retirementRetry.operationId());
+      assertThat(unavailableAuthorityRetry.exactAbsenceReadbackFieldSetBytes())
+          .isEqualTo(retirementRetry.exactAbsenceReadbackFieldSetBytes());
+      assertThatThrownBy(() -> fixture.prepareIssuerRetirement(UUID.randomUUID()))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("First-NEW admission abort source does not exist");
+      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID))
+          .isEqualTo(historyBeforeCompletedRead);
+      assertThat(partitionHeadImage(fixture.dsl(), fixture.originalPartitionId()))
+          .isEqualTo(headBeforeCompletedRead);
+      assertThat(physicalFieldSet(partitionKey)).isEqualTo(beforeRetirementRetry);
     }
   }
 
@@ -618,7 +652,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
       LuaInvocation invocation = retirementInvocation(fixture, pendingRetirement);
 
-      administratorCommands.hdel(partitionKey, new byte[][] {baselineCapacityField});
+      byte[][] baselineCapacityFields = {baselineCapacityField};
+      administratorCommands.hdel(partitionKey, baselineCapacityFields);
       byte[] missingBaseline = physicalFieldSet(partitionKey);
       assertThat(evaluate(invocation)).isEqualTo(-1L);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(missingBaseline);
@@ -722,9 +757,129 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
   }
 
   @Test
+  void bootstrapMembershipPreservesFrozenOwnershipAcrossAnUnrelatedAdditiveColumn() {
+    // Capture through the real bootstrap owner at the published prior migration frontier.
+    try (var fixture =
+        newFixture(
+            controlledCandidate(BigInteger.valueOf(19), BigInteger.ONE),
+            1,
+            MigrationVersion.fromVersion("1040.5"))) {
+      assertThat(fixture.originalBaselineReservationCount()).isOne();
+      String baselineSourceSql =
+          " FROM game_session_canonical_issuer_installed_anchor anchor"
+              + " JOIN game_session_canonical_issuer_partition_build_cohort_row cohort"
+              + " ON cohort.build_operation_id = anchor.build_operation_id"
+              + " AND cohort.source_operation_id = anchor.bootstrap_operation_id"
+              + " AND cohort.issuer_id = anchor.issuer_id"
+              + " AND cohort.source_kind = 'RESERVATION'";
+      UUID baselineReservationId =
+          fixture
+              .dsl()
+              .fetchSingle("SELECT cohort.source_key::uuid" + baselineSourceSql)
+              .get(0, UUID.class);
+      String retainedOwnerSql =
+          "SELECT jsonb_build_object('cohort', to_jsonb(cohort), 'anchor', to_jsonb(anchor))::text"
+              + baselineSourceSql;
+      String retainedOwnerBefore = fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class);
+      String reservationBefore = reservationImage(fixture.dsl(), baselineReservationId);
+      byte[] partitionBefore = physicalFieldSet(fixture.issuerPartitionKey());
+      List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
+      String durableHistoryBefore = durableHistoryImage(fixture.dsl(), NIL_UUID);
+      List<String> migrationHistoryBefore = fixture.migrationHistoryImage();
+
+      assertThat(
+              fixture.upgradeWithDefaultGameSessionMigrations(
+                  MigrationVersion.fromVersion("1040.6")))
+          .isOne();
+      List<String> migrationHistoryAfter = fixture.migrationHistoryImage();
+      assertThat(migrationHistoryAfter).hasSize(migrationHistoryBefore.size() + 1);
+      assertThat(migrationHistoryAfter.subList(0, migrationHistoryBefore.size()))
+          .containsExactlyElementsOf(migrationHistoryBefore);
+      assertThat(durableHistoryImage(fixture.dsl(), NIL_UUID)).isEqualTo(durableHistoryBefore);
+      assertThat(fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class))
+          .isEqualTo(retainedOwnerBefore);
+      assertThat(reservationImage(fixture.dsl(), baselineReservationId))
+          .isEqualTo(reservationBefore);
+      assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);
+      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(partitionBefore);
+
+      fixture
+          .dsl()
+          .execute(
+              "ALTER TABLE game_session_canonical_issuer_partition_reservation"
+                  + " ADD COLUMN non_authority_annotation text");
+      // The captured immutable JSON has no new key; the current row has an explicit SQL NULL.
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT jsonb_exists(cohort.source_row_json::jsonb, 'non_authority_annotation')"
+                          + baselineSourceSql)
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT non_authority_annotation FROM"
+                          + " game_session_canonical_issuer_partition_reservation"
+                          + " WHERE reservation_id = ?",
+                      baselineReservationId)
+                  .get(0, String.class))
+          .isNull();
+      fixture
+          .dsl()
+          .fetch(
+              "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
+
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .transaction(
+                          configuration -> {
+                            DSLContext transaction = DSL.using(configuration);
+                            assertThat(
+                                    transaction.execute(
+                                        "UPDATE game_session_canonical_issuer_partition_reservation"
+                                            + " SET coverage_fence = coverage_fence + 1"
+                                            + " WHERE reservation_id = ?",
+                                        baselineReservationId))
+                                .isOne();
+                            transaction.fetch(
+                                "SELECT gs_require_issuer_reservation_current_membership(?)",
+                                baselineReservationId);
+                          }))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
+          .hasMessageContaining(
+              "Installed issuer reservation requires exact bootstrap or current local-operation membership");
+      fixture
+          .dsl()
+          .fetch(
+              "SELECT gs_require_issuer_reservation_current_membership(?)", baselineReservationId);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT (to_jsonb(reservation) - 'non_authority_annotation')::text FROM"
+                          + " game_session_canonical_issuer_partition_reservation reservation"
+                          + " WHERE reservation_id = ?",
+                      baselineReservationId)
+                  .get(0, String.class))
+          .isEqualTo(reservationBefore);
+      assertThat(fixture.dsl().fetchSingle(retainedOwnerSql).get(0, String.class))
+          .isEqualTo(retainedOwnerBefore);
+      assertThat(currentOperationIds(fixture.dsl())).isEqualTo(membershipBefore);
+      assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(partitionBefore);
+    }
+  }
+
+  @Test
   void currentMembershipRejectsPrematureDeletionMutationTruncateAndDeferredSourceMismatch() {
     // A seeded baseline needs its own physical layout; sibling cases retain their issuer hashes.
-    try (var fixture = newFixture(BigInteger.valueOf(11), BigInteger.ONE, 1)) {
+    try (var fixture = newFixture(BigInteger.valueOf(17), BigInteger.ONE, 1)) {
       UUID originalId = fixture.originalOperationId();
       List<UUID> membershipBefore = currentOperationIds(fixture.dsl());
       String originalBefore = localOperationImage(fixture.dsl(), originalId);

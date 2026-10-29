@@ -288,11 +288,22 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   /**
    * Claims the one permitted original-NEW candidate installation. The immutable candidate and
-   * DISPATCH_POSSIBLE marker commit together before the caller can reach Redis. A returned create
+   * DISPATCH_POSSIBLE marker commit together before any candidate Redis mutation. A returned create
    * permission exists only for that first committed claim; later calls are read-only.
    */
   OriginalNewCandidateInstallationClaim claimOriginalNewCandidateInstallation(
       CanonicalGameplayAdmissionDecision originalDecision) {
+    return originalNewCandidateInstallationSource(originalDecision, true);
+  }
+
+  /** Reads the guarded source without claiming dispatch, so fresh Redis work can preflight first. */
+  OriginalNewCandidateInstallationClaim readOriginalNewCandidateInstallationSource(
+      CanonicalGameplayAdmissionDecision originalDecision) {
+    return originalNewCandidateInstallationSource(originalDecision, false);
+  }
+
+  private OriginalNewCandidateInstallationClaim originalNewCandidateInstallationSource(
+      CanonicalGameplayAdmissionDecision originalDecision, boolean claimCreation) {
     Objects.requireNonNull(originalDecision, "originalDecision");
     requireNoAmbientTransaction();
     return dsl.transactionResult(
@@ -335,6 +346,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
                     != CanonicalGameplayBindingTransitionSnapshot.Status.PREPARED
                 || transition.get("admission_lease_id", UUID.class) != null) {
               throw conflict("Only an untouched PREPARED original NEW row can claim creation");
+            }
+            if (!claimCreation) {
+              return new OriginalNewCandidateInstallationClaim(
+                  evidence,
+                  originalDecision,
+                  candidate,
+                  OriginalNewCandidateInstallationState.NEVER_DISPATCHED,
+                  null);
             }
             byte[] bytes = candidate.canonicalBytes();
             String digest = CanonicalGameplayIssuerMemberV2Codec.sha256(bytes);
@@ -1937,6 +1956,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 "First-binding provisional publication requires the exact Account lease decision");
           }
           boolean originalNew = current.expectedPrior() == null && expectedDecision != null;
+          if (originalNew
+              && candidate == null
+              && findTransition(transaction, current.transition().transitionId())
+                      .get("original_new_candidate_bytes", byte[].class)
+                  != null) {
+            throw conflict("Claimed original NEW candidate requires owner-produced physical readback");
+          }
           if (originalNew && candidate != null) {
             if (readback == null) throw conflict("Original NEW readback source is unavailable");
             requireDecisionMatchesOperation(expectedDecision, current);
@@ -5575,6 +5601,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayAccountCoverageEvidence evidence) {}
 
   enum OriginalNewCandidateInstallationState {
+    // Read-only source classification; this value is never persisted.
+    NEVER_DISPATCHED,
     DISPATCH_POSSIBLE,
     READBACK_CONFIRMED
   }

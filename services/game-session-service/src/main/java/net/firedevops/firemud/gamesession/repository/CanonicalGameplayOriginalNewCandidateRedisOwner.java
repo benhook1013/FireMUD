@@ -103,32 +103,31 @@ public final class CanonicalGameplayOriginalNewCandidateRedisOwner {
           originalDecision) {
     Objects.requireNonNull(originalDecision, "original Account decision");
     requireNoAmbientTransaction();
-    CanonicalGameplayBindingInventoryRepository.OriginalNewCandidateInstallationClaim claim =
-        inventory.claimOriginalNewCandidateInstallation(originalDecision);
-    return installClaimOnce(claim);
-  }
-
-  /** Package seam for the actual SQL-issued single-use claim; no caller can construct a claim. */
-  Installation installClaimOnce(
-      CanonicalGameplayBindingInventoryRepository.OriginalNewCandidateInstallationClaim claim) {
-    Objects.requireNonNull(claim, "SQL-issued original NEW claim");
-    requireNoAmbientTransaction();
-    var originalDecision = claim.originalDecision();
-    CanonicalGameplayOriginalNewCandidate candidate = claim.candidate();
+    var source = inventory.readOriginalNewCandidateInstallationSource(originalDecision);
+    CanonicalGameplayOriginalNewCandidate candidate = source.candidate();
     CanonicalGameplayTenantGameplayTagRepository.Assignment assignment;
     try {
       requireNoAmbientTransaction();
-      assignment = tenantTags.assignmentForTransition(claim.evidence().transition().transitionId());
+      assignment = tenantTags.assignmentForTransition(source.evidence().transition().transitionId());
       requireAssignment(assignment, candidate);
     } catch (RuntimeException unavailable) {
       throw unavailable();
     }
     Keys keys = keys(assignment, candidate);
 
-    if (claim.consumeCreatePermission()) {
-      CreateAttempt attempt = createOnce(claim, assignment, keys);
-      if (attempt == CreateAttempt.REFUSED) throw unavailable();
-      // A lost reply remains uncertain until this separate exact physical read succeeds.
+    if (source.state()
+        == CanonicalGameplayBindingInventoryRepository.OriginalNewCandidateInstallationState
+            .NEVER_DISPATCHED) {
+      try (PreparedCreate prepared = prepareCreate(candidate)) {
+        // Revalidate every current SQL source after preflight and commit before the sole EVAL.
+        var claim = inventory.claimOriginalNewCandidateInstallation(originalDecision);
+        if (!claim.candidate().equals(candidate)) throw unavailable();
+        if (claim.consumeCreatePermission()) {
+          CreateAttempt attempt = createOnce(claim, assignment, keys, prepared);
+          if (attempt == CreateAttempt.REFUSED) throw unavailable();
+          // A lost reply remains uncertain until the separate exact physical read succeeds.
+        }
+      }
     }
 
     PhysicalReadback readback = readExact(candidate, assignment, keys);
@@ -145,27 +144,43 @@ public final class CanonicalGameplayOriginalNewCandidateRedisOwner {
     return new Installation(candidate, assignment, keys, readback, provisional);
   }
 
-  private CreateAttempt createOnce(
-      CanonicalGameplayBindingInventoryRepository.OriginalNewCandidateInstallationClaim claim,
-      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
-      Keys keys) {
+  private PreparedCreate prepareCreate(CanonicalGameplayOriginalNewCandidate candidate) {
     requireNoAmbientTransaction();
-    RedisScriptDescriptor descriptor = requireDescriptor();
-    byte[] script = scriptSource(descriptor);
-    byte[] candidateBytes = claim.candidate().canonicalBytes();
+    byte[] script = scriptSource(requireDescriptor());
+    byte[] candidateBytes = candidate.canonicalBytes();
     if (candidateBytes.length == 0 || candidateBytes.length > MAX_CANDIDATE_BYTES) {
       throw unavailable();
     }
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
+    StatefulRedisConnection<byte[], byte[]> connection;
+    try {
+      connection = redisClient.connect(ByteArrayCodec.INSTANCE);
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    }
+    try {
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
       requirePrincipal(await(commands.aclWhoami()));
       String loadedSha = await(commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
+      return new PreparedCreate(connection, commands, loadedSha);
+    } catch (RuntimeException failure) {
+      connection.close();
+      throw unavailable();
+    }
+  }
+
+  private CreateAttempt createOnce(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewCandidateInstallationClaim claim,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      Keys keys,
+      PreparedCreate prepared) {
+    requireNoAmbientTransaction();
+    byte[] candidateBytes = claim.candidate().canonicalBytes();
+    try {
       Long result =
           await(
-              commands.evalsha(
-                  loadedSha,
+              prepared.commands().evalsha(
+                  prepared.loadedSha(),
                   ScriptOutputType.INTEGER,
                   keyBytes(keys),
                   ascii(CanonicalGameplayOriginalNewCandidate.PURPOSE),
@@ -373,6 +388,17 @@ public final class CanonicalGameplayOriginalNewCandidateRedisOwner {
 
   private static IllegalStateException unavailable() {
     return new IllegalStateException("Original NEW candidate install/readback is unavailable");
+  }
+
+  private record PreparedCreate(
+      StatefulRedisConnection<byte[], byte[]> connection,
+      RedisAsyncCommands<byte[], byte[]> commands,
+      String loadedSha)
+      implements AutoCloseable {
+    @Override
+    public void close() {
+      connection.close();
+    }
   }
 
   private enum CreateAttempt {

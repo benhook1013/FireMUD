@@ -503,6 +503,7 @@ Entry format:
 - 2026-10-29: A local tracker conflict edit failed its preservation assertion, but subsequent shell lines still staged and committed the unresolved text. Canonical documentation checks failed before publication. Preserve each side explicitly, verify conflict markers are absent, and make dependent staging/commit commands fail with the edit (for example checked subprocess calls); do not assume newline-separated shell commands stop on failure. The local follow-up correction preserves both proof histories and is rechecked before pushing.
 
 - 2026-10-29: The complete credential/candidate receiving gate R864 passed 141 selected tests but could not start Game Session main SpotBugs because the Java command line exceeded local OS limits. This is unavailable static proof, not a clean analysis or a code finding. Preserve the failed aggregate and require exact-head CI recovery; the command-size contribution and whether shorter hosted paths avoid it remain unverified.
+  - Outcome: R920 subsequently passes the enabled Game Session main SpotBugs check on the receiving source after the existing build enables auxiliary-classpath files and compact source-root handling. This closes that analysis-availability gap for R920; R864 remains a failed aggregate and supplies no clean main-analysis result.
 
 ## 2026-10-29 — Hosted completion parsing and capture diagnostics
 
@@ -563,3 +564,21 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: the production migration was present and executed in other schema contexts. A controlled historical SQL seed preserves the old assignment receipt, actor and snapshot without manufacturing a runtime projection or moving the test to the latest frontier. Current-schema assignments retain the production writer. Later shutdown connection noise is separate and its cause remains unproven.
   - Outcome: full Entity R722 executes 584 methods, with 519 passing, 46 failing on a missing placeholder in the new historical INSERT and 19 failing on separate PostgreSQL connection setup. R723 corrects only that placeholder and passes all 65 affected native cases with no skips; the 454 unit methods and other 65 native cases retain their R722 passing attribution. Enabled affected static analysis and formatting pass. The failed full-check aggregate remains recorded; the focused recovery does not relabel it as green.
   - Expected pattern: retain the exact pre-upgrade schema, source rows and history in migration proof. Use explicitly historical fixture input when current Java requires a later schema; do not add production compatibility branches or backfill authority merely to seed a test.
+
+- `2026-10-29`: Retained Redis layouts must be unique across combined fixture cases
+  - Context: #3341 membership-guard integration fixture; isolated R978 and combined R981 runs.
+  - Observation: The guard passed alone, but the combined run reused layout 11 already initialized by a sibling with different baseline data. Bootstrap correctly refused before the guard assertions, so the isolated pass did not establish shared-container isolation.
+  - Outcome: Give the seeded guard layout 17 while retaining the existing layout 11 and snapshot layout 13 cases. R983 passes all three together; the original R981 aggregate remains failed. Production SQL and Redis guards are unchanged by this fixture repair.
+  - Expected pattern: Check the full class's retained key/layout identities when adding a physical fixture. An isolated pass does not establish shared-container isolation; run the actual former collision cases together after repair.
+
+- `2026-10-29`: Explicitly selected analysis tasks can still be disabled
+  - Context: Gameplay R987 passed the three World migration-frontier regression cases and applied formatting, but omitted `-PfullCheck` when selecting Checkstyle, SpotBugs and formatting checks.
+  - Observation: Gradle returned success while those selected checks were `SKIPPED`. The initial progress report incorrectly described them as passing; test execution and formatter application were real, but did not establish enabled analysis or formatting verification.
+  - Outcome: R990 separately passes the enabled World integration Checkstyle, SpotBugs and formatting checks. Its aggregate remains failed on a Game Session negative-test oracle; this does not change R987's skipped-task attribution.
+  - Expected pattern: Include `-PfullCheck` and inspect the selected task outcomes before claiming those checks passed. Preserve R987 as the passing regression run with its skipped checks and record the subsequent enabled checks separately.
+
+- `2026-10-29`: An unrelated bot report delayed capture of a completed Hosted review
+  - Context: #3341 Hosted1 finished at 18:57 NZDT, while its original FireController operation remained `active / trigger_recovered` without native evidence.
+  - Observation: FireController's owner reproduced a false CodeRabbit attribution conflict caused by a newly created and edited Greptile report. The original immutable capture already contained the completed review, all three findings and the exact original comparison; no replacement trigger was needed.
+  - Outcome: The owner deployed the bounded parser correction, and the same operation recovered its three findings at 19:55 NZDT without changing review allowances or attribution. Gameplay consumed and adjudicated that original evidence.
+  - Expected pattern: Preserve the original attempt, report the capture mismatch to the tool owner and continue safe local work. Distinguish actual provider completion from stale local operation state; do not spend another review to recover existing results.

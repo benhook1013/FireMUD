@@ -620,8 +620,9 @@ jobs:
               "Promote Smoke-Tested Runtime Images",
             ]);
 
+            const preExecutionCancelledProofs = new Set();
             async function isPreExecutionCancelledAttempt(run, expectedDisplayTitle, identity) {
-              if (run.status !== "completed" || run.conclusion !== "cancelled" ||
+              if (run.event !== "pull_request" || run.status !== "completed" || run.conclusion !== "cancelled" ||
                   !positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
               const headRepository = context.payload.pull_request.head.repo?.full_name;
               if (typeof headRepository !== "string" || headRepository.length === 0) return false;
@@ -650,7 +651,13 @@ jobs:
                 return data.id === run.id && data.run_attempt === run.run_attempt &&
                   data.status === "completed" && data.conclusion === "cancelled";
               };
+              const proofKey = JSON.stringify([
+                repositoryName, workflowPath, run.id, run.run_attempt, run.workflow_id,
+                run.display_title, run.head_sha, expectedDisplayTitle, identity.headSha, headRepository,
+              ]);
               try {
+                // Attempt/workflow/job proof is immutable; the latest attempt is always fresh.
+                if (preExecutionCancelledProofs.has(proofKey)) return await latestAttempt();
                 const { data: before } = await requestAttempt();
                 if (!exactAttempt(before) || !(await latestAttempt())) return false;
                 const { data: workflow } = await withTransientGitHubRetry(
@@ -680,7 +687,9 @@ jobs:
                 }
                 if (jobNames.size !== preExecutionCancelledJobNames.size) return false;
                 const { data: after } = await requestAttempt();
-                return exactAttempt(after) && await latestAttempt();
+                if (!exactAttempt(after) || !(await latestAttempt())) return false;
+                preExecutionCancelledProofs.add(proofKey);
+                return true;
               } catch (error) {
                 core.warning(`Cancelled runtime attempt ${run.id}/${run.run_attempt} is not proven pre-execution: ${error.message}`);
                 return false;

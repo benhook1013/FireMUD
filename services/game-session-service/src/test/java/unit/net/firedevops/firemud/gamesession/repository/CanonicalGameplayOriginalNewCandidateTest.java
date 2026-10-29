@@ -163,8 +163,13 @@ class CanonicalGameplayOriginalNewCandidateTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("public-production original NEW");
 
-    assertThatThrownBy(() -> evidenceWithStatus(original.identity(), "COMMITTED"))
-        .isInstanceOf(IllegalArgumentException.class);
+    var aborted = evidenceWithStatus(original.identity(), "ABORTED");
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                    aborted, original.decision()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("no-prior PREPARED or PROVISIONAL NEW candidate");
   }
 
   @Test
