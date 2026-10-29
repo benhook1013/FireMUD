@@ -480,9 +480,34 @@ class EntityCharacterCreatePostgresIntegrationTest {
             selector.toBuilder().setCharacterUuid(UUID.randomUUID().toString()).build();
         var changedTarget =
             selector.toBuilder().setGameInstanceUuid(UUID.randomUUID().toString()).build();
-        for (var changed : List.of(changedOrigin, changedCharacter, changedTarget)) {
-          assertRuntimeUnavailable(() -> world.readPlayerCreatedActorPlacementReceipt(changed));
-          assertRuntimeUnavailable(() -> game.readPlayerCreatedActorRuntimeReference(changed));
+        var changedDigest =
+            selector.toBuilder()
+                .setOrigin(selector.getOrigin().toBuilder().setMutationDigest("f".repeat(64)))
+                .build();
+        var missingOperation =
+            selector.toBuilder()
+                .setOrigin(
+                    selector.getOrigin().toBuilder()
+                        .setCreationOperationUuid(UUID.randomUUID().toString()))
+                .build();
+        assertThatThrownBy(
+                () ->
+                    restartedRepository.read(
+                        proof.request().getOriginal().toBuilder()
+                            .setMutationDigest(changedDigest.getOrigin().getMutationDigest())
+                            .build()))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.ALREADY_EXISTS));
+        for (var changed :
+            List.of(
+                changedOrigin, changedCharacter, changedTarget, changedDigest, missingOperation)) {
+          assertRuntimeSelectorUnavailable(
+              () -> world.readPlayerCreatedActorPlacementReceipt(changed));
+          assertRuntimeSelectorUnavailable(
+              () -> game.readPlayerCreatedActorRuntimeReference(changed));
         }
         assertThat(retainedRow(dsl, "characters", "character_uuid", character))
             .isEqualTo(actorBefore);
@@ -1688,6 +1713,18 @@ class EntityCharacterCreatePostgresIntegrationTest {
             failure ->
                 assertThat(Status.fromThrowable(failure).getCode())
                     .isEqualTo(Status.Code.FAILED_PRECONDITION));
+  }
+
+  private static void assertRuntimeSelectorUnavailable(Runnable call) {
+    assertThatThrownBy(call::run)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(status.getDescription())
+                  .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
+            });
   }
 
   /** Controlled historical pre-V1023 storage cohort; this is not the current creation writer. */

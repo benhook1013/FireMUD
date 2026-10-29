@@ -557,7 +557,11 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
 
 - `2026-10-29`: Malformed source-refresh IDs missing the `review_refresh_` prefix returned unrelated startup-binding advice. The original full receipt IDs recovered the existing observations without another fetch. FireController owner reports client-only fix `18cf3b4d` now identifies `refresh_id`, its required prefix/format and retained-receipt recovery; an existing MCP process keeps its prior binary until normal reconnection. Preserve exact full handles in delegation messages rather than abbreviating tool arguments.
 
-- `2026-10-29`: The split issuer capacity/retirement proof shared static Testcontainers objects in an abstract fixture across two independently managed test classes. The first class passed, but the retirement class could not start Redis on its mapped port; no retirement cases ran. The exact timeout cause remains unproved. Each concrete test class now owns its own containers while sharing connection and SQL proof mechanics; verify both classes together and retain the original failed aggregate before claiming receiving proof.
+- `2026-10-29`: Split proof classes must not share static Testcontainers objects
+  - Context: The split issuer capacity/retirement proof shared static Testcontainers objects in an abstract fixture across two independently managed test classes.
+  - Observation: The first class passed, but the retirement class could not start Redis on its mapped port; no retirement cases ran. The exact timeout cause remains unproved.
+  - Expected pattern: Verify both classes together and retain the original failed aggregate before claiming receiving proof.
+  - Outcome (`2026-10-30`): Each concrete test class now owns its own containers while sharing connection and SQL proof mechanics. Later focused receiving results retain their own source and test attribution; the original failed aggregate and unrun retirement cases remain historical limits.
 
 - `2026-10-29`: Diagnose a pending supplementary gate separately from substantive CI
   - Context: #3310's full Validation run succeeded, but its required `Validation Gate` commit status remained pending after the metadata gate check itself succeeded.
