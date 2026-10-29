@@ -108,7 +108,8 @@ public final class CanonicalGameplayOriginalNewCandidateRedisOwner {
     CanonicalGameplayTenantGameplayTagRepository.Assignment assignment;
     try {
       requireNoAmbientTransaction();
-      assignment = tenantTags.assignmentForTransition(source.evidence().transition().transitionId());
+      assignment =
+          tenantTags.assignmentForTransition(source.evidence().transition().transitionId());
       requireAssignment(assignment, candidate);
     } catch (RuntimeException unavailable) {
       throw unavailable();
@@ -179,20 +180,22 @@ public final class CanonicalGameplayOriginalNewCandidateRedisOwner {
     try {
       Long result =
           await(
-              prepared.commands().evalsha(
-                  prepared.loadedSha(),
-                  ScriptOutputType.INTEGER,
-                  keyBytes(keys),
-                  ascii(CanonicalGameplayOriginalNewCandidate.PURPOSE),
-                  ascii(assignment.tenantId().toString()),
-                  ascii(assignment.accountId().toString()),
-                  ascii(assignment.playableStateNamespaceId().toString()),
-                  ascii(assignment.characterId().toString()),
-                  ascii(assignment.gameInstanceId().toString()),
-                  ascii(assignment.sessionId()),
-                  ascii(claim.candidate().transition().bindingGeneration().toString()),
-                  ascii(assignment.tenantGameplayTag()),
-                  candidateBytes));
+              prepared
+                  .commands()
+                  .evalsha(
+                      prepared.loadedSha(),
+                      ScriptOutputType.INTEGER,
+                      keyBytes(keys),
+                      ascii(CanonicalGameplayOriginalNewCandidate.PURPOSE),
+                      ascii(assignment.tenantId().toString()),
+                      ascii(assignment.accountId().toString()),
+                      ascii(assignment.playableStateNamespaceId().toString()),
+                      ascii(assignment.characterId().toString()),
+                      ascii(assignment.gameInstanceId().toString()),
+                      ascii(assignment.sessionId()),
+                      ascii(claim.candidate().transition().bindingGeneration().toString()),
+                      ascii(assignment.tenantGameplayTag()),
+                      candidateBytes));
       return Long.valueOf(1L).equals(result) ? CreateAttempt.CREATED : CreateAttempt.REFUSED;
     } catch (RuntimeException possibleLostReply) {
       // DISPATCH_POSSIBLE is already durable. The caller will only attempt an exact read.

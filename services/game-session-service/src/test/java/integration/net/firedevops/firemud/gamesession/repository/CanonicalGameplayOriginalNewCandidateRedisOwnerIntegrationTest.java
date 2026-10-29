@@ -131,7 +131,8 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
 
     assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
     assertThat(admin.dbsize()).isZero();
-    var untouched = source.repository().readOriginalNewCandidateInstallationSource(source.decision());
+    var untouched =
+        source.repository().readOriginalNewCandidateInstallationSource(source.decision());
     assertThat(untouched.state().name()).isEqualTo("NEVER_DISPATCHED");
     assertThat(untouched.consumeCreatePermission()).isFalse();
     configurePrincipal(true);

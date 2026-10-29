@@ -296,7 +296,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
     return originalNewCandidateInstallationSource(originalDecision, true);
   }
 
-  /** Reads the guarded source without claiming dispatch, so fresh Redis work can preflight first. */
+  /**
+   * Reads the guarded source without claiming dispatch, so fresh Redis work can preflight first.
+   */
   OriginalNewCandidateInstallationClaim readOriginalNewCandidateInstallationSource(
       CanonicalGameplayAdmissionDecision originalDecision) {
     return originalNewCandidateInstallationSource(originalDecision, false);
@@ -1961,7 +1963,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
               && findTransition(transaction, current.transition().transitionId())
                       .get("original_new_candidate_bytes", byte[].class)
                   != null) {
-            throw conflict("Claimed original NEW candidate requires owner-produced physical readback");
+            throw conflict(
+                "Claimed original NEW candidate requires owner-produced physical readback");
           }
           if (originalNew && candidate != null) {
             if (readback == null) throw conflict("Original NEW readback source is unavailable");
