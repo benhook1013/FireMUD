@@ -4,9 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.lettuce.core.AclSetuserArgs;
-import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -17,8 +15,6 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -27,15 +23,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -610,63 +603,22 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor(BigInteger partitions, BigInteger capacity) {
-    String exact =
-        "issuer-layout-descriptor/v1|"
-            + ISSUER
-            + "|"
-            + LAYOUT_VERSION
-            + "|"
-            + partitions
-            + "|"
-            + capacity
-            + "|"
-            + CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
-        ISSUER,
-        LAYOUT_VERSION,
-        partitions,
-        capacity,
-        CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
-        exact.getBytes(StandardCharsets.UTF_8));
+    return CanonicalGameplayIssuerTestFixtures.descriptor(
+        ISSUER, LAYOUT_VERSION, partitions, capacity);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint
       sourceCheckpoint(BigInteger generation) {
-    long sequence = generation.longValueExact() - 1;
-    var event =
-        AccountAuthoritySourceEventV1Codec.sealIssuer(
-            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
-                UUID.randomUUID().toString(),
-                UUID.randomUUID().toString(),
-                AccountAuthoritySourceEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + ISSUER,
-                Long.toString(sequence),
-                ISSUER,
-                generation.toString(),
-                generation.toString(),
-                "ISSUER_SECURITY_CHANGE"));
-    byte[] bytes = event.canonicalJsonUtf8();
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
-        ISSUER, generation, bytes, bytes);
+    return CanonicalGameplayIssuerTestFixtures.sourceCheckpoint(ISSUER, generation);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint
       checkpointShape(BigInteger generation) {
-    var trusted = sourceCheckpoint(generation);
-    byte[] checkpoint = trusted.checkpointBytes();
-    byte[] event = trusted.latestEventBytes();
-    return new CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint(
-        trusted.issuerId(),
-        trusted.issuerAuthGeneration(),
-        checkpoint,
-        CanonicalGameplayIssuerMemberV2Codec.sha256(checkpoint),
-        event,
-        CanonicalGameplayIssuerMemberV2Codec.sha256(event));
+    return CanonicalGameplayIssuerTestFixtures.checkpointShape(ISSUER, generation);
   }
 
   private static CanonicalGameplayIssuerMemberV2Value.Incarnation stableIncarnation(String seed) {
-    String digest = digest(seed.getBytes(StandardCharsets.UTF_8));
-    return new CanonicalGameplayIssuerMemberV2Value.Incarnation(
-        "controlled-attestor-" + seed, digest, deploymentEvidence(seed, digest), digest, digest);
+    return CanonicalGameplayIssuerTestFixtures.stableIncarnation(seed);
   }
 
   private static CanonicalGameplayIssuerBootstrapMemberOperationRepository.TrustedStableIncarnation
@@ -949,63 +901,31 @@ class CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest {
   }
 
   private TestSchema newTestSchemaAtVersion(String prefix, String version) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
     DriverManagerDataSource dataSource = dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion(version))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, version);
     return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
   }
 
   private static void migrateRemaining(TestSchema schema) {
-    Flyway.configure()
-        .dataSource(schema.dataSource())
-        .schemas(schema.schema())
-        .defaultSchema(schema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        schema.dataSource(), schema.schema(), MIGRATION_LOCATION, null);
   }
 
   private DriverManagerDataSource dataSource(String schema) {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName("org.postgresql.Driver");
-    String jdbcUrl = POSTGRES.getJdbcUrl();
-    dataSource.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
-    dataSource.setUsername(POSTGRES.getUsername());
-    dataSource.setPassword(POSTGRES.getPassword());
-    return dataSource;
+    return CanonicalGameplayIssuerTestFixtures.dataSource(
+        POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), schema);
   }
 
   private void dropSchema(String schema) {
-    try (Connection connection = dataSource("public").getConnection()) {
-      DSL.using(connection, SQLDialect.POSTGRES)
-          .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
-    } catch (SQLException failure) {
-      throw new IllegalStateException(
-          "Could not drop the owned issuer coverage test schema", failure);
-    }
+    CanonicalGameplayIssuerTestFixtures.dropSchema(
+        dataSource("public"), schema, "Could not drop the owned issuer coverage test schema");
   }
 
   private static RedisClient createRedisClient(String username, String password) {
-    RedisURI.Builder builder = RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379));
-    if (username != null) builder.withAuthentication(username, password);
-    RedisURI uri = builder.build();
-    uri.setTimeout(Duration.ofSeconds(5));
-    RedisClient client = RedisClient.create(uri);
-    client.setOptions(
-        ClientOptions.builder()
-            .autoReconnect(false)
-            .protocolVersion(io.lettuce.core.protocol.ProtocolVersion.RESP2)
-            .build());
-    return client;
+    return CanonicalGameplayIssuerTestFixtures.createRedisClient(
+        REDIS.getHost(), REDIS.getMappedPort(6379), username, password);
   }
 
   private static byte[] ascii(String value) {

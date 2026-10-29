@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AccountGameplayAdmissionAbortResolutionEvidence;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseState;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionOriginalAckReceiptEvidence;
@@ -365,6 +366,29 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     }
   }
 
+  /** Separate shape-only Account resolution; it proves neither cleanup nor admission. */
+  public record AbortResolutionEvidence(
+      UUID resolutionId,
+      UUID originalLeaseId,
+      BigInteger originalLeaseFence,
+      String originalLeaseSha256,
+      UUID orphanCleanupId,
+      UUID bindingDecisionId) {
+    public AbortResolutionEvidence {
+      highEntropyUuid(resolutionId);
+      highEntropyUuid(originalLeaseId);
+      positiveDecimal(Objects.requireNonNull(originalLeaseFence, "originalLeaseFence"));
+      digest(originalLeaseSha256);
+      highEntropyUuid(orphanCleanupId);
+      highEntropyUuid(bindingDecisionId);
+    }
+
+    @Override
+    public String toString() {
+      return "AccountGameplayAdmissionLeaseGrpcCodec.AbortResolutionEvidence[redacted]";
+    }
+  }
+
   /** Complete original-operation response shape with a redacted, typed receipt carrier. */
   public static final class OperationEvidence {
     private final AccountGameplayAdmissionLeaseEvidence originalLeaseEvidence;
@@ -372,18 +396,21 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     private final UUID bindingDecisionId;
     private final UUID orphanCleanupId;
     private final OriginalAckReceiptEvidence originalAckReceipt;
+    private final AbortResolutionEvidence abortResolution;
 
     private OperationEvidence(
         AccountGameplayAdmissionLeaseEvidence originalLeaseEvidence,
         State state,
         UUID bindingDecisionId,
         UUID orphanCleanupId,
-        OriginalAckReceiptEvidence originalAckReceipt) {
+        OriginalAckReceiptEvidence originalAckReceipt,
+        AbortResolutionEvidence abortResolution) {
       this.originalLeaseEvidence = originalLeaseEvidence;
       this.state = state;
       this.bindingDecisionId = bindingDecisionId;
       this.orphanCleanupId = orphanCleanupId;
       this.originalAckReceipt = originalAckReceipt;
+      this.abortResolution = abortResolution;
     }
 
     public AccountGameplayAdmissionLeaseEvidence originalLeaseEvidence() {
@@ -404,6 +431,24 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
 
     public OriginalAckReceiptEvidence originalAckReceipt() {
       return originalAckReceipt;
+    }
+
+    public AbortResolutionEvidence abortResolution() {
+      return abortResolution;
+    }
+
+    /** Compares wire shape only; this authenticates no owner or completed cleanup. */
+    public boolean matchesAbortTransition(UUID transitionId) {
+      if (state != State.ABORTED || transitionId == null) return false;
+      if (bindingDecisionId != null) {
+        return abortResolution == null && bindingDecisionId.equals(transitionId);
+      }
+      return abortResolution != null
+          && abortResolution.bindingDecisionId().equals(transitionId)
+          && leaseId(originalLeaseEvidence).equals(abortResolution.originalLeaseId())
+          && originalLeaseEvidence.leaseFence().equals(abortResolution.originalLeaseFence())
+          && originalLeaseEvidence.sha256().equals(abortResolution.originalLeaseSha256())
+          && Objects.equals(orphanCleanupId, abortResolution.orphanCleanupId());
     }
 
     @Override
@@ -1013,6 +1058,29 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
         originalAckReceipt);
   }
 
+  /** Preserves the original unknown terminal result and adds separate pending resolution. */
+  public static AccountGameplayAdmissionLeaseResponse toResolvedAbortResponse(
+      OriginalLeaseRequest request,
+      AccountGameplayAdmissionLeaseEvidence originalLease,
+      UUID originalCleanupId,
+      AbortResolutionEvidence resolution) {
+    requirePurpose(request, OriginalLeasePurpose.ABORT);
+    Objects.requireNonNull(resolution, "resolution");
+    AccountGameplayAdmissionLeaseResponse response =
+        buildResponse(
+                request.originalLeaseEvidenceUtf8(),
+                originalLease,
+                State.ABORTED,
+                null,
+                originalCleanupId,
+                null)
+            .toBuilder()
+            .addAbortResolution(toWireAbortResolution(resolution))
+            .build();
+    parseAbortResponse(request, response);
+    return response;
+  }
+
   public static OperationEvidence parseAcquireResponse(
       AcquireRequest request, AccountGameplayAdmissionLeaseResponse response) {
     Objects.requireNonNull(request, "request");
@@ -1143,7 +1211,13 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
   private static OperationEvidence parseOriginalLeaseResponse(
       OriginalLeaseRequest request, AccountGameplayAdmissionLeaseResponse response) {
     Objects.requireNonNull(request, "request");
-    OperationEvidence evidence = parseResponse(response);
+    boolean allowAbortResolution =
+        request.purpose == OriginalLeasePurpose.ABORT && request.bindingDecisionId() != null;
+    OperationEvidence evidence = parseResponse(response, false, allowAbortResolution);
+    if (evidence.abortResolution() != null
+        && !request.bindingDecisionId().equals(evidence.abortResolution().bindingDecisionId())) {
+      throw invalid("Abort resolution changed the supplied binding decision identity");
+    }
     byte[] actualLeaseBytes = response.getOriginalLeaseEvidenceUtf8(0).toByteArray();
     if (!Arrays.equals(request.originalLeaseEvidenceUtf8, actualLeaseBytes)
         || !request.originalLeaseEvidence().hasSameIdentity(evidence.originalLeaseEvidence())) {
@@ -1197,6 +1271,13 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
 
   private static OperationEvidence parseResponse(
       AccountGameplayAdmissionLeaseResponse response, boolean allowOriginalNewCredential) {
+    return parseResponse(response, allowOriginalNewCredential, false);
+  }
+
+  private static OperationEvidence parseResponse(
+      AccountGameplayAdmissionLeaseResponse response,
+      boolean allowOriginalNewCredential,
+      boolean allowAbortResolution) {
     Objects.requireNonNull(response, "response");
     requireWireSize(response.getSerializedSize(), MAX_RESPONSE_WIRE_BYTES, "lease response");
     requireNoUnknownFields(response.getUnknownFields().asMap().isEmpty(), "lease response");
@@ -1206,6 +1287,9 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
       }
     } else if (response.getOriginalNewCredentialCount() != 0) {
       throw invalid("Lease response cannot carry an original-new credential result");
+    }
+    if (!allowAbortResolution && response.getAbortResolutionCount() != 0) {
+      throw invalid("Only a decision-selected Abort response may carry abort resolution");
     }
     requireSchema(one(response.getSchemaVersionList(), "response.schemaVersion"));
     byte[] leaseBytes =
@@ -1222,7 +1306,49 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     OriginalAckReceiptEvidence receipt =
         receiptMessage == null ? null : fromWireReceipt(receiptMessage);
     validateOperationState(lease, state, decisionId, cleanupId, receipt);
-    return new OperationEvidence(lease, state, decisionId, cleanupId, receipt);
+    AccountGameplayAdmissionAbortResolutionEvidence resolutionMessage =
+        optional(response.getAbortResolutionList(), "response.abortResolution");
+    AbortResolutionEvidence resolution =
+        resolutionMessage == null ? null : fromWireAbortResolution(resolutionMessage);
+    if (resolution != null
+        && (state != State.ABORTED
+            || decisionId != null
+            || receipt != null
+            || !leaseId(lease).equals(resolution.originalLeaseId())
+            || !lease.leaseFence().equals(resolution.originalLeaseFence())
+            || !lease.sha256().equals(resolution.originalLeaseSha256())
+            || !Objects.equals(cleanupId, resolution.orphanCleanupId()))) {
+      throw invalid("Abort resolution differs from the exact unknown terminal operation");
+    }
+    return new OperationEvidence(lease, state, decisionId, cleanupId, receipt, resolution);
+  }
+
+  private static AccountGameplayAdmissionAbortResolutionEvidence toWireAbortResolution(
+      AbortResolutionEvidence resolution) {
+    return AccountGameplayAdmissionAbortResolutionEvidence.newBuilder()
+        .addSchemaVersion(SCHEMA_VERSION)
+        .addResolutionUuid(resolution.resolutionId().toString())
+        .addOriginalLeaseUuid(resolution.originalLeaseId().toString())
+        .addOriginalLeaseFence(positiveDecimal(resolution.originalLeaseFence()))
+        .addOriginalLeaseSha256(resolution.originalLeaseSha256())
+        .addOrphanCleanupUuid(resolution.orphanCleanupId().toString())
+        .addBindingDecisionUuid(resolution.bindingDecisionId().toString())
+        .build();
+  }
+
+  private static AbortResolutionEvidence fromWireAbortResolution(
+      AccountGameplayAdmissionAbortResolutionEvidence message) {
+    requireNoUnknownFields(message.getUnknownFields().asMap().isEmpty(), "abort resolution");
+    requireSchema(one(message.getSchemaVersionList(), "abortResolution.schemaVersion"));
+    return new AbortResolutionEvidence(
+        highEntropyUuid(one(message.getResolutionUuidList(), "abortResolution.resolutionId")),
+        highEntropyUuid(one(message.getOriginalLeaseUuidList(), "abortResolution.originalLeaseId")),
+        positiveCounter(
+            one(message.getOriginalLeaseFenceList(), "abortResolution.originalLeaseFence")),
+        digest(one(message.getOriginalLeaseSha256List(), "abortResolution.originalLeaseSha256")),
+        highEntropyUuid(one(message.getOrphanCleanupUuidList(), "abortResolution.orphanCleanupId")),
+        highEntropyUuid(
+            one(message.getBindingDecisionUuidList(), "abortResolution.bindingDecisionId")));
   }
 
   private static OriginalNewGameplayCredentialResult toWireOriginalNewCredential(

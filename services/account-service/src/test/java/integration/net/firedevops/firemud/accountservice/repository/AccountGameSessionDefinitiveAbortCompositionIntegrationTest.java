@@ -85,6 +85,103 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   }
 
   @Test
+  void retainedUnknownAbortResolvesTheRealTransitionWithoutRewritingAccountTerminal()
+      throws Exception {
+    try (var session = open()) {
+      var original = session.gs.source();
+      String beforeUnknownAbort = session.image();
+      UUID requestId = UUID.fromString((String) session.lease.carrier().get("requestId"));
+      var accountDsl = DSL.using(session.accountFixture.dataSource, SQLDialect.POSTGRES);
+      var unknown = session.client.abort(session.jwt, session.leaseBytes(), null);
+      assertThat(unknown.state()).isEqualTo(State.ABORTED);
+      assertThat(unknown.bindingDecisionId()).isNull();
+      assertThat(unknown.abortResolution()).isNull();
+      assertThat(unknown.orphanCleanupId()).isNotNull();
+      assertThat(session.image()).isEqualTo(beforeUnknownAbort);
+      String originalTerminal =
+          accountDsl
+              .fetchSingle(
+                  "SELECT to_jsonb(operation)::text FROM account_gameplay_admission_lease_operations"
+                      + " operation WHERE request_id = ?",
+                  requestId)
+              .get(0, String.class);
+      org.mockito.Mockito.verify(session.reverse, org.mockito.Mockito.never()).read(any(), any());
+
+      var outcome = session.abort();
+      assertThat(outcome.state()).isEqualTo(CanonicalGameplayAdmissionAbortOutcome.State.ABORTED);
+      assertThat(outcome.orphanCleanupId()).isEqualTo(unknown.orphanCleanupId());
+      assertThat(outcome.accountOperation().bindingDecisionId()).isNull();
+      var resolution = outcome.accountOperation().abortResolution();
+      assertThat(resolution).isNotNull();
+      assertThat(resolution.bindingDecisionId()).isEqualTo(session.gs.transitionId());
+      assertThat(resolution.orphanCleanupId()).isEqualTo(unknown.orphanCleanupId());
+      assertThat(resolution.originalLeaseSha256()).isEqualTo(session.lease.sha256());
+      assertThat(outcome.accountOperation().originalLeaseEvidence().canonicalJson())
+          .isEqualTo(original.originalDecision().leaseEvidenceJson());
+      assertThat(session.gs.source().candidate().lifecycle())
+          .isEqualTo(CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL_UNRESOLVED);
+      assertThat(session.gs.source().reservation().lifecycle())
+          .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING);
+
+      var pendingRelease = session.gs.prepareIssuerRelease();
+      var releaseReadback = session.gs.projectIssuerRelease(pendingRelease);
+      session.gs.completeIssuerRelease(pendingRelease, releaseReadback);
+      var pendingRetirement = session.gs.prepareIssuerRetirement(session.gs.transitionId());
+      assertThat(session.gs.retireIssuerCapacityOutcome(pendingRetirement)).isEqualTo(1L);
+      assertThat(
+              session.gs.isIssuerRetirementComplete(
+                  session.gs.prepareIssuerRetirement(session.gs.transitionId())))
+          .isTrue();
+      String settledImage = session.image();
+      String retainedResolution =
+          accountDsl
+              .fetchSingle(
+                  "SELECT to_jsonb(resolution)::text FROM account_gameplay_admission_abort_resolutions"
+                      + " resolution WHERE request_id = ?",
+                  requestId)
+              .get(0, String.class);
+
+      // A fresh Account server and GS owner recover durable resolution after GS is ABORTED;
+      // querying its PROVISIONAL reverse reader again would fail at this point.
+      session.restartAccount();
+      var replay = session.abort();
+      assertThat(replay.accountOperation().bindingDecisionId()).isNull();
+      assertThat(replay.accountOperation().abortResolution()).isEqualTo(resolution);
+      assertThat(replay.orphanCleanupId()).isEqualTo(unknown.orphanCleanupId());
+      org.mockito.Mockito.verify(session.reverse, org.mockito.Mockito.times(1))
+          .read(org.mockito.ArgumentMatchers.eq(session.gs.transitionId()), any());
+      assertThatThrownBy(
+              () -> session.client.abort(session.jwt, session.leaseBytes(), UUID.randomUUID()))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(() -> session.abortWith("invalid-current-caller-token"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.image()).isEqualTo(settledImage);
+      var retainedRead = session.client.read(session.jwt, session.leaseBytes());
+      assertThat(retainedRead.bindingDecisionId()).isNull();
+      assertThat(retainedRead.abortResolution()).isNull();
+      assertThat(retainedRead.orphanCleanupId()).isEqualTo(unknown.orphanCleanupId());
+      assertThat(
+              accountDsl
+                  .fetchSingle(
+                      "SELECT to_jsonb(operation)::text FROM"
+                          + " account_gameplay_admission_lease_operations operation"
+                          + " WHERE request_id = ?",
+                      requestId)
+                  .get(0, String.class))
+          .isEqualTo(originalTerminal);
+      assertThat(
+              accountDsl
+                  .fetchSingle(
+                      "SELECT to_jsonb(resolution)::text FROM"
+                          + " account_gameplay_admission_abort_resolutions resolution"
+                          + " WHERE request_id = ?",
+                      requestId)
+                  .get(0, String.class))
+          .isEqualTo(retainedResolution);
+    }
+  }
+
+  @Test
   void actualAbortExactRetryAndRestartRetainOriginalLeaseAndRejectTerminalRewrites()
       throws Exception {
     try (var session = open()) {

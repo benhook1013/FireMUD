@@ -74,6 +74,7 @@ import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionAbortResolution;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
@@ -1157,11 +1158,267 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
   }
 
+  @Test
+  void unknownAbortResolutionPreservesPopulatedTerminalAndReplaysWithoutReverseRead()
+      throws Exception {
+    try (PhysicalRedisFixture redis = PhysicalRedisFixture.start()) {
+      var prepared = prepareUnknownAbort(redis.client(), "1013");
+      Fixture fixture = prepared.fixture();
+      var original = fixture.readLeaseOperation(prepared.lease());
+      var originalRows =
+          fixture.dsl.fetch("SELECT * FROM account_gameplay_admission_lease_operations");
+      var originalHistory =
+          fixture.dsl.fetch(
+              "SELECT installed_rank, version, checksum FROM flyway_schema_history ORDER BY installed_rank");
+      Flyway.configure()
+          .dataSource(fixture.dataSource)
+          .schemas(fixture.schema)
+          .defaultSchema(fixture.schema)
+          .placeholders(Map.of("serviceSchema", fixture.schema))
+          .locations("classpath:db/migration")
+          .load()
+          .migrate();
+      assertThat(fixture.dsl.fetch("SELECT * FROM account_gameplay_admission_lease_operations"))
+          .isEqualTo(originalRows);
+      assertThat(
+              fixture.dsl.fetch(
+                  "SELECT installed_rank, version, checksum FROM flyway_schema_history"
+                      + " WHERE version IS DISTINCT FROM '1014' ORDER BY installed_rank"))
+          .isEqualTo(originalHistory);
+      UUID decisionId = UUID.randomUUID();
+      UUID cleanupId = original.orphanCleanupId();
+      String insertion =
+          "INSERT INTO account_gameplay_admission_abort_resolutions"
+              + " (request_id, resolution_id, original_lease_id, original_lease_fence,"
+              + " original_lease_sha256, orphan_cleanup_id, binding_decision_id)"
+              + " VALUES (?, ?, ?, ?, ?, ?, ?)";
+      UUID requestId = UUID.fromString((String) prepared.lease().carrier().get("requestId"));
+      UUID leaseId = UUID.fromString((String) prepared.lease().carrier().get("leaseId"));
+      long fence = prepared.lease().leaseFence().longValueExact();
+      String digest = prepared.lease().sha256();
+      for (Object[] changed :
+          List.of(
+              new Object[] {UUID.randomUUID(), fence, digest, cleanupId},
+              new Object[] {leaseId, fence + 1, digest, cleanupId},
+              new Object[] {leaseId, fence, "0".repeat(64), cleanupId},
+              new Object[] {leaseId, fence, digest, UUID.randomUUID()})) {
+        assertThatThrownBy(
+                () ->
+                    fixture.inSerializableTransaction(
+                        () ->
+                            fixture.dsl.execute(
+                                insertion,
+                                requestId,
+                                UUID.randomUUID(),
+                                changed[0],
+                                changed[1],
+                                changed[2],
+                                changed[3],
+                                decisionId)))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("Exact original unknown-decision abort linkage required");
+      }
+      assertThat(fixture.dsl.fetchCount(DSL.table("account_gameplay_admission_abort_resolutions")))
+          .isZero();
+
+      var abortWire =
+          AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+              prepared.jwt(), prepared.leaseBytes(), decisionId);
+      var first = new AtomicReference<AccountGameplayAdmissionLeaseResponse>();
+      withPeer(prepared.peer(), () -> first.set(prepared.owner().abort(abortWire)));
+      AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(
+          AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(abortWire), first.get());
+      assertThat(first.get().getBindingDecisionUuidCount()).isZero();
+      assertThat(first.get().getOrphanCleanupUuidList()).containsExactly(cleanupId.toString());
+      var retained =
+          fixture.inSerializableTransaction(
+              () ->
+                  new AccountGameplayAdmissionAbortResolutionRepository(fixture.dsl)
+                      .readExact(prepared.lease(), cleanupId, decisionId)
+                      .orElseThrow());
+      assertThat(retained)
+          .isEqualTo(
+              new AccountGameplayAdmissionAbortResolution(
+                  retained.resolutionId(),
+                  leaseId,
+                  prepared.lease().leaseFence(),
+                  digest,
+                  cleanupId,
+                  decisionId));
+      doAnswer(
+              invocation -> {
+                throw new AssertionError(
+                    "Retained resolution must not reread an aborted GS decision");
+              })
+          .when(prepared.decisionClient())
+          .read(any(), any());
+      var restarted =
+          new AccountGameplayAdmissionLeaseOwner(
+              prepared.verifier(), prepared.decisionClient(), TEST_NAMESPACE, fixture.dataSource);
+      var replay = new AtomicReference<AccountGameplayAdmissionLeaseResponse>();
+      withPeer(prepared.peer(), () -> replay.set(restarted.abort(abortWire)));
+      assertThat(replay.get()).isEqualTo(first.get());
+      var changedSelector =
+          AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+              prepared.jwt(), prepared.leaseBytes(), UUID.randomUUID());
+      assertThatThrownBy(() -> withPeer(prepared.peer(), () -> restarted.abort(changedSelector)))
+          .isInstanceOf(StatusRuntimeException.class);
+      var changedCarrier = new LinkedHashMap<>(prepared.lease().carrier());
+      changedCarrier.put(
+          "leaseFence", prepared.lease().leaseFence().add(BigInteger.ONE).toString());
+      var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
+      var changedWire =
+          AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+              prepared.jwt(),
+              changedLease.canonicalJson().getBytes(StandardCharsets.UTF_8),
+              decisionId);
+      assertThatThrownBy(() -> withPeer(prepared.peer(), () -> restarted.abort(changedWire)))
+          .isInstanceOf(StatusRuntimeException.class);
+      for (String mutation :
+          List.of(
+              "UPDATE account_gameplay_admission_abort_resolutions SET binding_decision_id = '"
+                  + UUID.randomUUID()
+                  + "'",
+              "DELETE FROM account_gameplay_admission_abort_resolutions",
+              "TRUNCATE account_gameplay_admission_abort_resolutions")) {
+        assertThatThrownBy(() -> fixture.dsl.execute(mutation))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("Account abort resolution is immutable");
+      }
+      var nullWire =
+          AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+              prepared.jwt(), prepared.leaseBytes(), null);
+      var nullReplay = new AtomicReference<AccountGameplayAdmissionLeaseResponse>();
+      withPeer(prepared.peer(), () -> nullReplay.set(restarted.abort(nullWire)));
+      assertThat(nullReplay.get()).isEqualTo(prepared.originalAbort());
+      assertThat(fixture.readLeaseOperation(prepared.lease())).isEqualTo(original);
+      assertThat(fixture.dsl.fetchCount(DSL.table("account_gameplay_admission_abort_resolutions")))
+          .isEqualTo(1);
+    }
+  }
+
+  @Test
+  void unknownAbortResolutionRefusesUnknownReverseReadAndCallerMovementWithoutWrites()
+      throws Exception {
+    try (PhysicalRedisFixture redis = PhysicalRedisFixture.start()) {
+      var prepared = prepareUnknownAbort(redis.client(), "latest");
+      Fixture fixture = prepared.fixture();
+      var original = fixture.readLeaseOperation(prepared.lease());
+      UUID decisionId = UUID.randomUUID();
+      var decision = prepared.decisionClient().read(decisionId, prepared.lease());
+      var wire =
+          AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+              prepared.jwt(), prepared.leaseBytes(), decisionId);
+      var reverseReadReached = new java.util.concurrent.atomic.AtomicBoolean();
+      doAnswer(
+              invocation -> {
+                reverseReadReached.set(true);
+                throw Status.UNAVAILABLE.asRuntimeException();
+              })
+          .when(prepared.decisionClient())
+          .read(any(), any());
+      assertThatThrownBy(() -> withPeer(prepared.peer(), () -> prepared.owner().abort(wire)))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(reverseReadReached).isTrue();
+      assertThat(fixture.dsl.fetchCount(DSL.table("account_gameplay_admission_abort_resolutions")))
+          .isZero();
+      var callerMovementReached = new java.util.concurrent.atomic.AtomicBoolean();
+      doAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+                TokenIdentity token = fixture.tokenIdentity(fixture.committedCandidate);
+                UUID revocation = UUID.randomUUID();
+                fixture.inSerializableTransaction(
+                    () ->
+                        fixture.tokenFences.beginRevocationIntent(
+                            token,
+                            revocation,
+                            AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                                token, revocation)));
+                callerMovementReached.set(true);
+                return decision;
+              })
+          .when(prepared.decisionClient())
+          .read(any(), any());
+      assertThatThrownBy(() -> withPeer(prepared.peer(), () -> prepared.owner().abort(wire)))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(fixture.dsl.fetchCount(DSL.table("account_gameplay_admission_abort_resolutions")))
+          .isZero();
+      assertThat(callerMovementReached).isTrue();
+      assertThat(fixture.readLeaseOperation(prepared.lease())).isEqualTo(original);
+    }
+  }
+
+  private PreparedUnknownAbort prepareUnknownAbort(
+      AccountGameplayDelegationRedisClient redisClient, String migrationTarget) throws Exception {
+    Fixture fixture = newFixture(redisClient, migrationTarget);
+    var issuance = fixture.committedCandidate.identity();
+    var recovered =
+        fixture.responseRecoveryOwner.recoverInitialLoginResponse(
+            issuance.requestId(),
+            issuance.accountId(),
+            new CallerIdentity(issuance.callerWorkload(), issuance.callerContextId()));
+    String jwt = new String(recovered.compactJwtBytes(), StandardCharsets.US_ASCII);
+    Candidate candidate = admissionCandidate(fixture);
+    Target target = admissionTarget(candidate, UUID.randomUUID());
+    UUID requestId = UUID.randomUUID();
+    var decisionClient = controlledPublishedTargetClient(candidate, target, requestId);
+    controlProvisionalDecisionRead(decisionClient, candidate, target);
+    var verifier =
+        new AccountGameplayAdmissionCallerVerifier(
+            fixture.signerFixture.trustedJwksSource(),
+            fixture.committedIssuanceOwner,
+            Clock.systemUTC());
+    var owner =
+        new AccountGameplayAdmissionLeaseOwner(
+            verifier, decisionClient, TEST_NAMESPACE, fixture.dataSource);
+    GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(CALLER_WORKLOAD).orElseThrow();
+    var acquire =
+        AccountGameplayAdmissionLeaseGrpcCodec.toAcquireRequest(
+            requestId, jwt, candidate, target, BigInteger.ONE);
+    var response = new AtomicReference<AccountGameplayAdmissionLeaseResponse>();
+    withPeer(peer, () -> response.set(owner.acquire(acquire)));
+    var lease =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
+                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(acquire), response.get())
+            .originalLeaseEvidence();
+    byte[] leaseBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var abort = AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(jwt, leaseBytes, null);
+    withPeer(peer, () -> response.set(owner.abort(abort)));
+    return new PreparedUnknownAbort(
+        fixture, owner, verifier, decisionClient, peer, jwt, lease, response.get());
+  }
+
+  private record PreparedUnknownAbort(
+      Fixture fixture,
+      AccountGameplayAdmissionLeaseOwner owner,
+      AccountGameplayAdmissionCallerVerifier verifier,
+      CanonicalGameplayAdmissionDecisionReadClient decisionClient,
+      GrpcPeerIdentity peer,
+      String jwt,
+      AccountGameplayAdmissionLeaseEvidence lease,
+      AccountGameplayAdmissionLeaseResponse originalAbort) {
+    byte[] leaseBytes() {
+      return lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public String toString() {
+      return "PreparedUnknownAbort[redacted]";
+    }
+  }
+
   private Fixture newFixture() throws Exception {
     return newFixture(null);
   }
 
   Fixture newFixture(AccountGameplayDelegationRedisClient redisClient) throws Exception {
+    return newFixture(redisClient, "latest");
+  }
+
+  private Fixture newFixture(
+      AccountGameplayDelegationRedisClient redisClient, String migrationTarget) throws Exception {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
     runOwnedSchemas.add(schema);
@@ -1172,6 +1429,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
+        .target(migrationTarget)
         .load()
         .migrate();
     DSLContext dsl =
