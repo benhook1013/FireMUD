@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
@@ -627,6 +629,74 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void retainedRevisionAdvanceAcrossPhysicalReadIsUnavailableAndRetryCanRead() throws Exception {
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+      inventory.commitOriginalNewFinalAdmission(actual);
+      var assignment = tags.assignmentForTransition(fixture.transitionId());
+      CanonicalGameplayTenantGameplayTagRepository racingTags = mock();
+      // Controlled race injection after the first SQL snapshot and before the actual Redis read.
+      // Advance retained accounting only, through the installed PostgreSQL guards. The immutable
+      // original candidate, receipt and persisted tag assignment retain their exact values.
+      when(racingTags.assignmentForTransition(fixture.transitionId()))
+          .thenAnswer(
+              ignored -> {
+                fixture
+                    .dsl()
+                    .transaction(
+                        configuration -> {
+                          var tx = org.jooq.impl.DSL.using(configuration);
+                          var revision =
+                              tx.fetchSingle(
+                                      "UPDATE game_session_canonical_binding_inventory_clock"
+                                          + " SET inventory_revision = inventory_revision + 1"
+                                          + " WHERE singleton_id = 1 RETURNING inventory_revision")
+                                  .get(0, java.math.BigDecimal.class);
+                          for (String table :
+                              List.of(
+                                  "game_session_canonical_binding_transition",
+                                  "game_session_canonical_gameplay_binding_inventory",
+                                  "game_session_canonical_issuer_partition_reservation")) {
+                            assertThat(
+                                    tx.execute(
+                                        "UPDATE "
+                                            + table
+                                            + " SET inventory_revision = ? WHERE transition_id = ?",
+                                        revision,
+                                        fixture.transitionId()))
+                                .isEqualTo(1);
+                          }
+                        });
+                return assignment;
+              });
+      var racingReader =
+          new CanonicalGameplayOriginalNewFinalAdmissionReadRepository(
+              fixture.dsl(), ownerClient, racingTags, "test", CLOCK);
+      Map<String, String> physical = physicalImage();
+      assertThatThrownBy(
+              () -> racingReader.readActualOriginalFinalAdmission(credential.selector(), "test"))
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW retained SQL source changed during Redis readback");
+      String retainedRows = sqlImage();
+      assertThat(
+              reader()
+                  .readActualOriginalFinalAdmission(credential.selector(), "test")
+                  .canonicalSessionSha256())
+          .isEqualTo(actual.finalSessionSha256());
+      assertThat(sqlImage()).isEqualTo(retainedRows);
+      assertThat(physicalImage()).isEqualTo(physical);
+    }
+  }
+
+  @Test
   void changedPersistedSessionCannotRecoverAgainstTheActualCommittedReceipt() throws Exception {
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
@@ -673,12 +743,22 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
           .isEqualTo(actual.admissionAtMillis());
       fixture.stopRuntime();
       String stoppedRows = sqlImage();
+      Map<String, String> stoppedPhysical = physicalImage();
+      // Reuse the genuine final readback after COMMITTED: this retry has no physical SQL update
+      // for the V1050 trigger to reject, so the Java runtime guard must refuse it explicitly.
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
+                      .commitOriginalNewFinalAdmission(actual))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Original NEW final admission commit requires its current RUNNING runtime");
       assertThatThrownBy(
               () ->
                   new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
                       .readOriginalNewFinalAdmissionSource(decision))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
       assertThat(sqlImage()).isEqualTo(stoppedRows);
+      assertThat(physicalImage()).isEqualTo(stoppedPhysical);
       assertThat(admin.get(ascii(installation.sessionKey())))
           .containsExactly(actual.exactCanonicalBytes());
     }

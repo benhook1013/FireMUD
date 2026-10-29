@@ -121,7 +121,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
       SourceSnapshot after = readCurrentSource(selector);
       if (!before.fingerprint().equals(after.fingerprint())
           || !before.candidate().equals(after.candidate())) {
-        throw conflict("Original NEW retained SQL source changed during Redis readback");
+        throw unavailable("Original NEW retained SQL source changed during Redis readback");
       }
       return result;
     } finally {
@@ -951,18 +951,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
       future.cancel(true);
       throw unavailable("Coordination Redis readback did not return bounded evidence", failure);
     }
-  }
-
-  private static Map<String, Object> object(Object value) {
-    if (!(value instanceof Map<?, ?> map))
-      throw conflict("Retained Account lease object is malformed");
-    Map<String, Object> result = new LinkedHashMap<>();
-    for (Map.Entry<?, ?> entry : map.entrySet()) {
-      if (!(entry.getKey() instanceof String key))
-        throw conflict("Retained Account lease key is malformed");
-      result.put(key, entry.getValue());
-    }
-    return result;
   }
 
   private static long positiveLong(Object value, String name) {

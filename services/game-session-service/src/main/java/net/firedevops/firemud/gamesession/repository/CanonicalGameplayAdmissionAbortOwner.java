@@ -109,7 +109,7 @@ public final class CanonicalGameplayAdmissionAbortOwner {
       throw new IllegalStateException("Account response changed the original transition identity");
     }
     if (operation.state() == AccountGameplayAdmissionLeaseGrpcCodec.State.ABORTED
-        && (operation.bindingDecisionId() == null
+        && (!operation.matchesAbortTransition(transitionId)
             || operation.orphanCleanupId() == null
             || operation.originalAckReceipt() != null)) {
       throw new IllegalStateException("Account ABORTED result lacks exact cleanup evidence");
