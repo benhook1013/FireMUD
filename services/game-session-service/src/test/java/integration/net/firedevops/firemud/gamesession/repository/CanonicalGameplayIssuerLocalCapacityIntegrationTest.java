@@ -481,7 +481,6 @@ class CanonicalGameplayIssuerLocalCapacityIntegrationTest
     }
   }
 
-
   @Test
   void actualReleaseReadbackPersistsAndReloadsWithMoreThan513PhysicalFields() throws Exception {
     try (var fixture = newFixture(BigInteger.valueOf(8), BigInteger.ONE, 250)) {
