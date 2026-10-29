@@ -529,3 +529,9 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: FireController's owner reproduced a false CodeRabbit attribution conflict caused by a newly created and edited Greptile report. The original immutable capture already contained the completed review, all three findings and the exact original comparison; no replacement trigger was needed.
   - Outcome: The owner deployed the bounded parser correction, and the same operation recovered its three findings at 19:55 NZDT without changing review allowances or attribution. Gameplay consumed and adjudicated that original evidence.
   - Expected pattern: Preserve the original attempt, report the capture mismatch to the tool owner and continue safe local work. Distinguish actual provider completion from stale local operation state; do not spend another review to recover existing results.
+
+- `2026-10-29`: Local resource admission does not establish queue order
+  - Context: The focused #3341 R992 retry waited behind the Account timing experiment while later R993 successor validation also requested the canonical resource slot.
+  - Observation: R993 acquired the freed slot first, and R992 exhausted its admission budget before Gradle or tests ran. Submitting the front retry earlier did not reserve execution priority; the initial queueing assumption delayed its proof.
+  - Outcome: R996 subsequently passes the exact front case under the ordinary guard. R992 remains an unexecuted admission failure, not a failed native test or successful retry.
+  - Expected pattern: Observe admission of the priority proof before launching another heavier waiter. Serialize subsequent qualification at the orchestrator when order matters rather than assuming fairness from resource exclusion.
