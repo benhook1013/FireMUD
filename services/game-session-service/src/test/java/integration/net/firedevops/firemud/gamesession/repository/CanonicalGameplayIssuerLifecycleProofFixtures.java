@@ -31,6 +31,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdenti
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -130,6 +131,21 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
 
   protected CanonicalGameplayAdmissionAbortCompositionFixture newFixture(
       Candidate candidate, int seedBootstrapMemberCount) {
+    return newFixture(candidate, seedBootstrapMemberCount, null);
+  }
+
+  protected CanonicalGameplayAdmissionAbortCompositionFixture newFixture(
+      Candidate candidate, int seedBootstrapMemberCount, MigrationVersion migrationTarget) {
+    return newFixture(candidate, seedBootstrapMemberCount, migrationTarget, (data, intent) -> {});
+  }
+
+  protected CanonicalGameplayAdmissionAbortCompositionFixture newFixture(
+      Candidate candidate,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget,
+      java.util.function.BiConsumer<
+              DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
+          afterBootstrap) {
     DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
     accountDataSource.setDriverClassName("org.postgresql.Driver");
     String postgresJdbcUrl = postgres().getJdbcUrl();
@@ -138,7 +154,12 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
     accountDataSource.setUsername(postgres().getUsername());
     accountDataSource.setPassword(postgres().getPassword());
     return new CanonicalGameplayAdmissionAbortCompositionFixture(
-        accountDataSource, candidate, issuerOwner, seedBootstrapMemberCount);
+        accountDataSource,
+        candidate,
+        issuerOwner,
+        seedBootstrapMemberCount,
+        migrationTarget,
+        afterBootstrap);
   }
 
   protected static Candidate controlledCandidate() {

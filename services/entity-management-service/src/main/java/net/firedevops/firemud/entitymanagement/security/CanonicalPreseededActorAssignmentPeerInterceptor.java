@@ -18,6 +18,11 @@ public final class CanonicalPreseededActorAssignmentPeerInterceptor implements S
   public static final String RECEIPT_READ_METHOD_NAME =
       "entity_management.v1.CanonicalPreseededActorAssignmentService/"
           + "ReadPreseededActorAssignmentReceipt";
+  public static final String RUNTIME_REFERENCE_READ_METHOD_NAME =
+      "entity_management.v1.CanonicalPreseededActorAssignmentService/"
+          + "ReadPreseededActorRuntimeReference";
+  private static final Context.Key<GrpcPeerIdentity> VERIFIED_RUNTIME_REFERENCE_PEER =
+      Context.key("firemud-preseeded-runtime-reference-peer");
   private static final Context.Key<GrpcPeerIdentity> VERIFIED_GAME_SESSION_PEER =
       Context.key("firemud-preseeded-actor-assignment-peer");
   private static final Context.Key<GrpcPeerIdentity> VERIFIED_WORLD_PEER =
@@ -39,7 +44,8 @@ public final class CanonicalPreseededActorAssignmentPeerInterceptor implements S
     String methodName = call.getMethodDescriptor().getFullMethodName();
     boolean assignmentWrite = METHOD_NAME.equals(methodName);
     boolean receiptRead = RECEIPT_READ_METHOD_NAME.equals(methodName);
-    if (!assignmentWrite && !receiptRead) {
+    boolean runtimeRead = RUNTIME_REFERENCE_READ_METHOD_NAME.equals(methodName);
+    if (!assignmentWrite && !receiptRead && !runtimeRead) {
       return next.startCall(call, headers);
     }
 
@@ -47,7 +53,7 @@ public final class CanonicalPreseededActorAssignmentPeerInterceptor implements S
         GrpcPeerIdentity.fromSslSession(call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
             .orElse(null);
     boolean trustedPeer =
-        assignmentWrite
+        (assignmentWrite || runtimeRead)
             ? isTrustedGameSessionPeer(peer, trustedNamespace)
             : isTrustedWorldPeer(peer, trustedNamespace);
     if (!trustedPeer
@@ -55,7 +61,7 @@ public final class CanonicalPreseededActorAssignmentPeerInterceptor implements S
         || SessionContext.isInternalService()) {
       call.close(
           Status.PERMISSION_DENIED.withDescription(
-              assignmentWrite
+              (assignmentWrite || runtimeRead)
                   ? "Trusted Game Session peer required"
                   : "Trusted World peer required"),
           new Metadata());
@@ -66,8 +72,21 @@ public final class CanonicalPreseededActorAssignmentPeerInterceptor implements S
     context =
         assignmentWrite
             ? context.withValue(VERIFIED_GAME_SESSION_PEER, peer)
-            : context.withValue(VERIFIED_WORLD_PEER, peer);
+            : receiptRead ? context.withValue(VERIFIED_WORLD_PEER, peer) : context;
+    if (runtimeRead) {
+      context = context.withValue(VERIFIED_RUNTIME_REFERENCE_PEER, peer);
+    }
     return Contexts.interceptCall(context, call, headers, next);
+  }
+
+  public static void requireVerifiedRuntimeReferencePeer(String namespace) {
+    if (!isTrustedGameSessionPeer(VERIFIED_RUNTIME_REFERENCE_PEER.get(), namespace)
+        || SessionContext.hasAuthenticatedCallerContext()
+        || SessionContext.isInternalService()) {
+      throw Status.PERMISSION_DENIED
+          .withDescription("Trusted Game Session runtime reference peer required")
+          .asRuntimeException();
+    }
   }
 
   public static GrpcPeerIdentity currentVerifiedPeer() {

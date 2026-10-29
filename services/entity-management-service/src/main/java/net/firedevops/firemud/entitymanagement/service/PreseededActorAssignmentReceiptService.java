@@ -12,6 +12,12 @@ public final class PreseededActorAssignmentReceiptService {
     this.characterRepository = Objects.requireNonNull(characterRepository, "characterRepository");
   }
 
+  /** Game Session's distinct purpose-specific read; does not create or repair projections. */
+  public Optional<PreseededActorRuntimeReference> readRuntimeReference(
+      PreseededActorAssignmentReceiptRequest request) {
+    return characterRepository.readPreseededActorRuntimeReference(Objects.requireNonNull(request));
+  }
+
   public Optional<PreseededActorAssignmentReceipt> read(
       PreseededActorAssignmentReceiptRequest request) {
     Objects.requireNonNull(request, "request");
