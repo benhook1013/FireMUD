@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -43,6 +44,19 @@ public final class CanonicalInitialAdmissionIntentRepository {
   /** Locks both Game Session owner sources and commits exact World request bytes before acquire. */
   public CanonicalInitialAdmissionIntentSnapshot reserve(
       Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    return reserve(holdRequest, lifecycleRequest, false);
+  }
+
+  /** Retains the exact Human pre-hold intent while its launch is still STARTING. */
+  public CanonicalInitialAdmissionIntentSnapshot reserveHumanStarting(
+      Request holdRequest, WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    return reserve(holdRequest, lifecycleRequest, true);
+  }
+
+  private CanonicalInitialAdmissionIntentSnapshot reserve(
+      Request holdRequest,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
+      boolean requireStarting) {
     Objects.requireNonNull(holdRequest, "holdRequest");
     Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
     requireIntentRequestId(holdRequest.initialAdmissionRequestId());
@@ -51,7 +65,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
         boundedRequestBytes(lifecycleRequest.canonicalBytes(), "lifecycle request");
     requireWritableReadCommittedOwnerTransaction();
 
-    LockedSources sources = lockSources(holdRequest);
+    LockedSources sources = lockSources(holdRequest, requireStarting);
     CanonicalInitialAdmissionIntentSnapshot.requireExactBinding(
         holdRequest, lifecycleRequest, sources.binding());
 
@@ -89,6 +103,17 @@ public final class CanonicalInitialAdmissionIntentRepository {
   /** Attaches only World-issued acquisition identity to an already committed exact intent. */
   public CanonicalInitialAdmissionIntentSnapshot attach(
       Request exactHoldRequest, HoldIdentity holdIdentity) {
+    return attach(exactHoldRequest, holdIdentity, false);
+  }
+
+  /** Attaches the exact World identity to a retained Human STARTING intent. */
+  public CanonicalInitialAdmissionIntentSnapshot attachHumanStarting(
+      Request exactHoldRequest, HoldIdentity holdIdentity) {
+    return attach(exactHoldRequest, holdIdentity, true);
+  }
+
+  private CanonicalInitialAdmissionIntentSnapshot attach(
+      Request exactHoldRequest, HoldIdentity holdIdentity, boolean requireStarting) {
     Objects.requireNonNull(exactHoldRequest, "exactHoldRequest");
     Objects.requireNonNull(holdIdentity, "holdIdentity");
     requireIntentRequestId(exactHoldRequest.initialAdmissionRequestId());
@@ -104,7 +129,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
     }
     requireWritableReadCommittedOwnerTransaction();
 
-    LockedSources sources = lockSources(exactHoldRequest);
+    LockedSources sources = lockSources(exactHoldRequest, requireStarting);
     Record existing =
         findIntent(
             exactHoldRequest.targetNamespace(), exactHoldRequest.initialAdmissionRequestId(), true);
@@ -171,7 +196,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
     return row == null ? Optional.empty() : Optional.of(decodeSnapshot(row));
   }
 
-  private LockedSources lockSources(Request request) {
+  private LockedSources lockSources(Request request, boolean requireStarting) {
     CanonicalRealmCatalogSnapshot catalog =
         catalogRepository.lockInitialAdmissionTarget(
             request.targetNamespace(),
@@ -179,11 +204,17 @@ public final class CanonicalInitialAdmissionIntentRepository {
             request.realmId(),
             request.expectedCatalogRevision());
     CanonicalInitialAdmissionLaunchTarget launch =
-        launchRepository.lockForInitialAdmission(
-            request.targetNamespace(),
-            request.canonicalTenantId(),
-            request.realmId(),
-            request.canonicalGameInstanceId());
+        requireStarting
+            ? launchRepository.lockStartingForHumanRuntimeCompletion(
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.realmId(),
+                request.canonicalGameInstanceId())
+            : launchRepository.lockForInitialAdmission(
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.realmId(),
+                request.canonicalGameInstanceId());
     SourceBinding source = sourceBinding(catalog, launch);
     Record retainedLaunch =
         dsl.fetchOne(
@@ -213,6 +244,16 @@ public final class CanonicalInitialAdmissionIntentRepository {
         || !intakeRequest.equals(
             required(retainedLaunch, "catalog_source_intake_request_id", UUID.class))) {
       throw conflict("Captured original launch differs from the locked catalog source identity");
+    }
+    if (requireStarting) {
+      final StartSessionPostAuthorizationExecutionTuple decodedOriginal;
+      try {
+        decodedOriginal = StartSessionPostAuthorizationExecutionTuple.decode(originalTuple);
+      } catch (RuntimeException malformed) {
+        throw conflict("Captured original Human StartSession tuple is malformed");
+      }
+      launchRepository.requireOriginalPinsBeforeStarting(
+          decodedOriginal, launch.association().launchBindingEvidence());
     }
     return new LockedSources(source, originalTuple.clone(), intakeOperation, intakeRequest);
   }

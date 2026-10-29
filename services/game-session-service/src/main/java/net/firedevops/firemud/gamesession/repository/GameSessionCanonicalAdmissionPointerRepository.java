@@ -319,6 +319,49 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     }
   }
 
+  /** Historical original origin only; neither reads nor locks the current routing pointer. */
+  CanonicalClosedAdmissionPointerSnapshot lockOriginalClosedOriginForRealm(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      long expectedPointerVersion,
+      long expectedCatalogRevision) {
+    requireReadSelector(targetNamespace, canonicalTenantId);
+    requireReadSelector(targetNamespace, realmId);
+    requirePositive(expectedPointerVersion, "expectedPointerVersion");
+    requirePositive(expectedCatalogRevision, "expectedCatalogRevision");
+    requireWritableOwnerTransaction();
+    var outcomes =
+        dsl.fetch(
+            "SELECT request_id FROM game_session_canonical_closed_admission_pointer_request "
+                + "WHERE target_namespace=? AND canonical_tenant_id=? AND realm_id=? "
+                + "AND pointer_version=? AND catalog_revision=? ORDER BY request_id LIMIT 2 FOR SHARE",
+            targetNamespace,
+            canonicalTenantId,
+            realmId,
+            expectedPointerVersion,
+            expectedCatalogRevision);
+    if (outcomes.size() != 1) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Realm does not have one exact historical original CLOSED request outcome");
+    }
+    UUID originalRequestId = required(outcomes.getFirst(), "request_id", UUID.class);
+    CanonicalClosedAdmissionPointerSnapshot origin =
+        lockOriginalClosedOrigin(targetNamespace, originalRequestId)
+            .orElseThrow(
+                () ->
+                    new InvalidCanonicalClosedPointerEvidenceException(
+                        "Exact historical original CLOSED request outcome is missing"));
+    if (!targetNamespace.equals(origin.targetNamespace())
+        || !canonicalTenantId.equals(origin.canonicalTenantId())
+        || !realmId.equals(origin.realmId())) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Historical original CLOSED outcome differs from the requested realm");
+    }
+    requireExpectedVersions(origin, expectedPointerVersion, expectedCatalogRevision);
+    return origin;
+  }
+
   /**
    * Requires absence across every persisted pointer/audit representation that can name this
    * canonical realm or its exactly associated legacy runtime selector. The caller must hold the
