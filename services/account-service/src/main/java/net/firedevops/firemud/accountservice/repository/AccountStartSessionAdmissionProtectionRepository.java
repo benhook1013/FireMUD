@@ -243,13 +243,23 @@ public class AccountStartSessionAdmissionProtectionRepository {
   }
 
   private void lockOriginalSourceRows(AccountStartSessionAdmissionProtectionEvidence evidence) {
-    for (SourceEvidence source : evidence.sourceEvidenceVector()) {
-      Record locked =
-          dsl.fetchOne(
-              "SELECT source_key FROM account_draft_authorization_source_locks "
-                  + "WHERE source_key = ? FOR UPDATE NOWAIT",
-              source.key());
-      if (locked == null || !source.key().equals(text(locked, "source_key"))) throw unavailable();
+    List<String> expectedKeys =
+        evidence.sourceEvidenceVector().stream().map(SourceEvidence::key).toList();
+    Set<String> expectedKeySet = new HashSet<>(expectedKeys);
+    if (expectedKeys.isEmpty() || expectedKeySet.size() != expectedKeys.size()) throw unavailable();
+    var locked =
+        dsl.fetch(
+            "SELECT source_key FROM account_draft_authorization_source_locks "
+                + "WHERE source_key = ANY(?::text[]) "
+                + "ORDER BY account_publication_authorization_source_sort_key(source_key) "
+                + "FOR UPDATE NOWAIT",
+            (Object) expectedKeys.toArray(String[]::new));
+    Set<String> lockedKeys = new HashSet<>();
+    for (Record row : locked) {
+      if (!lockedKeys.add(text(row, "source_key"))) throw unavailable();
+    }
+    if (locked.size() != expectedKeys.size() || !lockedKeys.equals(expectedKeySet)) {
+      throw unavailable();
     }
   }
 
