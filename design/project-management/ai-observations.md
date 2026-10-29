@@ -589,19 +589,23 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Outcome: Root identified the supported source-refresh reader, corrected the observer to read by refresh_id, and retained the valid result without another trigger.
   - Expected pattern: Keep the original request key distinct from its returned operation ID and use the retained-operation reader for completion.
 
-### 2026-10-30 — Preserve the resource-session descriptor through Python subprocesses
+- `2026-10-30`: Preserve the resource-session descriptor through Python subprocesses
+  - Context: A Python proof runner launched inside `run-locked-gradle.sh --resource-session` invoked nested Gradle.
+  - Observation: Default `subprocess.run` behavior closed the inherited resource descriptor, and the wrapper correctly refused admission before running tests (`Invalid inherited local resource session: invalid inherited lock descriptor`). The runner’s guarded cleanup restored temporary version selections.
+  - Expected pattern: Pass the existing `FIREMUD_LOCAL_RESOURCE_SESSION_FD` explicitly with `pass_fds` so nested subprocesses retain the original verified lease without creating or bypassing one.
+  - Outcome: The failed invocation remains an unrun gate, and the corrected invocation is being qualified. Recovery: R1034 passed 28 native cases and the selected Node 26 frontend/OpenAPI consumers with the original verified descriptor passed through `pass_fds`.
 
-A Python proof runner launched inside `run-locked-gradle.sh --resource-session` closed the inherited resource descriptor when invoking nested Gradle through the default `subprocess.run` behavior. The wrapper correctly refused admission before running tests (`Invalid inherited local resource session: invalid inherited lock descriptor`); the temporary version selections were restored by the runner’s guarded cleanup. Passing the existing `FIREMUD_LOCAL_RESOURCE_SESSION_FD` explicitly with `pass_fds` preserves the original verified lease without creating or bypassing one. The corrected invocation is being qualified; the failed invocation remains an unrun gate. Recovery: R1034 passed 28 native cases and the selected Node 26 frontend/OpenAPI consumers with the original verified descriptor passed through `pass_fds`.
+- `2026-10-30`: Verify the remote PR head ref before publishing a carry
+  - Context: While publishing a reconciled local branch for #3320, Gameplay guessed a remote branch name.
+  - Observation: The guess created an unused remote branch instead of advancing the PR head. A compact controller pull included `base_ref` but not `head_ref`, which was insufficient evidence for the guessed name.
+  - Expected pattern: Verify the exact PR head ref from retained published evidence before publication, especially when the local preparation branch has a different name.
+  - Outcome: The exact existing remote ref was verified from the retained published SHA; one atomic push advanced the correct branch and deleted only the accidental branch under an exact-SHA lease and the User’s existing own-branch cleanup authorization. No source was lost.
 
-### 2026-10-30 — Verify the remote PR head ref before publishing a carry
-
-Gameplay guessed a #3320 remote branch name while publishing a reconciled local branch, creating an unused remote branch instead of advancing the PR head. The exact existing remote ref was then verified from the retained published SHA; one atomic push advanced the correct branch and deleted only the accidental branch under an exact-SHA lease and the User’s existing own-branch cleanup authorization. No source was lost. A compact controller pull includes `base_ref` but not `head_ref`; that was insufficient evidence for the guessed name. Verify the exact PR head ref before publication, especially when the local preparation branch has a different name.
-
-### 2026-10-30 — Controller server errors also block owner notifications
-
-The existing Gameplay connection returned `overloaded` on an active Hosted-operation wait, followed by `service_unavailable` because its identity check received an HTTP server error. An independent CLI-operation read and the attempt to notify FireController Worker failed at the same identity boundary before dispatch. The last confirmed review states remain active; failure to read or notify is not completion, cancellation or a failed provider trigger. Original operation IDs, alert request and idempotency key are retained for supported recovery, with no alternate identity or duplicate review request. Local work continues; service recovery and alert delivery remain unconfirmed.
-
-Recovery update for the controller incident: the original Gameplay operation read and the exact retained owner-alert send succeeded at 11:52 UTC; evidence, adjudication and finalization then worked on the unchanged binding. FireController Worker reported controlled rollout recovery on the original instance at 11:48:08 UTC, with no container restart. These facts distinguish recovered reads from the earlier failed observations; they do not retroactively qualify an unavailable read.
+- `2026-10-30`: Controller server errors also block owner notifications
+  - Context: An active Hosted-operation wait on the existing Gameplay connection returned `overloaded`; its identity check then received an HTTP server error. An independent CLI-operation read and attempted notification to FireController Worker failed at the same identity boundary before dispatch.
+  - Observation: The last confirmed review states remained active. Failure to read or notify was not completion, cancellation or a failed provider trigger. Original operation IDs, alert request and idempotency key were retained for supported recovery; no alternate identity or duplicate review request was used. Local work continued, while service recovery and alert delivery remained unconfirmed.
+  - Expected pattern: Keep operation status distinct from observation/notification connectivity, and recover through the original binding and retained request identities.
+  - Outcome: The original Gameplay operation read and exact retained owner-alert send succeeded at 11:52 UTC; evidence, adjudication and finalization then worked on the unchanged binding. FireController Worker reported controlled rollout recovery on the original instance at 11:48:08 UTC, with no container restart. These facts distinguish recovered reads from the earlier failed observations; they do not retroactively qualify an unavailable read.
 
 - `2026-10-30`: A rate-limited Hosted trigger remained falsely active
   - Context: #3333 Hosted1 posted trigger comment 6495302463 at 00:22:47 NZDT. The authenticated provider replied six seconds later with “Action not completed” and a review-rate-limit explanation.

@@ -618,9 +618,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
         || decimalNullable(repair, "original_expected_prior_generation") != null
         || !"BEFORE_FINAL_CAS".equals(requiredText(repair, "original_execution_phase"))
         || !"REQUIRED".equals(requiredText(repair, "original_status"))
-        || !"REQUIRED".equals(requiredText(repair, "original_projection_state"))
-        || repair.get("original_projection_member", String.class) != null
-        || decimalNullable(repair, "original_projection_inventory_revision") != null
+        || !originalAccountProjectionMatchesRepair(row, repair, expectedMember)
         || decimal(repair, "operation_fence").signum() <= 0
         || requiredUuid(repair, "coverage_fence").equals(new UUID(0L, 0L))
         || decimal(repair, "inventory_snapshot_revision").signum() <= 0
@@ -652,10 +650,23 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
         || control.get("historical_account_admission_fence", UUID.class) != null
         || control.get("coverage_fence", UUID.class) != null
         || decimalNullable(control, "inventory_snapshot_revision") != null
-        || decimalNullable(control, "coverage_generation") != null
-        || !projectionRevisionMatchesRepair(row, repair)) {
+        || decimalNullable(control, "coverage_generation") != null) {
       throw conflict("Retained account member acknowledgement differs from the exact candidate");
     }
+  }
+
+  static boolean originalAccountProjectionMatchesRepair(
+      Record obligation, Record repair, String expectedMember) {
+    String state = requiredText(repair, "original_projection_state");
+    String member = repair.get("original_projection_member", String.class);
+    BigInteger revision = decimalNullable(repair, "original_projection_inventory_revision");
+    boolean exactOriginal =
+        ("REQUIRED".equals(state) && member == null && revision == null)
+            || ("PRESENT_AWAITING_COVERAGE".equals(state)
+                && expectedMember.equals(member)
+                && revision != null
+                && revision.signum() > 0);
+    return exactOriginal && projectionRevisionMatchesRepair(obligation, repair);
   }
 
   private static boolean projectionRevisionMatchesRepair(Record obligation, Record repair) {
