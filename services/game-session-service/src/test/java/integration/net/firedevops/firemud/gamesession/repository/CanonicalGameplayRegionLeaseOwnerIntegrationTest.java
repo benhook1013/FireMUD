@@ -248,7 +248,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
 
-      // Reads one and two are the initial source read and the new post-claim revalidation; read
+      // Reads one and two are the initial source read and the new pre-claim revalidation; read
       // three runs after EVALSHA, where this case exercises recovery-evidence drift.
       world.setAfterRead(3, incarnationSource::changeRecoveryEvidence);
       Throwable recoveryDriftFailure =
@@ -627,6 +627,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       }
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      // The second World read follows Redis preflight and precedes the SQL permission claim.
+      world.setAfterRead(2, incarnationSource::changeRecoveryEvidence);
+      var preClaimDependencyFailureOwner =
+          owner(
+              bindingInventory,
+              statusRepository,
+              validRedisOwner,
+              world,
+              "preclaim-dependency-drift",
+              incarnationSource);
+      assertThatThrownBy(
+              () ->
+                  preClaimDependencyFailureOwner.installForTransition(
+                      TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+      world.resetReads();
+      incarnationSource.restoreRecoveryEvidence();
 
       var validOwner =
           owner(
