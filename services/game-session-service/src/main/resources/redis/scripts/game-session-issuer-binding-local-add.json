@@ -1,0 +1,40 @@
+{
+  "scriptId": "game-session.issuer-binding-local-add.v1",
+  "resourcePath": "redis/lua/game-session-issuer-binding-local-add.lua",
+  "sha256": "f45adaf2c62acd186f5497da6035e190797f7a9a3a1f269ac9ff35936c5120e4",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "issuerPartition",
+      "ownedPrefix": "session:game:index:issuer:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "issuerId"},
+    {"name": "partitionId"},
+    {"name": "partitionCount"},
+    {"name": "partitionCapacity"},
+    {"name": "baselineFieldCountAndExactFieldValuePairs"},
+    {"name": "registeredLocalOperationCountAndExactOperationTupleAndCurrentPhase"},
+    {"name": "targetOperationAndRequiredFieldsAndCapacityCounts"}
+  ],
+  "category": "SESSION_ISSUER_INDEX",
+  "outcomes": [
+    {"code": "CAPACITY_RESERVED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "MEMBER_PROJECTED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "LOCAL_OPERATION_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDSET_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS_OR_CAPACITY", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "tailLossBehavior": "This local one-key projection requires the exact positively installed issuer anchor, immutable partition baseline including its owner-installed initial mutation revision, and complete SQL-registered current unretired reservation set. Existing baseline fields must all remain present and exact. A locally registered pending field may be absent or exact; an unretired completed SQL issuer-local release may appear only as its retained exact RELEASED capacity postimage with its binding absent; an authorized retired terminal capacity field is absent only with its exact retained original retirement proof. Every ADD compares and advances the partition-local opaque physical revision atomically with its one-key change, so an older prepared ADD or release cannot replay after a later release or retirement. Missing baseline/header/revision, legacy or malformed values, unknown fields, current source or incarnation movement, or incomplete SQL accounting leaves the operation unqualified. The result is physical readback evidence only; it does not acknowledge issuer-wide coverage, open a barrier, or authorize admission.",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "v2"}
+  ],
+  "legacyPayloadShape": null
+}

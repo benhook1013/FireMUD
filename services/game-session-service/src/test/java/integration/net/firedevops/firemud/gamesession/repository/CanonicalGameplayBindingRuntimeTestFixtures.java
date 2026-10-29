@@ -48,13 +48,22 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
    * inputs; this path proves neither a live producer nor initial-admission terminal authority.
    */
   public static RuntimeTarget seedRunningLaunch(DataSource dataSource, UUID canonicalTenantId) {
+    return seedRunningLaunch(dataSource, canonicalTenantId, null);
+  }
+
+  /**
+   * Fixed test namespace for authenticated cross-owner composition; upstream evidence is
+   * controlled.
+   */
+  public static RuntimeTarget seedRunningLaunch(
+      DataSource dataSource, UUID canonicalTenantId, String fixedNamespace) {
     if (canonicalTenantId == null || new UUID(0L, 0L).equals(canonicalTenantId)) {
       throw new IllegalArgumentException("Canonical tenant UUID must be non-nil");
     }
 
     String token = UUID.randomUUID().toString().replace("-", "");
     String shortToken = token.substring(0, 10);
-    String targetNamespace = "fixture-" + shortToken;
+    String targetNamespace = fixedNamespace == null ? "fixture-" + shortToken : fixedNamespace;
     String tenantSlug = "tenant-" + shortToken;
     String worldSlug = "world-" + shortToken;
     String worldDisplayName = "Fixture World " + shortToken;

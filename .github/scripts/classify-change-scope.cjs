@@ -185,6 +185,11 @@ function classifyChangeScope(inputFiles, options = {}) {
         }
       }
     }
+    // Account's native owner composition consumes Game Session classes and migrations.
+    if (affectedModules.has("game-session-service")) {
+      affectedModules.add("account-service");
+      affectedServices.add("account-service");
+    }
   }
 
   const pythonFiles = files.filter((file) => file.endsWith(".py") || isPythonDependency(file));

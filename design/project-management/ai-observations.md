@@ -411,3 +411,46 @@ Entry format:
   - Context: `staleSerializableGenuineAckCreatorRetriesAndRetainsOneExactWinner` failed in `finalized()` after 1.292 seconds, before the serializable race began.
   - Observation: The SQL guard message `storage deadline expired` covers either `evaluatedAt >` the database clock or `expiresAt <=` the database clock, so the branch and clock cause are unknown. Retain the failed result; an unchanged future retry cannot recover the original failure-time clock evidence.
   - Expected pattern: Capture the original evidence timestamps, JVM and database wall clocks, and monotonic elapsed time only after a failure, without delaying the original COMMIT or changing its lifetime or guard.
+
+- `2026-10-26`: Adding a nullable column can change frozen complete-row JSON without changing retained data
+  - Context: In the combined issuer owner, V1035 added a nullable abort identifier and V1036 added a nullable release linkage. Existing `to_jsonb(row)` cohort captures and retained-row assertions then included a new NULL field, so unchanged historical rows appeared to differ from their frozen source bytes. The focused native checks reproduced both cases.
+  - Observation: Whole-row JSON implicitly includes the database schema. A forward additive column can therefore break byte identity even when every pre-existing value and applied migration is unchanged. This is distinct from a changed non-null owner identity or receipt.
+  - Expected pattern: Preserve original frozen bytes and applied history. Where the owner contract makes the newly added NULL explicitly absence-equivalent, project out only that named field when NULL in current capture and retained-image comparison; keep non-null values and every other field significant. Prove the populated retained upgrade and exact retry, rather than using generic null stripping or rewriting old evidence.
+
+- `2026-10-26`: Read completed CI conclusions instead of inferring success from active-job absence
+  - Context: The #3310 observer reported no failures after Game Session disappeared from its query filtered to unfinished jobs. A later full job-list read exposed the actual failed conclusion; the failure at 22:19:23 NZDT was reported about nine minutes late.
+  - Observation: Absence from an active-job filter proves only that the job is no longer active. Treating it as success delayed repair of two stale raw-abort assertion messages and produced an incorrect status report. This was observer logic, not a FireController defect.
+  - Expected pattern: The single CI observer reads all current-run job conclusions, including completed failures and cancellations, on every cycle and reports an actionable failure immediately. Use a filtered active-job view only to summarize remaining work; never infer success from that view or wait for the aggregate gate to fail.
+
+- `2026-10-27`: Forward owner migrations can break shared disposable fixtures
+  - Context: In #2973, a new retained completion FK exposed an omitted child in the Game Session baseline TRUNCATE list and broke both Game Session and TCP cross-service suites; a reduced World migration probe also omitted tables required by the new tail migration.
+  - Observation: Focused owner proof can pass while shared fixtures fail, and a later Hikari closed-connection or teardown refusal can mask the original PostgreSQL error.
+  - Expected pattern: Keep explicit baseline descendants and exact original trigger-state restoration together, make reduced probes execute the complete current migration tail with its real prerequisite tables, and inspect the first SQL failure in the completed job's JUnit output before attributing failure to Docker availability.
+
+- `2026-10-27`: Manual Entity Flyway fixtures require the existing migration-lock setting
+  - Context: The region composition’s new Entity schema left `CREATE UNIQUE INDEX CONCURRENTLY` waiting on Flyway’s own history transaction.
+  - Observation: An owned JVM thread dump plus `pg_blocking_pids` identified the self-block; cancelling only that matched test-owned backend preserved the failed run.
+  - Expected pattern: Retain Entity’s existing `PostgreSQLConfigurationExtension.setTransactionalLock(false)` pattern for the fixture rather than changing applied migrations or host configuration.
+
+- `2026-10-27`: Failure diagnostics must retain the attempted transaction input
+  - Context: The manual Human-to-region composition rejected a guarded update and rolled its transaction back before the diagnostic reread.
+  - Observation: Reconstructing expected values from the retained `PREPARED` row yielded NULL admission fields and misleading predicate failures instead of the attempted decision.
+  - Expected pattern: Pass the immutable attempted selector to bounded failure-only diagnostics, read actual durable source rows separately, and keep attempted values distinct from committed evidence.
+
+- `2026-10-27`: Completed Hosted publication remained in native provider wait
+  - Context: #3310 Hosted5 completed on the exact requested head at 16:32:58 NZDT, but the original FireController operation still reported `active / provider_wait / trigger_recovered` after the completed publication was visible.
+  - Observation: the status did not expose the completed review or a capture failure. A bounded provider inspection found review 5661910348 and its six actionable comments; FireController's owner confirmed that the retained capture already contained the publication and began checking parser/attribution. The source completion mismatch delayed consuming the findings.
+  - Expected pattern: preserve the original attempt and quota, distinguish trigger delivery from provider execution, and expose capture incompatibility as an actionable state. Read the completed source for safe local fixes while the tool owner recovers its official evidence; never repost to obtain another review.
+  - Reconsideration trigger: the original attempt is recovered and the exact parser/attribution cause and diagnostic behavior are verified. Gameplay reported the retained handles directly to FireController's owner; no database or runtime bypass was used.
+
+  - Recovery: FireController identified six separately fingerprinted findings grouped into five comment containers. Parser fix `8f6e6121` recovered the same original attempt and all six exact findings; Gameplay verified the pinned head/base and finalized their native decisions. No trigger, allowance or controls changed. Full required controller CI was still pending at its owner's recovery handoff; native/race and packaged checks had passed.
+
+- `2026-10-29`: Abbreviated source-refresh IDs returned unrelated advice
+  - Context: Source-refresh IDs missing the `review_refresh_` prefix returned unrelated startup-binding advice. The original full receipt IDs recovered the existing observations without another fetch.
+  - Observation: FireController owner reports client-only fix `18cf3b4d` now identifies `refresh_id`, its required prefix/format and retained-receipt recovery; an existing MCP process keeps its prior binary until normal reconnection.
+  - Expected pattern: Preserve exact full handles in delegation messages rather than abbreviating tool arguments.
+
+- `2026-10-29`: Shared static Testcontainers blocked the retirement suite
+  - Context: The split issuer capacity/retirement proof shared static Testcontainers objects in an abstract fixture across two independently managed test classes.
+  - Observation: The first class passed, but the retirement class could not start Redis on its mapped port; no retirement cases ran. The exact timeout cause remains unproved.
+  - Expected pattern: Each concrete test class owns its own containers while sharing connection and SQL proof mechanics. Verify both classes together and retain the original failed aggregate before claiming receiving proof.

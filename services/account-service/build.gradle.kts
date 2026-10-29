@@ -86,6 +86,7 @@ dependencies {
     testImplementation(testFixtures(project(":common-platform-core")))
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
+    integrationTestImplementation(project(path = ":game-session-service", configuration = "gameSessionClassesProof"))
     integrationTestImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }
@@ -129,6 +130,11 @@ tasks.named<Test>("test") {
 }
 
 tasks.named<Test>("integrationTest") {
+    // Composition fixtures load Game Session and Common Saga migrations directly from the filesystem.
+    inputs.dir(project(":game-session-service").file("src/main/resources/db/migration"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(project(":common-saga").file("src/main/resources/db/migration/saga"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     val loggingArtifacts = loggingAdminIntegrationTestArtifacts.artifactFiles
     classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminIntegrationTestClasses)
 }

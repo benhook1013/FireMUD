@@ -1146,7 +1146,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return newFixture(null);
   }
 
-  private Fixture newFixture(AccountGameplayDelegationRedisClient redisClient) throws Exception {
+  Fixture newFixture(AccountGameplayDelegationRedisClient redisClient) throws Exception {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
     runOwnedSchemas.add(schema);
@@ -1422,7 +1422,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private DataSource dataSource;
   }
 
-  private static Candidate admissionCandidate(Fixture fixture) {
+  static Candidate admissionCandidate(Fixture fixture) {
     var identity = fixture.committedCandidate.identity();
     var authority = fixture.committedCandidate.authoritySnapshot();
     return new Candidate(
@@ -1532,7 +1532,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return decisionClient;
   }
 
-  private static PublishedRealmEvidence controlledPublishedTarget(
+  static PublishedRealmEvidence controlledPublishedTarget(
       Candidate candidate, Target target, UUID requestId) {
     var selector =
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
@@ -1708,9 +1708,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   private record LeaseAllocationState(
       long allocationCount, long fenceCount, LeaseAllocationRow allocation, LeaseFenceRow fence) {}
 
-  private static final class Fixture {
+  static final class Fixture {
     private final String schema;
-    private final DriverManagerDataSource dataSource;
+    final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
     private final DataSourceTransactionManager manager;
     private final TransactionTemplate transaction;
@@ -1732,9 +1732,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private final AccountGameplayAdmissionLeaseRepository leases;
     private final AccountGameplayTokenIdentityFenceRepository tokenFences;
     private final AccountGameplayDelegationIssuanceRepository issuance;
-    private AccountGameplayDelegationCommitSignerFixture signerFixture;
-    private AccountGameplayDelegationCommittedIssuanceOwner committedIssuanceOwner;
-    private AccountGameplayDelegationResponseRecoveryOwner responseRecoveryOwner;
+    AccountGameplayDelegationCommitSignerFixture signerFixture;
+    AccountGameplayDelegationCommittedIssuanceOwner committedIssuanceOwner;
+    AccountGameplayDelegationResponseRecoveryOwner responseRecoveryOwner;
     private final UUID tenantUuid = UUID.randomUUID();
     private final UUID joinRequestId = UUID.randomUUID();
     private final String callerBinding = "current-source-fixture-" + UUID.randomUUID();
@@ -1743,7 +1743,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private final CanonicalJoinScopeV2 joinScope;
     private final Account account;
     private final IssuerAccountSourceSnapshot issuanceSource;
-    private final CommittedCandidateVerificationData committedCandidate;
+    final CommittedCandidateVerificationData committedCandidate;
 
     private Fixture(
         String schema,
@@ -2316,10 +2316,13 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   }
 
   /** Run-owned local primary/replica used only for the authenticated Account-owner case. */
-  private static final class PhysicalRedisFixture implements AutoCloseable {
+  static final class PhysicalRedisFixture implements AutoCloseable {
     private static final int REDIS_PORT = 6379;
     private static final String ACCOUNT_PASSWORD = UUID.randomUUID().toString().replace("-", "");
     private static final String PRIMARY_ALIAS = "account-gameplay-admission-primary";
+    private static final String ISSUER_OWNER = "gamesession_coord_app";
+    private static final String ISSUER_OWNER_PASSWORD =
+        UUID.randomUUID().toString().replace("-", "");
 
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> primary =
@@ -2356,10 +2359,11 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 Integer.toString(REDIS_PORT));
 
     private RedisClient bootstrapClient;
+    private RedisClient issuerOwnerClient;
     private LettuceAccountCoordinationPinnedConnectionProvider accountProvider;
     private AccountGameplayDelegationRedisClient accountClient;
 
-    private static PhysicalRedisFixture start() throws InterruptedException {
+    static PhysicalRedisFixture start() throws InterruptedException {
       assumeTrue(
           DockerClientFactory.instance().isDockerAvailable(),
           "Docker is unavailable; authenticated Account-owner Redis proof is skipped");
@@ -2381,8 +2385,17 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       try (var connection = bootstrapClient.connect(ByteArrayCodec.INSTANCE)) {
         RedisCommands<byte[], byte[]> commands = connection.sync();
         configureAccountUser(commands);
+        configureIssuerOwner(commands);
         awaitLocalAndReplicaAof(commands);
       }
+
+      RedisURI issuerUri =
+          RedisURI.Builder.redis("127.0.0.1", primaryPort)
+              .withAuthentication(ISSUER_OWNER, ISSUER_OWNER_PASSWORD)
+              .build();
+      issuerUri.setTimeout(Duration.ofSeconds(5));
+      issuerOwnerClient = RedisClient.create(issuerUri);
+      issuerOwnerClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
 
       RedisURI accountUri =
           RedisURI.Builder.redis("127.0.0.1", primaryPort)
@@ -2402,8 +2415,12 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               classLoader);
     }
 
-    private AccountGameplayDelegationRedisClient client() {
+    AccountGameplayDelegationRedisClient client() {
       return Objects.requireNonNull(accountClient, "Owned Account Redis client is unavailable");
+    }
+
+    RedisClient issuerOwnerClient() {
+      return Objects.requireNonNull(issuerOwnerClient, "Owned issuer Redis client is unavailable");
     }
 
     private static RedisClient redisClient(String host, int port, String password) {
@@ -2447,6 +2464,29 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               .add("SETUSER")
               .add(AccountGameplayDelegationRedisClient.REQUIRED_ACL_IDENTITY)
               .add("+waitaof"));
+    }
+
+    private static void configureIssuerOwner(RedisCommands<byte[], byte[]> commands) {
+      commands.aclSetuser(
+          ISSUER_OWNER,
+          new AclSetuserArgs()
+              .reset()
+              .on()
+              .addPassword(ISSUER_OWNER_PASSWORD)
+              .keyPattern("session:game:index:issuer:*")
+              .addCommand(CommandType.HELLO)
+              .addCommand(CommandType.PING)
+              .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+              .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+              .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+              .addCommand(CommandType.EVALSHA)
+              .addCommand(CommandType.TYPE)
+              .addCommand(CommandType.PTTL)
+              .addCommand(CommandType.HGET)
+              .addCommand(CommandType.HLEN)
+              .addCommand(CommandType.HGETALL)
+              .addCommand(CommandType.HSET)
+              .addCommand(CommandType.HDEL));
     }
 
     private static void awaitLocalAndReplicaAof(RedisCommands<byte[], byte[]> commands)
@@ -2494,6 +2534,14 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       if (bootstrapClient != null) {
         try {
           bootstrapClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+        } catch (RuntimeException failure) {
+          if (cleanupFailure == null) cleanupFailure = failure;
+          else cleanupFailure.addSuppressed(failure);
+        }
+      }
+      if (issuerOwnerClient != null) {
+        try {
+          issuerOwnerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
         } catch (RuntimeException failure) {
           if (cleanupFailure == null) cleanupFailure = failure;
           else cleanupFailure.addSuppressed(failure);
@@ -2625,7 +2673,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               resourceClassLoader);
     }
 
-    private AccountGameplayDelegationRedisClient client() {
+    AccountGameplayDelegationRedisClient client() {
       return client;
     }
   }
