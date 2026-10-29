@@ -594,3 +594,15 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: Publication in an unmerged PR was assumed to freeze those artifacts, although neither was in the immutable receiving parent and no authorized retained/live application was known. That unsupported assumption delayed the complete upgrade repair.
   - Outcome: The owning migration contract and Overseer confirmed normal in-PR candidate correction, preserving all receiving-parent checksums and original evidence. R1010 subsequently passes populated actual-parent V1040.4 upgrade and changed-session owner proof; publication alone is not retained applied-state evidence.
   - Expected pattern: Establish actual receiving-parent and applied-state obligations before choosing forward-only migration repair. A later migration cannot repair an earlier migration that fails before it executes; concrete retained applied-state evidence must be resolved rather than rewritten.
+
+- `2026-10-29`: Created-player placement reached an unproved native JSON bind
+  - Context: The deeper #2898 composition exercised #3333's actual PLAYER_CREATED Entity terminal through World placement, beyond earlier parser/refusal and preseeded cases.
+  - Observation: World returned a redacted UNAVAILABLE response. A temporary test-only direct-owner diagnostic exposed PostgreSQL rejecting the created-origin JSONB argument as varchar; using a JSONB Java wrapper in plain bound SQL did not supply an implicit SQL cast.
+  - Outcome: The INSERT now casts that placeholder explicitly to jsonb. R1022 passes the real created-player placement, exact replay, authenticated region bridge and substituted-origin refusal with enabled affected checks. R1021's existing preseeded case and World main checks pass separately; its aggregate remains failed on the negative fixture's RPC exception expectation. Controlled creation protections and prior publication custody remain proof limits.
+  - Expected pattern: Qualify each supported origin through the actual native mutation and downstream owner join. Refusal, serialization, preseeded or smoke proof does not establish a created-origin write.
+
+- `2026-10-29`: Controller rollout transient recovered without repeating review work
+  - Context: Gameplay observed one overloaded operation read and one unavailable bound-identity request around a FireController rollout.
+  - Observation: The exact cause is unknown; the later backup start does not explain the earlier failures. The original keys and operation identities were retained, and same-role coordination remained available.
+  - Outcome: The original operations recovered without another provider trigger. The tool owner deployed bounded checkout cleanup, retained all original captures and verified two 18-request foreground batches during cleanup and after deployment. No worker identity or connection change was needed.
+  - Expected pattern: Retain exact request keys and report original diagnostic IDs to the tool owner. A connection transient does not authorize another review or changing worker identity.
