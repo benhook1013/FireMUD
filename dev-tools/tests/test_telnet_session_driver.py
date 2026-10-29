@@ -1014,7 +1014,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 while not command.endswith(b"\r\n"):
                     command += connection.recv(1)
                 commands.append(command)
-                connection.sendall(command)
+            connection.sendall(b"".join(commands))
             time.sleep(0.08)
 
         server = FakeServer(handler)
@@ -1033,11 +1033,12 @@ class TelnetSessionDriverTest(unittest.TestCase):
             session.send_command(f"LOGIN demo@example.com {secret}")
             records = wait_for(
                 session.store,
-                lambda rows: any(
-                    row.get("direction") == "inbound"
-                    and row.get("event") == "received"
-                    and row.get("text") == "LOGIN demo@example.com [REDACTED]\r\n"
+                lambda rows: "LOGIN demo@example.com [REDACTED]\r\n"
+                in "".join(
+                    row.get("text", "")
                     for row in rows
+                    if row.get("direction") == "inbound"
+                    and row.get("event") == "received"
                 ),
             )
             self.assertTrue(

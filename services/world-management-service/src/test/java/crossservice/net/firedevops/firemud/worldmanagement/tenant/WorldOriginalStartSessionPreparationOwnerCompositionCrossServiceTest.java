@@ -161,6 +161,7 @@ import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
@@ -244,6 +245,7 @@ import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
@@ -3511,33 +3513,6 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             initialLocationClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
 
     var entityReferenceClient = Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.class);
-    var runtimeReference =
-        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference.class);
-    var runtimeEntityId =
-        new net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId(
-            currentTarget.canonicalTenantId(),
-            currentTarget.canonicalGameInstanceId().toString(),
-            900_002L);
-    when(runtimeReference.workloadNamespace()).thenReturn(currentTarget.targetNamespace());
-    when(runtimeReference.runtimeEntityId()).thenReturn(runtimeEntityId);
-    when(runtimeReference.projectionGeneration()).thenReturn(2L);
-    when(runtimeReference.projectionFence()).thenReturn(2L);
-    when(runtimeReference.assignmentUuid()).thenReturn(assignmentId);
-    when(runtimeReference.canonicalAccountUuid())
-        .thenReturn(UUID.fromString(secondRequest.getCanonicalAccountUuid()));
-    when(runtimeReference.characterUuid()).thenReturn(characterId);
-    when(runtimeReference.intentDigest()).thenReturn(secondRequest.getAssignmentIntentDigest());
-    when(runtimeReference.playableStateNamespaceId())
-        .thenReturn(currentTarget.playableStateNamespaceId());
-    when(runtimeReference.target()).thenReturn(toWire(assignmentTarget));
-    when(runtimeReference.publishedOwnerProofDigest()).thenReturn(currentTarget.ownerProofDigest());
-    when(runtimeReference.corePayload())
-        .thenReturn(
-            net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
-                .newBuilder()
-                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
-                .setDisplayName("Controlled Second Region Player")
-                .build());
     var secondEntityReferenceSelector =
         ReadPreseededActorRuntimeReferenceRequest.newBuilder()
             .setSchemaVersion(1)
@@ -3547,6 +3522,40 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .setCharacterUuid(secondRequest.getCharacterUuid())
             .setIntentDigest(secondRequest.getAssignmentIntentDigest())
             .build();
+    var secondEntityReferenceResponse =
+        ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(secondEntityReferenceSelector.getAssignmentUuid())
+            .setCanonicalAccountUuid(secondEntityReferenceSelector.getCanonicalAccountUuid())
+            .setCharacterUuid(secondEntityReferenceSelector.getCharacterUuid())
+            .setIntentDigest(secondEntityReferenceSelector.getIntentDigest())
+            .setExpectedTarget(secondEntityReferenceSelector.getExpectedTarget())
+            .setPublishedOwnerProofDigest(
+                currentTarget.ownerProofDigest().substring("sha256:".length()))
+            .setRuntimeEntityId(900_002L)
+            .setProjectionGeneration(2L)
+            .setProjectionFence(2L)
+            .setCorePayload(
+                net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
+                    .newBuilder()
+                    .setActorKind(
+                        CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                    .setDisplayName("Controlled Second Region Player"))
+            .build();
+    // Only the second actor's transport response is controlled. Use the actual reader's validation
+    // and closed reference so origin, exact matching and canonical bytes share one immutable
+    // receipt.
+    var controlledStub =
+        Mockito.mock(
+            CanonicalPreseededActorAssignmentServiceGrpc
+                .CanonicalPreseededActorAssignmentServiceBlockingStub.class,
+            Mockito.RETURNS_SELF);
+    when(controlledStub.readPreseededActorRuntimeReference(secondEntityReferenceSelector))
+        .thenReturn(secondEntityReferenceResponse);
+    var controlledReferenceClient = Mockito.spy(actualEntityReferenceClient);
+    ReflectionTestUtils.setField(controlledReferenceClient, "stub", controlledStub);
+    // The spy borrows the initialized client's channel; its lifecycle stays with the actual client.
+    var runtimeReference = controlledReferenceClient.read(secondEntityReferenceSelector);
     Mockito.doAnswer(
             invocation -> {
               ReadPreseededActorRuntimeReferenceRequest request = invocation.getArgument(0);
