@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
@@ -92,6 +93,42 @@ public final class CanonicalGameplayAdmissionAbortManualFactory {
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+    factory.addService(
+        ServerInterceptors.interceptForward(receiver, new GrpcPeerIdentityInterceptor(), guard));
+    return factory.createServer();
+  }
+
+  /**
+   * Creates an unstarted mutual-TLS server for the unregistered never-admitted reverse read;
+   * production registration remains an explicit owner decision.
+   */
+  public static Server createUnregisteredNegativeDecisionReadServer(
+      String address,
+      KeyManagerFactory keys,
+      TrustManagerFactory trust,
+      DSLContext dsl,
+      String workloadNamespace,
+      CanonicalGameplayOriginalNewCandidateClosureRedisOwner closure) {
+    Objects.requireNonNull(address, "gRPC server address required");
+    Objects.requireNonNull(keys, "gRPC server key manager required");
+    Objects.requireNonNull(trust, "gRPC server trust manager required");
+    var guard = new CanonicalGameplayAdmissionDecisionReadWorkloadGuard(workloadNamespace);
+    var receiver =
+        new CanonicalGameplayAdmissionDecisionReadGrpcService(
+            new CanonicalGameplayBindingInventoryRepository(
+                Objects.requireNonNull(dsl, "Game Session SQL context required")),
+            guard,
+            workloadNamespace,
+            Objects.requireNonNull(closure, "negative closure owner required"));
+    var factory =
+        new BoundedGrpcServerFactory(
+            address,
+            List.of(),
+            keys,
+            trust,
+            TlsServerCredentials.ClientAuth.REQUIRE,
+            GrpcRequestBytePolicy.ordinary(),
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES);
     factory.addService(
         ServerInterceptors.interceptForward(receiver, new GrpcPeerIdentityInterceptor(), guard));
     return factory.createServer();
