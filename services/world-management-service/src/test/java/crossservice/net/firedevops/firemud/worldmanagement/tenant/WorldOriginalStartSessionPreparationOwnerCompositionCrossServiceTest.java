@@ -4554,7 +4554,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
     private void addService(ServerServiceDefinition service) {
       if (services.addService(
-              ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor())) != null) {
+              ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+          != null) {
         throw new IllegalArgumentException("Duplicate deferred World service");
       }
     }
