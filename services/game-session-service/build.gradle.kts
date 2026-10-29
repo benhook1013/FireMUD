@@ -200,8 +200,6 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/game-session-issuer-admission-barrier-close.json")
         include("redis/lua/game-session-original-new-candidate-install.lua")
         include("redis/scripts/game-session-original-new-candidate-install.json")
-        include("redis/lua/game-session-original-new-candidate-close.lua")
-        include("redis/scripts/game-session-original-new-candidate-close.json")
         include("redis/lua/game-session-original-new-final-admission.lua")
         include("redis/scripts/game-session-original-new-final-admission.json")
     }

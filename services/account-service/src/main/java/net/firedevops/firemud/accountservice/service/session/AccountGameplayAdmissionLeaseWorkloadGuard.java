@@ -9,7 +9,6 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrpc;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 
@@ -69,11 +68,7 @@ public final class AccountGameplayAdmissionLeaseWorkloadGuard implements ServerI
 
   private static boolean isLeaseMethod(MethodDescriptor<?, ?> method) {
     String fullMethodName = method.getFullMethodName();
-    return AccountGameplayAdmissionLeaseServiceGrpc
-            .getAbortNeverAdmittedGameplayAdmissionLeaseMethod()
-            .getFullMethodName()
-            .equals(fullMethodName)
-        || AccountGameplayAdmissionLeaseServiceGrpc.getAcquireGameplayAdmissionLeaseMethod()
+    return AccountGameplayAdmissionLeaseServiceGrpc.getAcquireGameplayAdmissionLeaseMethod()
             .getFullMethodName()
             .equals(fullMethodName)
         || AccountGameplayAdmissionLeaseServiceGrpc.getFinalizeGameplayAdmissionLeaseMethod()
@@ -91,15 +86,6 @@ public final class AccountGameplayAdmissionLeaseWorkloadGuard implements ServerI
         || AccountGameplayAdmissionLeaseServiceGrpc.getConfirmOriginalNewGameplayAdmissionMethod()
             .getFullMethodName()
             .equals(fullMethodName);
-  }
-
-  public void requireNeverAdmittedNamespace(
-      AccountGameplayAdmissionNeverAdmittedGrpcCodec.Request request) {
-    if (request == null) throw Status.INVALID_ARGUMENT.asRuntimeException();
-    if (!namespace.equals(request.originalLeaseEvidence().carrier().get("targetNamespace")))
-      throw Status.PERMISSION_DENIED
-          .withDescription("Never-admitted lease namespace is not authorized")
-          .asRuntimeException();
   }
 
   public void requireAcquisitionNamespace(

@@ -48,15 +48,6 @@ public record CanonicalGameplayBindingAccountIndexObligation(
       throw new IllegalArgumentException(
           "ACKNOWLEDGED is reserved for a completed NEW ADD_OR_RETAIN member repair");
     }
-    if (status == Status.NEVER_DISPATCHED
-        && (ordinal != 0
-            || action != Action.ADD_OR_RETAIN
-            || expectedPriorGeneration != null
-            || executionPhase != ExecutionPhase.BEFORE_FINAL_CAS
-            || projectionState != ProjectionState.REQUIRED)) {
-      throw new IllegalArgumentException(
-          "Never-dispatched account work cannot carry admitting or physical evidence");
-    }
     switch (projectionState) {
       case REQUIRED -> {
         if (projectedMember != null || projectionInventoryRevision != null) {
@@ -107,7 +98,6 @@ public record CanonicalGameplayBindingAccountIndexObligation(
 
   public enum Status {
     REQUIRED,
-    NEVER_DISPATCHED,
     ACKNOWLEDGED
   }
 

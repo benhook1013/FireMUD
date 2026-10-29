@@ -34,7 +34,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementRedisOwner {
       List.of(
           new RedisScriptDescriptor.ArgumentSpec("issuerIdPartitionLayoutAndExactBaselineFields"),
           new RedisScriptDescriptor.ArgumentSpec(
-              "currentUnretiredOriginalMemberCountAndExactFields"),
+              "currentUnretiredLocalOperationCountAndExactFields"),
           new RedisScriptDescriptor.ArgumentSpec(
               "originalReleaseReceiptAndOpaquePhysicalRevisionCompareAndAdvance"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> EXPECTED_OUTCOMES =
@@ -92,7 +92,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementRedisOwner {
     }
     try {
       var release = operation.release();
-      var work = projectionRepository.readPreparedPartitionWork(release.originalSource());
+      var work = projectionRepository.readPreparedPartitionWork(release.originalOperation());
       var mutation = operation.physicalMutation();
       if (mutation.status()
               != CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF
@@ -284,7 +284,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementRedisOwner {
 
   private byte[] exactPartitionKey(
       CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work) {
-    String key = CanonicalGameplayIssuerRedisKeys.forMember(work.targetSource().memberValue());
+    String key = CanonicalGameplayIssuerRedisKeys.forMember(work.targetOperation().memberValue());
     if (!key.startsWith(KEY_PREFIX) || key.length() > 512)
       throw unavailable("Issuer key is not canonical");
     return key.getBytes(StandardCharsets.US_ASCII);

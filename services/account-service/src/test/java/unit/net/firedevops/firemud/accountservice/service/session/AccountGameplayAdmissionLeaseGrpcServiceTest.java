@@ -164,7 +164,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   }
 
   @Test
-  void manualFactoryExposesExactlyTheSevenPurposeSpecificMethodsWithoutSpringRegistration() {
+  void manualFactoryExposesExactlyTheSixPurposeSpecificMethodsWithoutSpringRegistration() {
     assertThat(service.bindService().getServiceDescriptor().getMethods())
         .extracting(method -> method.getFullMethodName())
         .containsExactlyInAnyOrder(
@@ -173,8 +173,7 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             "account.v1.AccountGameplayAdmissionLeaseService/ReadGameplayAdmissionLease",
             "account.v1.AccountGameplayAdmissionLeaseService/AbortGameplayAdmissionLease",
             "account.v1.AccountGameplayAdmissionLeaseService/IssueOriginalNewGameplayCredential",
-            "account.v1.AccountGameplayAdmissionLeaseService/ConfirmOriginalNewGameplayAdmission",
-            "account.v1.AccountGameplayAdmissionLeaseService/AbortNeverAdmittedGameplayAdmissionLease");
+            "account.v1.AccountGameplayAdmissionLeaseService/ConfirmOriginalNewGameplayAdmission");
   }
 
   @Test

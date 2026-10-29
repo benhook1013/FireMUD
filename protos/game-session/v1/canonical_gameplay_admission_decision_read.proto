@@ -11,8 +11,6 @@ option java_outer_classname = "CanonicalGameplayAdmissionDecisionReadProto";
 // Explicit, manually composed Account-purpose reads. GS requires the exact same-namespace Account
 // workload and returns existing owner evidence without claiming gameplay admission.
 service CanonicalGameplayAdmissionDecisionReadService {
-  rpc GetOriginalNewNeverAdmittedDecision(GetOriginalNewNeverAdmittedDecisionRequest)
-      returns (GetOriginalNewNeverAdmittedDecisionResponse);
   rpc GetCanonicalGameplayAdmissionDecision(
       GetCanonicalGameplayAdmissionDecisionRequest)
       returns (GetCanonicalGameplayAdmissionDecisionResponse);
@@ -134,25 +132,4 @@ message GetPublishedRealmAdmissionOwnerReadResponse {
   repeated uint32 schema_version = 1;
   repeated GetCanonicalGameplayRosterOwnerReadResponse published_source = 2;
   repeated CanonicalPlayableTargetEvidence current_target = 3;
-}
-
-// Independently reads the original selected abandonment and actual qualified physical closure.
-message GetOriginalNewNeverAdmittedDecisionRequest {
-  repeated uint32 schema_version = 1;
-  repeated string transition_uuid = 2;
-  repeated string abandonment_uuid = 3;
-  repeated bytes expected_lease_evidence_utf8 = 4;
-}
-
-message GetOriginalNewNeverAdmittedDecisionResponse {
-  repeated uint32 schema_version = 1;
-  repeated string purpose = 2;
-  repeated string transition_uuid = 3;
-  repeated string abandonment_uuid = 4;
-  repeated bytes original_lease_evidence_utf8 = 5;
-  repeated string candidate_sha256 = 6;
-  repeated string closure_readback_sha256 = 7;
-  repeated CanonicalGameplayAdmissionCandidate candidate = 8;
-  repeated CanonicalPlayableTargetEvidence target_evidence = 9;
-  repeated string binding_generation = 10;
 }

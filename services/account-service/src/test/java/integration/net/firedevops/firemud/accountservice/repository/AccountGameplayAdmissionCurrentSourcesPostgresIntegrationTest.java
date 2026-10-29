@@ -2752,7 +2752,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               .reset()
               .on()
               .addPassword(ISSUER_OWNER_PASSWORD)
-              .keyPattern("session:game:*")
+              .keyPattern("session:game:index:issuer:*")
               .addCommand(CommandType.HELLO)
               .addCommand(CommandType.PING)
               .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
@@ -2765,13 +2765,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               .addCommand(CommandType.HLEN)
               .addCommand(CommandType.HGETALL)
               .addCommand(CommandType.HSET)
-              .addCommand(CommandType.HDEL)
-              .addCommand(CommandType.GET)
-              .addCommand(CommandType.SET)
-              .addCommand(CommandType.DEL)
-              .addCommand(CommandType.SISMEMBER)
-              .addCommand(CommandType.SADD)
-              .addCommand(CommandType.SREM));
+              .addCommand(CommandType.HDEL));
     }
 
     private static void awaitLocalAndReplicaAof(RedisCommands<byte[], byte[]> commands)

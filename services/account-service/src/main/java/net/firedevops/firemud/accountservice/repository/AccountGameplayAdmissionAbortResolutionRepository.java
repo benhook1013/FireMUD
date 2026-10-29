@@ -33,8 +33,7 @@ final class AccountGameplayAdmissionAbortResolutionRepository {
         || !result.originalLeaseFence().equals(lease.leaseFence())
         || !result.originalLeaseSha256().equals(lease.sha256())
         || !result.orphanCleanupId().equals(cleanupId)
-        || !AccountGameplayAdmissionAbortResolution.POSITIVE_PURPOSE.equals(result.purpose())
-        || !Objects.equals(result.bindingDecisionId(), decisionId)) {
+        || !result.bindingDecisionId().equals(decisionId)) {
       throw new IllegalStateException("Abort resolution changed the original exact linkage");
     }
     return Optional.of(result);
@@ -73,71 +72,6 @@ final class AccountGameplayAdmissionAbortResolutionRepository {
     return stored;
   }
 
-  AccountGameplayAdmissionAbortResolution recordOrReplayNeverAdmitted(
-      AccountGameplayAdmissionLeaseEvidence lease,
-      UUID cleanupId,
-      UUID transitionId,
-      UUID abandonmentId,
-      String candidateDigest,
-      String closureDigest) {
-    requireOriginalAbort(lease, cleanupId);
-    Record row =
-        dsl.fetchOne("SELECT * FROM " + RESOLUTIONS + " WHERE request_id = ?", requestId(lease));
-    if (row != null) {
-      var retained = decode(row);
-      if (!AccountGameplayAdmissionAbortResolution.NEGATIVE_PURPOSE.equals(retained.purpose())
-          || !retained.originalLeaseId().equals(leaseId(lease))
-          || !retained.originalLeaseFence().equals(lease.leaseFence())
-          || !retained.originalLeaseSha256().equals(lease.sha256())
-          || !retained.orphanCleanupId().equals(cleanupId)
-          || !Objects.equals(retained.transitionId(), transitionId)
-          || !Objects.equals(retained.abandonmentId(), abandonmentId)
-          || !Objects.equals(retained.candidateDigest(), candidateDigest)
-          || !Objects.equals(retained.closureDigest(), closureDigest))
-        throw new IllegalStateException("Negative abort resolution changed exact linkage");
-      return retained;
-    }
-    var resolution =
-        new AccountGameplayAdmissionAbortResolution(
-            UUID.randomUUID(),
-            leaseId(lease),
-            lease.leaseFence(),
-            lease.sha256(),
-            cleanupId,
-            null,
-            AccountGameplayAdmissionAbortResolution.NEGATIVE_PURPOSE,
-            transitionId,
-            abandonmentId,
-            candidateDigest,
-            closureDigest);
-    int inserted =
-        dsl.execute(
-            "INSERT INTO "
-                + RESOLUTIONS
-                + " (request_id, resolution_id, original_lease_id, original_lease_fence, original_lease_sha256,"
-                + " orphan_cleanup_id, binding_decision_id, purpose, transition_id, abandonment_id, candidate_sha256, closure_readback_sha256)"
-                + " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
-            requestId(lease),
-            resolution.resolutionId(),
-            resolution.originalLeaseId(),
-            resolution.originalLeaseFence().longValueExact(),
-            resolution.originalLeaseSha256(),
-            cleanupId,
-            resolution.purpose(),
-            transitionId,
-            abandonmentId,
-            candidateDigest,
-            closureDigest);
-    if (inserted != 1)
-      throw new IllegalStateException("Negative abort resolution insert unavailable");
-    var stored =
-        recordOrReplayNeverAdmitted(
-            lease, cleanupId, transitionId, abandonmentId, candidateDigest, closureDigest);
-    if (!stored.equals(resolution))
-      throw new IllegalStateException("Negative resolution readback changed");
-    return stored;
-  }
-
   private void requireOriginalAbort(AccountGameplayAdmissionLeaseEvidence lease, UUID cleanupId) {
     // readExact enforces writable SERIALIZABLE and locks Account before the operation row.
     AccountGameplayAdmissionLeaseOperation original =
@@ -156,12 +90,7 @@ final class AccountGameplayAdmissionAbortResolutionRepository {
         BigInteger.valueOf(row.get("original_lease_fence", Long.class)),
         row.get("original_lease_sha256", String.class),
         row.get("orphan_cleanup_id", UUID.class),
-        row.get("binding_decision_id", UUID.class),
-        row.get("purpose", String.class),
-        row.get("transition_id", UUID.class),
-        row.get("abandonment_id", UUID.class),
-        row.get("candidate_sha256", String.class),
-        row.get("closure_readback_sha256", String.class));
+        row.get("binding_decision_id", UUID.class));
   }
 
   private static UUID requestId(AccountGameplayAdmissionLeaseEvidence lease) {

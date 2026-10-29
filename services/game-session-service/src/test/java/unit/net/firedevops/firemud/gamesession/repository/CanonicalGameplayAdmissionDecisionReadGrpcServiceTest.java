@@ -16,15 +16,12 @@ import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Map;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuard;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayAdmissionDecisionReadGrpcService;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionResponse;
-import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionRequest;
-import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -133,65 +130,6 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
       verify(guard).requireAccountCaller();
       verifyNoInteractions(repository);
     }
-  }
-
-  @Test
-  void negativeDecisionRejectsNullAndOversizedRequestsBeforeParsingOrOwnerReads() {
-    var oversized =
-        GetOriginalNewNeverAdmittedDecisionRequest.newBuilder()
-            .mergeUnknownFields(
-                UnknownFieldSet.newBuilder()
-                    .addField(
-                        100,
-                        UnknownFieldSet.Field.newBuilder()
-                            .addLengthDelimited(
-                                ByteString.copyFrom(
-                                    new byte
-                                        [AccountGameplayAdmissionNeverAdmittedGrpcCodec
-                                                .MAX_WIRE_BYTES
-                                            + 1]))
-                            .build())
-                    .build())
-            .build();
-
-    for (var request : new GetOriginalNewNeverAdmittedDecisionRequest[] {null, oversized}) {
-      var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
-      var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
-      var closureOwner = mock(CanonicalGameplayOriginalNewCandidateClosureRedisOwner.class);
-      var observer = negativeObserver();
-      try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
-        new CanonicalGameplayAdmissionDecisionReadGrpcService(
-                repository, guard, "test", closureOwner)
-            .getOriginalNewNeverAdmittedDecision(request, observer);
-        codec.verify(
-            () -> AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request),
-            never());
-      }
-
-      assertNegativeFailure(observer, Status.Code.INVALID_ARGUMENT, null);
-      verify(guard).requireAccountCaller();
-      verifyNoInteractions(repository, closureOwner);
-    }
-  }
-
-  @Test
-  void unexpectedNegativeDecisionParserFailureIsSanitizedInternalBeforeOwnerReads() {
-    var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
-    var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
-    var closureOwner = mock(CanonicalGameplayOriginalNewCandidateClosureRedisOwner.class);
-    var observer = negativeObserver();
-    var request = GetOriginalNewNeverAdmittedDecisionRequest.getDefaultInstance();
-    try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
-      codec
-          .when(() -> AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request))
-          .thenThrow(new IllegalStateException("private negative parser details"));
-      new CanonicalGameplayAdmissionDecisionReadGrpcService(repository, guard, "test", closureOwner)
-          .getOriginalNewNeverAdmittedDecision(request, observer);
-    }
-
-    assertNegativeFailure(observer, Status.Code.INTERNAL, "private negative parser details");
-    verify(guard).requireAccountCaller();
-    verifyNoInteractions(repository, closureOwner);
   }
 
   @Test
@@ -456,25 +394,6 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
 
   private static String accountPeer() {
     return "spiffe://firemud/ns/test/sa/game-session-service";
-  }
-
-  @SuppressWarnings("unchecked")
-  private static StreamObserver<GetOriginalNewNeverAdmittedDecisionResponse> negativeObserver() {
-    return mock(StreamObserver.class);
-  }
-
-  private static void assertNegativeFailure(
-      StreamObserver<GetOriginalNewNeverAdmittedDecisionResponse> observer,
-      Status.Code expectedCode,
-      String privateDetail) {
-    var failure = ArgumentCaptor.forClass(Throwable.class);
-    verify(observer).onError(failure.capture());
-    assertThat(Status.fromThrowable(failure.getValue()).getCode()).isEqualTo(expectedCode);
-    if (privateDetail != null) {
-      assertThat(failure.getValue()).hasMessageNotContaining(privateDetail);
-    }
-    verify(observer, never()).onNext(any());
-    verify(observer, never()).onCompleted();
   }
 
   private static void assertFailure(

@@ -28,12 +28,6 @@ final class CanonicalGameplayIssuerCohortSql {
           + " - CASE WHEN to_jsonb(t)->'original_new_final_session_sha256' = 'null'::jsonb"
           + " THEN ARRAY['original_new_final_session_sha256', 'original_new_admission_at_ms',"
           + " 'original_new_continuity_expires_at_ms', 'original_new_session_duration_ms']"
-          + " ELSE ARRAY[]::text[] END"
-          // V1050.2's untouched negative arm is absence-equivalent; selected evidence is retained.
-          + " - CASE WHEN to_jsonb(t)->'original_new_abandonment_id' = 'null'::jsonb"
-          + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
-          + " 'original_new_abandonment_closure_digest', 'original_new_abandonment_orphan_cleanup_id',"
-          + " 'original_new_abandonment_resolution_id']"
           + " ELSE ARRAY[]::text[] END)::text AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"
