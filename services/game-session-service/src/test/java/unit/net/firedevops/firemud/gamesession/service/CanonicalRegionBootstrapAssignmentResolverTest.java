@@ -224,6 +224,34 @@ class CanonicalRegionBootstrapAssignmentResolverTest {
         .hasMessageContaining("changed during lifecycle revalidation");
   }
 
+  @Test
+  void initialLocationRegionRejectsCanonicalRegionSubstitution() {
+    var initialClient = mock(CanonicalInitialPlayerLocationClient.class);
+    var lifecycleResolver = mock(CanonicalRegionBootstrapAssignmentResolver.class);
+    var current = mock(CanonicalRegionBootstrapAssignmentResolver.Assignment.class);
+    when(current.request()).thenReturn(request);
+    when(current.canonicalRegionId()).thenReturn(CANONICAL_REGION_ID);
+    when(current.operationalRegionId()).thenReturn(OPERATIONAL_REGION_ID);
+    when(current.lifecycleStatus()).thenReturn(activeEvidence.lifecycleStatus());
+    when(current.lifecycleEpoch()).thenReturn(activeEvidence.lifecycleEpoch());
+    when(current.lifecycleRowVersion()).thenReturn(activeEvidence.rowVersion());
+    when(current.captureId()).thenReturn(activeEvidence.captureId());
+    when(current.graphSha256()).thenReturn(activeEvidence.graphSha256());
+    when(current.preparationInputDigest()).thenReturn(activeEvidence.preparationInputDigest());
+    when(lifecycleResolver.resolve(request, UNKNOWN_REGION_ID)).thenReturn(current);
+    var response = initialLocationRegionResponse(initialLocationRequest, activeEvidence);
+    var substitutedResponse =
+        response.toBuilder().setCanonicalRegionInstanceUuid(UNKNOWN_REGION_ID.toString()).build();
+    when(initialClient.readInitialPlayerLocationRegion(initialLocationRequest))
+        .thenReturn(substitutedResponse);
+    var resolver =
+        new CanonicalInitialPlayerLocationRegionResolver(initialClient, lifecycleResolver);
+
+    assertThatThrownBy(() -> resolver.resolve(initialLocationRequest))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("changed during lifecycle revalidation");
+  }
+
   private static CanonicalInitialPlayerLocationRequest initialLocationRequest(
       WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
     var target =
