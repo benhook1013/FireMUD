@@ -2,6 +2,10 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -10,16 +14,19 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.StoredProtection;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository.StoredSettlement;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
+import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionSettlementEvidence;
@@ -40,8 +47,10 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Ho
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -290,6 +299,133 @@ class AccountStartSessionAdmissionProtectionRepositoryPostgresIntegrationTest {
                             committed.evidence().accountProtectionFence(),
                             changedRequest.canonicalBytes())))
         .hasMessageContaining("Original admission recovery binding differs");
+  }
+
+  @Test
+  void settlementLocksCompleteCanonicalSourceSetBeforeProtectionAndRefusesMissingOrBusyRows()
+      throws Exception {
+    String schema = "ss_admission_lock_order_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    Flyway.configure()
+        .dataSource(source)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(source));
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    // UTF-16 canonical ordering differs from PostgreSQL code-point ordering even under C collation.
+    var first =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            "admission-\uD800\uDC00",
+            null,
+            "1",
+            null,
+            null,
+            bytes("first"));
+    var last =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS, "admission-\uE000", null, "1", null, null, bytes("last"));
+    UUID protectionId = UUID.randomUUID();
+    var evidence = mock(AccountStartSessionAdmissionProtectionEvidence.class);
+    when(evidence.accountProtectionId()).thenReturn(protectionId);
+    when(evidence.accountProtectionFence()).thenReturn(7L);
+    when(evidence.canonicalBytes()).thenReturn(bytes("controlled historical protection"));
+    when(evidence.sourceEvidenceVector()).thenReturn(List.of(last, first));
+    var terminal = mock(AccountInitialAdmissionSettlementReadEvidence.class);
+    when(terminal.protection()).thenReturn(evidence);
+    var repository = spy(new AccountStartSessionAdmissionProtectionRepository(dsl));
+    // Only locking is physical; retained historical evidence and terminal authority are controlled.
+    doReturn(Optional.of(new StoredProtection(evidence, 1L)))
+        .when(repository)
+        .findHistoricalExact(protectionId, 7L);
+    var lockedSourceSets = new ArrayList<List<String>>();
+    var protectionLocks = new ArrayList<Object>();
+    dsl.configuration()
+        .setAppending(
+            new DefaultExecuteListenerProvider(
+                ExecuteListener.onResultEnd(
+                    context -> {
+                      String sql = context.sql();
+                      if (sql != null
+                          && sql.contains("account_draft_authorization_source_locks")
+                          && sql.contains("FOR UPDATE NOWAIT")) {
+                        lockedSourceSets.add(
+                            java.util.Objects.requireNonNull(context.result())
+                                .getValues(0, String.class));
+                      }
+                    })),
+            new DefaultExecuteListenerProvider(
+                ExecuteListener.onExecuteStart(
+                    context -> {
+                      String sql = context.sql();
+                      if (sql != null
+                          && sql.contains("account_start_session_admission_protections")
+                          && sql.contains("FOR UPDATE NOWAIT")) {
+                        protectionLocks.add(
+                            java.util.Objects.requireNonNull(context.query())
+                                .getBindValues()
+                                .getFirst());
+                      }
+                    })));
+    dsl.execute(
+        "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)", last.key());
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(ignored -> repository.settleExact(terminal)))
+        .hasMessageContaining("Exact original StartSession admission protection unavailable");
+    assertThat(lockedSourceSets).containsExactly(List.of(last.key()));
+    assertThat(protectionLocks).isEmpty();
+    when(evidence.sourceEvidenceVector()).thenReturn(List.of(last, last));
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(ignored -> repository.settleExact(terminal)))
+        .hasMessageContaining("Exact original StartSession admission protection unavailable");
+    assertThat(lockedSourceSets).containsExactly(List.of(last.key()));
+    assertThat(protectionLocks).isEmpty();
+    when(evidence.sourceEvidenceVector()).thenReturn(List.of(last, first));
+    dsl.execute(
+        "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)", first.key());
+    for (var contended : List.of(first, last)) {
+      try (var holder = source.getConnection()) {
+        holder.setAutoCommit(false);
+        try (var statement =
+            holder.prepareStatement(
+                "SELECT source_key FROM account_draft_authorization_source_locks WHERE source_key = ? FOR UPDATE")) {
+          statement.setString(1, contended.key());
+          try (var rows = statement.executeQuery()) {
+            assertThat(rows.next()).isTrue();
+          }
+        }
+        assertThatThrownBy(
+                () -> transaction.executeWithoutResult(ignored -> repository.settleExact(terminal)))
+            .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
+            .satisfies(
+                failure -> {
+                  Throwable root = failure;
+                  while (root.getCause() != null) root = root.getCause();
+                  assertThat(((org.postgresql.util.PSQLException) root).getSQLState())
+                      .isEqualTo("55P03");
+                });
+        assertThat(protectionLocks).isEmpty();
+        holder.rollback();
+      }
+    }
+    lockedSourceSets.clear();
+    // With the whole source set locked, the absent protection row refuses settlement.
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(ignored -> repository.settleExact(terminal)))
+        .hasMessageContaining("Exact original StartSession admission protection unavailable");
+    assertThat(lockedSourceSets).containsExactly(List.of(first.key(), last.key()));
+    assertThat(protectionLocks).containsExactly(protectionId);
+    assertThat(dsl.fetchCount(DSL.table("account_start_session_admission_protection_settlements")))
+        .isZero();
   }
 
   private static CurrentFixture seedControlledCurrentOwnerRows(
