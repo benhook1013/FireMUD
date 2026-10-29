@@ -616,3 +616,9 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: The 2026-10-17 closed-validation-allowlist observation is the original process lesson; the 2026-10-27 and helper-validation portion of 2026-10-29 entries retain subsequent occurrences.
   - Observation: These are recurrences of that same lesson, rather than distinct validation policies. Their dated evidence remains intact. The uppercase `R948` artifact-search observation is a separate lesson.
   - Expected pattern: Apply the closed validation allowlist from the delegation workflow and preserve recurrence attribution without rewriting historical observations.
+
+- `2026-10-30`: An observed terminal CI result still needs its owning handoff
+  - Context: The shared observer first saw #3327's exact-head Runtime and Smoke success around 03:40 NZDT, after the provider jobs finished by 03:38:37.
+  - Observation: It treated that result as already known and unchanged without handing it to the owning orchestrator. Root retained a pending state until a targeted inquiry around 04:25, delaying maintenance readiness by about 45 minutes. This recurs with the retained observer-priority lesson from 2026-10-27; it was reporting delay, not provider or controller latency.
+  - Expected pattern: Treat a meaningful terminal result as unreported until its owning handoff is delivered. Prioritizing the front must not discard a successor's completed transition; retain one shared observer.
+  - Outcome: Root inspected the complete 13-job Runtime and four-job Smoke inventories, verified actual build, smoke and authenticated cleanup, and sent Overseer the exact source and readiness evidence without a rerun.
