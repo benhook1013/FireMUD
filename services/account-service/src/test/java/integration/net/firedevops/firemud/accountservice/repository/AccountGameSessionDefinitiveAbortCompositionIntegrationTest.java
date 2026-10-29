@@ -1307,29 +1307,15 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 new LoopbackMtlsTestPki.IdentitySpec(
                     "wrong", "spiffe://firemud/ns/test/sa/world-management-service", false));
         if (claimedNeverAdmitted) {
-          var receiver =
+          gsServer =
               CanonicalGameplayAdmissionAbortManualFactory
-                  .createUnregisteredNegativeDecisionReadReceiver(
-                      gs.dsl(), "test", gs.negativeClosure());
-          var guard =
-              new net.firedevops.firemud.gamesession.security
-                  .CanonicalGameplayAdmissionDecisionReadWorkloadGuard("test");
-          var serverFactory =
-              new net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory(
-                  "127.0.0.1:0",
-                  List.of(),
-                  pki.keyManagerFactory(pki.identity("gs")),
-                  pki.trustManagerFactory(),
-                  io.grpc.TlsServerCredentials.ClientAuth.REQUIRE,
-                  net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy.ordinary(),
-                  net.firedevops.firemud.common.account.admission
-                      .AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES);
-          serverFactory.addService(
-              io.grpc.ServerInterceptors.interceptForward(
-                  receiver,
-                  new net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor(),
-                  guard));
-          gsServer = serverFactory.createServer();
+                  .createUnregisteredNegativeDecisionReadServer(
+                      "127.0.0.1:0",
+                      pki.keyManagerFactory(pki.identity("gs")),
+                      pki.trustManagerFactory(),
+                      gs.dsl(),
+                      "test",
+                      gs.negativeClosure());
         } else {
           gsServer =
               CanonicalGameplayAdmissionAbortManualFactory.createUnregisteredDecisionReadServer(

@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.dto;
 import java.math.BigInteger;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 
 /** Append-only linkage of an unknown-decision abort to its verified Game Session transition. */
 public record AccountGameplayAdmissionAbortResolution(
@@ -18,7 +19,8 @@ public record AccountGameplayAdmissionAbortResolution(
     String candidateDigest,
     String closureDigest) {
   public static final String POSITIVE_PURPOSE = "provisional-decision/v1";
-  public static final String NEGATIVE_PURPOSE = "original-new-never-admitted-closure/v1";
+  public static final String NEGATIVE_PURPOSE =
+      AccountGameplayAdmissionNeverAdmittedGrpcCodec.PURPOSE;
 
   public AccountGameplayAdmissionAbortResolution(
       UUID resolutionId,
