@@ -246,6 +246,13 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .executeWithoutResult(
               status -> repository.reserveProtected(prepared.request(), prepared.protection()));
       assertThat(currentOriginReads).hasValue(1);
+      // The real second request is refused at intent reservation while the first is pending.
+      assertThatThrownBy(() -> prepare(target, "protected-writer-later-open", 1211, true))
+          .isInstanceOf(
+              CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
+          .hasMessage("Another nonterminal initial-admission intent already owns this realm");
+      assertThat(terminal(harness, prepared.request()).get("status", String.class))
+          .isEqualTo("PENDING");
       String pointerBefore =
           harness.dsl().fetch("SELECT * FROM gameplay_admission_pointer").formatJSON();
       String auditBefore =
@@ -311,6 +318,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   .fetch("SELECT * FROM gameplay_admission_pointer_event ORDER BY id")
                   .formatJSON())
           .isEqualTo(auditBefore);
+
+      // A later OPEN route needs a separately issued original owner attempt. This fixture
+      // reuses one source; it does not qualify independently advanced-pointer recovery.
     } finally {
       harness.close();
     }

@@ -70,6 +70,7 @@ public final class AccountInitialAdmissionSettlementReadGrpcCodec {
     requireProtectionBudget(protection);
     var response =
         GetAccountInitialAdmissionSettlementResponse.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
             .addReadRequestId(evidence.readRequestId().toString())
             .addAccountProtectionEvidence(ByteString.copyFrom(protection))
             .addCanonicalGameSessionOwnerProof(
@@ -88,7 +89,9 @@ public final class AccountInitialAdmissionSettlementReadGrpcCodec {
     if (response == null) throw invalid("Response is missing");
     requireClosed(response);
     requireBudget(response, MAX_RESPONSE_WIRE_BYTES);
-    if (response.getReadRequestIdCount() != 1
+    if (response.getSchemaVersionCount() != 1
+        || response.getSchemaVersion(0) != SCHEMA_VERSION
+        || response.getReadRequestIdCount() != 1
         || response.getAccountProtectionEvidenceCount() != 1
         || response.getCanonicalGameSessionOwnerProofCount() != 1
         || !input.readRequestId().toString().equals(response.getReadRequestId(0))) {

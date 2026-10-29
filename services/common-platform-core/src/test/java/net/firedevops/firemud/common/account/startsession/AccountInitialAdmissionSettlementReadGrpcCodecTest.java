@@ -50,6 +50,7 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
       var request =
           AccountInitialAdmissionSettlementReadGrpcCodec.toRequest(input, "world-runtime");
       var response = AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(evidence);
+      assertThat(response.getSchemaVersionList()).containsExactly(1);
       assertThat(
               AccountInitialAdmissionSettlementReadGrpcCodec.fromRequestWireBytes(
                       request.toByteArray(), "world-runtime")
@@ -155,6 +156,9 @@ class AccountInitialAdmissionSettlementReadGrpcCodecTest {
     var changed = evidence(Outcome.ABORTED, false);
     var invalid =
         List.of(
+            response.toBuilder().clearSchemaVersion().build(),
+            response.toBuilder().addSchemaVersion(1).build(),
+            response.toBuilder().setSchemaVersion(0, 2).build(),
             response.toBuilder().clearReadRequestId().build(),
             response.toBuilder().addReadRequestId(evidence.readRequestId().toString()).build(),
             response.toBuilder().setReadRequestId(0, UUID.randomUUID().toString()).build(),
