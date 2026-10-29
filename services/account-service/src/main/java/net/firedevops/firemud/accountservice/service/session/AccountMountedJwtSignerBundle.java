@@ -349,6 +349,121 @@ public final class AccountMountedJwtSignerBundle {
   }
 
   /**
+   * Signs the purpose-bound tenant credential for one Account-owned ORIGINAL-NEW lineage. The
+   * supplied operation identity is the lineage identity; the new row has generation 1 and a
+   * distinct JTI. It is separate from the immutable unscoped LOGIN claim shape.
+   */
+  static SignedDelegationDigest signOriginalNewBoundGameplayDelegationDigest(
+      Path privateMountRoot,
+      Path privateBundlePath,
+      Path publicMountRoot,
+      Path publicJwksPath,
+      ExpectedIdentity expectedIdentity,
+      OriginalNewBoundDelegationSigningSpec spec,
+      DelegationCandidateConsumer candidateConsumer) {
+    Objects.requireNonNull(spec, "Original-new bound signing specification is required");
+    Objects.requireNonNull(candidateConsumer, "Gameplay delegation owner callback is required");
+    VerifiedMountedSigner mounted =
+        readAndVerifyMounted(
+            privateMountRoot, privateBundlePath, publicMountRoot, publicJwksPath, expectedIdentity);
+    if (!mounted.observation().expectedIdentity().equals(expectedIdentity)
+        || !spec.accountAuthority().accountId().equals(spec.accountId())
+        || spec.accountAuthority().issuanceFence() != spec.issuanceFence()
+        || spec.operationId().equals(spec.tokenJti())) {
+      throw invalid();
+    }
+
+    byte[] header = null;
+    byte[] claims = null;
+    byte[] encodedHeader = null;
+    byte[] encodedClaims = null;
+    byte[] signingInput = null;
+    byte[] signatureBytes = null;
+    byte[] encodedSignature = null;
+    byte[] compactBytes = null;
+    byte[] tokenDigest = null;
+    byte[] callbackBytes = null;
+    try {
+      Map<String, Object> headerFields = new LinkedHashMap<>();
+      headerFields.put("alg", ALGORITHM);
+      headerFields.put("kid", expectedIdentity.kid());
+      headerFields.put("typ", "JWT");
+      header = canonicalJsonBytes(headerFields);
+      Map<String, Object> delegation = new LinkedHashMap<>();
+      delegation.put("iss", GameSessionAccountDelegationProfile.ISSUER);
+      delegation.put("sub", spec.accountId().toString());
+      delegation.put("jti", spec.tokenJti().toString());
+      delegation.put("accountId", spec.accountId().toString());
+      delegation.put("aud", GameSessionAccountDelegationProfile.AUDIENCE);
+      delegation.put("iat", spec.issuedAtEpochSecond());
+      delegation.put("nbf", spec.notBeforeEpochSecond());
+      delegation.put("exp", spec.expiresAtEpochSecond());
+      delegation.put("tokenGeneration", "1");
+      delegation.put(
+          "authorityTuple", mergeBoundAuthorityTuple(spec.accountAuthority(), spec.bound()));
+      delegation.put("membershipVersion", spec.bound().membershipVersion());
+      delegation.put("issuanceFence", Long.toString(spec.issuanceFence()));
+      delegation.put("tenantId", spec.bound().tenantId());
+      net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator
+          .validateClaims(delegation);
+      claims = canonicalJsonBytes(delegation);
+      encodedHeader = Base64.getUrlEncoder().withoutPadding().encode(header);
+      encodedClaims = Base64.getUrlEncoder().withoutPadding().encode(claims);
+      signingInput = joinCompactParts(encodedHeader, encodedClaims, null);
+
+      Signature signer = Signature.getInstance("SHA256withRSA");
+      signer.initSign(mounted.privateKey());
+      signer.update(signingInput);
+      signatureBytes = signer.sign();
+
+      Signature verifier = Signature.getInstance("SHA256withRSA");
+      verifier.initVerify(mounted.publicKey());
+      verifier.update(signingInput);
+      if (!verifier.verify(signatureBytes)) throw invalid();
+      encodedSignature = Base64.getUrlEncoder().withoutPadding().encode(signatureBytes);
+      compactBytes = joinCompactParts(encodedHeader, encodedClaims, encodedSignature);
+      if (compactBytes.length > MAX_DELEGATION_COMPACT_JWT_BYTES) throw invalid();
+      tokenDigest = MessageDigest.getInstance("SHA-256").digest(compactBytes);
+      SignedDelegationDigest digest =
+          new SignedDelegationDigest(
+              spec.operationId(),
+              spec.requestId(),
+              spec.tokenJti(),
+              expectedIdentity.operationId(),
+              expectedIdentity.generation(),
+              expectedIdentity.kid(),
+              expectedIdentity.publicKeyFingerprint(),
+              spec.issuedAtEpochSecond(),
+              spec.notBeforeEpochSecond(),
+              spec.expiresAtEpochSecond(),
+              java.util.HexFormat.of().formatHex(tokenDigest));
+      callbackBytes = compactBytes.clone();
+      try {
+        candidateConsumer.bindExactCandidate(digest, callbackBytes);
+      } catch (RuntimeException failure) {
+        throw invalid();
+      }
+      if (!sha256(callbackBytes).equals(digest.compactTokenSha256())) throw invalid();
+      return digest;
+    } catch (InvalidMountedSignerBundleException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      throw invalid();
+    } finally {
+      wipe(header);
+      wipe(claims);
+      wipe(encodedHeader);
+      wipe(encodedClaims);
+      wipe(signingInput);
+      wipe(signatureBytes);
+      wipe(encodedSignature);
+      wipe(compactBytes);
+      wipe(tokenDigest);
+      wipe(callbackBytes);
+    }
+  }
+
+  /**
    * Distinct control-ui entry, available only to the Account owner. The owner must have retained
    * genuine primary authentication and exact committed signer evidence before calling outside SQL
    * locks. Mounted correspondence alone supplies neither authority nor permission to deliver.
@@ -1139,6 +1254,45 @@ public final class AccountMountedJwtSignerBundle {
       membershipVersion = Map.copyOf(membershipVersion);
       net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile
           .requirePublicTenantBoundAuthority(tenantId, authorityTuple, membershipVersion);
+    }
+  }
+
+  record OriginalNewBoundDelegationSigningSpec(
+      UUID operationId,
+      UUID requestId,
+      UUID accountId,
+      UUID tokenJti,
+      long issuedAtEpochSecond,
+      long notBeforeEpochSecond,
+      long expiresAtEpochSecond,
+      long issuanceFence,
+      AccountAuthoritySnapshot accountAuthority,
+      BoundDelegationClaims bound) {
+    OriginalNewBoundDelegationSigningSpec {
+      Objects.requireNonNull(operationId);
+      Objects.requireNonNull(requestId);
+      Objects.requireNonNull(accountId);
+      Objects.requireNonNull(tokenJti);
+      Objects.requireNonNull(accountAuthority);
+      Objects.requireNonNull(bound);
+      if (operationId.version() != 4
+          || requestId.version() != 4
+          || tokenJti.version() != 4
+          || operationId.variant() != 2
+          || requestId.variant() != 2
+          || tokenJti.variant() != 2
+          || operationId.equals(tokenJti)
+          || !accountAuthority.accountId().equals(accountId)
+          || issuedAtEpochSecond <= 0L
+          || notBeforeEpochSecond <= 0L
+          || notBeforeEpochSecond > issuedAtEpochSecond
+          || expiresAtEpochSecond <= issuedAtEpochSecond
+          || expiresAtEpochSecond - issuedAtEpochSecond
+              > GameSessionAccountDelegationProfile.MAX_TOKEN_LIFETIME_SECONDS
+          || issuanceFence <= 0L
+          || accountAuthority.issuanceFence() != issuanceFence) {
+        throw invalid();
+      }
     }
   }
 

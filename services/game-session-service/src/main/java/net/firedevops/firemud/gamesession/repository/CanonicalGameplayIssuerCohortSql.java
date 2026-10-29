@@ -15,9 +15,14 @@ final class CanonicalGameplayIssuerCohortSql {
           + " t.inventory_revision AS source_revision,"
           // Preserve frozen pre-V1035 transition bytes for the absence-equivalent new NULL field.
           // A definitive abort UUID remains part of the full captured source.
-          + " CASE WHEN to_jsonb(t)->'admission_orphan_cleanup_id' = 'null'::jsonb"
-          + " THEN (to_jsonb(t) - 'admission_orphan_cleanup_id')::text"
-          + " ELSE to_jsonb(t)::text END AS source_row_json"
+          + " (CASE WHEN to_jsonb(t)->'admission_orphan_cleanup_id' = 'null'::jsonb"
+          + " THEN to_jsonb(t) - 'admission_orphan_cleanup_id'"
+          + " ELSE to_jsonb(t) END"
+          // V1048 preserves old pending cohorts until an actual candidate dispatch is claimed.
+          + " - CASE WHEN to_jsonb(t)->'original_new_candidate_bytes' = 'null'::jsonb"
+          + " THEN ARRAY['original_new_candidate_bytes', 'original_new_candidate_digest',"
+          + " 'original_new_candidate_state', 'original_new_candidate_readback_digest']"
+          + " ELSE ARRAY[]::text[] END)::text AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"
           + " ELSE 'UNRESOLVED_LEGACY_RESERVATION' END AS source_kind,"

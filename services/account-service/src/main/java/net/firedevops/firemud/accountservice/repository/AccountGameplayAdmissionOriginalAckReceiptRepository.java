@@ -72,7 +72,9 @@ final class AccountGameplayAdmissionOriginalAckReceiptRepository {
     return new Creation(receipt, wasInserted);
   }
 
-  /** Exact storage-only read for the sibling owner after it observed successful receipt COMMIT. */
+  /**
+   * Exact storage-only read after the sibling owner proved receipt COMMIT or frozen WAL coverage.
+   */
   AccountGameplayAdmissionOriginalAckReceipt readExact(
       AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId) {
     requireWritableSerializableTransaction();
@@ -80,6 +82,24 @@ final class AccountGameplayAdmissionOriginalAckReceiptRepository {
     Record row = selectReceipt(requestId);
     if (row == null) throw unavailable();
     return decode(row, exactCommitted(evidence, decisionId));
+  }
+
+  /** Captures exact pending evidence; this method alone proves no WAL durability. */
+  PendingHistoricalReceipt captureHistorical(
+      AccountGameplayAdmissionLeaseEvidence evidence, UUID decisionId) {
+    requireWritableSerializableTransaction();
+    UUID requestId = validateRequest(evidence, decisionId);
+    Record row =
+        dsl.fetchOne(
+            "SELECT (capture.captured_receipt).*, capture.wal_upper_fence::text AS wal_upper_fence "
+                + "FROM account_gameplay_admission_capture_original_ack_receipt(?, ?, ?) capture",
+            requestId,
+            evidence.sha256(),
+            decisionId);
+    if (row == null) throw unavailable();
+    return new PendingHistoricalReceipt(
+        decode(row, exactCommitted(evidence, decisionId)),
+        required(row, "wal_upper_fence", String.class));
   }
 
   /** Proves historical independent receipt durability without changing its original evidence. */
@@ -162,6 +182,28 @@ final class AccountGameplayAdmissionOriginalAckReceiptRepository {
   private static IllegalStateException unavailable() {
     return new IllegalStateException(
         "Original Account admission acknowledgement receipt unavailable");
+  }
+
+  /** Non-wire SQL-issued pending capability. Only captureHistorical can stamp its frozen fence. */
+  static final class PendingHistoricalReceipt {
+    private final AccountGameplayAdmissionOriginalAckReceipt receipt;
+    private final String walUpperFence;
+
+    private PendingHistoricalReceipt(
+        AccountGameplayAdmissionOriginalAckReceipt receipt, String walUpperFence) {
+      this.receipt = Objects.requireNonNull(receipt);
+      this.walUpperFence = Objects.requireNonNull(walUpperFence);
+      if (!walUpperFence.matches("(0|[1-9A-F][0-9A-F]{0,7})/(0|[1-9A-F][0-9A-F]{0,7})")
+          || "0/0".equals(walUpperFence)) throw unavailable();
+    }
+
+    AccountGameplayAdmissionOriginalAckReceipt receipt() {
+      return receipt;
+    }
+
+    String walUpperFence() {
+      return walUpperFence;
+    }
   }
 
   record Creation(AccountGameplayAdmissionOriginalAckReceipt receipt, boolean inserted) {

@@ -10,6 +10,8 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 The sections below define the target-state runtime contract. Current implementation and proof status is:
 
+- **Original NEW credential and candidate preparation:** the dependent unregistered Account credential/opaque-handle producer, strict receiving codec/client and non-admitting candidate installer are present locally. This boundary depends on the separate issuer/INITIAL Account readiness owners and does not include the final controller CAS or whole-flow coordinator. Receiving qualification and proof limits are tracked in [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md#canonical-new-admission-components).
+
 - **Local NEW issuer anchor:** the unregistered bootstrap owner installs the initial issuer anchor with exact physical readback and controlled Account checkpoint and stable-incarnation collaborators. Completed-original retries return retained installation evidence; current physical verification remains separate. The [issuer anchor owner](../../system-architecture-redis.md#installed-issuer-anchor-for-ordinary-new) defines the contract.
 
 - **Local NEW issuer projection and release:** the ordinary post-baseline owner projects one-key member/capacity state and performs issuer-local release with exact physical readback. Ordinary ADD revalidates the target’s current Account authority; terminal cleanup and non-target accounting preserve captured Account provenance.

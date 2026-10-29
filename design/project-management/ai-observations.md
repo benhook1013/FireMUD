@@ -489,6 +489,12 @@ Entry format:
 
 Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was recorded at 04:30:37, a 39-minute 19-second capture delay. FireController identified an optional `review_info_content` marker that broke standing-result parsing and unrelated CI-bot edits that masked the useful capture diagnostic. The owner deployed parser/diagnostic regression fixes in `2f1e5da5` and recovered the original zero-finding evidence without another trigger or spent reservation. Retain optional-marker and unrelated-comment cases in completion recovery tests; provider check success alone cannot establish a zero-finding native review.
 
+- `2026-10-29`: Qualify analysis recovery after a local command-line launch failure
+  - Context: The complete credential/candidate receiving gate R864 passed 141 selected tests but could not start Game Session main SpotBugs because the Java command line exceeded local OS limits.
+  - Observation: This is unavailable static proof, not clean analysis or a code finding. The command-size contribution and whether shorter hosted paths avoid it remain unverified.
+  - Expected pattern: Preserve the failed aggregate and require exact-head CI recovery for the unavailable check before claiming CI qualification.
+  - Outcome: R920 subsequently passes the enabled Game Session main SpotBugs check on the receiving source after the existing build enables auxiliary-classpath files and compact source-root handling. This closes that analysis-availability gap for R920; R864 remains a failed aggregate and supplies no clean main-analysis result.
+
 - `2026-10-29`: Check owner reachability before adjudicating a schema-level review claim
   - Context: #3320 CLI reported that a later issuer cutoff could strand an older CLOSED barrier because the SQL operation schema permits positive prior epochs.
   - Observation: Gameplay initially accepted and escalated that claim before reading the actual owner. `beginCutoff` already requires current OPEN control and the original anchor-install operation, rejecting INSTALLED before allocation. The source claim was corrected in native review history and the unnecessary decision request withdrawn.
@@ -498,6 +504,17 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: #3320 added production/test anchors and a link from a capability proof cell to its own proof-summary paragraph.
   - Observation: links and Markdown passed locally, but CI architecture-doc-contracts rejected the proof-cell documentation path; that column permits executable tests or canonical validation/smoke tooling. The test links were valid and remain retained.
   - Expected pattern: run the existing architecture-doc-contracts check when changing capability anchors; keep summary/gap links outside proof cells and retain direct executable proof links inside them. This is a selection correction, not a new validation tool.
+
+- `2026-10-29`: Shared smoke-selector changes need their companion retarget contract
+  - Context: The #3331/#3332 smoke-selector correction passed its focused extracted-workflow fixtures.
+  - Observation: The separate `pr-retarget-workflow-contract.sh` still required two removed first-match implementation literals, and actual Validation caught the missed companion contract. Original failed CI remains retained.
+  - Expected pattern: Update existing assertions to canonical all-candidate selection and run the complete existing dev-tool contract step when changing the shared smoke path. Focused success alone does not cover its other workflow consumers.
+
+- `2026-10-29`: A review grant and tool override do not authorize exceeding the file limit
+  - Context: Gameplay treated an existing two-round CLI grant plus a newly available request override as authorization to exceed the project file limit on #3310.
+  - Observation: Overseer identified that no traceable Human exception had been given. The cited 111-file CLI capability sentence is unverified history without an identified run, comparison and completion, and does not support an exception.
+  - Expected pattern: Distinguish tool capability and additional-round authority from authority to bypass a configured limit.
+  - Outcome: The running attempt is retained to completion with its findings; further override requests are stopped and existing policy and grants remain unchanged.
 
 - `2026-10-29`: Malformed source-refresh IDs missing the `review_refresh_` prefix returned unrelated startup-binding advice. The original full receipt IDs recovered the existing observations without another fetch. FireController owner reports client-only fix `18cf3b4d` now identifies `refresh_id`, its required prefix/format and retained-receipt recovery; an existing MCP process keeps its prior binary until normal reconnection. Preserve exact full handles in delegation messages rather than abbreviating tool arguments.
 

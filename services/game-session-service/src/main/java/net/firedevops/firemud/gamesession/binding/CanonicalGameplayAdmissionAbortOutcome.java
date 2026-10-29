@@ -33,7 +33,7 @@ public record CanonicalGameplayAdmissionAbortOutcome(
       }
       if (state == State.ABORTED) {
         requireNonNil(orphanCleanupId, "orphanCleanupId");
-        if (!transitionId.equals(accountOperation.bindingDecisionId())) {
+        if (!accountOperation.matchesAbortTransition(transitionId)) {
           throw new IllegalArgumentException(
               "ABORTED result changed the exact transition identity");
         }

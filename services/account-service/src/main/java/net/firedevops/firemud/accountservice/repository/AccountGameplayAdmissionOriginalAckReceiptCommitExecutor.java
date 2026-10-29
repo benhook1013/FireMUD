@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -50,13 +51,12 @@ final class AccountGameplayAdmissionOriginalAckReceiptCommitExecutor {
     // row.
     rejectAmbient();
     var read =
-        execute(
-            new ReceiptTransactionManager(dataSource),
-            repository ->
-                creation.inserted()
-                    ? repository.readExact(acknowledgement.evidence(), acknowledgement.decisionId())
-                    : repository.readDurably(
-                        acknowledgement.evidence(), acknowledgement.decisionId()));
+        creation.inserted()
+            ? execute(
+                new ReceiptTransactionManager(dataSource),
+                repository ->
+                    repository.readExact(acknowledgement.evidence(), acknowledgement.decisionId()))
+            : read(acknowledgement.evidence(), acknowledgement.decisionId());
     validate(read, acknowledgement.evidence(), acknowledgement.decisionId());
     if (!created.equals(read)) throw denied();
     return read;
@@ -67,12 +67,65 @@ final class AccountGameplayAdmissionOriginalAckReceiptCommitExecutor {
     Objects.requireNonNull(evidence);
     Objects.requireNonNull(decisionId);
     rejectAmbient();
+    var pending =
+        execute(
+            new ReceiptTransactionManager(dataSource),
+            repository -> repository.captureHistorical(evidence, decisionId));
+    validate(pending.receipt(), evidence, decisionId);
+    // Capture completion is not proof of original timing or durability. Observe actual durable
+    // coverage of the exact SQL-issued upper fence, after releasing the capture's row locks.
+    awaitFrozenFenceCoverage(pending);
+    rejectAmbient();
     var receipt =
         execute(
             new ReceiptTransactionManager(dataSource),
-            repository -> repository.readDurably(evidence, decisionId));
+            repository -> repository.readExact(evidence, decisionId));
     validate(receipt, evidence, decisionId);
+    if (!pending.receipt().equals(receipt)) throw denied();
     return receipt;
+  }
+
+  private void awaitFrozenFenceCoverage(
+      AccountGameplayAdmissionOriginalAckReceiptRepository.PendingHistoricalReceipt pending) {
+    rejectAmbient();
+    try (Connection connection = dataSource.getConnection()) {
+      if (!connection.getAutoCommit()
+          || !"PostgreSQL".equals(connection.getMetaData().getDatabaseProductName()))
+        throw denied();
+      try (PreparedStatement statement =
+          connection.prepareStatement(
+              "SELECT current_setting('server_version_num')::integer, pg_is_in_recovery(), "
+                  + "current_setting('fsync'), pg_current_wal_flush_lsn() >= ?::pg_lsn")) {
+        statement.setQueryTimeout(1);
+        statement.setString(1, pending.walUpperFence());
+        for (int observation = 0; observation < 50; observation++) {
+          boolean covered;
+          try (ResultSet result = statement.executeQuery()) {
+            if (!result.next()) throw denied();
+            int version = result.getInt(1);
+            if (version < 180000
+                || version >= 190000
+                || result.getBoolean(2)
+                || !"on".equals(result.getString(3))) throw denied();
+            covered = result.getBoolean(4);
+            if (result.wasNull() || result.next()) throw denied();
+          }
+          if (covered) return;
+          if (observation < 49) {
+            try {
+              Thread.sleep(10L);
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw denied();
+            }
+          }
+        }
+      }
+    } catch (SQLException failure) {
+      throw new TransactionSystemException("Account receipt WAL coverage unavailable", failure);
+    }
+    throw new IllegalStateException(
+        "Original Account acknowledgement receipt WAL coverage unavailable");
   }
 
   private static void validate(

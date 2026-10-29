@@ -79,6 +79,12 @@ public final class AccountGameplayAdmissionLeaseWorkloadGuard implements ServerI
             .equals(fullMethodName)
         || AccountGameplayAdmissionLeaseServiceGrpc.getAbortGameplayAdmissionLeaseMethod()
             .getFullMethodName()
+            .equals(fullMethodName)
+        || AccountGameplayAdmissionLeaseServiceGrpc.getIssueOriginalNewGameplayCredentialMethod()
+            .getFullMethodName()
+            .equals(fullMethodName)
+        || AccountGameplayAdmissionLeaseServiceGrpc.getConfirmOriginalNewGameplayAdmissionMethod()
+            .getFullMethodName()
             .equals(fullMethodName);
   }
 
@@ -107,6 +113,36 @@ public final class AccountGameplayAdmissionLeaseWorkloadGuard implements ServerI
     if (!namespace.equals(targetNamespace)) {
       throw Status.PERMISSION_DENIED
           .withDescription("Gameplay admission lease target namespace is not authorized")
+          .asRuntimeException();
+    }
+  }
+
+  public void requireOriginalNewCredentialNamespace(
+      AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredentialRequest request) {
+    if (request == null) {
+      throw Status.INVALID_ARGUMENT
+          .withDescription("Malformed Account original-new credential request")
+          .asRuntimeException();
+    }
+    Object targetNamespace = request.originalLeaseEvidence().carrier().get("targetNamespace");
+    if (!namespace.equals(targetNamespace)) {
+      throw Status.PERMISSION_DENIED
+          .withDescription("Original-new credential lease target namespace is not authorized")
+          .asRuntimeException();
+    }
+  }
+
+  public void requireOriginalFinalAdmissionConfirmationNamespace(
+      AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmationRequest request) {
+    if (request == null) {
+      throw Status.INVALID_ARGUMENT
+          .withDescription("Malformed Account original-new confirmation request")
+          .asRuntimeException();
+    }
+    Object targetNamespace = request.originalLeaseEvidence().carrier().get("targetNamespace");
+    if (!namespace.equals(targetNamespace)) {
+      throw Status.PERMISSION_DENIED
+          .withDescription("Original-new confirmation lease target namespace is not authorized")
           .asRuntimeException();
     }
   }

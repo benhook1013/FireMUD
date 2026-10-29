@@ -26,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.CommittedSignerEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.CustodyMode;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
+import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayIssuanceRepository.Genesis;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.ExplicitRouteProfilePolicy;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.VerifiedClaims;
@@ -312,6 +313,234 @@ public final class AccountGameplayDelegationSigner {
       if (openedCandidate != null) openedCandidate.close();
       PendingCandidateCredential untransferredCandidate = acquiredCandidate.getAndSet(null);
       if (untransferredCandidate != null) untransferredCandidate.close();
+    }
+  }
+
+  /**
+   * Signs and locally verifies the distinct tenant-bound ORIGINAL-NEW credential for one frozen
+   * Account lineage. It reuses the current Account signer/trust/JWKS sources, but does not enter or
+   * alter the unscoped LOGIN issuance row or its token-identity invariant.
+   */
+  public OriginalNewBoundSignedCandidate signOriginalNewBoundCandidate(
+      Genesis genesis,
+      AccountAuthoritySnapshot accountAuthority,
+      String tenantId,
+      Map<String, Object> exactAuthorityTuple,
+      Map<String, String> exactMembershipVersion) {
+    Objects.requireNonNull(genesis);
+    Objects.requireNonNull(accountAuthority);
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
+    byte[] firstJwksBytes = null;
+    byte[] finalJwksBytes = null;
+    AtomicReference<byte[]> compactTokenCapture = new AtomicReference<>();
+    byte[] transientCompactJwt = null;
+    try {
+      CurrentSigner initial = accountTransaction.execute(status -> currentCommittedSigner());
+      if (initial == null || !accountAuthority.accountId().equals(genesis.accountId())) {
+        throw unavailable();
+      }
+      SourceIdentity sourcePin = trustedJwksSource.sourceIdentity();
+      firstJwksBytes = requireExactTrustedSnapshot(initial, sourcePin, trustedJwksSource.load());
+      byte[] pinnedJwks = firstJwksBytes;
+      AccountPublicJwksCache keyCache =
+          new AccountPublicJwksCache(
+              () -> {
+                PublicJwksSnapshot observed = trustedJwksSource.load();
+                byte[] observedBytes = requireExactTrustedSnapshot(initial, sourcePin, observed);
+                try {
+                  if (!Arrays.equals(pinnedJwks, observedBytes)) {
+                    throw new AccountPublicJwksCache.InvalidJwksException();
+                  }
+                  return observed;
+                } finally {
+                  wipe(observedBytes);
+                }
+              },
+              sourcePin,
+              clock,
+              PUBLIC_KEY_CACHE_AGE);
+      keyCache.keyFor(initial.expectedIdentity().kid());
+
+      var bound =
+          new AccountMountedJwtSignerBundle.BoundDelegationClaims(
+              tenantId, exactAuthorityTuple, exactMembershipVersion);
+      var signingSpec =
+          new AccountMountedJwtSignerBundle.OriginalNewBoundDelegationSigningSpec(
+              genesis.lineageId(),
+              genesis.requestId(),
+              genesis.accountId(),
+              genesis.tokenJti(),
+              genesis.issuedAtEpochSecond(),
+              genesis.notBeforeEpochSecond(),
+              genesis.expiresAtEpochSecond(),
+              genesis.issuanceFence(),
+              accountAuthority,
+              bound);
+      AccountMountedJwtSignerBundle.SignedDelegationDigest digest =
+          AccountMountedJwtSignerBundle.signOriginalNewBoundGameplayDelegationDigest(
+              privateMountRoot,
+              privateBundlePath,
+              publicMountRoot,
+              publicJwksPath,
+              initial.expectedIdentity(),
+              signingSpec,
+              (signed, exactCompactJwt) -> {
+                if (!genesis.lineageId().equals(signed.issuanceOperationId())
+                    || !genesis.requestId().equals(signed.requestId())
+                    || !genesis.tokenJti().equals(signed.jti())
+                    || !initial.expectedIdentity().operationId().equals(signed.signerOperationId())
+                    || !initial.expectedIdentity().generation().equals(signed.signerGeneration())
+                    || !initial.expectedIdentity().kid().equals(signed.kid())
+                    || !initial
+                        .expectedIdentity()
+                        .publicKeyFingerprint()
+                        .equals(signed.publicKeyFingerprint())
+                    || signed.issuedAtEpochSecond() != genesis.issuedAtEpochSecond()
+                    || signed.notBeforeEpochSecond() != genesis.notBeforeEpochSecond()
+                    || signed.expiresAtEpochSecond() != genesis.expiresAtEpochSecond()
+                    || !genesis.requestDigest().matches("[0-9a-f]{64}")) {
+                  throw unavailable();
+                }
+                byte[] copy = exactCompactJwt.clone();
+                if (!compactTokenCapture.compareAndSet(null, copy)) {
+                  wipe(copy);
+                  throw unavailable();
+                }
+              });
+      transientCompactJwt = compactTokenCapture.getAndSet(null);
+      if (transientCompactJwt == null
+          || !sha256(transientCompactJwt).equals(digest.compactTokenSha256())) throw unavailable();
+      String compact = exactAscii(transientCompactJwt);
+      VerifiedClaims verified =
+          new AccountAsymmetricJwtVerifier(keyCache, clock).verify(compact, GSA_SIGNING_POLICY);
+      Map<String, Object> claims = verified.claims();
+      if (!GameSessionAccountDelegationProfile.PROFILE.equals(verified.profile())
+          || !GameSessionAccountDelegationProfile.TYPE.equals(verified.tokenType())
+          || !initial.expectedIdentity().kid().equals(verified.keyId())
+          || !genesis.accountId().toString().equals(claims.get("sub"))
+          || !genesis.accountId().toString().equals(claims.get("accountId"))
+          || !genesis.tokenJti().toString().equals(claims.get("jti"))
+          || !tenantId.equals(claims.get("tenantId"))
+          || decimalCounterClaim(claims, "tokenGeneration") != 1L
+          || numberClaim(claims, "iat") != genesis.issuedAtEpochSecond()
+          || numberClaim(claims, "nbf") != genesis.notBeforeEpochSecond()
+          || numberClaim(claims, "exp") != genesis.expiresAtEpochSecond()
+          || decimalCounterClaim(claims, "issuanceFence") != genesis.issuanceFence()
+          || !exactAuthorityTuple.equals(claims.get("authorityTuple"))
+          || !exactMembershipVersion.equals(claims.get("membershipVersion"))
+          || claims.containsKey("globalRoles")
+          || claims.containsKey("scopedRoles")
+          || !sha256(transientCompactJwt).equals(digest.compactTokenSha256())) {
+        throw unavailable();
+      }
+      finalJwksBytes = requireExactTrustedSnapshot(initial, sourcePin, trustedJwksSource.load());
+      if (!Arrays.equals(firstJwksBytes, finalJwksBytes)) throw unavailable();
+      CurrentSigner observed = accountTransaction.execute(status -> currentCommittedSigner());
+      if (observed == null) throw unavailable();
+      requireSameCommittedSigner(initial, observed);
+      return new OriginalNewBoundSignedCandidate(
+          transientCompactJwt,
+          digest.compactTokenSha256(),
+          digest.kid(),
+          digest.signerGeneration(),
+          digest.publicKeyFingerprint());
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      wipe(firstJwksBytes);
+      wipe(finalJwksBytes);
+      wipe(compactTokenCapture.getAndSet(null));
+      wipe(transientCompactJwt);
+    }
+  }
+
+  /** Verifies one exact Account-owned ORIGINAL-NEW JWT under the current mounted signer/JWKS. */
+  public VerifiedOriginalNewBoundCredential verifyOriginalNewBoundCredential(
+      String compactJwt,
+      Genesis genesis,
+      AccountAuthoritySnapshot accountAuthority,
+      String tenantId,
+      Map<String, Object> exactAuthorityTuple,
+      Map<String, String> exactMembershipVersion) {
+    Objects.requireNonNull(compactJwt);
+    Objects.requireNonNull(genesis);
+    Objects.requireNonNull(accountAuthority);
+    Objects.requireNonNull(exactAuthorityTuple);
+    Objects.requireNonNull(exactMembershipVersion);
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
+    byte[] jwtBytes = null;
+    byte[] initialJwks = null;
+    byte[] finalJwks = null;
+    try {
+      CurrentSigner initial = accountTransaction.execute(status -> currentCommittedSigner());
+      if (initial == null || !genesis.accountId().equals(accountAuthority.accountId()))
+        throw unavailable();
+      // Recovery verifies the frozen JWT's original key against today's trusted JWKS.
+      // A completed rotation can retain that key without making it the active signer.
+      SourceIdentity pin = trustedJwksSource.sourceIdentity();
+      initialJwks = requireExactTrustedSnapshot(initial, pin, trustedJwksSource.load());
+      byte[] pinned = initialJwks;
+      AccountPublicJwksCache keyCache =
+          new AccountPublicJwksCache(
+              () -> {
+                PublicJwksSnapshot observed = trustedJwksSource.load();
+                byte[] observedBytes = requireExactTrustedSnapshot(initial, pin, observed);
+                try {
+                  if (!Arrays.equals(pinned, observedBytes)) {
+                    throw new AccountPublicJwksCache.InvalidJwksException();
+                  }
+                  return observed;
+                } finally {
+                  wipe(observedBytes);
+                }
+              },
+              pin,
+              clock,
+              PUBLIC_KEY_CACHE_AGE);
+      keyCache.keyFor(genesis.signerKid());
+      VerifiedClaims verified =
+          new AccountAsymmetricJwtVerifier(keyCache, clock).verify(compactJwt, GSA_SIGNING_POLICY);
+      Map<String, Object> claims = verified.claims();
+      jwtBytes = compactJwt.getBytes(StandardCharsets.US_ASCII);
+      if (!exactAscii(jwtBytes).equals(compactJwt)
+          || jwtBytes.length > GameSessionAccountDelegationProfile.MAX_COMPACT_JWT_BYTES
+          || !sha256(jwtBytes).equals(genesis.tokenHash())
+          || !GameSessionAccountDelegationProfile.PROFILE.equals(verified.profile())
+          || !GameSessionAccountDelegationProfile.TYPE.equals(verified.tokenType())
+          || !genesis.signerKid().equals(verified.keyId())
+          || !genesis.accountId().toString().equals(claims.get("sub"))
+          || !genesis.accountId().toString().equals(claims.get("accountId"))
+          || !genesis.tokenJti().toString().equals(claims.get("jti"))
+          || !tenantId.equals(claims.get("tenantId"))
+          || decimalCounterClaim(claims, "tokenGeneration") != 1L
+          || numberClaim(claims, "iat") != genesis.issuedAtEpochSecond()
+          || numberClaim(claims, "nbf") != genesis.notBeforeEpochSecond()
+          || numberClaim(claims, "exp") != genesis.expiresAtEpochSecond()
+          || decimalCounterClaim(claims, "issuanceFence") != genesis.issuanceFence()
+          || !exactAuthorityTuple.equals(claims.get("authorityTuple"))
+          || !exactMembershipVersion.equals(claims.get("membershipVersion"))
+          || claims.containsKey("globalRoles")
+          || claims.containsKey("scopedRoles")) throw unavailable();
+      finalJwks = requireExactTrustedSnapshot(initial, pin, trustedJwksSource.load());
+      if (!Arrays.equals(initialJwks, finalJwks)) throw unavailable();
+      CurrentSigner observed = accountTransaction.execute(status -> currentCommittedSigner());
+      if (observed == null) throw unavailable();
+      requireSameCommittedSigner(initial, observed);
+      return new VerifiedOriginalNewBoundCredential(
+          genesis.lineageId(),
+          genesis.accountId(),
+          genesis.tokenJti(),
+          genesis.tokenHash(),
+          genesis.issuanceFence(),
+          genesis.expiresAtEpochSecond());
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      wipe(jwtBytes);
+      wipe(initialJwks);
+      wipe(finalJwks);
     }
   }
 
@@ -1551,6 +1780,84 @@ public final class AccountGameplayDelegationSigner {
   static final class SigningUnavailableException extends IllegalStateException {
     private SigningUnavailableException() {
       super("Account gameplay delegation candidate is unavailable or ambiguous");
+    }
+  }
+
+  /** Signature/profile verification result with no compact JWT or handle bytes. */
+  public record VerifiedOriginalNewBoundCredential(
+      UUID lineageId,
+      UUID accountId,
+      UUID tokenJti,
+      String tokenSha256,
+      long issuanceFence,
+      long expiresAtEpochSecond) {
+    public VerifiedOriginalNewBoundCredential {
+      Objects.requireNonNull(lineageId);
+      Objects.requireNonNull(accountId);
+      Objects.requireNonNull(tokenJti);
+      if (tokenSha256 == null
+          || !tokenSha256.matches("[0-9a-f]{64}")
+          || issuanceFence <= 0L
+          || expiresAtEpochSecond <= 0L) throw unavailable();
+    }
+
+    @Override
+    public String toString() {
+      return "VerifiedOriginalNewBoundCredential[redacted]";
+    }
+  }
+
+  /** Transient signed bytes owned by this Account signer invocation; diagnostics redact them. */
+  public static final class OriginalNewBoundSignedCandidate implements AutoCloseable {
+    private byte[] compactJwtBytes;
+    private final String tokenHash;
+    private final String signerKid;
+    private final String signerGeneration;
+    private final String publicKeyFingerprint;
+
+    private OriginalNewBoundSignedCandidate(
+        byte[] compactJwtBytes,
+        String tokenHash,
+        String signerKid,
+        String signerGeneration,
+        String publicKeyFingerprint) {
+      this.compactJwtBytes = compactJwtBytes.clone();
+      this.tokenHash = Objects.requireNonNull(tokenHash);
+      this.signerKid = Objects.requireNonNull(signerKid);
+      this.signerGeneration = Objects.requireNonNull(signerGeneration);
+      this.publicKeyFingerprint = Objects.requireNonNull(publicKeyFingerprint);
+    }
+
+    public byte[] compactJwtBytes() {
+      if (compactJwtBytes == null) throw unavailable();
+      return compactJwtBytes.clone();
+    }
+
+    public String tokenHash() {
+      return tokenHash;
+    }
+
+    public String signerKid() {
+      return signerKid;
+    }
+
+    public String signerGeneration() {
+      return signerGeneration;
+    }
+
+    public String publicKeyFingerprint() {
+      return publicKeyFingerprint;
+    }
+
+    @Override
+    public void close() {
+      wipe(compactJwtBytes);
+      compactJwtBytes = null;
+    }
+
+    @Override
+    public String toString() {
+      return "OriginalNewBoundSignedCandidate[credential=redacted]";
     }
   }
 }

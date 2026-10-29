@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
@@ -9,10 +11,14 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import io.lettuce.core.protocol.ProtocolVersion;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -35,7 +41,9 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbor
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventorySnapshot;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationReadback;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationSourceSnapshot.Family;
@@ -145,49 +153,6 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       MigrationVersion migrationTarget,
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap) {
-    this(
-        accountDataSource,
-        accountCandidate,
-        issuerRedisClient,
-        seedBootstrapMemberCount,
-        migrationTarget,
-        afterBootstrap,
-        true);
-  }
-
-  /**
-   * Keeps the actual V1047-era owners at their historical schema until the caller upgrades it.
-   * Later-schema composition tests retain the normal after-bootstrap upgrade behavior.
-   */
-  static CanonicalGameplayAdmissionAbortCompositionFixture atHistoricalIssuerAdmissionFrontier(
-      DriverManagerDataSource accountDataSource,
-      Candidate accountCandidate,
-      RedisClient issuerRedisClient,
-      MigrationVersion migrationTarget) {
-    Objects.requireNonNull(migrationTarget, "migrationTarget");
-    if (!migrationTarget.equals(MigrationVersion.fromVersion("1047"))
-        && !migrationTarget.equals(MigrationVersion.fromVersion("1047.1"))) {
-      throw new IllegalArgumentException("Historical issuer admission requires V1047 or V1047.1");
-    }
-    return new CanonicalGameplayAdmissionAbortCompositionFixture(
-        accountDataSource,
-        accountCandidate,
-        issuerRedisClient,
-        0,
-        migrationTarget,
-        (data, intent) -> {},
-        false);
-  }
-
-  private CanonicalGameplayAdmissionAbortCompositionFixture(
-      DriverManagerDataSource accountDataSource,
-      Candidate accountCandidate,
-      RedisClient issuerRedisClient,
-      int seedBootstrapMemberCount,
-      MigrationVersion migrationTarget,
-      BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
-          afterBootstrap,
-      boolean upgradeAfterBootstrap) {
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
@@ -233,7 +198,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             accountCandidate.issuerIndexPartitionCapacity());
     establishActualLegacyDisposition(dsl);
     if (seedBootstrapMemberCount > 0) {
-      seedQualifiedBootstrapMembers(seedBootstrapMemberCount);
+      seedQualifiedBootstrapMembers(seedBootstrapMemberCount, migrationTarget);
     }
     repository = new CanonicalGameplayBindingInventoryRepository(dsl);
     BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
@@ -283,7 +248,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
             .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
     Objects.requireNonNull(afterBootstrap, "afterBootstrap").accept(dataSource, bootstrapIntent);
-    if (migrationTarget != null && upgradeAfterBootstrap) {
+    if (migrationTarget != null) {
       upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
     }
     new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
@@ -316,8 +281,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
    * Tuple-consistent controlled upstream target; it does not claim a live initial-admission
    * producer.
    */
-  private static CanonicalPlayableTarget sealControlledInitialTarget(
-      CanonicalPlayableTarget original) {
+  static CanonicalPlayableTarget sealControlledInitialTarget(CanonicalPlayableTarget original) {
     var request =
         new WorldCanonicalInitialAdmissionHold.Request(
             original.targetNamespace(),
@@ -484,6 +448,10 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public Target target() {
+    return target(target);
+  }
+
+  static Target target(CanonicalPlayableTarget target) {
     return new Target(
         target.targetNamespace(),
         target.tenantSlug(),
@@ -1396,15 +1364,19 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
   }
 
-  private void seedQualifiedBootstrapMembers(int count) {
+  private void seedQualifiedBootstrapMembers(int count, MigrationVersion migrationTarget) {
     var inventoryRepository = new CanonicalGameplayBindingInventoryRepository(dsl);
+    boolean historicalProvisionalSetup =
+        migrationTarget != null
+            && migrationTarget.compareTo(MigrationVersion.fromVersion("1048")) < 0;
     for (int index = 0; index < count; index++) {
-      seedQualifiedBootstrapMember(inventoryRepository);
+      seedQualifiedBootstrapMember(inventoryRepository, historicalProvisionalSetup);
     }
   }
 
   private void seedQualifiedBootstrapMember(
-      CanonicalGameplayBindingInventoryRepository inventoryRepository) {
+      CanonicalGameplayBindingInventoryRepository inventoryRepository,
+      boolean historicalProvisionalSetup) {
     var candidate =
         new CanonicalGameplayBindingIdentity(
             UUID.randomUUID(),
@@ -1437,15 +1409,224 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var prepared = inventoryRepository.readProvisionalCasEvidence(transitionId);
     var lease =
         controlledLeaseEvidence(candidate, prepared.transition().bindingGeneration(), target);
-    inventoryRepository.markProvisional(
-        prepared,
+    var decision =
         new CanonicalGameplayAdmissionDecision(
             transitionId,
             lease,
             candidate,
             prepared.transition().bindingGeneration(),
             null,
-            target));
+            target);
+    if (historicalProvisionalSetup) {
+      seedHistoricalLeaseBoundProvisional(dsl, prepared, decision);
+    } else {
+      inventoryRepository.markProvisional(prepared, decision);
+    }
+  }
+
+  /**
+   * Controlled historical setup reproduces the predecessor's native lease-bound PROVISIONAL
+   * statements at 83a13e834894a0dfdb1797a887243e27fd7c9a48, without requiring V1048 columns. This
+   * setup does not prove current provisional publication or Account lease issuance. The subsequent
+   * bootstrap, default-ordered upgrade and retained abort still execute their owners.
+   */
+  static void seedHistoricalLeaseBoundProvisional(
+      DSLContext dsl,
+      CanonicalGameplayBindingProvisionalCasEvidence prepared,
+      CanonicalGameplayAdmissionDecision decision) {
+    assertThat(prepared.expectedPrior()).isNull();
+    seedHistoricalLeaseBoundProvisional(dsl, prepared.transition(), decision);
+  }
+
+  static void seedHistoricalLeaseBoundProvisional(
+      DSLContext dsl,
+      CanonicalGameplayBindingTransitionSnapshot prepared,
+      CanonicalGameplayAdmissionDecision decision) {
+    Objects.requireNonNull(dsl, "dsl");
+    assertThat(prepared.expectedPriorBindingRef()).isNull();
+    assertThat(prepared.expectedPriorBindingGeneration()).isNull();
+    assertThat(prepared.status())
+        .isEqualTo(
+            net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
+                .Status.PREPARED);
+    dsl.transaction(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger currentRevision =
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+          BigInteger priorRevision = prepared.inventoryRevision();
+          assertThat(
+                  transaction.fetchOne(
+                      "SELECT id FROM game_instances"
+                          + " WHERE tenant_id = ? AND id = ? AND game_instance_uuid = ? FOR UPDATE",
+                      decision.targetEvidence().gameSessionTenantId(),
+                      decision.targetEvidence().gameInstanceId(),
+                      decision.targetEvidence().canonicalGameInstanceId()))
+              .isNotNull();
+          assertThat(
+                  seedHistoricalProvisionalTransition(
+                      transaction, prepared, decision, priorRevision, nextRevision))
+              .isOne();
+          assertThat(
+                  transaction.execute(
+                      "UPDATE game_session_canonical_gameplay_binding_inventory"
+                          + " SET lifecycle = 'PROVISIONAL', inventory_revision = ?"
+                          + " WHERE binding_ref = ? AND transition_id = ?"
+                          + " AND lifecycle = 'CANDIDATE_PREPARED'"
+                          + " AND binding_generation = ? AND account_index_fence = ?"
+                          + " AND account_index_state = 'REPAIR_REQUIRED'"
+                          + " AND issuer_index_state = 'REPAIR_REQUIRED' AND inventory_revision = ?",
+                      new BigDecimal(nextRevision),
+                      prepared.bindingRef().bytes(),
+                      prepared.transitionId(),
+                      new BigDecimal(prepared.bindingGeneration()),
+                      prepared.candidateAccountIndexFence(),
+                      new BigDecimal(priorRevision)))
+              .isOne();
+          for (String obligationTable :
+              List.of(
+                  "game_session_canonical_binding_account_index_obligation",
+                  "game_session_canonical_binding_issuer_index_obligation",
+                  "game_session_canonical_binding_region_bridge_obligation")) {
+            assertThat(
+                    transaction.execute(
+                        "UPDATE "
+                            + obligationTable
+                            + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+                        new BigDecimal(nextRevision),
+                        prepared.transitionId(),
+                        new BigDecimal(priorRevision)))
+                .isOne();
+          }
+          assertThat(
+                  transaction.execute(
+                      "UPDATE game_session_canonical_issuer_partition_reservation"
+                          + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
+                          + " AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+                      new BigDecimal(nextRevision),
+                      prepared.issuerReservationId(),
+                      prepared.transitionId(),
+                      new BigDecimal(priorRevision)))
+              .isOne();
+          assertThat(
+                  transaction.execute(
+                      "UPDATE game_session_canonical_binding_inventory_clock"
+                          + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = ?",
+                      new BigDecimal(nextRevision),
+                      new BigDecimal(currentRevision)))
+              .isOne();
+        });
+  }
+
+  private static int seedHistoricalProvisionalTransition(
+      DSLContext transaction,
+      CanonicalGameplayBindingTransitionSnapshot current,
+      CanonicalGameplayAdmissionDecision decision,
+      BigInteger priorRevision,
+      BigInteger nextRevision) {
+    List<Object> values = new ArrayList<>();
+    values.add(new BigDecimal(nextRevision));
+    values.addAll(historicalAdmissionDecisionValues(decision));
+    values.add(current.transitionId());
+    values.add(new BigDecimal(priorRevision));
+    values.add(current.bindingRef().bytes());
+    values.add(new BigDecimal(current.bindingGeneration()));
+    values.add(current.candidateAccountIndexFence());
+    String expectedPriorPredicate =
+        "AND expected_prior_binding_ref IS NULL AND expected_prior_binding_generation IS NULL";
+    values.add(decision.leaseExpiresAtEpochMillis().toString());
+    String assignments =
+        "admission_request_id = ?, admission_lease_id = ?, admission_lease_fence = ?,"
+            + " admission_lease_kind = ?, admission_lease_digest = ?,"
+            + " admission_lease_evidence = ?, admission_resume_episode_id = ?,"
+            + " admission_expected_old_binding_generation = ?, admission_lease_expires_at = ?,"
+            + " admission_target_namespace = ?, admission_target_tenant_slug = ?,"
+            + " admission_target_tenant_id = ?, admission_target_world_slug = ?,"
+            + " admission_target_world_display_name = ?, admission_target_realm_id = ?,"
+            + " admission_target_realm_slug = ?, admission_target_realm_display_name = ?,"
+            + " admission_target_game_session_tenant_id = ?, admission_target_game_instance_id = ?,"
+            + " admission_target_playable_state_namespace_id = ?,"
+            + " admission_target_playable_state_scope = ?,"
+            + " admission_target_canonical_game_instance_id = ?,"
+            + " admission_target_canonical_version_id = ?, admission_target_runtime_version_id = ?,"
+            + " admission_target_catalog_revision = ?, admission_target_pointer_version = ?,"
+            + " admission_target_pointer_snapshot_digest = ?,"
+            + " admission_target_active_world_epoch = ?,"
+            + " admission_target_initial_admission_request_id = ?,"
+            + " admission_target_initial_admission_request_digest = ?,"
+            + " admission_target_origin_kind = ?,"
+            + " admission_target_expected_prior_pointer_version = ?,"
+            + " admission_target_hold_id = ?, admission_target_hold_fence = ?,"
+            + " admission_target_hold_binding_digest = ?, admission_target_audit_event_id = ?,"
+            + " admission_target_owner_proof_digest = ?,"
+            + " admission_target_owner_proof_outcome = ?,"
+            + " admission_target_positive_durable_abort = ?,"
+            + " admission_target_terminal_at = ?::timestamptz,"
+            + " admission_target_character_creation_policy = ?";
+    return transaction.execute(
+        "UPDATE game_session_canonical_binding_transition"
+            + " SET status = 'PROVISIONAL', inventory_revision = ?, "
+            + assignments
+            + " WHERE transition_id = ? AND status = 'PREPARED'"
+            + " AND inventory_revision = ? AND candidate_binding_ref = ?"
+            + " AND candidate_binding_generation = ? AND candidate_account_index_fence = ?"
+            + " "
+            + expectedPriorPredicate
+            + " AND admission_request_id IS NULL AND admission_lease_id IS NULL"
+            + " AND CAST(? AS NUMERIC) > FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)",
+        values.toArray());
+  }
+
+  private static List<Object> historicalAdmissionDecisionValues(
+      CanonicalGameplayAdmissionDecision decision) {
+    CanonicalPlayableTarget target = decision.targetEvidence();
+    List<Object> values = new ArrayList<>();
+    values.add(decision.requestId());
+    values.add(decision.leaseId());
+    values.add(new BigDecimal(decision.leaseFence()));
+    values.add(decision.leaseKind().name());
+    values.add(decision.leaseSha256());
+    values.add(decision.leaseEvidenceJson());
+    values.add(decision.resumeEpisodeId());
+    values.add(
+        decision.expectedOldBindingGeneration() == null
+            ? null
+            : new BigDecimal(decision.expectedOldBindingGeneration()));
+    values.add(new BigDecimal(decision.leaseExpiresAtEpochMillis()));
+    values.add(target.targetNamespace());
+    values.add(target.tenantSlug());
+    values.add(target.canonicalTenantId());
+    values.add(target.worldSlug());
+    values.add(target.worldDisplayName());
+    values.add(target.realmId());
+    values.add(target.realmSlug());
+    values.add(target.realmDisplayName());
+    values.add(target.gameSessionTenantId());
+    values.add(target.gameInstanceId());
+    values.add(target.playableStateNamespaceId());
+    values.add(target.playableStateScope());
+    values.add(target.canonicalGameInstanceId());
+    values.add(target.canonicalVersionId());
+    values.add(target.runtimeVersionId());
+    values.add(target.catalogRevision());
+    values.add(target.pointerVersion());
+    values.add(target.admissionPointerSnapshotDigest());
+    values.add(target.activeWorldEpoch());
+    values.add(target.initialAdmissionRequestId());
+    values.add(target.initialAdmissionRequestDigest());
+    values.add(target.initialAdmissionOriginKind().name());
+    values.add(target.expectedPriorPointerVersion());
+    values.add(target.holdId());
+    values.add(target.holdFence());
+    values.add(target.holdBindingDigest());
+    values.add(target.auditEventId());
+    values.add(target.ownerProofDigest());
+    values.add(target.ownerProofOutcome().name());
+    values.add(target.positiveDurableAbort());
+    values.add(OffsetDateTime.ofInstant(target.ownerProofTerminalAt(), ZoneOffset.UTC));
+    values.add(target.characterCreationPolicy());
+    return values;
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint

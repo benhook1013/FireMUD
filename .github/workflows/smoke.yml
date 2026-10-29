@@ -604,6 +604,97 @@ jobs:
             const workflowPath = ".github/workflows/runtime-images.yml";
             const repositoryName = `${owner}/${repo}`;
             const positiveInteger = (value) => Number.isSafeInteger(value) && value > 0;
+            const preExecutionCancelledJobNames = new Set([
+              "Derive Runtime Image Metadata",
+              "Dispatch PR Base Refreshes",
+              "Build Runtime Base Image",
+              "Build Backup Verifier Image",
+              "PR Hosted Identity Controller Smoke",
+              "PR Full-Stack Smoke (runtime-required=$" + "{{ needs.image-meta.outputs.runtime_smoke_required }})",
+              "Publish Trusted Backup Verifier Image",
+              "Published Runtime Full-Stack Smoke",
+              "Dispatch Trusted PR Runtime Publication",
+              "Build Runtime Images ($" + "{{ matrix.service }})",
+              "Build Trusted Hosted Identity Controller",
+              "Publish Trusted Hosted Identity Controller",
+              "Promote Smoke-Tested Runtime Images",
+            ]);
+
+            const preExecutionCancelledProofs = new Set();
+            async function isPreExecutionCancelledAttempt(run, expectedDisplayTitle, identity) {
+              if (run.event !== "pull_request" || run.status !== "completed" || run.conclusion !== "cancelled" ||
+                  !positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
+              const headRepository = context.payload.pull_request.head.repo?.full_name;
+              if (typeof headRepository !== "string" || headRepository.length === 0) return false;
+              const attemptPath = "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}";
+              const requestAttempt = () => withTransientGitHubRetry(
+                "exact cancelled runtime attempt lookup",
+                () => github.request(attemptPath, {
+                  owner, repo, run_id: run.id, attempt_number: run.run_attempt,
+                })
+              );
+              const exactAttempt = (source) => source.id === run.id &&
+                source.run_attempt === run.run_attempt && source.status === "completed" &&
+                source.conclusion === "cancelled" && source.path === workflowPath &&
+                source.repository?.full_name === repositoryName &&
+                source.workflow_id === run.workflow_id && positiveInteger(source.workflow_id) &&
+                source.event === "pull_request" && run.event === "pull_request" &&
+                source.display_title === expectedDisplayTitle &&
+                run.display_title === expectedDisplayTitle &&
+                source.head_sha === identity.headSha && run.head_sha === identity.headSha &&
+                source.head_repository?.full_name === headRepository;
+              const latestAttempt = async () => {
+                const { data } = await withTransientGitHubRetry(
+                  "current cancelled runtime run lookup",
+                  () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })
+                );
+                return data.id === run.id && data.run_attempt === run.run_attempt &&
+                  data.status === "completed" && data.conclusion === "cancelled";
+              };
+              const proofKey = JSON.stringify([
+                repositoryName, workflowPath, run.id, run.run_attempt, run.workflow_id,
+                run.display_title, run.head_sha, expectedDisplayTitle, identity.headSha, headRepository,
+              ]);
+              try {
+                // Attempt/workflow/job proof is immutable; the latest attempt is always fresh.
+                if (preExecutionCancelledProofs.has(proofKey)) return await latestAttempt();
+                const { data: before } = await requestAttempt();
+                if (!exactAttempt(before) || !(await latestAttempt())) return false;
+                const { data: workflow } = await withTransientGitHubRetry(
+                  "cancelled runtime workflow identity lookup",
+                  () => github.rest.actions.getWorkflow({ owner, repo, workflow_id: before.workflow_id })
+                );
+                if (workflow.id !== before.workflow_id || workflow.path !== workflowPath ||
+                    workflow.name !== "Build Runtime Images") return false;
+                const jobs = await withTransientGitHubRetry(
+                  "exact cancelled runtime attempt jobs lookup",
+                  () => github.paginate(
+                    "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                    { owner, repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100 }
+                  )
+                );
+                if (!Array.isArray(jobs) || jobs.length !== preExecutionCancelledJobNames.size) return false;
+                const jobIds = new Set();
+                const jobNames = new Set();
+                for (const job of jobs) {
+                  if (!positiveInteger(job.id) || jobIds.has(job.id) || job.run_id !== run.id ||
+                      jobNames.has(job.name) ||
+                      !preExecutionCancelledJobNames.has(job.name) ||
+                      job.status !== "completed" || !["cancelled", "skipped"].includes(job.conclusion) ||
+                      !Array.isArray(job.steps) || job.steps.length !== 0) return false;
+                  jobIds.add(job.id);
+                  jobNames.add(job.name);
+                }
+                if (jobNames.size !== preExecutionCancelledJobNames.size) return false;
+                const { data: after } = await requestAttempt();
+                if (!exactAttempt(after) || !(await latestAttempt())) return false;
+                preExecutionCancelledProofs.add(proofKey);
+                return true;
+              } catch (error) {
+                core.warning(`Cancelled runtime attempt ${run.id}/${run.run_attempt} is not proven pre-execution: ${error.message}`);
+                return false;
+              }
+            }
 
             async function verifyCanonicalSmokeProducer(run, candidate, identity) {
               if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
@@ -726,11 +817,12 @@ jobs:
                 }
                 workflowRunQuery.created = `${pullRequestCreatedAt}..*`;
               }
-              let matching = null;
+              const matchingRuns = [];
               await withTransientGitHubRetry(
                 "runtime-images workflow lookup",
                 async () => {
-                  workflowRunPages: for await (const response of github.paginate.iterator(
+                  matchingRuns.length = 0;
+                  for await (const response of github.paginate.iterator(
                     github.rest.actions.listWorkflowRuns,
                     workflowRunQuery
                   )) {
@@ -755,13 +847,27 @@ jobs:
                           continue;
                         }
                       }
-                      matching = run;
-                      break workflowRunPages;
+                      const createdAt = Date.parse(run.created_at ?? "");
+                      if (!Number.isFinite(createdAt) || !positiveInteger(run.id)) {
+                        throw new Error("matching runtime-images run has invalid native chronology");
+                      }
+                      matchingRuns.push({ run, createdAt });
                     }
                   }
                 }
               );
-              return matching;
+              matchingRuns.sort((left, right) => right.createdAt - left.createdAt || right.run.id - left.run.id);
+              let newestPreExecutionCancellation = null;
+              for (const candidate of matchingRuns) {
+                const run = candidate.run;
+                if (run.status === "completed" && run.conclusion === "cancelled" &&
+                    await isPreExecutionCancelledAttempt(run, expectedDisplayTitle, identity)) {
+                  newestPreExecutionCancellation ??= run;
+                  continue;
+                }
+                return run;
+              }
+              return newestPreExecutionCancellation;
             }
 
             async function resolveCurrentIdentity(label) {

@@ -10,7 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -18,17 +20,21 @@ import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseState;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AbortResolutionEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.v1.CanonicalPlayableTargetEvidence;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Shape and tuple checks only; these carriers grant no Account or gameplay authority. */
 class AccountGameplayAdmissionLeaseGrpcCodecTest {
@@ -43,6 +49,7 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
   private static final UUID VERSION_ID = UUID.fromString("99999999-9999-4999-8999-999999999999");
   private static final UUID HOLD_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID HOLD_FENCE = UUID.fromString("66666666-6666-4666-8666-666666666666");
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
   void roundTripsExactAcquireLeaseBytesAndCompleteAckWithoutClaimingAuthority() {
@@ -203,6 +210,133 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
   }
 
   @Test
+  void originalNewCredentialCarrierKeepsHandleOpaqueAndRejectsUnboundClaims() throws Exception {
+    var lease = lease();
+    byte[] leaseBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var request =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(
+            AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+                JWT, leaseBytes));
+    Map<?, ?> carrier = lease.carrier();
+    Map<?, ?> scope = object(carrier, "bindingScope");
+    UUID requestId = UUID.fromString((String) carrier.get("requestId"));
+    UUID accountId = UUID.fromString((String) scope.get("accountId"));
+    UUID leaseId = UUID.fromString((String) carrier.get("leaseId"));
+    long leaseFence = lease.leaseFence().longValueExact();
+    UUID lineageId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+    while (tokenJti.equals(lineageId)
+        || tokenJti
+            .toString()
+            .equals(String.valueOf(object(carrier, "tokenIdentityEvidence").get("tokenJti")))) {
+      tokenJti = UUID.randomUUID();
+    }
+    long issuedAt = Instant.now().getEpochSecond();
+    Map<String, Object> claims = boundClaims(lease, tokenJti, issuedAt);
+    String boundJwt = compactJwt(claims);
+    byte[] handle = new byte[32];
+    java.util.Arrays.fill(handle, (byte) 0x2a);
+    String checkpointsSha256 = checkpointsSha256(carrier.get("outboxCheckpoints"));
+    OriginalNewCredential credential =
+        AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+            boundJwt,
+            handle,
+            lineageId,
+            tokenJti,
+            jwtSha256(boundJwt),
+            Long.parseLong((String) carrier.get("issuanceFence")),
+            leaseId,
+            leaseFence,
+            "102",
+            checkpointsSha256);
+    var ack =
+        OriginalAckReceiptEvidence.fromFields(
+            1,
+            requestId,
+            accountId,
+            leaseId,
+            leaseFence,
+            lease.sha256(),
+            DECISION_ID,
+            1_015_000L,
+            "101",
+            1_014_999L,
+            "102");
+
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+            request, lease, State.COMMITTED, DECISION_ID, ack, credential);
+    var resolutionWire =
+        AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+                abortRequest(lease, DECISION_ID), lease, CLEANUP_ID, abortResolution(lease))
+            .getAbortResolution(0);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+                    request, response.toBuilder().addAbortResolution(resolutionWire).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertAbortRejected(
+        abortRequest(lease, DECISION_ID),
+        response.toBuilder()
+            .clearOriginalNewCredential()
+            .addAbortResolution(resolutionWire)
+            .build());
+    OriginalNewCredential parsed =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+            request, response);
+    byte[] firstHandleRead = parsed.opaqueRebindHandle();
+    String handleHex = HexFormat.of().formatHex(handle);
+    assertThat(parsed.lineageId()).isEqualTo(lineageId);
+    assertThat(parsed.signedBoundGsACompactJwt()).isEqualTo(boundJwt);
+    assertThat(firstHandleRead).containsExactly(handle);
+    assertThat(parsed.toString()).doesNotContain(boundJwt, handleHex);
+    assertThat(request.toString()).doesNotContain(JWT, handleHex);
+    java.util.Arrays.fill(firstHandleRead, (byte) 0);
+    byte[] secondHandleRead = parsed.opaqueRebindHandle();
+    assertThat(secondHandleRead).containsExactly(handle);
+    java.util.Arrays.fill(secondHandleRead, (byte) 0);
+    parsed.close();
+    assertThatThrownBy(parsed::opaqueRebindHandle)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Credential result is closed");
+
+    for (String changedClaim :
+        java.util.List.of("missingTenantId", "tenantId", "sub", "accountId", "tokenGeneration")) {
+      Map<String, Object> changedClaims = new LinkedHashMap<>(claims);
+      if (changedClaim.equals("missingTenantId")) {
+        changedClaims.remove("tenantId");
+      } else {
+        changedClaims.put(
+            changedClaim,
+            changedClaim.equals("tokenGeneration") ? "2" : UUID.randomUUID().toString());
+      }
+      String changedJwt = compactJwt(changedClaims);
+      try (OriginalNewCredential changedCredential =
+          AccountGameplayAdmissionLeaseGrpcCodec.originalNewCredential(
+              changedJwt,
+              handle,
+              lineageId,
+              tokenJti,
+              jwtSha256(changedJwt),
+              Long.parseLong((String) carrier.get("issuanceFence")),
+              leaseId,
+              leaseFence,
+              "102",
+              checkpointsSha256)) {
+        assertThatThrownBy(
+                () ->
+                    AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+                        request, lease, State.COMMITTED, DECISION_ID, ack, changedCredential))
+            .as("independently rejects changed %s", changedClaim)
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+    }
+    credential.close();
+    java.util.Arrays.fill(handle, (byte) 0);
+    java.util.Arrays.fill(leaseBytes, (byte) 0);
+  }
+
+  @Test
   void rejectsMissingDuplicateAndUnknownAcquireAndResponseFields() {
     var lease = lease();
     var wireRequest = wireRequest(lease, candidate(lease), target(lease));
@@ -312,6 +446,231 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
                         .addBindingDecisionUuid(DECISION_ID.toString())
                         .addBindingDecisionUuid(OTHER.toString())
                         .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void resolvedAbortPreservesUnknownTerminalAndMatchesOnlyItsExactTransition() {
+    var lease = lease();
+    byte[] originalBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var request = abortRequest(lease, DECISION_ID);
+    var resolution = abortResolution(lease);
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+            request, lease, CLEANUP_ID, resolution);
+    var parsed = AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(request, response);
+    assertThat(parsed.state()).isEqualTo(State.ABORTED);
+    assertThat(parsed.bindingDecisionId()).isNull();
+    assertThat(parsed.originalAckReceipt()).isNull();
+    assertThat(parsed.orphanCleanupId()).isEqualTo(CLEANUP_ID);
+    assertThat(parsed.abortResolution()).isEqualTo(resolution);
+    assertThat(parsed.matchesAbortTransition(DECISION_ID)).isTrue();
+    assertThat(parsed.matchesAbortTransition(OTHER)).isFalse();
+    assertThat(parsed.matchesAbortTransition(null)).isFalse();
+    assertThat(response.getBindingDecisionUuidCount()).isZero();
+    assertThat(response.getOriginalAckReceiptCount()).isZero();
+    assertThat(response.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+        .containsExactly(originalBytes);
+    assertThat(parsed.toString()).doesNotContain(DECISION_ID.toString(), lease.sha256());
+    assertThat(resolution.toString())
+        .doesNotContain(
+            resolution.resolutionId().toString(), DECISION_ID.toString(), lease.sha256());
+
+    var unresolved = response.toBuilder().clearAbortResolution().build();
+    var unknown = AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(request, unresolved);
+    assertThat(unknown.abortResolution()).isNull();
+    assertThat(unknown.bindingDecisionId()).isNull();
+    assertThat(unknown.matchesAbortTransition(DECISION_ID)).isFalse();
+
+    var knownResponse =
+        AccountGameplayAdmissionLeaseGrpcCodec.toAbortResponse(
+            request, lease, State.ABORTED, DECISION_ID, CLEANUP_ID, null);
+    var known = AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(request, knownResponse);
+    assertThat(known.abortResolution()).isNull();
+    assertThat(known.matchesAbortTransition(DECISION_ID)).isTrue();
+    assertThat(known.matchesAbortTransition(OTHER)).isFalse();
+    var pending =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
+            request(lease, candidate(lease), target(lease)), pendingResponse(lease));
+    assertThat(pending.matchesAbortTransition(DECISION_ID)).isFalse();
+  }
+
+  @Test
+  void rejectsAbortResolutionWithDifferentLeaseCleanupOrSelectedDecision() {
+    var lease = lease();
+    var request = abortRequest(lease, DECISION_ID);
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+            request, lease, CLEANUP_ID, abortResolution(lease));
+    var resolution = response.getAbortResolution(0);
+    for (var changed :
+        List.of(
+            resolution.toBuilder().setOriginalLeaseUuid(0, OTHER.toString()).build(),
+            resolution.toBuilder()
+                .setOriginalLeaseFence(0, lease.leaseFence().add(BigInteger.ONE).toString())
+                .build(),
+            resolution.toBuilder().setOriginalLeaseSha256(0, "0".repeat(64)).build(),
+            resolution.toBuilder().setOrphanCleanupUuid(0, OTHER.toString()).build(),
+            resolution.toBuilder().setBindingDecisionUuid(0, OTHER.toString()).build())) {
+      assertAbortRejected(request, response.toBuilder().setAbortResolution(0, changed).build());
+    }
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+                    request, lease, OTHER, abortResolution(lease)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsMissingDuplicateUnknownAndNoncanonicalAbortResolutionFields() {
+    var lease = lease();
+    var request = abortRequest(lease, DECISION_ID);
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+            request, lease, CLEANUP_ID, abortResolution(lease));
+    var resolution = response.getAbortResolution(0);
+    assertAbortRejected(request, response.toBuilder().addAbortResolution(resolution).build());
+    for (var field : resolution.getDescriptorForType().getFields()) {
+      var missing = resolution.toBuilder().clearField(field).build();
+      var duplicate =
+          resolution.toBuilder()
+              .addRepeatedField(field, resolution.getRepeatedField(field, 0))
+              .build();
+      assertAbortRejected(request, response.toBuilder().setAbortResolution(0, missing).build());
+      assertAbortRejected(request, response.toBuilder().setAbortResolution(0, duplicate).build());
+    }
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    assertAbortRejected(
+        request,
+        response.toBuilder()
+            .setAbortResolution(0, resolution.toBuilder().setUnknownFields(unknown))
+            .build());
+    for (var changed :
+        List.of(
+            resolution.toBuilder().setSchemaVersion(0, 2).build(),
+            resolution.toBuilder().setOriginalLeaseFence(0, "01").build(),
+            resolution.toBuilder().setOriginalLeaseFence(0, "0").build(),
+            resolution.toBuilder().setOriginalLeaseFence(0, "+1").build(),
+            resolution.toBuilder().setOriginalLeaseSha256(0, "A".repeat(64)).build(),
+            resolution.toBuilder().setOriginalLeaseSha256(0, "0".repeat(63)).build())) {
+      assertAbortRejected(request, response.toBuilder().setAbortResolution(0, changed).build());
+    }
+    for (var fieldName :
+        List.of(
+            "resolution_uuid",
+            "original_lease_uuid",
+            "orphan_cleanup_uuid",
+            "binding_decision_uuid")) {
+      var field = resolution.getDescriptorForType().findFieldByName(fieldName);
+      for (var invalidUuid :
+          List.of(
+              "00000000-0000-0000-0000-000000000000",
+              "44444444-4444-1444-8444-444444444444",
+              "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")) {
+        var changed = resolution.toBuilder().setRepeatedField(field, 0, invalidUuid).build();
+        assertAbortRejected(request, response.toBuilder().setAbortResolution(0, changed).build());
+      }
+    }
+    assertThatThrownBy(
+            () ->
+                new AbortResolutionEvidence(
+                    OTHER, OTHER, BigInteger.ZERO, lease.sha256(), CLEANUP_ID, DECISION_ID))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new AbortResolutionEvidence(
+                    new UUID(0L, 0L),
+                    OTHER,
+                    BigInteger.ONE,
+                    lease.sha256(),
+                    CLEANUP_ID,
+                    DECISION_ID))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsAbortResolutionOnUnselectedAbortOtherPurposesAndKnownTerminal() {
+    var lease = lease();
+    byte[] leaseBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var request = abortRequest(lease, DECISION_ID);
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+            request, lease, CLEANUP_ID, abortResolution(lease));
+    assertAbortRejected(abortRequest(lease, null), response);
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+                    abortRequest(lease, null), lease, CLEANUP_ID, abortResolution(lease)))
+        .isInstanceOf(IllegalArgumentException.class);
+    var read =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(
+            AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(JWT, leaseBytes));
+    var finalize =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(
+            AccountGameplayAdmissionLeaseGrpcCodec.toFinalizeRequest(JWT, leaseBytes, DECISION_ID));
+    assertThatThrownBy(
+            () -> AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(read, response))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(finalize, response))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertRejected(request(lease, candidate(lease), target(lease)), response);
+    assertAbortRejected(
+        request, response.toBuilder().addBindingDecisionUuid(DECISION_ID.toString()).build());
+    assertAbortRejected(
+        request,
+        pendingResponse(lease).toBuilder()
+            .addAbortResolution(response.getAbortResolution(0))
+            .build());
+    assertAbortRejected(
+        request,
+        response.toBuilder()
+            .addOriginalNewCredential(
+                net.firedevops.firemud.account.v1.OriginalNewGameplayCredentialResult
+                    .getDefaultInstance())
+            .build());
+    var credentialRequest =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(
+            AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+                JWT, leaseBytes));
+    assertThatThrownBy(
+            () ->
+                AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+                    credentialRequest,
+                    response.toBuilder()
+                        .addOriginalNewCredential(
+                            net.firedevops.firemud.account.v1.OriginalNewGameplayCredentialResult
+                                .getDefaultInstance())
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static AccountGameplayAdmissionLeaseGrpcCodec.OriginalLeaseRequest abortRequest(
+      AccountGameplayAdmissionLeaseEvidence lease, UUID decisionId) {
+    return AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(
+        AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(
+            JWT, lease.canonicalJson().getBytes(StandardCharsets.UTF_8), decisionId));
+  }
+
+  private static AbortResolutionEvidence abortResolution(
+      AccountGameplayAdmissionLeaseEvidence lease) {
+    return new AbortResolutionEvidence(
+        OTHER,
+        UUID.fromString((String) lease.carrier().get("leaseId")),
+        lease.leaseFence(),
+        lease.sha256(),
+        CLEANUP_ID,
+        DECISION_ID);
+  }
+
+  private static void assertAbortRejected(
+      AccountGameplayAdmissionLeaseGrpcCodec.OriginalLeaseRequest request,
+      AccountGameplayAdmissionLeaseResponse response) {
+    assertThatThrownBy(
+            () -> AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(request, response))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -777,6 +1136,48 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
               MessageDigest.getInstance("SHA-256").digest(jwt.getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    }
+  }
+
+  private static Map<String, Object> boundClaims(
+      AccountGameplayAdmissionLeaseEvidence lease, UUID tokenJti, long issuedAt) {
+    Map<?, ?> carrier = lease.carrier();
+    Map<?, ?> scope = object(carrier, "bindingScope");
+    Map<?, ?> baseline = object(carrier, "membershipBaseline");
+    Map<String, Object> claims = new LinkedHashMap<>();
+    claims.put("iss", GameSessionAccountDelegationProfile.ISSUER);
+    claims.put("sub", scope.get("accountId"));
+    claims.put("accountId", scope.get("accountId"));
+    claims.put("jti", tokenJti.toString());
+    claims.put("aud", GameSessionAccountDelegationProfile.AUDIENCE);
+    claims.put("iat", issuedAt);
+    claims.put("nbf", issuedAt);
+    claims.put("exp", issuedAt + 120L);
+    claims.put("tokenGeneration", "1");
+    claims.put("authorityTuple", carrier.get("authorityTuple"));
+    claims.put("membershipVersion", baseline.get("membershipVersion"));
+    claims.put("issuanceFence", carrier.get("issuanceFence"));
+    claims.put("tenantId", scope.get("tenantId"));
+    return claims;
+  }
+
+  private static String compactJwt(Map<String, Object> claims) throws Exception {
+    String header =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(
+                "{\"alg\":\"RS256\",\"kid\":\"controlled-test\"}".getBytes(StandardCharsets.UTF_8));
+    String payload =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(JSON.writeValueAsBytes(claims));
+    return header + "." + payload + ".c2ln";
+  }
+
+  private static String checkpointsSha256(Object checkpoints) throws Exception {
+    byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(checkpoints));
+    try {
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+    } finally {
+      java.util.Arrays.fill(canonical, (byte) 0);
     }
   }
 

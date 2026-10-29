@@ -79,6 +79,35 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
   }
 
   @Test
+  void unknownAccountAbortWithoutSeparateTransitionEvidenceCannotClearTheCandidate() {
+    var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
+    var client = mock(AccountGameplayAdmissionLeaseClient.class);
+    var provisional = source(false);
+    var lease = provisional.originalDecision().leaseEvidence();
+    when(lease.hasSameIdentity(lease)).thenReturn(true);
+    var operation =
+        mock(
+            net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec
+                .OperationEvidence.class);
+    when(operation.originalLeaseEvidence()).thenReturn(lease);
+    when(operation.state())
+        .thenReturn(
+            net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec
+                .State.ABORTED);
+    when(operation.orphanCleanupId()).thenReturn(CLEANUP_ID);
+    when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(provisional);
+    when(client.abort(any(), any(), any())).thenReturn(operation);
+
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                    .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account ABORTED result lacks exact cleanup evidence");
+    verify(repository, never()).recordFirstNewAccountAbort(any(), any());
+  }
+
+  @Test
   void retainedTerminalRetryReturnsTheOriginalCleanupOnlyAfterExactAccountReplay() {
     var repository = mock(CanonicalGameplayBindingInventoryRepository.class);
     var client = mock(AccountGameplayAdmissionLeaseClient.class);
@@ -95,6 +124,7 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
             net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec
                 .State.ABORTED);
     when(operation.bindingDecisionId()).thenReturn(TRANSITION_ID);
+    when(operation.matchesAbortTransition(TRANSITION_ID)).thenReturn(true);
     when(operation.orphanCleanupId()).thenReturn(CLEANUP_ID);
     when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(retained);
     when(client.abort(any(), any(), any())).thenReturn(operation);
@@ -154,6 +184,7 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
       switch (state) {
         case ABORTED -> {
           when(operation.bindingDecisionId()).thenReturn(TRANSITION_ID);
+          when(operation.matchesAbortTransition(TRANSITION_ID)).thenReturn(true);
           when(operation.orphanCleanupId()).thenReturn(UUID.randomUUID());
         }
         case COMMITTED -> {

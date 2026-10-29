@@ -18,6 +18,7 @@ import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -42,6 +43,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * JDBC/repository/opaque-ACK doubles; not PostgreSQL durability, authentication or admission proof.
  */
 class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
+  private static final String WAL_UPPER_FENCE = "0/16B6C50";
+  private static final String WAL_COVERAGE_SQL =
+      "SELECT current_setting('server_version_num')::integer, pg_is_in_recovery(), "
+          + "current_setting('fsync'), pg_current_wal_flush_lsn() >= ?::pg_lsn";
+
   @AfterEach
   void clearTransaction() {
     for (Object key : TransactionSynchronizationManager.getResourceMap().keySet()) {
@@ -87,6 +93,15 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
   }
 
   @Test
+  void historicalPendingReceiptConstructorRemainsPrivate() {
+    var constructors =
+        AccountGameplayAdmissionOriginalAckReceiptRepository.PendingHistoricalReceipt.class
+            .getDeclaredConstructors();
+    assertThat(constructors).hasSize(1);
+    assertThat(java.lang.reflect.Modifier.isPrivate(constructors[0].getModifiers())).isTrue();
+  }
+
+  @Test
   void anotherDataSourceIsRejectedBeforeAnyConnection() throws Exception {
     var fixture = new Fixture();
     var other = mock(DataSource.class);
@@ -126,33 +141,42 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
   }
 
   @Test
-  void retryCommitCannotSubstituteForUnavailableHistoricalDurability() throws Exception {
+  void retryCommitCannotSubstituteForUnavailableHistoricalFenceCoverage() throws Exception {
     var fixture = new Fixture();
     fixture.inserted = false;
-    fixture.failRead = true;
+    fixture.flush.covered = false;
+    fixture.prepareHistoricalRead(true);
     try (var repositories = fixture.repositories()) {
       assertThatThrownBy(() -> fixture.executor.confirm(fixture.acknowledgement))
-          .hasMessage("read unavailable");
+          .hasMessageContaining("WAL coverage unavailable");
       verify(fixture.first.connection).commit();
-      verify(repositories.constructed().get(1)).readDurably(fixture.evidence, fixture.decision);
+      verify(repositories.constructed().get(1))
+          .captureHistorical(fixture.evidence, fixture.decision);
+      verify(repositories.constructed().get(1), never()).readExact(any(), any());
       verify(repositories.constructed().get(1), never()).create(any());
-      verify(fixture.second.connection, never()).commit();
+      verify(repositories.constructed().get(1), never()).readDurably(any(), any());
+      assertThat(repositories.constructed()).hasSize(2);
+      verify(fixture.second.connection).commit();
+      verify(fixture.second.connection).close();
+      verify(fixture.flush.connection).close();
+      verifyNoInteractions(fixture.fourth.connection);
     }
   }
 
   @Test
-  void retainedReceiptUsesHistoricalDurabilityRatherThanRetryCommitProof() throws Exception {
+  void retainedReceiptUsesFrozenFenceCoverageAndExactReread() throws Exception {
     var fixture = new Fixture();
     fixture.inserted = false;
+    fixture.prepareHistoricalRead(true);
     try (var repositories = fixture.repositories()) {
       assertThat(fixture.executor.confirm(fixture.acknowledgement)).isSameAs(fixture.receipt);
-      var read = repositories.constructed().get(1);
-      verify(read).readDurably(fixture.evidence, fixture.decision);
-      verify(read, never()).readExact(any(), any());
+      var capture = repositories.constructed().get(1);
+      var read = repositories.constructed().get(2);
+      verify(capture).captureHistorical(fixture.evidence, fixture.decision);
+      verify(read).readExact(fixture.evidence, fixture.decision);
+      verify(capture, never()).readDurably(any(), any());
       verify(read, never()).create(any());
-      int[] closes = invocationSequences(fixture.first.connection, "close");
-      int[] reads = invocationSequences(read, "readDurably");
-      assertThat(reads[0]).isGreaterThan(closes[0]);
+      assertHistoricalReadSequence(fixture, capture, read, true);
     }
   }
 
@@ -240,14 +264,76 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
   @Test
   void readOnlyValidatesExistingReceipt() throws Exception {
     var fixture = new Fixture();
+    fixture.prepareHistoricalRead(false);
     try (var repositories = fixture.repositories()) {
       assertThat(fixture.executor.read(fixture.evidence, fixture.decision))
           .isSameAs(fixture.receipt);
-      verify(repositories.constructed().getFirst(), never()).create(any());
-      verify(repositories.constructed().getFirst(), never()).readExact(any(), any());
-      verify(repositories.constructed().getFirst()).readDurably(fixture.evidence, fixture.decision);
+      var capture = repositories.constructed().getFirst();
+      var read = repositories.constructed().get(1);
+      verify(capture, never()).create(any());
+      verify(capture).captureHistorical(fixture.evidence, fixture.decision);
+      verify(read).readExact(fixture.evidence, fixture.decision);
+      verify(capture, never()).readDurably(any(), any());
       verify(fixture.first.connection).commit();
-      verifyNoInteractions(fixture.second.connection);
+      assertHistoricalReadSequence(fixture, capture, read, false);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"coverage", "sql", "version", "recovery", "fsync", "autocommit"})
+  void historicalReadDoesNotReachExactRereadWithoutValidFenceCoverage(String fault)
+      throws Exception {
+    var fixture = new Fixture();
+    fixture.prepareHistoricalRead(false);
+    switch (fault) {
+      case "coverage" -> fixture.flush.covered = false;
+      case "sql" -> fixture.flush.failFenceQuery = true;
+      case "version" -> when(fixture.flush.fenceResult.getInt(1)).thenReturn(160000);
+      case "recovery" -> when(fixture.flush.fenceResult.getBoolean(2)).thenReturn(true);
+      case "fsync" -> when(fixture.flush.fenceResult.getString(3)).thenReturn("off");
+      case "autocommit" -> when(fixture.flush.connection.getAutoCommit()).thenReturn(false);
+      default -> throw new IllegalArgumentException(fault);
+    }
+    try (var repositories = fixture.repositories()) {
+      assertThatThrownBy(() -> fixture.executor.read(fixture.evidence, fixture.decision))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(repositories.constructed()).hasSize(1);
+      verify(repositories.constructed().getFirst())
+          .captureHistorical(fixture.evidence, fixture.decision);
+      verify(repositories.constructed().getFirst(), never()).readExact(any(), any());
+      verify(fixture.first.connection).commit();
+      verify(fixture.first.connection).close();
+      verify(fixture.flush.connection).close();
+      verifyNoInteractions(fixture.third.connection);
+    }
+  }
+
+  @Test
+  void historicalReadDoesNotExposeReceiptWhenIndependentExactRereadChanges() throws Exception {
+    var fixture = new Fixture();
+    fixture.prepareHistoricalRead(false);
+    var r = fixture.receipt;
+    fixture.readReceipt =
+        new AccountGameplayAdmissionOriginalAckReceipt(
+            r.operation(),
+            r.schemaVersion(),
+            r.requestId(),
+            r.accountId(),
+            r.leaseId(),
+            r.leaseFence(),
+            r.evidenceSha256(),
+            r.bindingDecisionId(),
+            r.expiresAtMs(),
+            r.finalizationXid(),
+            r.committedBeforeMs(),
+            "123458");
+    try (var repositories = fixture.repositories()) {
+      assertThatThrownBy(() -> fixture.executor.read(fixture.evidence, fixture.decision))
+          .hasMessageContaining("Fresh owned");
+      assertThat(repositories.constructed()).hasSize(2);
+      verify(repositories.constructed().get(1)).readExact(fixture.evidence, fixture.decision);
+      verify(fixture.third.connection).commit();
+      verify(fixture.third.connection, never()).rollback();
     }
   }
 
@@ -333,6 +419,51 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
     assertThat(acquisitions[1]).isLessThan(reads[0]);
   }
 
+  private static void assertHistoricalReadSequence(
+      Fixture fixture,
+      AccountGameplayAdmissionOriginalAckReceiptRepository capture,
+      AccountGameplayAdmissionOriginalAckReceiptRepository read,
+      boolean creationPrecededCapture)
+      throws SQLException {
+    Jdbc captureJdbc = creationPrecededCapture ? fixture.second : fixture.first;
+    Jdbc flushJdbc = fixture.flush;
+    Jdbc finalReadJdbc = creationPrecededCapture ? fixture.fourth : fixture.third;
+    int[] captureCalls = invocationSequences(capture, "captureHistorical");
+    int[] captureCommits = invocationSequences(captureJdbc.connection, "commit");
+    int[] captureCloses = invocationSequences(captureJdbc.connection, "close");
+    int[] fenceQueries = invocationSequences(flushJdbc.connection, "prepareStatement");
+    int[] fenceParameters = invocationSequences(flushJdbc.fenceStatement, "setString");
+    int[] fenceExecutions = invocationSequences(flushJdbc.fenceStatement, "executeQuery");
+    int[] fenceCloses = invocationSequences(flushJdbc.connection, "close");
+    int[] exactReads = invocationSequences(read, "readExact");
+    int[] finalCommits = invocationSequences(finalReadJdbc.connection, "commit");
+
+    assertThat(captureCalls).hasSize(1);
+    assertThat(captureCommits).hasSize(1);
+    assertThat(captureCloses).hasSize(1);
+    assertThat(fenceQueries).hasSize(1);
+    assertThat(fenceParameters).hasSize(1);
+    assertThat(fenceExecutions).hasSize(1);
+    assertThat(fenceCloses).hasSize(1);
+    assertThat(exactReads).hasSize(1);
+    assertThat(finalCommits).hasSize(1);
+    assertThat(captureCalls[0]).isLessThan(captureCommits[0]);
+    assertThat(captureCommits[0]).isLessThan(captureCloses[0]);
+    assertThat(captureCloses[0]).isLessThan(fenceQueries[0]);
+    assertThat(fenceQueries[0]).isLessThan(fenceParameters[0]);
+    assertThat(fenceParameters[0]).isLessThan(fenceExecutions[0]);
+    assertThat(fenceExecutions[0]).isLessThan(fenceCloses[0]);
+    assertThat(fenceCloses[0]).isLessThan(exactReads[0]);
+    assertThat(exactReads[0]).isLessThan(finalCommits[0]);
+    verify(capture).captureHistorical(fixture.evidence, fixture.decision);
+    verify(fixture.pending).walUpperFence();
+    assertThat(mockingDetails(flushJdbc.connection).getInvocations())
+        .filteredOn(invocation -> invocation.getMethod().getName().equals("prepareStatement"))
+        .extracting(invocation -> invocation.getArgument(0, String.class))
+        .containsExactly(WAL_COVERAGE_SQL);
+    verify(flushJdbc.fenceStatement).setString(1, WAL_UPPER_FENCE);
+  }
+
   private static int[] invocationSequences(Object mock, String method) {
     return mockingDetails(mock).getInvocations().stream()
         .filter(invocation -> invocation.getMethod().getName().equals(method))
@@ -344,6 +475,9 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
     private final DataSource source = mock(DataSource.class);
     private final Jdbc first = new Jdbc();
     private final Jdbc second = new Jdbc();
+    private final Jdbc third = new Jdbc();
+    private final Jdbc fourth = new Jdbc();
+    private final Jdbc flush = new Jdbc();
     private Connection readConnection = second.connection;
     private final AccountGameplayAdmissionLeaseEvidence evidence =
         AccountGameplayAdmissionOriginalAckReceiptTestFixtures.fixture();
@@ -351,20 +485,43 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
     private final OriginalCommitAcknowledgement acknowledgement =
         mock(OriginalCommitAcknowledgement.class);
     private final AccountGameplayAdmissionOriginalAckReceipt receipt = receipt(evidence, decision);
+    // Unit-only mock of the private pending capability; the production constructor is asserted
+    // private by historicalPendingReceiptConstructorRemainsPrivate.
+    private final AccountGameplayAdmissionOriginalAckReceiptRepository.PendingHistoricalReceipt
+        pending =
+            mock(
+                AccountGameplayAdmissionOriginalAckReceiptRepository.PendingHistoricalReceipt
+                    .class);
     private boolean inserted = true;
     private AccountGameplayAdmissionOriginalAckReceipt readReceipt = receipt;
     private boolean failRead;
     private String creationFault;
+    private boolean historicalRead;
+    private boolean historicalAfterCreate;
     private final AccountGameplayAdmissionOriginalAckReceiptCommitExecutor executor =
         new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(source);
 
     private Fixture() throws SQLException {
       when(source.getConnection()).thenReturn(first.connection, second.connection);
+      when(pending.receipt()).thenReturn(receipt);
+      when(pending.walUpperFence()).thenReturn(WAL_UPPER_FENCE);
       when(acknowledgement.belongsTo(source)).thenReturn(true);
       when(acknowledgement.evidence()).thenReturn(evidence);
       when(acknowledgement.decisionId()).thenReturn(decision);
       when(acknowledgement.finalizationXid()).thenReturn(receipt.finalizationXid());
       when(acknowledgement.committedBeforeMs()).thenReturn(receipt.committedBeforeMs());
+    }
+
+    private void prepareHistoricalRead(boolean afterCreate) throws SQLException {
+      historicalRead = true;
+      historicalAfterCreate = afterCreate;
+      if (afterCreate) {
+        when(source.getConnection())
+            .thenReturn(first.connection, second.connection, flush.connection, fourth.connection);
+      } else {
+        when(source.getConnection())
+            .thenReturn(first.connection, flush.connection, third.connection);
+      }
     }
 
     private MockedConstruction<AccountGameplayAdmissionOriginalAckReceiptRepository>
@@ -374,8 +531,7 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
           (repository, context) -> {
             DSLContext dsl = (DSLContext) context.arguments().getFirst();
             Connection enlisted = dsl.connectionResult(value -> value);
-            assertThat(enlisted)
-                .isSameAs(context.getCount() == 1 ? first.connection : readConnection);
+            assertThat(enlisted).isSameAs(repositoryConnection(context.getCount()));
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
             assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
             assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
@@ -406,7 +562,25 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
                     });
             when(repository.readExact(evidence, decision)).thenAnswer(ignored -> readResult());
             when(repository.readDurably(evidence, decision)).thenAnswer(ignored -> readResult());
+            when(repository.captureHistorical(evidence, decision)).thenReturn(pending);
           });
+    }
+
+    private Connection repositoryConnection(int count) {
+      if (!historicalRead) return count == 1 ? first.connection : readConnection;
+      if (historicalAfterCreate) {
+        return switch (count) {
+          case 1 -> first.connection;
+          case 2 -> second.connection;
+          case 3 -> fourth.connection;
+          default -> throw new IllegalArgumentException("Unexpected repository " + count);
+        };
+      }
+      return switch (count) {
+        case 1 -> first.connection;
+        case 2 -> third.connection;
+        default -> throw new IllegalArgumentException("Unexpected repository " + count);
+      };
     }
 
     private AccountGameplayAdmissionOriginalAckReceipt readResult() {
@@ -423,6 +597,19 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
   private static final class Jdbc {
     private final DatabaseMetaData metadata = mock(DatabaseMetaData.class);
     private final ResultSet settings = mock(ResultSet.class);
+    private final ResultSet fenceResult = mock(ResultSet.class);
+    private boolean covered = true;
+    private boolean failFenceQuery;
+    private final PreparedStatement fenceStatement =
+        mock(
+            PreparedStatement.class,
+            invocation -> {
+              if (invocation.getMethod().getName().equals("executeQuery")) {
+                if (failFenceQuery) throw new SQLException("flush observation unavailable");
+                return fenceResult;
+              }
+              return Answers.RETURNS_DEFAULTS.answer(invocation);
+            });
     private final Statement statement =
         mock(
             Statement.class,
@@ -437,9 +624,11 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
         mock(
             Connection.class,
             invocation ->
-                invocation.getMethod().getName().equals("createStatement")
-                    ? statement
-                    : Answers.RETURNS_DEFAULTS.answer(invocation));
+                switch (invocation.getMethod().getName()) {
+                  case "createStatement" -> statement;
+                  case "prepareStatement" -> fenceStatement;
+                  default -> Answers.RETURNS_DEFAULTS.answer(invocation);
+                });
     private boolean badIsolation;
     private boolean badAutoCommit;
 
@@ -471,6 +660,20 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
       when(settings.getString(4)).thenReturn("on");
       when(settings.getString(5)).thenReturn("serializable");
       when(settings.getString(6)).thenReturn("off");
+      when(fenceResult.next())
+          .thenAnswer(
+              new org.mockito.stubbing.Answer<Boolean>() {
+                private final AtomicInteger row = new AtomicInteger();
+
+                @Override
+                public Boolean answer(org.mockito.invocation.InvocationOnMock ignored) {
+                  return row.getAndIncrement() % 2 == 0;
+                }
+              });
+      when(fenceResult.getInt(1)).thenReturn(180011);
+      when(fenceResult.getBoolean(2)).thenReturn(false);
+      when(fenceResult.getString(3)).thenReturn("on");
+      when(fenceResult.getBoolean(4)).thenAnswer(ignored -> covered);
     }
   }
 }
