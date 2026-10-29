@@ -417,7 +417,9 @@ class AccountGameplayAdmissionLeaseClientTest {
                     AccountGameplayAdmissionLeaseGrpcCodec.class,
                     invocation -> {
                       // Isolate the client guard; the real codec already rejects this mismatch.
-                      if (invocation.getMethod().getName()
+                      if (invocation
+                          .getMethod()
+                          .getName()
                           .equals("parseIssueOriginalNewCredentialResponse")) {
                         return parsed;
                       }
