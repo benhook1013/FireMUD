@@ -94,16 +94,20 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     }
     for (ConfirmationCall call : confirmationCallsWithDefaultRequests()) {
       assertConfirmationCode(call, null, Status.Code.UNAUTHENTICATED);
-      assertConfirmationCode(call, peer(NAMESPACE, "world-management-service"), Status.Code.PERMISSION_DENIED);
-      assertConfirmationCode(call, peer("other", "game-session-service"), Status.Code.PERMISSION_DENIED);
+      assertConfirmationCode(
+          call, peer(NAMESPACE, "world-management-service"), Status.Code.PERMISSION_DENIED);
+      assertConfirmationCode(
+          call, peer("other", "game-session-service"), Status.Code.PERMISSION_DENIED);
 
       SessionContext.setContext("123", List.of(), Map.of());
-      assertConfirmationCode(call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+      assertConfirmationCode(
+          call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
       SessionContext.clear();
 
       SessionContext.setContext(
           null, List.of(), Map.of(), true, "game-session-service", "instance");
-      assertConfirmationCode(call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+      assertConfirmationCode(
+          call, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
       SessionContext.clear();
     }
     verifyNoInteractions(owner, credentialOwner);
@@ -205,13 +209,15 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             observer -> service.finalizeGameplayAdmissionLease(malformedFinalize, observer),
             observer -> service.readGameplayAdmissionLease(malformedRead, observer),
             observer -> service.abortGameplayAdmissionLease(malformedAbort, observer),
-            observer -> service.issueOriginalNewGameplayCredential(
-                IssueOriginalNewGameplayCredentialRequest.getDefaultInstance(), observer))) {
+            observer ->
+                service.issueOriginalNewGameplayCredential(
+                    IssueOriginalNewGameplayCredentialRequest.getDefaultInstance(), observer))) {
       assertCode(call, peer(NAMESPACE, "game-session-service"), Status.Code.INVALID_ARGUMENT);
     }
     assertConfirmationCode(
-        observer -> service.confirmOriginalNewGameplayAdmission(
-            ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer),
+        observer ->
+            service.confirmOriginalNewGameplayAdmission(
+                ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer),
         peer(NAMESPACE, "game-session-service"),
         Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(owner, credentialOwner);
@@ -253,7 +259,8 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
     var foreignAbort =
         AccountGameplayAdmissionLeaseGrpcCodec.toAbortRequest(JWT, originalBytes, null);
     var foreignIssue =
-        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(JWT, originalBytes);
+        AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
+            JWT, originalBytes);
     var foreignConfirmation =
         AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
             JWT, originalBytes);
@@ -409,14 +416,16 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
         observer ->
             service.abortGameplayAdmissionLease(
                 AbortGameplayAdmissionLeaseRequest.getDefaultInstance(), observer),
-        observer -> service.issueOriginalNewGameplayCredential(
-            IssueOriginalNewGameplayCredentialRequest.getDefaultInstance(), observer));
+        observer ->
+            service.issueOriginalNewGameplayCredential(
+                IssueOriginalNewGameplayCredentialRequest.getDefaultInstance(), observer));
   }
 
   private List<ConfirmationCall> confirmationCallsWithDefaultRequests() {
     return List.of(
-        observer -> service.confirmOriginalNewGameplayAdmission(
-            ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer));
+        observer ->
+            service.confirmOriginalNewGameplayAdmission(
+                ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer));
   }
 
   private void assertConfirmationCode(

@@ -125,7 +125,8 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
   @org.junit.jupiter.api.Test
   void candidateDigestMustMatchTheExactFrozenBytesBeforeDispatch() {
     byte[] candidate =
-        source.repository()
+        source
+            .repository()
             .readOriginalNewCandidateInstallationSource(source.decision())
             .candidate()
             .canonicalBytes();
@@ -133,13 +134,15 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
 
     assertCandidateConstraint(
         () ->
-            source.dsl().execute(
-                "UPDATE game_session_canonical_binding_transition"
-                    + " SET original_new_candidate_bytes = ?, original_new_candidate_digest = ?,"
-                    + " original_new_candidate_state = 'DISPATCH_POSSIBLE' WHERE transition_id = ?",
-                candidate,
-                "sha256:" + "0".repeat(64),
-                TRANSITION_ID),
+            source
+                .dsl()
+                .execute(
+                    "UPDATE game_session_canonical_binding_transition"
+                        + " SET original_new_candidate_bytes = ?, original_new_candidate_digest = ?,"
+                        + " original_new_candidate_state = 'DISPATCH_POSSIBLE' WHERE transition_id = ?",
+                    candidate,
+                    "sha256:" + "0".repeat(64),
+                    TRANSITION_ID),
         "chk_gs_original_new_candidate_installation");
 
     assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
@@ -151,7 +154,8 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
   @org.junit.jupiter.api.Test
   void insertedTransitionCannotSkipTheOriginalCandidateClaim() {
     byte[] candidate =
-        source.repository()
+        source
+            .repository()
             .readOriginalNewCandidateInstallationSource(source.decision())
             .candidate()
             .canonicalBytes();
@@ -160,19 +164,21 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
       String readback = state.equals("READBACK_CONFIRMED") ? "sha256:" + "1".repeat(64) : null;
       assertCandidateConstraint(
           () ->
-              source.dsl().execute(
-                  "INSERT INTO game_session_canonical_binding_transition"
-                      + " SELECT (jsonb_populate_record(retained, jsonb_build_object("
-                      + " 'original_new_candidate_bytes', ?::bytea,"
-                      + " 'original_new_candidate_digest', 'sha256:' || encode(sha256(?::bytea), 'hex'),"
-                      + " 'original_new_candidate_state', ?::text,"
-                      + " 'original_new_candidate_readback_digest', ?::text))).*"
-                      + " FROM game_session_canonical_binding_transition retained WHERE transition_id = ?",
-                  candidate,
-                  candidate,
-                  state,
-                  readback,
-                  TRANSITION_ID),
+              source
+                  .dsl()
+                  .execute(
+                      "INSERT INTO game_session_canonical_binding_transition"
+                          + " SELECT (jsonb_populate_record(retained, jsonb_build_object("
+                          + " 'original_new_candidate_bytes', ?::bytea,"
+                          + " 'original_new_candidate_digest', 'sha256:' || encode(sha256(?::bytea), 'hex'),"
+                          + " 'original_new_candidate_state', ?::text,"
+                          + " 'original_new_candidate_readback_digest', ?::text))).*"
+                          + " FROM game_session_canonical_binding_transition retained WHERE transition_id = ?",
+                      candidate,
+                      candidate,
+                      state,
+                      readback,
+                      TRANSITION_ID),
           "gs_original_new_candidate_immutable");
       assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
       assertThat(admin.dbsize()).isZero();
