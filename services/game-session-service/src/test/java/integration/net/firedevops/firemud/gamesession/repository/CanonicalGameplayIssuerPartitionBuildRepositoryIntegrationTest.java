@@ -7,17 +7,13 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
@@ -1714,43 +1710,12 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor(BigInteger version, BigInteger count, BigInteger capacity) {
-    String encoded =
-        "issuer-layout-descriptor/v1|"
-            + ISSUER
-            + "|"
-            + version
-            + "|"
-            + count
-            + "|"
-            + capacity
-            + "|"
-            + CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
-        ISSUER,
-        version,
-        count,
-        capacity,
-        CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
-        encoded.getBytes(StandardCharsets.UTF_8));
+    return CanonicalGameplayIssuerTestFixtures.descriptor(ISSUER, version, count, capacity);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint
       sourceCheckpoint(BigInteger issuerGeneration) {
-    long sequence = issuerGeneration.longValueExact() - 1L;
-    var event =
-        AccountAuthoritySourceEventV1Codec.sealIssuer(
-            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
-                UUID.randomUUID().toString(),
-                UUID.randomUUID().toString(),
-                AccountAuthoritySourceEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + ISSUER,
-                Long.toString(sequence),
-                ISSUER,
-                issuerGeneration.toString(),
-                issuerGeneration.toString(),
-                "ISSUER_SECURITY_CHANGE"));
-    byte[] eventBytes = event.canonicalJsonUtf8();
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
-        ISSUER, issuerGeneration, eventBytes, eventBytes);
+    return CanonicalGameplayIssuerTestFixtures.sourceCheckpoint(ISSUER, issuerGeneration);
   }
 
   private static CanonicalGameplayAdmissionAbortSource createActualRetainedTerminalUnresolved(
@@ -1809,89 +1774,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
       CanonicalGameplayBindingIdentity candidate,
       BigInteger bindingGeneration,
       CanonicalPlayableTarget target) {
-    long now = System.currentTimeMillis();
-    String nowSeconds = Long.toString(now / 1000L);
-    Map<String, Object> carrier = new java.util.LinkedHashMap<>();
-    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
-    carrier.put("schemaVersion", "1");
-    carrier.put("mode", "PUBLIC_PRODUCTION");
-    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
-    carrier.put("targetNamespace", target.targetNamespace());
-    carrier.put(
-        "callerWorkload",
-        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
-    carrier.put("requestId", UUID.randomUUID().toString());
-    carrier.put("leaseId", UUID.randomUUID().toString());
-    carrier.put("leaseFence", "1");
-    carrier.put(
-        "bindingScope",
-        Map.ofEntries(
-            Map.entry("accountId", candidate.accountId().toString()),
-            Map.entry("tenantId", candidate.tenantId().toString()),
-            Map.entry("realmId", target.realmId().toString()),
-            Map.entry("worldSlug", target.worldSlug()),
-            Map.entry("realmSlug", target.realmSlug()),
-            Map.entry("playableStateNamespaceId", target.playableStateNamespaceId().toString()),
-            Map.entry("playableStateScope", target.playableStateScope()),
-            Map.entry("gameInstanceId", target.canonicalGameInstanceId().toString()),
-            Map.entry("characterId", candidate.characterId().toString()),
-            Map.entry("sessionId", candidate.sessionId()),
-            Map.entry("bindingGeneration", bindingGeneration.toString()),
-            Map.entry("catalogRevision", Long.toString(target.catalogRevision())),
-            Map.entry("pointerVersion", Long.toString(target.pointerVersion())),
-            Map.entry("regionId", candidate.regionId().toString()),
-            Map.entry("regionEpoch", candidate.regionEpoch().toString())));
-    carrier.put(
-        "authorityTuple",
-        Map.of(
-            "issuerAuthGeneration", candidate.issuerAuthGeneration().toString(),
-            "accountAuthorityGeneration", "1",
-            "tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
-            "membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
-            "privateRealmGrantVersions", List.of()));
-    carrier.put("issuanceFence", "1");
-    carrier.put(
-        "membershipBaseline",
-        Map.of(
-            "membershipLifecycleState", "ACTIVE",
-            "membershipVersion", Map.of(candidate.tenantId().toString(), "1"),
-            "membershipAuthorityGeneration", "1"));
-    String prefix = "account:auth-authority:v1:";
-    List<Map<String, Object>> checkpoints = new java.util.ArrayList<>();
-    for (String stream :
-        List.of(
-            "account/" + candidate.accountId(),
-            "issuer/" + candidate.issuerId(),
-            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
-            "tenant/" + candidate.tenantId())) {
-      checkpoints.add(
-          Map.of(
-              "outboxStreamKey",
-              prefix + stream,
-              "outboxSequence",
-              stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0"));
-    }
-    carrier.put("outboxCheckpoints", checkpoints);
-    carrier.put(
-        "tokenIdentityEvidence",
-        Map.ofEntries(
-            Map.entry("accountId", candidate.accountId().toString()),
-            Map.entry("operationId", UUID.randomUUID().toString()),
-            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
-            Map.entry("tokenJti", UUID.randomUUID().toString()),
-            Map.entry("tokenSHA256", "a".repeat(64)),
-            Map.entry("tokenProfile", "game-session-account-delegation"),
-            Map.entry("tokenGeneration", "1"),
-            Map.entry("issuanceFence", "1"),
-            Map.entry("tokenIdentityFence", "1"),
-            Map.entry("issuedAt", nowSeconds),
-            Map.entry("notBefore", nowSeconds),
-            Map.entry("expiresAt", Long.toString(now / 1000L + 60L))));
-    carrier.put("evaluatedAt", Long.toString(now));
-    carrier.put(
-        "expiresAt",
-        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
-    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+    return CanonicalGameplayIssuerTestFixtures.controlledLeaseEvidence(
+        candidate, bindingGeneration, target);
   }
 
   private static CanonicalGameplayBindingTransitionSnapshot prepareActualBinding(
@@ -2089,46 +1973,28 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static TestSchema newTestSchema(String prefix) {
-    return newTestSchemaAtVersion(prefix, null);
+    String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
+    DriverManagerDataSource dataSource = dataSource(schema);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
+    return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
   }
 
   private static TestSchema newTestSchemaAtVersion(String prefix, String version) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
     DriverManagerDataSource dataSource = dataSource(schema);
-    var configuration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
-    if (version != null) configuration.target(MigrationVersion.fromVersion(version));
-    configuration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, version);
     return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
   }
 
   private static void migrateThrough1031(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1031"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1031");
   }
 
   private static void migrateThrough1032(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1032"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1032");
   }
 
   private static void migrateThrough1037(TestSchema testSchema) {
@@ -2180,18 +2046,12 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static void migrateRemaining(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, null);
   }
 
   private static TestSchema newLegacyIssuerTestSchema(String prefix) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
     DriverManagerDataSource dataSource = dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
@@ -2371,14 +2231,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static DriverManagerDataSource dataSource(String schema) {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName("org.postgresql.Driver");
-    String jdbcUrl = postgres.getJdbcUrl();
-    String separator = jdbcUrl.contains("?") ? "&" : "?";
-    dataSource.setUrl(jdbcUrl + separator + "currentSchema=" + schema);
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-    return dataSource;
+    return CanonicalGameplayIssuerTestFixtures.dataSource(
+        postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), schema);
   }
 
   private static String retainedPreBridgeRegionImage(DSLContext dsl) {
@@ -2474,12 +2328,8 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static void dropSchema(String schema) {
-    try (Connection connection = dataSource("public").getConnection()) {
-      DSL.using(connection, SQLDialect.POSTGRES)
-          .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
-    } catch (SQLException failure) {
-      throw new IllegalStateException("Could not drop the owned issuer-build test schema", failure);
-    }
+    CanonicalGameplayIssuerTestFixtures.dropSchema(
+        dataSource("public"), schema, "Could not drop the owned issuer-build test schema");
   }
 
   private record Fixture(

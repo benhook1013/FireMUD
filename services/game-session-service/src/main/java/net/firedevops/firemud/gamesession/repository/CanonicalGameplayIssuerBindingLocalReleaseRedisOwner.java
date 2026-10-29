@@ -1,42 +1,31 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerPartitionRedisSupport.KEY_PREFIX;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerPartitionRedisSupport.ascii;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerPartitionRedisSupport.b64;
+
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisFuture;
-import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigInteger;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Manual one-key physical owner for an SQL-issued first-NEW issuer release successor. */
 public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
-  private static final String PRINCIPAL = "gamesession_coord_app";
-  private static final String KEY_PREFIX = "session:game:index:issuer:";
-  private static final int MAX_SCRIPT_BYTES = 128 * 1024;
-  private static final long COMMAND_TIMEOUT_MILLIS = 5_000;
+  private static final CanonicalGameplayIssuerPartitionRedisSupport REDIS =
+      new CanonicalGameplayIssuerPartitionRedisSupport(
+          CanonicalGameplayIssuerBindingLocalReleaseRedisOwner::unavailable);
   private static final List<RedisScriptDescriptor.KeySpec> EXPECTED_KEYS =
       List.of(
           new RedisScriptDescriptor.KeySpec(
@@ -119,7 +108,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       }
       requireFreshCurrentState(work);
       RedisScriptDescriptor descriptor = requireDescriptor();
-      byte[] script = scriptSource(descriptor);
+      byte[] script = REDIS.scriptSource(descriptor);
       byte[] key = exactPartitionKey(work);
       long outcome = writeOneKey(script, key, scriptArguments(work, operation));
       if (outcome != 1 && outcome != 2) {
@@ -142,17 +131,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
 
   private long writeOneKey(byte[] script, byte[] key, byte[][] arguments) {
     requireNoAmbientTransaction();
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
-      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-      requirePrincipal(await(commands.aclWhoami()));
-      String sha = await(commands.scriptLoad(script));
-      if (!digest("SHA-1", script).equals(sha))
-        throw unavailable("Redis loaded a different script");
-      Long reply =
-          await(commands.evalsha(sha, ScriptOutputType.INTEGER, new byte[][] {key}, arguments));
-      if (reply == null) throw unavailable("Redis returned no release result");
-      return reply;
+    try {
+      return REDIS.writeOneKey(redisClient, script, key, arguments);
     } catch (RuntimeException failure) {
       throw unavailable("One-key issuer release command failed", failure);
     }
@@ -165,33 +145,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     requireNoAmbientTransaction();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
-      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-      requirePrincipal(await(commands.aclWhoami()));
-      if (!"hash".equals(await(commands.type(key)))
-          || !Long.valueOf(-1L).equals(await(commands.pttl(key)))) {
-        throw unavailable("Issuer partition type or TTL is not canonical");
-      }
-      Long count = await(commands.hlen(key));
-      int maxFields = CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_LOCAL_HASH_FIELDS;
-      if (count == null || count < 1 || count > maxFields)
-        throw unavailable("Issuer partition field count is invalid");
-      Map<byte[], byte[]> raw = await(commands.hgetall(key));
-      if (raw == null || raw.size() != count)
-        throw unavailable("Issuer partition readback is incomplete");
-      Map<String, byte[]> actual = new HashMap<>();
-      long bytes = 0;
-      for (Map.Entry<byte[], byte[]> field : raw.entrySet()) {
-        byte[] name = Objects.requireNonNull(field.getKey(), "Redis field");
-        byte[] value = Objects.requireNonNull(field.getValue(), "Redis value");
-        bytes = Math.addExact(bytes, name.length + (long) value.length);
-        if (bytes > CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.MAX_TOTAL_HASH_BYTES) {
-          throw unavailable("Issuer partition readback exceeds its bounded field set");
-        }
-        String encodedName = Base64.getEncoder().encodeToString(name);
-        if (actual.putIfAbsent(encodedName, value.clone()) != null) {
-          throw unavailable("Issuer partition readback repeats a physical field");
-        }
-      }
+      RedisAsyncCommands<byte[], byte[]> commands = REDIS.authenticatedCommands(connection);
+      Map<String, byte[]> actual = REDIS.readBoundedHash(commands, key);
       Map<String, byte[]> baseline = work.baselineFields();
       Map<String, byte[]> allowed = work.allowedFields();
       byte[] physicalRevision =
@@ -226,7 +181,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
         throw unavailable("Exact RELEASED capacity field or binding-field removal is absent");
       }
       for (Map.Entry<String, byte[]> field : actual.entrySet()) {
-        String decoded = decodeUtf8(Base64.getDecoder().decode(field.getKey()));
+        String decoded = REDIS.decodeField(field.getKey());
         if (decoded.equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) {
           continue;
         }
@@ -264,7 +219,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
       int physicalReservations = 0;
       int physicalBindings = 0;
       for (Map.Entry<String, byte[]> field : actual.entrySet()) {
-        String decoded = decodeUtf8(Base64.getDecoder().decode(field.getKey()));
+        String decoded = REDIS.decodeField(field.getKey());
         if (decoded.equals(CanonicalGameplayIssuerPartitionMutationRepository.REVISION_FIELD)) {
           continue;
         } else if (decoded.startsWith(
@@ -317,7 +272,7 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
         throw unavailable("Issuer release readback violates physical or SQL capacity bounds");
       }
       return CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(
-          decodePhysicalMap(actual));
+          REDIS.decodePhysicalMap(actual));
     } catch (RuntimeException failure) {
       throw unavailable("Independent issuer release readback was not exact", failure);
     }
@@ -389,20 +344,9 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
   private void requireFreshCurrentState(
       CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork work) {
     requireNoAmbientTransaction();
-    var state = currentStateSource.readFreshCurrentState();
+    var current = currentStateSource.readFreshCurrentState();
     requireNoAmbientTransaction();
-    var checkpoint = state == null ? null : state.accountCheckpoint();
-    var anchor = work.anchor();
-    if (checkpoint == null
-        || !checkpoint.issuerId().equals(anchor.issuerId())
-        || !checkpoint.issuerAuthGeneration().equals(anchor.issuerAuthGeneration())
-        || !Arrays.equals(checkpoint.exactCheckpointBytes(), anchor.sourceCheckpointBytes())
-        || !checkpoint.checkpointDigest().equals(anchor.sourceCheckpointDigest())
-        || !Arrays.equals(checkpoint.latestIssuerEventBytes(), anchor.sourceEventBytes())
-        || !Objects.equals(checkpoint.latestIssuerEventDigest(), anchor.sourceEventDigest())
-        || !Arrays.equals(
-            CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(state.incarnation()),
-            anchor.incarnationBytes())) {
+    if (!REDIS.matchesCurrentState(current, work.anchor())) {
       throw unavailable("Issuer source checkpoint or incarnation changed");
     }
   }
@@ -416,113 +360,20 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseRedisOwner {
     } catch (RuntimeException missing) {
       throw unavailable("Manual issuer release descriptor is not installed", missing);
     }
-    if (!CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.SCRIPT_ID.equals(
-            descriptor.scriptId())
-        || !CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.RESOURCE_PATH.equals(
-            descriptor.resourcePath())
-        || !"game-session-service".equals(descriptor.owner())
-        || !PRINCIPAL.equals(descriptor.principal())
-        || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
-        || !EXPECTED_KEYS.equals(descriptor.keys())
-        || !EXPECTED_ARGUMENTS.equals(descriptor.arguments())
-        || descriptor.category() != RedisScriptDescriptor.ScriptCategory.SESSION_ISSUER_INDEX
-        || !EXPECTED_OUTCOMES.equals(descriptor.outcomes())
-        || descriptor.resetSensitivity() != RedisScriptDescriptor.ResetSensitivity.CLUSTER
-        || descriptor.lossClass() != RedisScriptDescriptor.LossClass.EMPTY_REDIS_COLD_START_OR_RESET
-        || descriptor.compatibilityLevel()
-            != RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET
-        || !descriptor
-            .supportedCoexistence()
-            .equals(List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v2")))
-        || descriptor.legacyPayloadShape() != null) {
+    if (!REDIS.matchesDescriptor(
+        descriptor,
+        CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.SCRIPT_ID,
+        CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution.RESOURCE_PATH,
+        EXPECTED_KEYS,
+        EXPECTED_ARGUMENTS,
+        EXPECTED_OUTCOMES)) {
       throw unavailable("Manual issuer release descriptor differs from its exact owner contract");
     }
     return descriptor;
   }
 
-  private static byte[] scriptSource(RedisScriptDescriptor descriptor) {
-    try (InputStream input =
-        CanonicalGameplayIssuerBindingLocalReleaseRedisOwner.class
-            .getClassLoader()
-            .getResourceAsStream(descriptor.resourcePath())) {
-      if (input == null) throw unavailable("Issuer release Lua resource is missing");
-      byte[] bytes = input.readNBytes(MAX_SCRIPT_BYTES + 1);
-      if (bytes.length == 0
-          || bytes.length > MAX_SCRIPT_BYTES
-          || !descriptor.sha256().equals(digest("SHA-256", bytes))) {
-        throw unavailable("Issuer release Lua differs from its exact descriptor digest");
-      }
-      return bytes;
-    } catch (IOException | RuntimeException failure) {
-      throw unavailable("Issuer release Lua is unavailable", failure);
-    }
-  }
-
-  private static Map<String, byte[]> decodePhysicalMap(Map<String, byte[]> encoded) {
-    Map<String, byte[]> result = new HashMap<>();
-    encoded.forEach(
-        (field, value) -> result.put(decodeUtf8(Base64.getDecoder().decode(field)), value.clone()));
-    return result;
-  }
-
-  private static String b64(byte[] value) {
-    return Base64.getEncoder().encodeToString(value);
-  }
-
-  private static String decodeUtf8(byte[] bytes) {
-    try {
-      return StandardCharsets.UTF_8
-          .newDecoder()
-          .onMalformedInput(CodingErrorAction.REPORT)
-          .onUnmappableCharacter(CodingErrorAction.REPORT)
-          .decode(java.nio.ByteBuffer.wrap(bytes))
-          .toString();
-    } catch (CharacterCodingException malformed) {
-      throw unavailable("Issuer hash field is not valid UTF-8", malformed);
-    }
-  }
-
-  private static byte[] ascii(String value) {
-    return value.getBytes(StandardCharsets.US_ASCII);
-  }
-
-  private static RedisAsyncCommands<byte[], byte[]> requireCommands(
-      StatefulRedisConnection<byte[], byte[]> connection) {
-    if (connection == null || !connection.isOpen())
-      throw unavailable("Redis connection is unavailable");
-    return connection.async();
-  }
-
-  private static void requirePrincipal(String principal) {
-    if (!PRINCIPAL.equals(principal))
-      throw unavailable("Redis principal is not the exact coordination owner");
-  }
-
-  private static <T> T await(RedisFuture<T> future) {
-    try {
-      return future.get(COMMAND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
-    } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-      future.cancel(true);
-      throw unavailable("Redis issuer release command was interrupted", interrupted);
-    } catch (ExecutionException | TimeoutException | RuntimeException failure) {
-      future.cancel(true);
-      throw unavailable("Redis issuer release command failed", failure);
-    }
-  }
-
-  private static String digest(String algorithm, byte[] bytes) {
-    try {
-      return HexFormat.of().formatHex(MessageDigest.getInstance(algorithm).digest(bytes));
-    } catch (Exception failure) {
-      throw unavailable("Could not verify issuer release Lua digest", failure);
-    }
-  }
-
   private static void requireNoAmbientTransaction() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
-      throw unavailable("Physical issuer release cannot run inside an ambient SQL transaction");
-    }
+    REDIS.requireNoAmbientTransaction();
   }
 
   private static IllegalStateException unavailable(String message) {

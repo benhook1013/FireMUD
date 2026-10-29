@@ -5,9 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import io.lettuce.core.AclSetuserArgs;
-import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -20,12 +18,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,7 +33,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
-import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
@@ -50,8 +44,6 @@ import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBinding
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -1192,76 +1184,22 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor
       descriptor(BigInteger partitions) {
-    String exact =
-        "issuer-layout-descriptor/v1|"
-            + ISSUER
-            + "|"
-            + LAYOUT_VERSION
-            + "|"
-            + partitions
-            + "|"
-            + PARTITION_CAPACITY
-            + "|"
-            + CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
-        ISSUER,
-        LAYOUT_VERSION,
-        partitions,
-        PARTITION_CAPACITY,
-        CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY,
-        exact.getBytes(StandardCharsets.UTF_8));
+    return CanonicalGameplayIssuerTestFixtures.descriptor(
+        ISSUER, LAYOUT_VERSION, partitions, PARTITION_CAPACITY);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint
       sourceCheckpoint(BigInteger generation) {
-    long sequence = generation.longValueExact() - 1;
-    var event =
-        AccountAuthoritySourceEventV1Codec.sealIssuer(
-            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
-                UUID.randomUUID().toString(),
-                UUID.randomUUID().toString(),
-                AccountAuthoritySourceEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + ISSUER,
-                Long.toString(sequence),
-                ISSUER,
-                generation.toString(),
-                generation.toString(),
-                "ISSUER_SECURITY_CHANGE"));
-    byte[] bytes = event.canonicalJsonUtf8();
-    return new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedAccountIssuerCheckpoint(
-        ISSUER, generation, bytes, bytes);
+    return CanonicalGameplayIssuerTestFixtures.sourceCheckpoint(ISSUER, generation);
   }
 
   private static CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint
       checkpointShape(BigInteger generation) {
-    var trusted = sourceCheckpoint(generation);
-    byte[] checkpoint = trusted.checkpointBytes();
-    byte[] event = trusted.latestEventBytes();
-    return new CanonicalGameplayIssuerLayoutBootstrapIntent.AccountIssuerSourceCheckpoint(
-        trusted.issuerId(),
-        trusted.issuerAuthGeneration(),
-        checkpoint,
-        CanonicalGameplayIssuerMemberV2Codec.sha256(checkpoint),
-        event,
-        CanonicalGameplayIssuerMemberV2Codec.sha256(event));
+    return CanonicalGameplayIssuerTestFixtures.checkpointShape(ISSUER, generation);
   }
 
   private static CanonicalGameplayIssuerMemberV2Value.Incarnation stableIncarnation(String seed) {
-    String digest = digest(seed.getBytes(StandardCharsets.UTF_8));
-    var deployment =
-        new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
-            "controlled-deployment-" + seed,
-            "deployment-generation-" + seed,
-            List.of("controlled-node-" + seed),
-            "controlled-redis-build-" + seed,
-            "controlled-lua-registry-" + seed,
-            digest,
-            "READY",
-            "boot-" + seed,
-            "startup-" + seed,
-            "storage-" + seed,
-            "aof-" + seed);
-    return new CanonicalGameplayIssuerMemberV2Value.Incarnation(
-        "controlled-attestor-" + seed, digest, deployment, digest, digest);
+    return CanonicalGameplayIssuerTestFixtures.stableIncarnation(seed);
   }
 
   private static CanonicalGameplayIssuerBindingLocalOperation.Request request(
@@ -1374,91 +1312,17 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
       CanonicalGameplayBindingIdentity candidate,
       BigInteger bindingGeneration,
       CanonicalPlayableTarget target) {
-    long now = System.currentTimeMillis();
-    String nowSeconds = Long.toString(now / 1000L);
-    Map<String, Object> carrier = new LinkedHashMap<>();
-    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
-    carrier.put("schemaVersion", "1");
-    carrier.put("mode", "PUBLIC_PRODUCTION");
-    carrier.put("leaseKind", AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING.name());
-    carrier.put("targetNamespace", target.targetNamespace());
-    carrier.put(
-        "callerWorkload",
-        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
-    carrier.put("requestId", "10101010-1010-4010-8010-101010101010");
-    carrier.put("leaseId", "20202020-2020-4020-8020-202020202020");
-    carrier.put("leaseFence", "1");
-    Map<String, Object> scope = new LinkedHashMap<>();
-    scope.put("accountId", candidate.accountId().toString());
-    scope.put("tenantId", candidate.tenantId().toString());
-    scope.put("realmId", target.realmId().toString());
-    scope.put("worldSlug", target.worldSlug());
-    scope.put("realmSlug", target.realmSlug());
-    scope.put("playableStateNamespaceId", target.playableStateNamespaceId().toString());
-    scope.put("playableStateScope", target.playableStateScope());
-    scope.put("gameInstanceId", target.canonicalGameInstanceId().toString());
-    scope.put("characterId", candidate.characterId().toString());
-    scope.put("sessionId", candidate.sessionId());
-    scope.put("bindingGeneration", bindingGeneration.toString());
-    scope.put("catalogRevision", Long.toString(target.catalogRevision()));
-    scope.put("pointerVersion", Long.toString(target.pointerVersion()));
-    scope.put("regionId", candidate.regionId().toString());
-    scope.put("regionEpoch", candidate.regionEpoch().toString());
-    carrier.put("bindingScope", scope);
-    Map<String, Object> authority = new LinkedHashMap<>();
-    authority.put("issuerAuthGeneration", candidate.issuerAuthGeneration().toString());
-    authority.put("accountAuthorityGeneration", "1");
-    authority.put("tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"));
-    authority.put("membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"));
-    authority.put("privateRealmGrantVersions", List.of());
-    carrier.put("authorityTuple", authority);
-    carrier.put("issuanceFence", "1");
-    carrier.put(
-        "membershipBaseline",
-        new LinkedHashMap<>(
-            Map.of(
-                "membershipLifecycleState",
-                "ACTIVE",
-                "membershipVersion",
-                Map.of(candidate.tenantId().toString(), "1"),
-                "membershipAuthorityGeneration",
-                "1")));
-    String prefix = "account:auth-authority:v1:";
-    List<Map<String, Object>> checkpoints = new java.util.ArrayList<>();
-    for (String stream :
-        List.of(
-            "account/" + candidate.accountId(),
-            "issuer/" + ISSUER,
-            "membership/" + candidate.accountId() + "/" + candidate.tenantId(),
-            "tenant/" + candidate.tenantId())) {
-      checkpoints.add(
-          new LinkedHashMap<>(
-              Map.of(
-                  "outboxStreamKey",
-                  prefix + stream,
-                  "outboxSequence",
-                  stream.startsWith("membership/") || stream.startsWith("tenant/") ? "1" : "0")));
-    }
-    carrier.put("outboxCheckpoints", checkpoints);
-    Map<String, Object> tokenIdentity = new LinkedHashMap<>();
-    tokenIdentity.put("accountId", candidate.accountId().toString());
-    tokenIdentity.put("operationId", "40404040-4040-4040-8040-404040404040");
-    tokenIdentity.put("issuanceRequestId", "50505050-5050-4050-8050-505050505050");
-    tokenIdentity.put("tokenJti", "60606060-6060-4060-8060-606060606060");
-    tokenIdentity.put("tokenSHA256", "a".repeat(64));
-    tokenIdentity.put("tokenProfile", "game-session-account-delegation");
-    tokenIdentity.put("tokenGeneration", "1");
-    tokenIdentity.put("issuanceFence", "1");
-    tokenIdentity.put("tokenIdentityFence", "1");
-    tokenIdentity.put("issuedAt", nowSeconds);
-    tokenIdentity.put("notBefore", nowSeconds);
-    tokenIdentity.put("expiresAt", Long.toString(now / 1000L + 60L));
-    carrier.put("tokenIdentityEvidence", tokenIdentity);
-    carrier.put("evaluatedAt", Long.toString(now));
-    carrier.put(
-        "expiresAt",
-        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
-    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+    return CanonicalGameplayIssuerTestFixtures.controlledLeaseEvidence(
+        candidate,
+        bindingGeneration,
+        target,
+        new CanonicalGameplayIssuerTestFixtures.ControlledLeaseEvidenceIdentity(
+            ISSUER,
+            UUID.fromString("10101010-1010-4010-8010-101010101010"),
+            UUID.fromString("20202020-2020-4020-8020-202020202020"),
+            UUID.fromString("40404040-4040-4040-8040-404040404040"),
+            UUID.fromString("50505050-5050-4050-8050-505050505050"),
+            UUID.fromString("60606060-6060-4060-8060-606060606060")));
   }
 
   private void establishActualLegacyDisposition(DSLContext dsl) {
@@ -1466,64 +1330,33 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
   }
 
   private TestSchema newTestSchemaAtVersion(String prefix) {
-    String schema = prefix + UUID.randomUUID().toString().replace("-", "");
+    String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
     DriverManagerDataSource dataSource = dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1030"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, "1030");
     return new TestSchema(schema, dataSource, DSL.using(dataSource, SQLDialect.POSTGRES));
   }
 
   private static void migrateRemaining(TestSchema schema) {
-    Flyway.configure()
-        .dataSource(schema.dataSource())
-        .schemas(schema.schema())
-        .defaultSchema(schema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        schema.dataSource(), schema.schema(), MIGRATION_LOCATION, null);
   }
 
   private DriverManagerDataSource dataSource(String schemaName) {
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName("org.postgresql.Driver");
-    String jdbcUrl = POSTGRES.getJdbcUrl();
-    dataSource.setUrl(
-        jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schemaName);
-    dataSource.setUsername(POSTGRES.getUsername());
-    dataSource.setPassword(POSTGRES.getPassword());
-    return dataSource;
+    return CanonicalGameplayIssuerTestFixtures.dataSource(
+        POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), schemaName);
   }
 
   private void dropSchema(String schemaName) {
-    try (Connection connection = dataSource("public").getConnection()) {
-      DSL.using(connection, SQLDialect.POSTGRES)
-          .execute("DROP SCHEMA IF EXISTS \"" + schemaName + "\" CASCADE");
-    } catch (SQLException failure) {
-      throw new IllegalStateException(
-          "Could not drop the owned issuer local-operation test schema", failure);
-    }
+    CanonicalGameplayIssuerTestFixtures.dropSchema(
+        dataSource("public"),
+        schemaName,
+        "Could not drop the owned issuer local-operation test schema");
   }
 
   private static RedisClient createRedisClient(String username, String password) {
-    RedisURI.Builder builder = RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379));
-    if (username != null) builder.withAuthentication(username, password);
-    RedisURI uri = builder.build();
-    uri.setTimeout(Duration.ofSeconds(5));
-    RedisClient client = RedisClient.create(uri);
-    client.setOptions(
-        ClientOptions.builder()
-            .autoReconnect(false)
-            .protocolVersion(io.lettuce.core.protocol.ProtocolVersion.RESP2)
-            .build());
-    return client;
+    return CanonicalGameplayIssuerTestFixtures.createRedisClient(
+        REDIS.getHost(), REDIS.getMappedPort(6379), username, password);
   }
 
   private static long count(DSLContext dsl, String table) {
