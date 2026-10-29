@@ -68,18 +68,18 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
               .asRuntimeException());
       return;
     }
+    GetAccountInitialAdmissionSettlementResponse response;
     try {
       var evidence = owner.read(input);
-      var response = AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(evidence);
+      response = AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(evidence);
       AccountInitialAdmissionSettlementReadGrpcCodec.fromResponse(input, response);
-      observer.onNext(response);
-      observer.onCompleted();
     } catch (TooManyRowsException unproved) {
       observer.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Exact protected terminal is unavailable")
               .withCause(unproved)
               .asRuntimeException());
+      return;
     } catch (CannotCreateTransactionException
         | DataAccessResourceFailureException
         | TransientDataAccessException unavailable) {
@@ -88,6 +88,7 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
               .withDescription("Settlement owner is unavailable")
               .withCause(unavailable)
               .asRuntimeException());
+      return;
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException storageFailure) {
       if (hasTransientSqlState(storageFailure)) {
@@ -103,19 +104,24 @@ public final class AccountInitialAdmissionSettlementReadGrpcService
                 .withCause(storageFailure)
                 .asRuntimeException());
       }
+      return;
     } catch (IllegalArgumentException | IllegalStateException unproved) {
       observer.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Exact protected terminal is unavailable")
               .withCause(unproved)
               .asRuntimeException());
+      return;
     } catch (RuntimeException unexpected) {
       observer.onError(
           Status.INTERNAL
               .withDescription("Settlement owner read failed")
               .withCause(unexpected)
               .asRuntimeException());
+      return;
     }
+    observer.onNext(response);
+    observer.onCompleted();
   }
 
   private static boolean hasTransientSqlState(Throwable failure) {
