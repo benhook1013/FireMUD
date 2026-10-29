@@ -451,6 +451,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         || finalReadback.admissionAtMillis() > nowMillis
         || nowMillis >= finalReadback.continuityExpiresAtMillis()) throw unavailable();
 
+    VerifiedCaller beforeActivationCaller = verifyCaller(presentedInitialGsACompactJwt, peer);
+    if (!AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData
+        .hasSameOwnerEvidence(
+            caller.currentCandidate(), beforeActivationCaller.currentCandidate())) {
+      throw unavailable();
+    }
+
     // Activation is Account-owned and happens only after the authenticated GS readback exists.
     // If its reply is lost, the Redis CAS accepts only the same immutable active projection.
     AccountGameplayDelegationRedisClient.OriginalNewActivationReadback activation =
