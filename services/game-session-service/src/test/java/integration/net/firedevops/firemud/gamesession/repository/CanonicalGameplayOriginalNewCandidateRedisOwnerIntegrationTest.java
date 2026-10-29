@@ -223,6 +223,22 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
   }
 
   @org.junit.jupiter.api.Test
+  void claimedCandidateCannotUseLegacyProvisionalPublicationWithoutPhysicalReadback() {
+    source.repository().claimOriginalNewCandidateInstallation(source.decision());
+    var claimedEvidence = source.repository().readProvisionalCasEvidence(TRANSITION_ID);
+    String sqlBefore = sourceSqlImage(source);
+    assertThat(admin.dbsize()).isZero();
+
+    assertThatThrownBy(
+            () -> source.repository().markProvisional(claimedEvidence, source.decision()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Claimed original NEW candidate requires owner-produced physical readback");
+
+    assertThat(sourceSqlImage(source)).isEqualTo(sqlBefore);
+    assertThat(admin.dbsize()).isZero();
+  }
+
+  @org.junit.jupiter.api.Test
   void changedOriginalLeaseCannotReuseThePersistedCandidateOrDispatchRedis() {
     var originalClaim =
         source.repository().claimOriginalNewCandidateInstallation(source.decision());
@@ -241,7 +257,8 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
             source.decision().targetEvidence());
 
     assertThatThrownBy(() -> owner.installOnce(changedDecision))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Original NEW candidate retry differs from its immutable SQL source");
     assertThat(admin.dbsize()).isZero();
     assertThat(
             source
@@ -359,7 +376,8 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     new CanonicalGameplayAccountAdmissionBarrierRepository(source.dsl())
         .beginFenceIntent(source.identity().accountId(), UUID.randomUUID());
     assertThatThrownBy(() -> owner.installOnce(source.decision()))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Account-fence acquisition intent blocks a new binding transition");
     assertThat(admin.dbsize()).isZero();
 
     try {

@@ -1750,6 +1750,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 "First-binding provisional publication requires the exact Account lease decision");
           }
           boolean originalNew = current.expectedPrior() == null && expectedDecision != null;
+          if (originalNew
+              && candidate == null
+              && findTransition(transaction, current.transition().transitionId())
+                      .get("original_new_candidate_bytes", byte[].class)
+                  != null) {
+            throw conflict("Claimed original NEW candidate requires owner-produced physical readback");
+          }
           if (originalNew && candidate != null) {
             if (readback == null) throw conflict("Original NEW readback source is unavailable");
             requireDecisionMatchesOperation(expectedDecision, current);

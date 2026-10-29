@@ -2769,7 +2769,84 @@ const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
   const bad = make(async () => { badCalls++; return { data: { sha: second, parents: [] } }; });
   for (let i = 0; i < 2; i++) await assert.rejects(bad.immutableCommit(first, "wrong OID"), /different commit OID/);
   assert.equal(badCalls, 2, "invalid immutable evidence must not enter the cache");
-  console.log("Smoke quota deadline and immutable OID cache contract passed");
+  const cancellationContext = structuredClone(context);
+  cancellationContext.payload.pull_request.head.repo = { full_name: "owner/repo" };
+  const cancellationSource = {
+    id: 901, run_attempt: 1, workflow_id: 123, path: ".github/workflows/runtime-images.yml",
+    repository: { full_name: "owner/repo" }, head_repository: { full_name: "owner/repo" },
+    event: "pull_request", status: "completed", conclusion: "cancelled",
+    display_title: "exact cancellation comparison", head_sha: "a".repeat(40),
+  };
+  const cancellationIdentity = { headSha: cancellationSource.head_sha };
+  function cancellationFixture() {
+    const calls = { attempt: 0, latest: 0, workflow: 0, jobs: 0 };
+    const state = { source: structuredClone(cancellationSource), latest: structuredClone(cancellationSource),
+      failJobs: false, incompleteJobs: false };
+    let jobNames;
+    const api = {
+      request: async () => { calls.attempt++; return { data: structuredClone(state.source) }; },
+      rest: { actions: {
+        getWorkflowRun: async () => { calls.latest++; return { data: structuredClone(state.latest) }; },
+        getWorkflow: async () => { calls.workflow++; return { data: {
+          id: state.source.workflow_id, path: state.source.path, name: "Build Runtime Images",
+        } }; },
+      } },
+      paginate: async () => {
+        calls.jobs++;
+        if (state.failJobs) throw { status: 404, message: "controlled unavailable job proof" };
+        return [...jobNames].map((name, index) => ({
+          id: index + 1, run_id: state.source.id, name, status: "completed", conclusion: "cancelled",
+          steps: state.incompleteJobs ? [{ name: "executed step" }] : [],
+        }));
+      },
+    };
+    const helpers = new Function("github", "context", "core",
+      `${source}; return { isPreExecutionCancelledAttempt, preExecutionCancelledJobNames };`)(
+      api, cancellationContext, { warning: () => {} });
+    jobNames = helpers.preExecutionCancelledJobNames;
+    return { calls, state, check: (run = state.source, title = cancellationSource.display_title,
+      identity = cancellationIdentity) => helpers.isPreExecutionCancelledAttempt(run, title, identity) };
+  }
+  const cancellation = cancellationFixture();
+  assert.equal(await cancellation.check({ ...cancellationSource, event: "repository_dispatch" }), false);
+  assert.deepEqual(cancellation.calls, { attempt: 0, latest: 0, workflow: 0, jobs: 0 },
+    "non-PR sources must short-circuit before any API request");
+  assert.equal(await cancellation.check(), true);
+  assert.deepEqual(cancellation.calls, { attempt: 2, latest: 2, workflow: 1, jobs: 1 },
+    "first proof must retain both exact attempt reads, latest guards, workflow and full jobs proof");
+  assert.equal(await cancellation.check(), true);
+  assert.deepEqual(cancellation.calls, { attempt: 2, latest: 3, workflow: 1, jobs: 1 },
+    "positive immutable proof may be reused only with a fresh latest-attempt guard");
+  cancellation.state.latest.run_attempt = 2;
+  assert.equal(await cancellation.check(), false, "warm cache must refuse a newer latest attempt");
+  cancellation.state.latest = { ...cancellationSource, status: "in_progress", conclusion: null };
+  assert.equal(await cancellation.check(), false, "warm cache must refuse a nonterminal latest run");
+  cancellation.state.latest = { ...cancellationSource, conclusion: "success" };
+  assert.equal(await cancellation.check(), false, "warm cache must require current cancellation");
+  cancellation.state.source.run_attempt = 2;
+  cancellation.state.latest = { ...cancellation.state.source };
+  const beforeAttemptChange = cancellation.calls.attempt;
+  assert.equal(await cancellation.check(), true);
+  assert.equal(cancellation.calls.attempt, beforeAttemptChange + 2,
+    "a changed exact attempt requires complete immutable proof again");
+  const beforeTitleChange = cancellation.calls.attempt;
+  assert.equal(await cancellation.check(undefined, "different expected title"), false);
+  assert.equal(cancellation.calls.attempt, beforeTitleChange + 1,
+    "changed comparison title must not reuse an earlier proof");
+  const beforeHeadChange = cancellation.calls.attempt;
+  assert.equal(await cancellation.check(undefined, undefined, { headSha: "b".repeat(40) }), false);
+  assert.equal(cancellation.calls.attempt, beforeHeadChange + 1,
+    "changed comparison head must not reuse an earlier proof");
+  for (const invalid of ["failJobs", "incompleteJobs"]) {
+    const rejected = cancellationFixture();
+    rejected.state[invalid] = true;
+    assert.equal(await rejected.check(), false);
+    assert.equal(await rejected.check(), false);
+    assert.equal(rejected.calls.jobs, 2, "failed/incomplete job proof must not enter the cache");
+    rejected.state[invalid] = false;
+    assert.equal(await rejected.check(), true, "recovered proof must be fetched and qualified anew");
+  }
+  console.log("Smoke quota deadline, immutable OID and cancelled-attempt cache contracts passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => {
   Date.now = realNow;
   global.setTimeout = realTimeout;

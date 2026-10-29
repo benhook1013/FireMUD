@@ -486,6 +486,7 @@ Entry format:
 - 2026-10-29: A local tracker conflict edit failed its preservation assertion, but subsequent shell lines still staged and committed the unresolved text. Canonical documentation checks failed before publication. Preserve each side explicitly, verify conflict markers are absent, and make dependent staging/commit commands fail with the edit (for example checked subprocess calls); do not assume newline-separated shell commands stop on failure. The local follow-up correction preserves both proof histories and is rechecked before pushing.
 
 - 2026-10-29: The complete credential/candidate receiving gate R864 passed 141 selected tests but could not start Game Session main SpotBugs because the Java command line exceeded local OS limits. This is unavailable static proof, not a clean analysis or a code finding. Preserve the failed aggregate and require exact-head CI recovery; the command-size contribution and whether shorter hosted paths avoid it remain unverified.
+  - Outcome: R920 subsequently passes the enabled Game Session main SpotBugs check on the receiving source after the existing build enables auxiliary-classpath files and compact source-root handling. This closes that analysis-availability gap for R920; R864 remains a failed aggregate and supplies no clean main-analysis result.
 
 ## 2026-10-29 — Hosted completion parsing and capture diagnostics
 

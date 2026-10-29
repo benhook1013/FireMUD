@@ -1170,6 +1170,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       var originalHistory =
           fixture.dsl.fetch(
               "SELECT installed_rank, version, checksum FROM flyway_schema_history ORDER BY installed_rank");
+      int predecessorInstalledRank =
+          fixture.dsl.fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+              .get(0, Integer.class);
       Flyway.configure()
           .dataSource(fixture.dataSource)
           .schemas(fixture.schema)
@@ -1183,7 +1186,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       assertThat(
               fixture.dsl.fetch(
                   "SELECT installed_rank, version, checksum FROM flyway_schema_history"
-                      + " WHERE version IS DISTINCT FROM '1014' ORDER BY installed_rank"))
+                      + " WHERE installed_rank <= ? ORDER BY installed_rank",
+                  predecessorInstalledRank))
           .isEqualTo(originalHistory);
       UUID decisionId = UUID.randomUUID();
       UUID cleanupId = original.orphanCleanupId();
