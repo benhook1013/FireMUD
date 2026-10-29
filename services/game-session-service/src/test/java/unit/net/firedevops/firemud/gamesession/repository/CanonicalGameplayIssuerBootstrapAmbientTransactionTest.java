@@ -100,6 +100,30 @@ class CanonicalGameplayIssuerBootstrapAmbientTransactionTest {
     verifyNoInteractions(redisClient, catalog, currentStateSource, work);
   }
 
+  @Test
+  void ordinaryRedisOwnersRejectBothAmbientStatesBeforeSqlRedisOrCurrentSource() {
+    var redisClient = mock(RedisClient.class);
+    var catalog = mock(RedisScriptCatalog.class);
+    var repository = mock(CanonicalGameplayIssuerBindingLocalProjectionRepository.class);
+    var currentStateSource =
+        mock(CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource.class);
+    var addOwner =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            redisClient, catalog, repository, currentStateSource);
+    var releaseOwner =
+        new CanonicalGameplayIssuerBindingLocalReleaseRedisOwner(
+            redisClient, catalog, repository, currentStateSource);
+    var add = mock(CanonicalGameplayIssuerBindingLocalOperation.class);
+    var release = mock(CanonicalGameplayIssuerBindingLocalReleaseOperation.class);
+
+    assertRefusesInBothAmbientStates(
+        () -> addOwner.projectAndRead(add), "projection is unavailable");
+    assertRefusesInBothAmbientStates(
+        () -> releaseOwner.releaseAndRead(release), "release is unavailable");
+
+    verifyNoInteractions(redisClient, catalog, repository, currentStateSource, add, release);
+  }
+
   private static void assertRefusesInBothAmbientStates(Runnable invocation, String message) {
     assertRefuses(invocation, message, false);
     assertRefuses(invocation, message, true);

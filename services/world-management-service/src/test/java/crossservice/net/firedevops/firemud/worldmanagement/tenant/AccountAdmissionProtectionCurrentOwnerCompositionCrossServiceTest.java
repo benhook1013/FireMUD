@@ -374,7 +374,7 @@ class AccountAdmissionProtectionCurrentOwnerCompositionCrossServiceTest {
           assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
         }
       } finally {
-        server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+        assertThat(server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
       }
     } finally {
       var admin =
