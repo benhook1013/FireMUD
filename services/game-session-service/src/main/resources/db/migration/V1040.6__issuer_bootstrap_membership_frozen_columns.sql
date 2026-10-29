@@ -60,8 +60,8 @@ BEGIN
            AND cohort.source_inventory_revision <= reservation.inventory_revision
            AND cohort.source_row_json::jsonb -> 'reservation_id'
                = to_jsonb(reservation.reservation_id)
-           AND cohort.source_row_json::jsonb -> 'binding_ref'
-               = to_jsonb(reservation.binding_ref)
+           AND (cohort.source_row_json::jsonb ->> 'binding_ref')::bytea
+               = reservation.binding_ref
            AND cohort.source_row_json::jsonb -> 'account_id'
                = to_jsonb(reservation.account_id)
            AND cohort.source_row_json::jsonb -> 'tenant_id'
@@ -108,8 +108,8 @@ BEGIN
                = to_jsonb(reservation.coverage_fence)
            AND cohort.source_row_json::jsonb -> 'inventory_snapshot_revision'
                = to_jsonb(reservation.inventory_snapshot_revision)
-           AND cohort.source_row_json::jsonb -> 'created_at'
-               = to_jsonb(reservation.created_at)) THEN
+           AND (cohort.source_row_json::jsonb ->> 'created_at')::timestamptz
+               = reservation.created_at) THEN
         RETURN;
     END IF;
     RAISE EXCEPTION 'Installed issuer reservation requires exact bootstrap or current local-operation membership'

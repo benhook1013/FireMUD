@@ -734,6 +734,135 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   @Test
+  void frozenPlanPreservesNativeSourceValuesAcrossSessionRenderings() {
+    for (String captureFormat : List.of("hex", "escape")) {
+      TestSchema testSchema = newTestSchema("gs_build_native_");
+      try {
+        var captureSchema = sessionSchema(testSchema, "UTC", captureFormat);
+        var fixture = pendingFixture(captureSchema);
+        var prepareSchema =
+            sessionSchema(
+                testSchema, "Pacific/Auckland", captureFormat.equals("hex") ? "escape" : "hex");
+        var owner = new CanonicalGameplayIssuerPartitionBuildRepository(prepareSchema.dsl());
+        List<String> sourceBefore =
+            rowImagesWithXmin(
+                testSchema.dsl(), "game_session_canonical_issuer_partition_reservation");
+        List<String> intentCohortBefore =
+            rowImages(
+                testSchema.dsl(), "game_session_canonical_issuer_layout_bootstrap_cohort_row");
+        var plan =
+            owner.prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId());
+        assertThat(plan.state())
+            .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.PREPARED);
+        assertThat(plan.cohortRows())
+            .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+            .containsExactlyElementsOf(
+                fixture.intent().cohortRows().stream()
+                    .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowJson)
+                    .toList());
+        List<String> planBefore =
+            rowImagesWithXmin(
+                testSchema.dsl(), "game_session_canonical_issuer_partition_build_plan");
+        List<String> buildCohortBefore =
+            rowImagesWithXmin(
+                testSchema.dsl(), "game_session_canonical_issuer_partition_build_cohort_row");
+        List<String> workBefore =
+            rowImagesWithXmin(
+                testSchema.dsl(), "game_session_canonical_issuer_partition_build_member_work");
+        var readSchema = sessionSchema(testSchema, "America/New_York", captureFormat);
+        var readPlan =
+            readSchema
+                .dsl()
+                .transactionResult(
+                    configuration -> {
+                      DSLContext transaction = DSL.using(configuration);
+                      return new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                          .readPreparedPlanInTransaction(
+                              transaction, fixture.intent().operationId(), fixture.requestId());
+                    });
+        assertThat(readPlan.buildOperationId()).isEqualTo(plan.buildOperationId());
+        assertThat(readPlan.planDigest()).isEqualTo(plan.planDigest());
+        assertThat(readPlan.cohortRows())
+            .extracting(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
+            .containsExactlyElementsOf(
+                plan.cohortRows().stream()
+                    .map(CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceRowDigest)
+                    .toList());
+        var retry =
+            new CanonicalGameplayIssuerPartitionBuildRepository(captureSchema.dsl())
+                .prepareInitialBuildPlan(fixture.intent().operationId(), fixture.requestId());
+        assertThat(retry.buildOperationId()).isEqualTo(plan.buildOperationId());
+        assertThat(retry.planDigest()).isEqualTo(plan.planDigest());
+        assertThatThrownBy(
+                () ->
+                    prepareSchema
+                        .dsl()
+                        .transaction(
+                            configuration -> {
+                              DSLContext transaction = DSL.using(configuration);
+                              assertThat(
+                                      transaction.execute(
+                                          "UPDATE game_session_canonical_issuer_partition_reservation"
+                                              + " SET coverage_fence = coverage_fence + 1"
+                                              + " WHERE reservation_id = ?",
+                                          fixture.reservationId()))
+                                  .isOne();
+                              new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                                  .readPreparedPlanInTransaction(
+                                      transaction,
+                                      fixture.intent().operationId(),
+                                      fixture.requestId());
+                            }))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Current source row differs");
+        for (String changedKeys :
+            List.of("ADD COLUMN unexpected_attribute text", "DROP COLUMN created_at")) {
+          assertThatThrownBy(
+                  () ->
+                      prepareSchema
+                          .dsl()
+                          .transaction(
+                              configuration -> {
+                                DSLContext transaction = DSL.using(configuration);
+                                transaction.execute(
+                                    "ALTER TABLE game_session_canonical_issuer_partition_reservation "
+                                        + changedKeys);
+                                new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+                                    .readPreparedPlanInTransaction(
+                                        transaction,
+                                        fixture.intent().operationId(),
+                                        fixture.requestId());
+                              }))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("Current source row differs");
+        }
+        assertThat(
+                rowImagesWithXmin(
+                    testSchema.dsl(), "game_session_canonical_issuer_partition_reservation"))
+            .containsExactlyElementsOf(sourceBefore);
+        assertThat(
+                rowImages(
+                    testSchema.dsl(), "game_session_canonical_issuer_layout_bootstrap_cohort_row"))
+            .containsExactlyElementsOf(intentCohortBefore);
+        assertThat(
+                rowImagesWithXmin(
+                    testSchema.dsl(), "game_session_canonical_issuer_partition_build_plan"))
+            .containsExactlyElementsOf(planBefore);
+        assertThat(
+                rowImagesWithXmin(
+                    testSchema.dsl(), "game_session_canonical_issuer_partition_build_cohort_row"))
+            .containsExactlyElementsOf(buildCohortBefore);
+        assertThat(
+                rowImagesWithXmin(
+                    testSchema.dsl(), "game_session_canonical_issuer_partition_build_member_work"))
+            .containsExactlyElementsOf(workBefore);
+      } finally {
+        dropSchema(testSchema.schema());
+      }
+    }
+  }
+
+  @Test
   void exactOwnerRejectsMissingWrongRequestMissingControlAndChangedFrozenSources() {
     TestSchema testSchema = newTestSchema("gs_issuer_build_intent_fence_");
     try {
@@ -2228,6 +2357,19 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     dsl.execute(
         "UPDATE game_session_canonical_binding_inventory_clock"
             + " SET inventory_revision = 1 WHERE singleton_id = 1 AND inventory_revision = 0");
+  }
+
+  private static TestSchema sessionSchema(TestSchema schema, String timeZone, String byteaOutput) {
+    DriverManagerDataSource sessionDataSource =
+        CanonicalGameplayIssuerTestFixtures.withSessionRendering(
+            dataSource(schema.schema()), timeZone, byteaOutput);
+    DSLContext sessionDsl = DSL.using(sessionDataSource, SQLDialect.POSTGRES);
+    var settings =
+        sessionDsl.fetchSingle(
+            "SELECT current_setting('TimeZone'), current_setting('bytea_output')");
+    assertThat(settings.get(0, String.class)).isEqualTo(timeZone);
+    assertThat(settings.get(1, String.class)).isEqualTo(byteaOutput);
+    return new TestSchema(schema.schema(), sessionDataSource, sessionDsl);
   }
 
   private static DriverManagerDataSource dataSource(String schema) {
