@@ -95,7 +95,8 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
   }
 
   protected RedisClient createRedisClient(String username, String password) {
-    RedisURI.Builder builder = RedisURI.Builder.redis(redis().getHost(), redis().getMappedPort(6379));
+    RedisURI.Builder builder =
+        RedisURI.Builder.redis(redis().getHost(), redis().getMappedPort(6379));
     if (username != null) builder.withAuthentication(username, password);
     RedisURI uri = builder.build();
     uri.setTimeout(Duration.ofSeconds(5));
