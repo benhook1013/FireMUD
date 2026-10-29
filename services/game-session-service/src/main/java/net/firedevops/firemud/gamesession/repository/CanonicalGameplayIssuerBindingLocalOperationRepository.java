@@ -280,14 +280,14 @@ final class CanonicalGameplayIssuerBindingLocalOperationRepository {
     Record countRow =
         Objects.requireNonNull(
             transaction.fetchOne(
-                "SELECT count(*) FROM "
+                "SELECT count(*) FROM game_session_canonical_issuer_current_local_operation membership"
+                    + " JOIN "
                     + OPERATION
-                    + " operation WHERE operation.issuer_id = ? AND operation.partition_id = ?"
-                    + " AND NOT EXISTS (SELECT 1 FROM"
-                    + " game_session_canonical_issuer_binding_local_retirement retirement"
-                    + " WHERE retirement.original_local_operation_id = operation.operation_id"
-                    + " AND retirement.status = 'RETIRED')",
+                    + " operation ON operation.operation_id = membership.operation_id"
+                    + " WHERE membership.issuer_id = ? AND membership.anchor_bootstrap_operation_id = ?"
+                    + " AND membership.partition_id = ?",
                 ISSUER,
+                anchor.bootstrapOperationId(),
                 decimal(partitionId)),
             "Expected local issuer operation count row");
     long operationCount =

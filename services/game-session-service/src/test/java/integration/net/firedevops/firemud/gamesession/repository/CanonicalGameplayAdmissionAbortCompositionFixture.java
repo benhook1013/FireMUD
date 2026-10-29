@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
@@ -44,6 +45,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -122,6 +124,26 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       RedisClient issuerRedisClient,
       int seedBootstrapMemberCount,
       MigrationVersion migrationTarget) {
+    this(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        seedBootstrapMemberCount,
+        migrationTarget,
+        (data, intent) -> {});
+  }
+
+  /**
+   * Lets a populated-parent upgrade run after actual bootstrap and before current-only NEW code.
+   */
+  public CanonicalGameplayAdmissionAbortCompositionFixture(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      int seedBootstrapMemberCount,
+      MigrationVersion migrationTarget,
+      BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
+          afterBootstrap) {
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
@@ -215,6 +237,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             issuerRedisClient, issuerCatalog, issuerSource);
     new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
         .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
+    Objects.requireNonNull(afterBootstrap, "afterBootstrap").accept(dataSource, bootstrapIntent);
     var request =
         new CanonicalGameplayIssuerBindingLocalOperation.Request(
             UUID.randomUUID(), transitionId, identity, null, null);
@@ -583,10 +606,26 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   /** Applies pending Game Session migrations with Flyway's default version ordering. */
   public int upgradeWithDefaultGameSessionMigrations(MigrationVersion migrationTarget) {
+    return upgradeWithDefaultGameSessionMigrations(migrationTarget, dataSource);
+  }
+
+  /** Initializes rendering on every owned Flyway connection, not one unrelated SQL session. */
+  public int upgradeWithDefaultGameSessionMigrations(
+      MigrationVersion migrationTarget, String timeZone, String byteaOutput) {
+    return upgradeWithDefaultGameSessionMigrations(
+        migrationTarget, dataSourceWithRendering(timeZone, byteaOutput));
+  }
+
+  static int upgradeWithDefaultGameSessionMigrations(
+      MigrationVersion migrationTarget, DriverManagerDataSource migrationDataSource) {
+    String schema =
+        DSL.using(migrationDataSource, SQLDialect.POSTGRES)
+            .fetchSingle("SELECT current_schema()")
+            .get(0, String.class);
     Flyway flyway =
         Flyway.configure()
             .target(Objects.requireNonNull(migrationTarget, "migrationTarget"))
-            .dataSource(dataSource)
+            .dataSource(migrationDataSource)
             .schemas(schema)
             .defaultSchema(schema)
             .placeholders(java.util.Map.of("serviceSchema", schema))
@@ -595,6 +634,33 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var result = flyway.migrate();
     flyway.validate();
     return result.migrationsExecuted;
+  }
+
+  private DriverManagerDataSource dataSourceWithRendering(String timeZone, String byteaOutput) {
+    return CanonicalGameplayIssuerTestFixtures.withSessionRendering(
+        dataSource, timeZone, byteaOutput);
+  }
+
+  /**
+   * Runs the real abort owner for one original bootstrap member using changed session rendering.
+   */
+  public CanonicalGameplayAdmissionAbortSource recordBootstrapAccountAbort(
+      UUID reservationId, String timeZone, String byteaOutput) {
+    DSLContext configured =
+        DSL.using(dataSourceWithRendering(timeZone, byteaOutput), SQLDialect.POSTGRES);
+    UUID bootstrapTransition =
+        configured
+            .fetchSingle(
+                "SELECT transition_id FROM game_session_canonical_issuer_partition_reservation"
+                    + " WHERE reservation_id = ?",
+                reservationId)
+            .get(0, UUID.class);
+    var owner = new CanonicalGameplayBindingInventoryRepository(configured);
+    var source = owner.readFirstNewAdmissionAbortSource(bootstrapTransition);
+    return owner.recordFirstNewAccountAbort(
+        source,
+        UUID.nameUUIDFromBytes(
+            ("bootstrap-controller-cleanup:" + reservationId).getBytes(StandardCharsets.UTF_8)));
   }
 
   /**
@@ -869,6 +935,46 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   CanonicalGameplayIssuerBindingLocalProjectionRepository.PreparedPartitionWork
       readCurrentOriginalPartitionWork() {
     return localProjectionRepository.readPreparedPartitionWork(localOperation);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalRetirementOperation prepareIssuerRetirement(
+      UUID transitionId) {
+    return new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource)
+        .prepareOrResume(transitionId);
+  }
+
+  public CanonicalGameplayIssuerBindingLocalRetirementRedisOwner.Readback retireIssuerCapacity(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return new CanonicalGameplayIssuerBindingLocalRetirementRedisOwner(
+            issuerRedisClient,
+            retirementCatalog(),
+            localProjectionRepository,
+            new CanonicalGameplayIssuerBindingLocalRetirementOperationRepository(dsl, issuerSource),
+            issuerSource)
+        .retireAndRead(operation);
+  }
+
+  /** Public test bridge for the otherwise package-private retirement readback outcome. */
+  public long retireIssuerCapacityOutcome(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return retireIssuerCapacity(operation).scriptOutcome();
+  }
+
+  /** Public test bridge for the otherwise package-private retirement operation status. */
+  public boolean isIssuerRetirementComplete(
+      CanonicalGameplayIssuerBindingLocalRetirementOperation operation) {
+    return operation.status()
+        == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED;
+  }
+
+  /** Adds the retirement script only for callers that exercise the new owner. */
+  RedisScriptCatalog retirementCatalog() {
+    return RedisScriptCatalog.fromContributions(
+        List.of(
+            new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
+            new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution()));
   }
 
   public byte[] issuerPartitionKey() {

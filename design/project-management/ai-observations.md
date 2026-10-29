@@ -454,3 +454,39 @@ Entry format:
   - Context: The split issuer capacity/retirement proof shared static Testcontainers objects in an abstract fixture across two independently managed test classes.
   - Observation: The first class passed, but the retirement class could not start Redis on its mapped port; no retirement cases ran. The exact timeout cause remains unproved.
   - Expected pattern: Each concrete test class owns its own containers while sharing connection and SQL proof mechanics. Verify both classes together and retain the original failed aggregate before claiming receiving proof.
+
+- `2026-10-27`: Historical migration fixtures must not invoke a newly extended fresh writer
+  - Context: #3315 Entity CI failed all 46 roster-retention cases in shared setup. The fixture seeded at V1011 (and a legacy V1017 path) through the current assignment writer before upgrading; that writer now requires the V1022 runtime-projection table.
+  - Observation: the production migration was present and executed in other schema contexts. A controlled historical SQL seed preserves the old assignment receipt, actor and snapshot without manufacturing a runtime projection or moving the test to the latest frontier. Current-schema assignments retain the production writer. Later shutdown connection noise is separate and its cause remains unproven.
+  - Outcome: full Entity R722 executes 584 methods, with 519 passing, 46 failing on a missing placeholder in the new historical INSERT and 19 failing on separate PostgreSQL connection setup. R723 corrects only that placeholder and passes all 65 affected native cases with no skips; the 454 unit methods and other 65 native cases retain their R722 passing attribution. Enabled affected static analysis and formatting pass. The failed full-check aggregate remains recorded; the focused recovery does not relabel it as green.
+  - Expected pattern: retain the exact pre-upgrade schema, source rows and history in migration proof. Use explicitly historical fixture input when current Java requires a later schema; do not add production compatibility branches or backfill authority merely to seed a test.
+
+- `2026-10-29`: Retained Redis layouts must be unique across combined fixture cases
+  - Context: #3341 membership-guard integration fixture; isolated R978 and combined R981 runs.
+  - Observation: The guard passed alone, but the combined run reused layout 11 already initialized by a sibling with different baseline data. Bootstrap correctly refused before the guard assertions, so the isolated pass did not establish shared-container isolation.
+  - Outcome: Give the seeded guard layout 17 while retaining the existing layout 11 and snapshot layout 13 cases. R983 passes all three together; the original R981 aggregate remains failed. Production SQL and Redis guards are unchanged by this fixture repair.
+  - Expected pattern: Check the full class's retained key/layout identities when adding a physical fixture. An isolated pass does not establish shared-container isolation; run the actual former collision cases together after repair.
+
+- `2026-10-29`: Explicitly selected analysis tasks can still be disabled
+  - Context: Gameplay R987 passed the three World migration-frontier regression cases and applied formatting, but omitted `-PfullCheck` when selecting Checkstyle, SpotBugs and formatting checks.
+  - Observation: Gradle returned success while those selected checks were `SKIPPED`. The initial progress report incorrectly described them as passing; test execution and formatter application were real, but did not establish enabled analysis or formatting verification.
+  - Outcome: R990 separately passes the enabled World integration Checkstyle, SpotBugs and formatting checks. Its aggregate remains failed on a Game Session negative-test oracle; this does not change R987's skipped-task attribution.
+  - Expected pattern: Include `-PfullCheck` and inspect the selected task outcomes before claiming those checks passed. Preserve R987 as the passing regression run with its skipped checks and record the subsequent enabled checks separately.
+
+- `2026-10-29`: An unrelated bot report delayed capture of a completed Hosted review
+  - Context: #3341 Hosted1 finished at 18:57 NZDT, while its original FireController operation remained `active / trigger_recovered` without native evidence.
+  - Observation: FireController's owner reproduced a false CodeRabbit attribution conflict caused by a newly created and edited Greptile report. The original immutable capture already contained the completed review, all three findings and the exact original comparison; no replacement trigger was needed.
+  - Outcome: The owner deployed the bounded parser correction, and the same operation recovered its three findings at 19:55 NZDT without changing review allowances or attribution. Gameplay consumed and adjudicated that original evidence.
+  - Expected pattern: Preserve the original attempt, report the capture mismatch to the tool owner and continue safe local work. Distinguish actual provider completion from stale local operation state; do not spend another review to recover existing results.
+
+- `2026-10-29`: Local resource admission does not establish queue order
+  - Context: The focused #3341 R992 retry waited behind the Account timing experiment while later R993 successor validation also requested the canonical resource slot.
+  - Observation: R993 acquired the freed slot first, and R992 exhausted its admission budget before Gradle or tests ran. Submitting the front retry earlier did not reserve execution priority; the initial queueing assumption delayed its proof.
+  - Outcome: R996 subsequently passes the exact front case under the ordinary guard. R992 remains an unexecuted admission failure, not a failed native test or successful retry.
+  - Expected pattern: Observe admission of the priority proof before launching another heavier waiter. Serialize subsequent qualification at the orchestrator when order matters rather than assuming fairness from resource exclusion.
+
+- `2026-10-29`: A published candidate migration was incorrectly treated as an applied artifact
+  - Context: #3341 needed a native timestamp/binary comparison correction in candidate V1040.5/.6. The initial forward-only approach could not cross V1040.5's earlier populated backfill.
+  - Observation: Publication in an unmerged PR was assumed to freeze those artifacts, although neither was in the immutable receiving parent and no authorized retained/live application was known. That unsupported assumption delayed the complete upgrade repair.
+  - Outcome: The owning migration contract and Overseer confirmed normal in-PR candidate correction, preserving all receiving-parent checksums and original evidence. R1010 subsequently passes populated actual-parent V1040.4 upgrade and changed-session owner proof; publication alone is not retained applied-state evidence.
+  - Expected pattern: Establish actual receiving-parent and applied-state obligations before choosing forward-only migration repair. A later migration cannot repair an earlier migration that fails before it executes; concrete retained applied-state evidence must be resolved rather than rewritten.

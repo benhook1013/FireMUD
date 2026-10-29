@@ -9,6 +9,7 @@ import com.google.protobuf.util.JsonFormat;
 import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import io.grpc.BindableService;
 import io.grpc.CallOptions;
+import io.grpc.Context;
 import io.grpc.ForwardingServerCall;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
@@ -58,6 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture;
@@ -65,11 +67,14 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionManualFactory;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionSettlementService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementService;
+import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadGrpcCodec;
+import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
@@ -81,6 +86,7 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdm
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountInitialAdmissionSettlementReadClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionWorldParticipationSettlementClient;
@@ -151,6 +157,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaun
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
+import net.firedevops.firemud.gamesession.service.AccountInitialAdmissionSettlementReadService;
+import net.firedevops.firemud.gamesession.service.impl.AccountInitialAdmissionSettlementReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.AuthenticatedCanonicalInitialAdmissionWorldVerifier;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalInitialAdmissionOwnerReadGrpcService;
@@ -604,6 +612,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         gameSessionReceivers.add(
             new CanonicalInitialAdmissionOwnerReadGrpcService(
                 admissionOwner, new CanonicalInitialAdmissionOwnerReadWorkloadGuard(NAMESPACE)));
+        gameSessionReceivers.add(
+            new AccountInitialAdmissionSettlementReadGrpcService(
+                new AccountInitialAdmissionSettlementReadService(
+                    new AccountInitialAdmissionProtectionBindingRepository(gs.dsl()),
+                    attempts,
+                    admissionOwner,
+                    NAMESPACE),
+                NAMESPACE));
       }
       Server gsServer =
           server("game-session-service", pki, gameSessionReceivers.toArray(BindableService[]::new));
@@ -2333,6 +2349,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           .containsExactly(identity.canonicalBytes());
       assertThat(protectionRequest.originalLeaseExpiresAt())
           .isEqualTo(originalProtectionRequest.originalLeaseExpiresAt());
+      var gameSessionPeer =
+          GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service")
+              .orElseThrow();
       var accountAcquisition = issuer.admissionProtectionAcquisitionService(currentAttempt);
       var admissionTransportPki =
           LoopbackMtlsTestPki.create(
@@ -2553,6 +2572,34 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         assertThat(accountRowAfterAbortedOwnerBeforeSettlement)
             .isEqualTo(accountRowBeforeSourceWrite);
 
+        assertAccountAdmissionProtectionSettled(
+            issuer.sourceDsl(),
+            gsEndpoints,
+            pki,
+            factory,
+            gameSessionPeer,
+            accountProtection,
+            abortedWorldTerminal,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+
+        var releasedAccount =
+            Objects.requireNonNull(
+                new TransactionTemplate(accountManager(issuer.sourceDsl()))
+                    .execute(
+                        ignored ->
+                            updateAccountPasswordThroughOwner(
+                                issuer.sourceDsl(),
+                                accountUuid,
+                                accountPasswordBeforeSourceWrite + "-aborted")),
+                "Settled Account owner update readback required");
+        assertThat(releasedAccount.getAccountUuid()).isEqualTo(accountUuid);
+        assertThat(
+                issuer
+                    .sourceDsl()
+                    .fetchSingle(
+                        "SELECT password_hash FROM accounts WHERE account_uuid=?", accountUuid)
+                    .get("password_hash", String.class))
+            .isEqualTo(accountPasswordBeforeSourceWrite + "-aborted");
         return;
       }
 
@@ -2688,13 +2735,98 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           .containsExactly(
               GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(worldTerminal));
 
-      assertAccountSourceWriteBlockedWhileAdmissionPending(
-          issuer.sourceDsl(), accountUuid, accountPasswordBeforeSourceWrite);
-      assertThat(accountRowSnapshot(issuer.sourceDsl(), accountUuid))
-          .isEqualTo(accountRowBeforeSourceWrite);
+      assertAccountAdmissionProtectionSettled(
+          issuer.sourceDsl(),
+          gsEndpoints,
+          pki,
+          factory,
+          gameSessionPeer,
+          accountProtection,
+          worldTerminal,
+          GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
+
+      String settledAccountPassword = accountPasswordBeforeSourceWrite + "-settled";
+      var releasedAccount =
+          Objects.requireNonNull(
+              new TransactionTemplate(accountManager(issuer.sourceDsl()))
+                  .execute(
+                      ignored ->
+                          updateAccountPasswordThroughOwner(
+                              issuer.sourceDsl(), accountUuid, settledAccountPassword)),
+              "Settled Account owner update readback required");
+      assertThat(releasedAccount.getAccountUuid()).isEqualTo(accountUuid);
+      String accountPasswordAfterSettlement =
+          issuer
+              .sourceDsl()
+              .fetchSingle("SELECT password_hash FROM accounts WHERE account_uuid=?", accountUuid)
+              .get("password_hash", String.class);
+      assertThat(accountPasswordAfterSettlement).isEqualTo(settledAccountPassword);
+      assertThat(accountPasswordAfterSettlement).isNotEqualTo(accountPasswordBeforeSourceWrite);
+      String accountRowAfterSettlement = accountRowSnapshot(issuer.sourceDsl(), accountUuid);
+      assertThat(accountRowAfterSettlement).isNotEqualTo(accountRowBeforeSourceWrite);
 
       var finalWorldState = worldHoldOwner.readState(identity, lifecycleRequest).orElseThrow();
       assertThat(finalWorldState.holdStatus().name()).isEqualTo("COMMITTED");
+    }
+  }
+
+  private static void assertAccountAdmissionProtectionSettled(
+      DSLContext accountSql,
+      ServiceEndpointsProperties gsEndpoints,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory,
+      GrpcPeerIdentity gameSessionPeer,
+      AccountStartSessionAdmissionProtectionEvidence accountProtection,
+      GameSessionCanonicalInitialAdmissionOwnerProof expectedTerminal,
+      GameSessionCanonicalInitialAdmissionOwnerProof.Outcome expectedOutcome)
+      throws Exception {
+    try (var accountTerminalRead =
+        new GrpcAccountInitialAdmissionSettlementReadClient(
+            gsEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
+      accountTerminalRead.init();
+      var accountOwnerRead =
+          accountTerminalRead.read(
+              new AccountInitialAdmissionSettlementReadInput(UUID.randomUUID(), accountProtection));
+      assertThat(accountOwnerRead.terminal()).isEqualTo(expectedTerminal);
+      assertThat(accountOwnerRead.terminal().outcome()).isEqualTo(expectedOutcome);
+      var accountSettlementOwner =
+          new AccountStartSessionAdmissionProtectionSettlementService(
+              new AccountStartSessionAdmissionProtectionRepository(accountSql),
+              accountTerminalRead,
+              accountManager(accountSql),
+              NAMESPACE);
+      var accountSettlement =
+          Context.current()
+              .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
+              .call(
+                  () ->
+                      accountSettlementOwner.settle(
+                          accountProtection.accountProtectionId(),
+                          accountProtection.accountProtectionFence()));
+      assertThat(accountSettlement.protection().canonicalBytes())
+          .containsExactly(accountProtection.canonicalBytes());
+      assertThat(accountSettlement.terminal()).isEqualTo(expectedTerminal);
+      var accountSettlementReplay =
+          Context.current()
+              .withValue(GrpcPeerIdentity.CONTEXT_KEY, gameSessionPeer)
+              .call(
+                  () ->
+                      accountSettlementOwner.settle(
+                          accountProtection.accountProtectionId(),
+                          accountProtection.accountProtectionFence()));
+      assertThat(accountSettlementReplay.canonicalBytes())
+          .containsExactly(accountSettlement.canonicalBytes());
+      var storedSettlement =
+          accountSql.fetchSingle(
+              "SELECT outcome,terminal_bytes,terminal_digest "
+                  + "FROM account_start_session_admission_protection_settlements "
+                  + "WHERE protection_id=?",
+              accountProtection.accountProtectionId());
+      assertThat(storedSettlement.get("outcome", String.class)).isEqualTo(expectedOutcome.name());
+      assertThat(storedSettlement.get("terminal_bytes", byte[].class))
+          .containsExactly(accountSettlement.canonicalBytes());
+      assertThat(storedSettlement.get("terminal_digest", String.class))
+          .isEqualTo(accountSettlement.digest());
     }
   }
 
@@ -3181,6 +3313,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    if (Arrays.stream(receivers)
+        .anyMatch(AccountInitialAdmissionSettlementReadGrpcService.class::isInstance)) {
+      builder.maxInboundMessageSize(
+          AccountInitialAdmissionSettlementReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+    }
     if (additionalService != null)
       builder.addService(
           ServerInterceptors.intercept(additionalService.get(), new GrpcPeerIdentityInterceptor()));
