@@ -547,14 +547,24 @@ BEGIN
       AND r.binding_ref = i.binding_ref AND a.binding_ref = i.binding_ref AND b.binding_ref = i.binding_ref
       AND a.account_index_fence = i.account_index_fence AND i.account_index_fence = t.candidate_account_index_fence
       AND i.inventory_revision = t.inventory_revision AND r.inventory_revision = t.inventory_revision
-      AND a.inventory_revision = t.inventory_revision AND b.inventory_revision = t.inventory_revision AND s.inventory_revision = t.inventory_revision
       AND a.status = 'NEVER_DISPATCHED' AND a.projection_state = 'REQUIRED' AND a.projection_member IS NULL
       AND b.status = 'NEVER_DISPATCHED' AND b.bridge_operation_id IS NULL
-      AND ((i.lifecycle = 'TERMINAL_UNRESOLVED' AND r.lifecycle IN ('RELEASE_PENDING', 'RELEASED'))
+      AND ((i.lifecycle = 'TERMINAL_UNRESOLVED' AND r.lifecycle IN ('RELEASE_PENDING', 'RELEASED')
+          AND a.inventory_revision = t.inventory_revision
+          AND b.inventory_revision = t.inventory_revision
+          AND s.inventory_revision = t.inventory_revision)
         OR (i.lifecycle = 'TERMINAL' AND r.lifecycle = 'RELEASED'
           AND EXISTS (SELECT 1 FROM game_session_canonical_issuer_binding_local_retirement retirement
             JOIN game_session_canonical_issuer_binding_local_release_operation release ON release.operation_id = retirement.release_operation_id
-            WHERE release.transition_id = id AND retirement.status = 'RETIRED' AND release.status = 'RELEASED')))
+            WHERE release.transition_id = id AND retirement.status = 'RETIRED' AND release.status = 'RELEASED'
+              AND release.orphan_cleanup_id = t.original_new_abandonment_orphan_cleanup_id
+              AND release.binding_ref = i.binding_ref AND release.binding_generation = i.binding_generation
+              AND release.reservation_id = r.reservation_id
+              AND s.status = 'RELEASED' AND s.local_release_operation_id = release.operation_id
+              AND a.inventory_revision = release.completion_inventory_revision
+              AND b.inventory_revision = release.completion_inventory_revision
+              AND s.inventory_revision = release.completion_inventory_revision
+              AND release.completion_inventory_revision < t.inventory_revision)))
       AND NOT EXISTS (SELECT 1 FROM game_session_canonical_account_member_repair_operation WHERE transition_id = id)
       AND NOT EXISTS (SELECT 1 FROM game_session_region_timeline_preparation WHERE transition_id = id)) THEN
     RAISE EXCEPTION 'Original NEW negative terminal lost complete attributable cleanup sources' USING ERRCODE = '23514';

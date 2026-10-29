@@ -622,6 +622,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
               transaction.fetchOne(
                   "SELECT r.retirement_operation_id FROM game_session_canonical_issuer_binding_local_retirement r"
                       + " JOIN game_session_canonical_issuer_binding_local_release_operation release ON release.operation_id = r.release_operation_id"
+                      + " JOIN "
+                      + ISSUER_OBLIGATION
+                      + " obligation ON obligation.transition_id = release.transition_id"
+                      + " AND obligation.local_release_operation_id = release.operation_id"
+                      + " AND obligation.status = 'RELEASED' AND obligation.binding_ref = release.binding_ref"
+                      + " AND obligation.reservation_id = release.reservation_id"
+                      + " AND obligation.inventory_revision = release.completion_inventory_revision"
                       + " WHERE release.transition_id = ? AND release.orphan_cleanup_id = ? AND release.status = 'RELEASED' AND r.status = 'RETIRED'",
                   transitionId,
                   source.orphanCleanupId());
@@ -656,7 +663,19 @@ public final class CanonicalGameplayBindingInventoryRepository {
                   transitionId,
                   decimal(prior)),
               "Original NEW cleanup lost its terminal source");
-          advanceOriginalNewAbandonmentRevision(transaction, transitionId, prior, next);
+          // Completed followup obligations retain their original evidence and revisions.
+          // Only the mutable inventory/reservation snapshots follow this terminal clock edge.
+          for (String table : List.of(INVENTORY, RESERVATION)) {
+            requireOne(
+                transaction.execute(
+                    "UPDATE "
+                        + table
+                        + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+                    decimal(next),
+                    transitionId,
+                    decimal(prior)),
+                "Original NEW completion lost its exact inventory or reservation");
+          }
           requireOne(
               transaction.execute(
                   "UPDATE "
