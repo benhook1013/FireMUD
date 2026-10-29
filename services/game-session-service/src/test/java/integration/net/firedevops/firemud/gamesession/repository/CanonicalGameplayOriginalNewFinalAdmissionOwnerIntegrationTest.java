@@ -26,6 +26,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
@@ -138,8 +139,6 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     decision = fixture.originalPreparedDecisionWithControlledAccountLease();
     installation = candidateOwner(inventory).installOnce(decision);
     fixture.acknowledgeOriginalIssuer();
-    new CanonicalGameplayAccountMemberRepairOwner(fixture.dsl(), ownerClient, catalog)
-        .repair(fixture.transitionId());
   }
 
   @AfterEach
@@ -159,6 +158,40 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
   @Test
   void sameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows() throws Exception {
+    repairAccountMember();
+    assertSameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows();
+  }
+
+  @Test
+  void alreadyPresentAccountProjectionFinalizesAndReadsWithItsOriginalRevision() throws Exception {
+    var prepared = inventory.readProvisionalCasEvidence(fixture.transitionId());
+    String member = CanonicalGameplayAccountIndexMember.of(prepared.candidate()).value();
+    byte[] key = ascii("session:game:index:account:" + decision.candidate().accountId());
+    assertThat(admin.sadd(key, ascii(member))).isEqualTo(1L);
+    assertThat(admin.sismember(key, ascii(member))).isTrue();
+    var projection = inventory.markCandidateAccountIndexPresent(prepared, member);
+    repairAccountMember();
+    var repair =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT original_projection_state, original_projection_member,"
+                    + " original_projection_inventory_revision FROM"
+                    + " game_session_canonical_account_member_repair_operation WHERE transition_id = ?",
+                fixture.transitionId());
+    assertThat(repair.get("original_projection_state", String.class))
+        .isEqualTo("PRESENT_AWAITING_COVERAGE");
+    assertThat(repair.get("original_projection_member", String.class)).isEqualTo(member);
+    assertThat(
+            repair
+                .get("original_projection_inventory_revision", java.math.BigDecimal.class)
+                .toBigIntegerExact())
+        .isEqualTo(projection.projectionInventoryRevision());
+    assertSameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows();
+  }
+
+  private void assertSameNativeCandidateFinalizesCommitsReadsAndRecoversExactTimesAndRows()
+      throws Exception {
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     // World canonical region identity and its operational runtime projection are distinct.
@@ -499,6 +532,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   @Test
   void genuineAccountAndIssuerAcknowledgementsCannotSubstituteForMissingRegionAcknowledgement()
       throws Exception {
+    repairAccountMember();
     String rows = sqlImage();
     Map<String, String> physical = physicalImage();
     assertThatThrownBy(() -> inventory.readOriginalNewFinalAdmissionSource(decision))
@@ -516,6 +550,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   @Test
   void missingOrChangedIndexesAndBarriersNeverRecreateCommittedPostimagesOrExtendTimes()
       throws Exception {
+    repairAccountMember();
     bridge();
     var accountOpen = controlledAccountOpen();
     var issuerOpen = issuerOpen();
@@ -579,6 +614,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   @Test
   void provisionalFinalCasRefusesMissingIndexesAndChangedBarriersWithoutAdmission()
       throws Exception {
+    repairAccountMember();
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     var accountOpen = controlledAccountOpen();
@@ -630,6 +666,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
   @Test
   void retainedRevisionAdvanceAcrossPhysicalReadIsUnavailableAndRetryCanRead() throws Exception {
+    repairAccountMember();
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     var accountOpen = controlledAccountOpen();
@@ -698,6 +735,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
   @Test
   void changedPersistedSessionCannotRecoverAgainstTheActualCommittedReceipt() throws Exception {
+    repairAccountMember();
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     var accountOpen = controlledAccountOpen();
@@ -762,6 +800,11 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       assertThat(admin.get(ascii(installation.sessionKey())))
           .containsExactly(actual.exactCanonicalBytes());
     }
+  }
+
+  private void repairAccountMember() {
+    new CanonicalGameplayAccountMemberRepairOwner(fixture.dsl(), ownerClient, catalog)
+        .repair(fixture.transitionId());
   }
 
   private void bridge() {

@@ -74,6 +74,12 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       fail(observer, Status.FAILED_PRECONDITION);
       return;
     }
+    if (request == null
+        || request.getSerializedSize()
+            > AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    }
     final AccountGameplayAdmissionNeverAdmittedGrpcCodec.DecisionRequest selector;
     try {
       selector = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request);
@@ -86,6 +92,9 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       }
     } catch (IllegalArgumentException malformed) {
       fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    } catch (RuntimeException unexpectedParserFailure) {
+      fail(observer, Status.INTERNAL);
       return;
     }
     if (closureOwner == null) {
