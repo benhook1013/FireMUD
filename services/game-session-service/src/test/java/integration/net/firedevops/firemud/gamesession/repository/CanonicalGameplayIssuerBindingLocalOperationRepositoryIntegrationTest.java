@@ -32,9 +32,12 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -562,10 +565,16 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     var anchor =
         initialCoverageOwner(dsl, () -> state)
             .completeInitialBootstrap(intent.operationId(), intent.requestId());
+    // This historical phase has no V1038.5 membership table. Adapt only its slot-count read;
+    // registration still uses the actual owner and all enabled old-schema guards. This does not
+    // qualify the new membership gate before that schema exists.
+    AtomicInteger oldPhaseSlotCountSubstitutions = new AtomicInteger();
     var local =
-        new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, () -> state)
+        new CanonicalGameplayIssuerBindingLocalOperationRepository(
+                preMembershipLocalProducer(dsl, oldPhaseSlotCountSubstitutions), () -> state)
             .beginOrResumeOrdinaryNew(
                 request("migration-request", "migration-transition", identity("migration")));
+    assertThat(oldPhaseSlotCountSubstitutions.get()).isEqualTo(1);
     UUID committedId = UUID.randomUUID();
     UUID pendingId = UUID.randomUUID();
     UUID successor = UUID.randomUUID();
@@ -639,6 +648,11 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     migrateRemaining(schema);
     assertThat(
             dsl.fetch(
+                    "SELECT operation_id FROM game_session_canonical_issuer_current_local_operation")
+                .getValues(0, UUID.class))
+        .containsExactly(local.operationId());
+    assertThat(
+            dsl.fetch(
                     "SELECT (to_jsonb(mutation) - 'bootstrap_operation_id')::text"
                         + " FROM game_session_canonical_issuer_partition_mutation mutation ORDER BY mutation_id")
                 .getValues(0, String.class))
@@ -695,6 +709,40 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                 .getValues("definition", String.class))
         .hasSize(2)
         .allSatisfy(definition -> assertThat(definition).contains("bootstrap_operation_id"));
+  }
+
+  private static DSLContext preMembershipLocalProducer(
+      DSLContext dsl, AtomicInteger substitutions) {
+    String currentSlotCount =
+        "SELECT count(*) FROM game_session_canonical_issuer_current_local_operation membership"
+            + " JOIN game_session_canonical_issuer_binding_local_operation operation"
+            + " ON operation.operation_id = membership.operation_id"
+            + " WHERE membership.issuer_id = ? AND membership.anchor_bootstrap_operation_id = ?"
+            + " AND membership.partition_id = ?";
+    String oldSlotCount =
+        "SELECT count(*) FROM game_session_canonical_issuer_binding_local_operation operation"
+            + " WHERE operation.issuer_id = ? AND operation.anchor_bootstrap_operation_id = ?"
+            + " AND operation.partition_id = ?"
+            + " AND NOT EXISTS (SELECT 1 FROM game_session_canonical_issuer_binding_local_retirement retirement"
+            + " WHERE retirement.original_local_operation_id = operation.operation_id"
+            + " AND retirement.status = 'RETIRED')";
+    var configuration = dsl.configuration().derive();
+    configuration.set(
+        new DefaultExecuteListenerProvider(
+            new DefaultExecuteListener() {
+              @Override
+              public void renderEnd(ExecuteContext context) {
+                String sql = context.sql();
+                if (currentSlotCount.equals(sql)) {
+                  substitutions.incrementAndGet();
+                  context.sql(oldSlotCount);
+                } else if (sql != null
+                    && sql.contains("game_session_canonical_issuer_current_local_operation")) {
+                  throw new AssertionError("Unexpected membership read in the pre-V1038.5 producer");
+                }
+              }
+            }));
+    return DSL.using(configuration);
   }
 
   private static void insertPreLineageMutation(

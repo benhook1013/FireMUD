@@ -29,6 +29,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
       "game_session_canonical_issuer_binding_local_operation";
   private static final String BOOTSTRAP_OPERATION =
       "game_session_canonical_issuer_bootstrap_member_operation";
+  private static final String CURRENT_LOCAL_OPERATION =
+      "game_session_canonical_issuer_current_local_operation";
   private static final String RESERVATION = "game_session_canonical_issuer_partition_reservation";
   private static final String INVENTORY = "game_session_canonical_gameplay_binding_inventory";
   private static final String TRANSITION = "game_session_canonical_binding_transition";
@@ -156,13 +158,15 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     List<Record> operationRows =
         transaction.fetch(
             "SELECT operation.* FROM "
+                + CURRENT_LOCAL_OPERATION
+                + " membership JOIN "
                 + LOCAL_OPERATION
-                + " operation WHERE operation.issuer_id = ? AND operation.partition_id = ? AND NOT EXISTS (SELECT 1 FROM "
-                + "game_session_canonical_issuer_binding_local_retirement retirement"
-                + " WHERE retirement.original_local_operation_id = operation.operation_id"
-                + " AND retirement.status = 'RETIRED')"
+                + " operation ON operation.operation_id = membership.operation_id"
+                + " WHERE membership.issuer_id = ? AND membership.anchor_bootstrap_operation_id = ?"
+                + " AND membership.partition_id = ?"
                 + " ORDER BY operation.operation_fence, operation.operation_id",
             ISSUER,
+            anchor.bootstrapOperationId(),
             targetPartition);
     PartitionSources sources =
         readPartitionSources(transaction, operationRows, anchor, targetPartition);
@@ -177,7 +181,7 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     proofsByPartition.put(targetPartition, targetBaseline);
 
     int partitionLocalOperationCount = 0;
-    BigInteger localAggregateCapacity = readIssuerLocalCapacity(transaction);
+    BigInteger localAggregateCapacity = readIssuerLocalCapacity(transaction, anchor);
     BigInteger localPartitionCapacity = BigInteger.ZERO;
     boolean foundTarget = false;
     for (Record row : operationRows) {
@@ -241,8 +245,8 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
             "A post-baseline issuer operation reuses an installed reservation identity");
       }
     }
-    verifyCurrentReservationAccounting(transaction, anchor, baselineReservationIds.size());
-    verifyRetirementAccounting(transaction);
+    verifyCurrentReservationAccounting(transaction, anchor);
+    verifyRetirementAccounting(transaction, anchor);
 
     BigInteger aggregateCapacity = anchor.aggregateCountedCapacity().add(localAggregateCapacity);
     BigInteger aggregateBound = anchor.partitionCount().multiply(anchor.partitionCapacity());
@@ -380,19 +384,22 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     return baseline;
   }
 
-  private static BigInteger readIssuerLocalCapacity(DSLContext transaction) {
+  private static BigInteger readIssuerLocalCapacity(
+      DSLContext transaction, CanonicalGameplayIssuerInstalledAnchor anchor) {
     Record row =
         transaction.fetchOne(
             "SELECT COUNT(*) AS count FROM "
+                + CURRENT_LOCAL_OPERATION
+                + " membership JOIN "
                 + LOCAL_OPERATION
-                + " operation JOIN "
+                + " operation ON operation.operation_id = membership.operation_id JOIN "
                 + RESERVATION
                 + " reservation ON reservation.reservation_id = operation.reservation_id"
                 + " AND reservation.issuer_id = operation.issuer_id"
-                + " WHERE operation.issuer_id = ? AND reservation.lifecycle <> 'RELEASED'"
-                + " AND NOT EXISTS (SELECT 1 FROM game_session_canonical_issuer_binding_local_retirement retirement"
-                + " WHERE retirement.original_local_operation_id = operation.operation_id AND retirement.status = 'RETIRED')",
-            ISSUER);
+                + " WHERE membership.issuer_id = ? AND membership.anchor_bootstrap_operation_id = ?"
+                + " AND reservation.lifecycle <> 'RELEASED'",
+            ISSUER,
+            anchor.bootstrapOperationId());
     if (row == null) throw unavailable("The issuer-wide local capacity count is unavailable");
     return number(row, "count");
   }
@@ -868,68 +875,83 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     return reservationIds;
   }
 
-  private static BigInteger verifyCurrentReservationAccounting(
-      DSLContext transaction,
-      CanonicalGameplayIssuerInstalledAnchor anchor,
-      int baselineReservationCount) {
-    Record localCountRow =
+  private static void verifyCurrentReservationAccounting(
+      DSLContext transaction, CanonicalGameplayIssuerInstalledAnchor anchor) {
+    // SQL write-boundary guards maintain this complete current set. Retained original operations
+    // and completed retirements remain immutable provenance, not an ordinary projection inventory.
+    Record invalidMembership =
         transaction.fetchOne(
-            "SELECT COUNT(*) AS count FROM " + LOCAL_OPERATION + " WHERE issuer_id = ?", ISSUER);
-    Record reservationCountRow =
-        transaction.fetchOne(
-            "SELECT COUNT(*) AS count FROM " + RESERVATION + " WHERE issuer_id = ?", ISSUER);
-    Record orphanCountRow =
+            "SELECT COUNT(*) AS count FROM "
+                + CURRENT_LOCAL_OPERATION
+                + " membership LEFT JOIN "
+                + LOCAL_OPERATION
+                + " operation ON operation.operation_id = membership.operation_id LEFT JOIN "
+                + RESERVATION
+                + " reservation ON reservation.reservation_id = operation.reservation_id"
+                + " WHERE membership.issuer_id = ? AND (operation.operation_id IS NULL"
+                + " OR reservation.reservation_id IS NULL OR operation.issuer_id <> membership.issuer_id"
+                + " OR operation.anchor_bootstrap_operation_id <> membership.anchor_bootstrap_operation_id"
+                + " OR membership.anchor_bootstrap_operation_id <> ?"
+                + " OR operation.partition_id <> membership.partition_id"
+                + " OR reservation.issuer_id <> membership.issuer_id"
+                + " OR reservation.partition_id <> membership.partition_id"
+                + " OR reservation.transition_id <> operation.transition_id"
+                + " OR reservation.binding_ref <> operation.binding_ref"
+                + " OR EXISTS (SELECT 1 FROM "
+                + BOOTSTRAP_OPERATION
+                + " bootstrap WHERE bootstrap.bootstrap_operation_id = ?"
+                + " AND bootstrap.reservation_id = reservation.reservation_id))",
+            ISSUER,
+            anchor.bootstrapOperationId(),
+            anchor.bootstrapOperationId());
+    Record orphanReservations =
         transaction.fetchOne(
             "SELECT COUNT(*) AS count FROM "
                 + RESERVATION
-                + " reservation WHERE reservation.issuer_id = ? AND NOT EXISTS (SELECT 1 FROM "
+                + " reservation WHERE reservation.issuer_id = ? AND reservation.lifecycle <> 'RELEASED'"
+                + " AND NOT EXISTS (SELECT 1 FROM "
                 + BOOTSTRAP_OPERATION
                 + " bootstrap WHERE bootstrap.bootstrap_operation_id = ?"
+                + " AND bootstrap.issuer_id = reservation.issuer_id"
                 + " AND bootstrap.reservation_id = reservation.reservation_id)"
                 + " AND NOT EXISTS (SELECT 1 FROM "
                 + LOCAL_OPERATION
-                + " operation WHERE operation.issuer_id = reservation.issuer_id"
-                + " AND operation.reservation_id = reservation.reservation_id)",
+                + " operation JOIN "
+                + CURRENT_LOCAL_OPERATION
+                + " membership ON membership.operation_id = operation.operation_id"
+                + " WHERE operation.reservation_id = reservation.reservation_id"
+                + " AND membership.issuer_id = reservation.issuer_id"
+                + " AND membership.anchor_bootstrap_operation_id = ?)",
             ISSUER,
+            anchor.bootstrapOperationId(),
             anchor.bootstrapOperationId());
-    Record missingCountRow =
-        transaction.fetchOne(
-            "SELECT COUNT(*) AS count FROM "
-                + LOCAL_OPERATION
-                + " operation WHERE operation.issuer_id = ? AND NOT EXISTS (SELECT 1 FROM "
-                + RESERVATION
-                + " reservation WHERE reservation.issuer_id = operation.issuer_id"
-                + " AND reservation.reservation_id = operation.reservation_id)",
-            ISSUER);
-    if (localCountRow == null
-        || reservationCountRow == null
-        || orphanCountRow == null
-        || missingCountRow == null) {
-      throw unavailable("The complete retained issuer reservation accounting is unavailable");
-    }
-    BigInteger localCount = number(localCountRow, "count");
-    BigInteger reservationCount = number(reservationCountRow, "count");
-    if (number(orphanCountRow, "count").signum() != 0
-        || number(missingCountRow, "count").signum() != 0
-        || !reservationCount.equals(localCount.add(BigInteger.valueOf(baselineReservationCount)))) {
+    if (invalidMembership == null
+        || orphanReservations == null
+        || number(invalidMembership, "count").signum() != 0
+        || number(orphanReservations, "count").signum() != 0) {
       throw unavailable(
-          "Durable issuer reservations differ from full bootstrap and local SQL history");
+          "Current issuer reservations differ from their exact bootstrap or local owners");
     }
-    return reservationCount;
   }
 
-  private static void verifyRetirementAccounting(DSLContext transaction) {
+  private static void verifyRetirementAccounting(
+      DSLContext transaction, CanonicalGameplayIssuerInstalledAnchor anchor) {
     Record invalidRows =
         transaction.fetchOne(
-            "SELECT COUNT(*) AS count FROM game_session_canonical_issuer_binding_local_retirement retirement"
+            "SELECT COUNT(*) AS count FROM game_session_canonical_issuer_partition_mutation_head head"
+                + " JOIN game_session_canonical_issuer_partition_mutation mutation"
+                + " ON mutation.mutation_id = head.pending_mutation_id"
+                + " AND mutation.issuer_id = head.issuer_id"
+                + " AND mutation.bootstrap_operation_id = head.bootstrap_operation_id"
+                + " AND mutation.partition_id = head.partition_id"
+                + " LEFT JOIN game_session_canonical_issuer_binding_local_retirement retirement"
+                + " ON retirement.retirement_operation_id = mutation.owner_operation_id"
                 + " LEFT JOIN "
                 + LOCAL_OPERATION
                 + " original ON original.operation_id = retirement.original_local_operation_id"
                 + " LEFT JOIN "
                 + ISSUER_LOCAL_RELEASE
                 + " release ON release.operation_id = retirement.release_operation_id"
-                + " LEFT JOIN game_session_canonical_issuer_partition_mutation mutation"
-                + " ON mutation.mutation_id = retirement.physical_mutation_id"
                 + " LEFT JOIN "
                 + RESERVATION
                 + " reservation ON reservation.reservation_id = retirement.reservation_id"
@@ -950,7 +972,13 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
                 + " LEFT JOIN "
                 + REGION_OBLIGATION
                 + " region_obligation ON region_obligation.transition_id = retirement.transition_id"
-                + " WHERE retirement.issuer_id = ? AND (original.operation_id IS NULL OR release.operation_id IS NULL"
+                + " WHERE head.issuer_id = ? AND head.bootstrap_operation_id = ?"
+                + " AND mutation.mutation_kind = 'RETIRE' AND (retirement.retirement_operation_id IS NULL"
+                + " OR retirement.issuer_id <> head.issuer_id OR retirement.partition_id <> head.partition_id"
+                + " OR retirement.physical_mutation_id <> mutation.mutation_id"
+                + " OR retirement.status <> 'PENDING_PHYSICAL_PROOF'"
+                + " OR head.current_revision <> mutation.expected_revision"
+                + " OR original.operation_id IS NULL OR release.operation_id IS NULL"
                 + " OR mutation.mutation_id IS NULL OR original.reservation_id <> retirement.reservation_id"
                 + " OR original.binding_ref <> retirement.binding_ref"
                 + " OR release.status <> 'RELEASED' OR release.original_local_operation_id <> retirement.original_local_operation_id"
@@ -966,8 +994,6 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
                 + " OR mutation.successor_revision <> retirement.successor_revision"
                 + " OR mutation.exact_intended_change_bytes <> retirement.exact_intended_change_bytes"
                 + " OR mutation.exact_intended_change_digest <> retirement.exact_intended_change_digest"
-                + " OR (retirement.status = 'RETIRED' AND (mutation.status <> 'COMMITTED'"
-                + " OR mutation.exact_readback_field_set_bytes <> retirement.exact_absence_readback_field_set_bytes))"
                 + " OR (retirement.status = 'PENDING_PHYSICAL_PROOF' AND (mutation.status <> 'PENDING_PHYSICAL_PROOF'"
                 + " OR reservation.reservation_id IS NULL OR reservation.lifecycle <> 'RELEASED'"
                 + " OR reservation.inventory_revision <> retirement.release_completion_inventory_revision"
@@ -986,10 +1012,11 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
                 + " OR account_obligation.inventory_revision <> retirement.release_completion_inventory_revision"
                 + " OR region_obligation.transition_id IS NULL"
                 + " OR region_obligation.inventory_revision <> retirement.release_completion_inventory_revision)))",
-            ISSUER);
+            ISSUER,
+            anchor.bootstrapOperationId());
     if (invalidRows == null || number(invalidRows, "count").signum() != 0) {
       throw unavailable(
-          "A retained physical retirement does not match its exact SQL release and mutation history");
+          "A pending physical retirement does not match its exact SQL release and mutation history");
     }
   }
 
