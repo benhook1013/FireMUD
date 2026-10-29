@@ -196,10 +196,14 @@ Entry format:
   - Expected pattern: expose the controlling grant decision, timestamp, actor, original reason and baseline beside its additional-result count through an existing read-only controller command, so a worker can distinguish lifetime history from the current allowance without guessing. This is a tooling suggestion; existing counting and authorization rules stay unchanged.
   - Reconsideration trigger: when an existing read-only controller command exposes the controlling grant decision, timestamp, rationale and baseline beside the remaining allowance, verify it against separate lifetime and current allowances and revisit the manual queue readback.
 
+<a id="validation-none-whitespace-checks"></a>
+
 - `2026-10-17`: A validation allowance of NONE includes whitespace checks.
   - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
+  - Recurrence (`2026-10-27`): two documentation helpers assigned validation `NONE` nevertheless ran scoped `git diff --check` and disclosed it; no substantive gate or semantic proof was claimed. Main retained the named consolidated checks.
+  - Recurrence (`2026-10-29`): a tracker helper embedded the whitespace check in a status command and disclosed it. Its separate unsupported R948 artifact-absence claim was corrected from the retained results and remains recorded in the artifact-naming observation below.
 
 - `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
   - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
@@ -469,11 +473,6 @@ Entry format:
   - Consequence and correction: fresh-schema tests passed while the proposed migration order was unsuitable for an existing parent deployment. Move only these new, unapplied migrations to V1012/V1013, preserve all parent migration names/checksums, and prove populated upgrade plus the canonical frontier check against the published parent. No out-of-order execution or host change is authorized.
   - Outcome: R768 passes the actual-parent frontier guard, jOOQ generation and all 26 selected PostgreSQL/Redis cases with the V1012→V1013 upgrade; integration static/format and documentation checks pass, and all five observed containers are independently absent. Replacement hosted CI is still required.
 
-- `2026-10-27`: Keep helper validation inside its closed allowlist
-  - Context: two bounded documentation helpers were assigned validation `NONE`.
-  - Observation: both nevertheless ran scoped `git diff --check` and disclosed it. No substantive gate or semantic proof was claimed; this repeats the existing 2026-10-17 closed-allowlist observation.
-  - Expected pattern: Main retains ownership of consolidated checks, and helpers run only explicitly named validation. This incident did not widen helper authority.
-
 - `2026-10-27`: Qualify compact SpotBugs launch inputs with actual task execution
   - Context: local final-admission qualification R783 could not launch Game Session SpotBugs Main because the Java command exceeded the operating system argument-size limit. R785 confirmed auxiliary-classpath file mode was active but still could not launch this task.
   - Observation: sourcepath now retains non-generated source roots instead of expanding them to individual paths. The exact oversized argv item was not independently measured, so the original failure does not establish a general operating-system limit.
@@ -549,10 +548,10 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Expected pattern: Distinguish tool capability and additional-round authority from authority to bypass a configured limit.
   - Outcome: The running attempt is retained to completion with its findings; further override requests are stopped and existing policy and grants remain unchanged.
 
-- `2026-10-29`: Keep status inspection separate from unassigned validation
-  - Context: a bounded tracker helper was explicitly assigned validation `NONE`, repeating the closed-allowlist boundary recorded on 2026-10-27.
-  - Observation: the helper embedded `git diff --check` in a status command and disclosed it. Its artifact search also missed uppercase `R948` logs and produced an unsupported absence statement, which Main replaced after reading the retained results.
-  - Expected pattern: run only the named validation commands, and inspect actual artifact naming before asserting missing evidence. Main owns consolidated proof; an extra whitespace check supplies no semantic validation credit.
+- `2026-10-29`: Inspect artifact naming before declaring proof missing
+  - Context: a bounded tracker helper searched for R948 validation artifacts.
+  - Observation: its search missed uppercase `R948` logs and produced an unsupported absence statement, which Main corrected after reading the retained results.
+  - Expected pattern: inspect actual artifact naming and retained results before asserting missing evidence. The separate validation-allowance recurrence is retained with the [original closed-allowlist observation](#validation-none-whitespace-checks).
 
 - `2026-10-29`: Malformed source-refresh IDs missing the `review_refresh_` prefix returned unrelated startup-binding advice. The original full receipt IDs recovered the existing observations without another fetch. FireController owner reports client-only fix `18cf3b4d` now identifies `refresh_id`, its required prefix/format and retained-receipt recovery; an existing MCP process keeps its prior binary until normal reconnection. Preserve exact full handles in delegation messages rather than abbreviating tool arguments.
 
@@ -666,11 +665,6 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Context: The shared observer read 30 successful jobs for #3315 and inferred that the still-running workflow and pending gate were inconsistent.
   - Observation: The GitHub connector returned only the first page. A bounded API read with per_page=100 showed 38 total jobs, including the still-running Game Session checks. Root initially repeated the incomplete inventory, then challenged pagination and corrected the User and Overseer; no callback defect or CI repair followed from the partial read.
   - Expected pattern: Retain total_count, returned count and continuation evidence before declaring a workflow's job inventory complete. A full page is not evidence that no more jobs exist.
-- `2026-10-30`: Cross-reference retained helper-validation recurrences
-  - Context: The 2026-10-17 closed-validation-allowlist observation is the original process lesson; the 2026-10-27 and helper-validation portion of 2026-10-29 entries retain subsequent occurrences.
-  - Observation: These are recurrences of that same lesson, rather than distinct validation policies. Their dated evidence remains intact. The uppercase `R948` artifact-search observation is a separate lesson.
-  - Expected pattern: Apply the closed validation allowlist from the delegation workflow and preserve recurrence attribution without rewriting historical observations.
-
 - `2026-10-30`: An observed terminal CI result still needs its owning handoff
   - Context: The shared observer first saw #3327's exact-head Runtime and Smoke success around 03:40 NZDT, after the provider jobs finished by 03:38:37.
   - Observation: It treated that result as already known and unchanged without handing it to the owning orchestrator. Root retained a pending state until a targeted inquiry around 04:25, delaying maintenance readiness by about 45 minutes. This recurs with the retained observer-priority lesson from 2026-10-27; it was reporting delay, not provider or controller latency.
