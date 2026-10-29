@@ -95,11 +95,19 @@ public final class AccountStartSessionAdmissionProtectionSettlementService {
       observed = gameSessionClient.read(readInput);
     } catch (StatusRuntimeException failure) {
       throw dependencyFailure(failure);
-    } catch (IllegalArgumentException | IllegalStateException malformed) {
+    } catch (IllegalArgumentException malformed) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Game Session admission terminal response is malformed")
           .withCause(malformed)
           .asRuntimeException();
+    } catch (IllegalStateException failure) {
+      Status status =
+          failure.getCause() instanceof IllegalArgumentException
+              ? Status.FAILED_PRECONDITION.withDescription(
+                  "Game Session admission terminal response is malformed")
+              : Status.UNAVAILABLE.withDescription(
+                  "Game Session admission terminal reader is unavailable");
+      throw status.withCause(failure).asRuntimeException();
     }
     requireNoAmbientTransaction();
     requireExactOwnerRead(readInput, observed);

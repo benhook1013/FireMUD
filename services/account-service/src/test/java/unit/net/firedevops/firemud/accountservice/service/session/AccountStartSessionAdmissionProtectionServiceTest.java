@@ -358,7 +358,9 @@ class AccountStartSessionAdmissionProtectionServiceTest {
     for (RuntimeException malformed :
         List.of(
             new IllegalArgumentException("malformed direct owner read"),
-            new IllegalStateException("malformed decoded owner read"))) {
+            new IllegalStateException(
+                "malformed decoded owner read",
+                new IllegalArgumentException("invalid wire response")))) {
       var invalid = new SettlementHarness();
       when(invalid.repository.findHistoricalExact(
               fixture.protection().accountProtectionId(),
@@ -382,6 +384,32 @@ class AccountStartSessionAdmissionProtectionServiceTest {
       assertThat(failure.getCause()).isSameAs(malformed);
       verify(invalid.repository, never()).settleExact(any());
     }
+
+    var unavailable = new SettlementHarness();
+    when(unavailable.repository.findHistoricalExact(
+            fixture.protection().accountProtectionId(),
+            fixture.protection().accountProtectionFence()))
+        .thenReturn(Optional.of(new StoredProtection(fixture.protection(), 89L)));
+    when(unavailable.repository.findSettlementExact(
+            fixture.protection().accountProtectionId(),
+            fixture.protection().accountProtectionFence()))
+        .thenReturn(Optional.empty());
+    var localFailure = new IllegalStateException("closed local dependency reader");
+    doThrow(localFailure).when(unavailable.client).read(any());
+    var localStatusFailure =
+        statusFailure(
+            () ->
+                withGameSessionPeer(
+                    () ->
+                        unavailable.service.settle(
+                            fixture.protection().accountProtectionId(),
+                            fixture.protection().accountProtectionFence())));
+    assertThat(Status.fromThrowable(localStatusFailure).getCode())
+        .isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(Status.fromThrowable(localStatusFailure).getDescription())
+        .isEqualTo("Game Session admission terminal reader is unavailable");
+    assertThat(localStatusFailure.getCause()).isSameAs(localFailure);
+    verify(unavailable.repository, never()).settleExact(any());
 
     for (Status.Code code : Status.Code.values()) {
       var dependency = new SettlementHarness();
