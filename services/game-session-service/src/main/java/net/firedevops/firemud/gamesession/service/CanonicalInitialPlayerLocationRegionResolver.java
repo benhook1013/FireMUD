@@ -47,6 +47,7 @@ public final class CanonicalInitialPlayerLocationRegionResolver {
         || !lifecycle.getCaptureUuid().equals(current.captureId().toString())
         || !lifecycle.getGraphSha256().equals(current.graphSha256())
         || !lifecycle.getPreparationInputDigest().equals(current.preparationInputDigest())
+        || !canonicalRegionId.equals(current.canonicalRegionId())
         || !observed.getOperationalRegionUuid().equals(current.operationalRegionId().toString())) {
       throw new IllegalStateException(
           "World initial-location region consequence changed during lifecycle revalidation");
