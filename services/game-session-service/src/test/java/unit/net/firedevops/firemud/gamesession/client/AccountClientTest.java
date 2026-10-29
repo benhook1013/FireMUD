@@ -40,6 +40,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
+  private static final String ACCOUNT_UUID = "00000000-0000-4000-8000-000000000042";
 
   @Test
   void authenticateReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
@@ -200,6 +201,103 @@ class AccountClientTest {
         .isNull();
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "42",
+        "not-a-uuid",
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-00000000000A",
+        " 00000000-0000-4000-8000-000000000042"
+      })
+  void runtimeReadersRejectNonCanonicalAccountsBeforeCallingAccount(String invalidAccount)
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    AccountClient client = newClient(stub);
+    assertThat(
+            client
+                .getTenantMembershipForRuntime(invalidAccount, "7", "request-1")
+                .getError()
+                .getCode())
+        .isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(
+            client
+                .getRealmAccessGrantForRuntime(invalidAccount, "7", "world", "realm", "request-1")
+                .getError()
+                .getCode())
+        .isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    org.mockito.Mockito.verifyNoInteractions(stub);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "42",
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-000000000043"
+      })
+  void runtimeMembershipRejectsUncorrelatedAccountResult(String returnedAccount) throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId(returnedAccount)
+                .setTenantId("7")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(true)
+                .build());
+    AccountClient client = newClient(stub);
+    assertThat(
+            client
+                .getTenantMembershipForRuntime(ACCOUNT_UUID, "7", "request-1")
+                .getError()
+                .getCode())
+        .isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    verify(stub, times(1))
+        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+  }
+
+  @Test
+  void realmGrantRequiresExactAccountTenantWorldAndRealmResult() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    var exact =
+        GetRealmAccessGrantForRuntimeResponse.newBuilder()
+            .setAccountId(ACCOUNT_UUID)
+            .setTenantId("7")
+            .setWorldSlug("world")
+            .setRealmSlug("realm")
+            .setGranted(true)
+            .setGrantVersion(4L)
+            .build();
+    AccountClient client = newClient(stub);
+    for (var result :
+        java.util.List.of(
+            exact.toBuilder().setAccountId("42").build(),
+            exact.toBuilder().setAccountId("00000000-0000-4000-8000-000000000043").build(),
+            exact.toBuilder().setTenantId("8").build(),
+            exact.toBuilder().setWorldSlug("other").build(),
+            exact.toBuilder().setRealmSlug("other").build())) {
+      when(stub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+          .thenReturn(result);
+      assertThat(
+              client
+                  .getRealmAccessGrantForRuntime(ACCOUNT_UUID, "7", "world", "realm", "request-1")
+                  .getError()
+                  .getCode())
+          .isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    }
+    when(stub.getRealmAccessGrantForRuntime(any(GetRealmAccessGrantForRuntimeRequest.class)))
+        .thenReturn(exact);
+    assertThat(
+            client.getRealmAccessGrantForRuntime(ACCOUNT_UUID, "7", "world", "realm", "request-1"))
+        .isEqualTo(exact);
+  }
+
   @Test
   void runtimeMembershipCallerUsesCanonicalAccountTenantRequest() throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub stub =
@@ -207,7 +305,7 @@ class AccountClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId("42")
+            .setAccountId(ACCOUNT_UUID)
             .setTenantId("7")
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
@@ -219,12 +317,12 @@ class AccountClientTest {
     AccountClient client = newClient(stub);
 
     GetTenantMembershipForRuntimeResponse actual =
-        client.getTenantMembershipForRuntime("42", "7", null);
+        client.getTenantMembershipForRuntime(ACCOUNT_UUID, "7", null);
 
     ArgumentCaptor<GetTenantMembershipForRuntimeRequest> captor =
         ArgumentCaptor.forClass(GetTenantMembershipForRuntimeRequest.class);
     verify(stub).getTenantMembershipForRuntime(captor.capture());
-    assertThat(captor.getValue().getAccountId()).isEqualTo("42");
+    assertThat(captor.getValue().getAccountId()).isEqualTo(ACCOUNT_UUID);
     assertThat(captor.getValue().getTenantId()).isEqualTo("7");
     assertThat(captor.getValue().getRequestId()).isEmpty();
     assertThat(actual).isEqualTo(expected);
@@ -233,7 +331,7 @@ class AccountClientTest {
   @Test
   void runtimeMembershipReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetTenantMembershipForRuntimeResponse response =
-        newClient(null).getTenantMembershipForRuntime("42", "7", "request-1");
+        newClient(null).getTenantMembershipForRuntime(ACCOUNT_UUID, "7", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
@@ -242,7 +340,8 @@ class AccountClientTest {
   @Test
   void realmAccessGrantReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetRealmAccessGrantForRuntimeResponse response =
-        newClient(null).getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+        newClient(null)
+            .getRealmAccessGrantForRuntime(ACCOUNT_UUID, "7", "world", "realm", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
@@ -257,7 +356,7 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId("42")
+            .setAccountId(ACCOUNT_UUID)
             .setTenantId("7")
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
@@ -269,7 +368,7 @@ class AccountClientTest {
         .thenReturn(expected);
 
     GetTenantMembershipForRuntimeResponse actual =
-        fixture.client().getTenantMembershipForRuntime("42", "7", "request-1");
+        fixture.client().getTenantMembershipForRuntime(ACCOUNT_UUID, "7", "request-1");
 
     assertThat(actual).isEqualTo(expected);
     verify(fixture.initialStub())
@@ -292,7 +391,7 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
     GetTenantMembershipForRuntimeResponse response =
-        fixture.client().getTenantMembershipForRuntime("42", "7", "request-1");
+        fixture.client().getTenantMembershipForRuntime(ACCOUNT_UUID, "7", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
@@ -349,7 +448,9 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
     GetRealmAccessGrantForRuntimeResponse response =
-        fixture.client().getRealmAccessGrantForRuntime("42", "7", "world", "realm", "request-1");
+        fixture
+            .client()
+            .getRealmAccessGrantForRuntime(ACCOUNT_UUID, "7", "world", "realm", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Realm grant authority unavailable");
@@ -371,7 +472,7 @@ class AccountClientTest {
     AccountClient client = newClient(stub, channelFactory);
 
     GetTenantMembershipForRuntimeResponse response =
-        client.getTenantMembershipForRuntime("42", "7", "request-1");
+        client.getTenantMembershipForRuntime(ACCOUNT_UUID, "7", "request-1");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");

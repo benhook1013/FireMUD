@@ -29,7 +29,7 @@ public class MailController {
   @PostMapping
   public ResponseEntity<ApiResponse<MailMessageDto>> sendMail(
       @Valid @RequestBody SendMailRequest request) {
-    if (!SessionContext.isCurrentAccount(request.senderAccountId())) {
+    if (!request.senderAccountId().equals(SessionContext.currentAccountUuidOrNull())) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Sender must match authenticated account");
     }

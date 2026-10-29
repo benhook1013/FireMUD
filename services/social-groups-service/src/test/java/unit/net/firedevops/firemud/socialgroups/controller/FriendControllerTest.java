@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -54,11 +55,14 @@ class FriendControllerTest {
 
   @Test
   void addFriendReturnsDto() throws Exception {
-    AddFriendRequest request = new AddFriendRequest(1L, 2L, 3L);
-    FriendLinkDto response = new FriendLinkDto(1L, 1L, 2L, 3L, "active", null);
+    AddFriendRequest request = new AddFriendRequest(1L, accountUuid(2L), accountUuid(3L));
+    FriendLinkDto response =
+        new FriendLinkDto(1L, 1L, accountUuid(2L), accountUuid(3L), "active", null);
     when(friendService.addFriend(request)).thenReturn(response);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             post("/friends")
@@ -67,17 +71,19 @@ class FriendControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value(2L));
+        .andExpect(jsonPath("$.data.accountId").value(accountUuid(2L)));
   }
 
   @Test
   void addFriendRejectsSelfLinkAsBadRequest() throws Exception {
-    AddFriendRequest request = new AddFriendRequest(1L, 2L, 2L);
+    AddFriendRequest request = new AddFriendRequest(1L, accountUuid(2L), accountUuid(2L));
     when(friendService.addFriend(request))
         .thenThrow(
             new IllegalArgumentException("Cannot add or remove your own account as a friend"));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             post("/friends")
@@ -93,8 +99,10 @@ class FriendControllerTest {
 
   @Test
   void addFriendRejectsZeroTenantIdBeforeAccessCheck() throws Exception {
-    AddFriendRequest request = new AddFriendRequest(0L, 2L, 3L);
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    AddFriendRequest request = new AddFriendRequest(0L, accountUuid(2L), accountUuid(3L));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
@@ -112,12 +120,14 @@ class FriendControllerTest {
 
   @Test
   void removeFriendReturnsSuccess() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
-            delete("/friends/3")
+            delete("/friends/10000000-0000-4000-8000-000000000003")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
@@ -125,17 +135,19 @@ class FriendControllerTest {
 
   @Test
   void removeFriendRejectsSelfLinkAsBadRequest() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     org.mockito.Mockito.doThrow(
             new IllegalArgumentException("Cannot add or remove your own account as a friend"))
         .when(friendService)
-        .removeFriend(1L, 2L, 2L);
+        .removeFriend(1L, accountUuid(2L), accountUuid(2L));
 
     mockMvc
         .perform(
-            delete("/friends/2")
+            delete("/friends/10000000-0000-4000-8000-000000000002")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
@@ -146,36 +158,38 @@ class FriendControllerTest {
 
   @Test
   void removeFriendRejectsMalformedFriendAccountIdBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
             delete("/friends/not-a-number")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("friendAccountId must be numeric"));
+        .andExpect(jsonPath("$.error.message").value("Malformed claim: friendAccountId"));
 
     verifyNoInteractions(friendService, socialAccessGuard);
   }
 
   @Test
   void getFriendReturnsCanonicalRosterEntry() throws Exception {
-    when(friendService.getFriend(1L, 2L, 3L))
+    when(friendService.getFriend(1L, accountUuid(2L), accountUuid(3L)))
         .thenReturn(
             java.util.Optional.of(
                 new FriendRosterEntryDto(
                     1,
                     7L,
                     1L,
-                    2L,
-                    3L,
+                    accountUuid(2L),
+                    accountUuid(3L),
                     "active",
                     java.time.Instant.parse("2026-04-10T01:02:03Z"),
                     new FriendPresenceDto(
-                        3L,
+                        accountUuid(3L),
                         true,
                         9L,
                         "SHARED",
@@ -190,35 +204,37 @@ class FriendControllerTest {
                         null,
                         null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
-            get("/friends/3")
+            get("/friends/10000000-0000-4000-8000-000000000003")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.friendLinkId").value(7L))
-        .andExpect(jsonPath("$.data.friendAccountId").value(3L))
+        .andExpect(jsonPath("$.data.friendAccountId").value(accountUuid(3L)))
         .andExpect(jsonPath("$.data.presence.characterName").value("Ben"));
   }
 
   @Test
   void getFriendByOrdinalReturnsCanonicalRosterEntry() throws Exception {
-    when(friendService.getFriendByOrdinal(1L, 2L, 1))
+    when(friendService.getFriendByOrdinal(1L, accountUuid(2L), 1))
         .thenReturn(
             java.util.Optional.of(
                 new FriendRosterEntryDto(
                     1,
                     7L,
                     1L,
-                    2L,
-                    3L,
+                    accountUuid(2L),
+                    accountUuid(3L),
                     "active",
                     java.time.Instant.parse("2026-04-10T01:02:03Z"),
                     new FriendPresenceDto(
-                        3L,
+                        accountUuid(3L),
                         true,
                         9L,
                         "SHARED",
@@ -233,28 +249,32 @@ class FriendControllerTest {
                         null,
                         null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             get("/friends/entry/1")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.ordinal").value(1))
-        .andExpect(jsonPath("$.data.friendAccountId").value(3L));
+        .andExpect(jsonPath("$.data.friendAccountId").value(accountUuid(3L)));
   }
 
   @Test
   void getFriendByOrdinalRejectsMalformedOrdinalBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
             get("/friends/entry/not-a-number")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
@@ -266,7 +286,9 @@ class FriendControllerTest {
   @Test
   void listFriendPresenceReturnsPresenceList() throws Exception {
     when(friendService.listFriendPresence(
-            1L, 2L, net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY))
+            1L,
+            accountUuid(2L),
+            net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY))
         .thenReturn(
             new net.firedevops.firemud.socialgroups.dto.FriendPresenceViewDto(
                 net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY,
@@ -274,7 +296,7 @@ class FriendControllerTest {
                 1,
                 List.of(
                     new FriendPresenceDto(
-                        3L,
+                        accountUuid(3L),
                         true,
                         9L,
                         "demo",
@@ -287,12 +309,14 @@ class FriendControllerTest {
                         null,
                         null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             get("/friends/presence")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .param("filter", "FRIENDS_ONLY")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
@@ -300,7 +324,7 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.data.filter").value("FRIENDS_ONLY"))
         .andExpect(jsonPath("$.data.totalCount").value(2))
         .andExpect(jsonPath("$.data.matchCount").value(1))
-        .andExpect(jsonPath("$.data.presences[0].friendAccountId").value(3L))
+        .andExpect(jsonPath("$.data.presences[0].friendAccountId").value(accountUuid(3L)))
         .andExpect(jsonPath("$.data.presences[0].online").value(true))
         .andExpect(jsonPath("$.data.presences[0].worldSlug").value("demo"))
         .andExpect(jsonPath("$.data.presences[0].realmSlug").value("production"));
@@ -308,15 +332,17 @@ class FriendControllerTest {
 
   @Test
   void getFriendPresencePolicyReturnsCanonicalPolicy() throws Exception {
-    when(friendService.getFriendPresencePolicy(1L, 2L))
+    when(friendService.getFriendPresencePolicy(1L, accountUuid(2L)))
         .thenReturn(new FriendPresencePolicyViewDto(FriendPresenceVisibilityPolicyValue.PRIVATE));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             get("/friends/visibility")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
@@ -325,7 +351,9 @@ class FriendControllerTest {
 
   @Test
   void getFriendPresencePolicyRejectsMalformedAccountIdBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
@@ -335,7 +363,7 @@ class FriendControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+        .andExpect(jsonPath("$.error.message").value("Malformed claim: accountId"));
 
     verifyNoInteractions(friendService, socialAccessGuard);
   }
@@ -344,13 +372,15 @@ class FriendControllerTest {
   void updateFriendPresencePolicyReturnsCanonicalPolicy() throws Exception {
     UpdateFriendPresencePolicyRequest request =
         new UpdateFriendPresencePolicyRequest(
-            1L, 2L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
+            1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
     when(friendService.updateFriendPresencePolicy(
-            1L, 2L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY))
+            1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY))
         .thenReturn(
             new FriendPresencePolicyViewDto(FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             put("/friends/visibility")
@@ -366,14 +396,16 @@ class FriendControllerTest {
   void updateFriendPresencePolicyRejectsReservedHiddenStaff() throws Exception {
     UpdateFriendPresencePolicyRequest request =
         new UpdateFriendPresencePolicyRequest(
-            1L, 2L, FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF);
+            1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF);
     when(friendService.updateFriendPresencePolicy(
-            1L, 2L, FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF))
+            1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF))
         .thenThrow(
             new IllegalArgumentException(
                 "Friend presence visibility policy HIDDEN_STAFF is reserved"));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             put("/friends/visibility")
@@ -390,7 +422,9 @@ class FriendControllerTest {
   @Test
   void listFriendsReturnsRosterList() throws Exception {
     when(friendService.listFriends(
-            1L, 2L, net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY))
+            1L,
+            accountUuid(2L),
+            net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY))
         .thenReturn(
             new net.firedevops.firemud.socialgroups.dto.FriendRosterViewDto(
                 net.firedevops.firemud.socialgroups.dto.FriendRosterFilter.FRIENDS_ONLY,
@@ -401,12 +435,12 @@ class FriendControllerTest {
                         1,
                         7L,
                         1L,
-                        2L,
-                        3L,
+                        accountUuid(2L),
+                        accountUuid(3L),
                         "active",
                         java.time.Instant.parse("2026-04-10T01:02:03Z"),
                         new FriendPresenceDto(
-                            3L,
+                            accountUuid(3L),
                             true,
                             9L,
                             "SHARED",
@@ -421,12 +455,14 @@ class FriendControllerTest {
                             null,
                             null)))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             get("/friends")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .param("filter", "FRIENDS_ONLY")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
@@ -434,7 +470,7 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.data.filter").value("FRIENDS_ONLY"))
         .andExpect(jsonPath("$.data.totalCount").value(1))
         .andExpect(jsonPath("$.data.friends[0].friendLinkId").value(7L))
-        .andExpect(jsonPath("$.data.friends[0].friendAccountId").value(3L))
+        .andExpect(jsonPath("$.data.friends[0].friendAccountId").value(accountUuid(3L)))
         .andExpect(jsonPath("$.data.friends[0].status").value("active"))
         .andExpect(jsonPath("$.data.friends[0].presence.online").value(true))
         .andExpect(jsonPath("$.data.friends[0].presence.worldSlug").value("demo"));
@@ -442,13 +478,15 @@ class FriendControllerTest {
 
   @Test
   void listFriendsRejectsZeroTenantIdBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
             get("/friends")
                 .param("tenantId", "0")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
@@ -459,15 +497,17 @@ class FriendControllerTest {
 
   @Test
   void getFriendRosterSummaryReturnsCanonicalCounts() throws Exception {
-    when(friendService.getFriendRosterSummary(1L, 2L))
+    when(friendService.getFriendRosterSummary(1L, accountUuid(2L)))
         .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 0, 2, 1, 1));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             get("/friends/summary")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
@@ -487,42 +527,59 @@ class FriendControllerTest {
 
   @Test
   void removeFriendByOrdinalReturnsRemovedEntry() throws Exception {
-    when(friendService.removeFriendByOrdinal(1L, 2L, 1))
+    when(friendService.removeFriendByOrdinal(1L, accountUuid(2L), 1))
         .thenReturn(
             java.util.Optional.of(
                 new FriendRosterEntryDto(
                     1,
                     7L,
                     1L,
-                    2L,
-                    3L,
+                    accountUuid(2L),
+                    accountUuid(3L),
                     "active",
                     java.time.Instant.parse("2026-04-10T01:02:03Z"),
                     new FriendPresenceDto(
-                        3L, false, null, null, null, null, null, null, null, null, null, null, null,
-                        null, null))));
+                        accountUuid(3L),
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             delete("/friends/entry/1")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.friendAccountId").value(3L));
+        .andExpect(jsonPath("$.data.friendAccountId").value(accountUuid(3L)));
   }
 
   @Test
   void removeFriendByOrdinalRejectsMalformedOrdinalBeforeAccessCheck() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
             delete("/friends/entry/not-a-number")
                 .param("tenantId", "1")
-                .param("accountId", "2")
+                .param("accountId", accountUuid(2L))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))

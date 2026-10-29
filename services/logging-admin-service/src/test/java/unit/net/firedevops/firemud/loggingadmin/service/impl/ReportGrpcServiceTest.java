@@ -32,8 +32,8 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId("2")
-            .setTargetAccountId("3")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
+            .setTargetAccountId("e830a76a-a786-43de-9416-5840fa6e0578")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -70,8 +70,8 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId("2")
-            .setTargetAccountId("3")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
+            .setTargetAccountId("e830a76a-a786-43de-9416-5840fa6e0578")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -126,7 +126,7 @@ class ReportGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("reporterAccountId must be positive", ref.get().getError().getMessage());
+    assertEquals("Malformed claim: reporterAccountId", ref.get().getError().getMessage());
   }
 
   @Test
@@ -140,7 +140,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId("2")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setTargetAccountId("0")
             .setType("BUG")
             .setDescription("bad")
@@ -162,7 +162,7 @@ class ReportGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("targetAccountId must be positive", ref.get().getError().getMessage());
+    assertEquals("Malformed claim: targetAccountId", ref.get().getError().getMessage());
   }
 
   @Test
@@ -174,7 +174,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId("2")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -206,7 +206,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId("2")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setType("BUG")
             .setDescription("bad")
             .build(),
@@ -239,7 +239,7 @@ class ReportGrpcServiceTest {
     service.createReport(
         CreateReportRequest.newBuilder()
             .setTenantId("1")
-            .setReporterAccountId("2")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setType("BUG")
             .setDescription("bad")
             .build(),

@@ -4,7 +4,7 @@ import java.io.Serializable;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import org.springframework.util.StringUtils;
+import net.firedevops.firemud.common.security.JwtClaims;
 
 /** Represents persisted login context stored in Redis for a session. */
 public record SessionContext(
@@ -323,8 +323,20 @@ public record SessionContext(
     return gameInstanceId > 0 && characterId > 0;
   }
 
+  /**
+   * Uses the shared ordinary Account identity contract without interpreting private row handles.
+   */
+  public static boolean isCanonicalAccountIdentity(String accountId) {
+    try {
+      JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+      return true;
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
   public boolean hasAccountIdentity() {
-    return StringUtils.hasText(accountId);
+    return isCanonicalAccountIdentity(accountId);
   }
 
   public boolean hasGameplayBinding() {

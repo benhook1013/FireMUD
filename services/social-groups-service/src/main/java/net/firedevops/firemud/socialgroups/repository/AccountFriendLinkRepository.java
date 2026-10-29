@@ -24,14 +24,16 @@ public class AccountFriendLinkRepository {
   }
 
   public List<AccountFriendLink> findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-      Long tenantId, Long accountId, String status) {
+      Long tenantId, String accountId, String status) {
     var reciprocal = ACCOUNT_FRIEND_LINKS.as("reciprocal_friend_link");
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
         .where(
             ACCOUNT_FRIEND_LINKS
                 .TENANT_ID
                 .eq(tenantId)
-                .and(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(accountId))
+                .and(
+                    ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(
+                        JooqSocialGroupsRepositorySupport.toAccountUuid(accountId)))
                 .and(ACCOUNT_FRIEND_LINKS.STATUS.eq(status))
                 .andExists(
                     dsl.selectOne()
@@ -52,27 +54,33 @@ public class AccountFriendLinkRepository {
   }
 
   public List<AccountFriendLink> findByTenantIdAndAccountIdAndStatus(
-      Long tenantId, Long accountId, String status) {
+      Long tenantId, String accountId, String status) {
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
         .where(
             ACCOUNT_FRIEND_LINKS
                 .TENANT_ID
                 .eq(tenantId)
-                .and(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(accountId))
+                .and(
+                    ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(
+                        JooqSocialGroupsRepositorySupport.toAccountUuid(accountId)))
                 .and(ACCOUNT_FRIEND_LINKS.STATUS.eq(status)))
         .orderBy(ACCOUNT_FRIEND_LINKS.ID.asc())
         .fetch(this::toEntity);
   }
 
   public Optional<AccountFriendLink> findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
-      Long tenantId, Long accountId, Long friendAccountId, String status) {
+      Long tenantId, String accountId, String friendAccountId, String status) {
     return dsl.selectFrom(ACCOUNT_FRIEND_LINKS)
         .where(
             ACCOUNT_FRIEND_LINKS
                 .TENANT_ID
                 .eq(tenantId)
-                .and(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(accountId))
-                .and(ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID.eq(friendAccountId))
+                .and(
+                    ACCOUNT_FRIEND_LINKS.ACCOUNT_ID.eq(
+                        JooqSocialGroupsRepositorySupport.toAccountUuid(accountId)))
+                .and(
+                    ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID.eq(
+                        JooqSocialGroupsRepositorySupport.toAccountUuid(friendAccountId)))
                 .and(ACCOUNT_FRIEND_LINKS.STATUS.eq(status)))
         .orderBy(ACCOUNT_FRIEND_LINKS.ID.asc())
         .limit(1)
@@ -90,8 +98,12 @@ public class AccountFriendLinkRepository {
     int updated =
         dsl.update(ACCOUNT_FRIEND_LINKS)
             .set(ACCOUNT_FRIEND_LINKS.TENANT_ID, entity.getTenantId())
-            .set(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID, entity.getAccountId())
-            .set(ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID, entity.getFriendAccountId())
+            .set(
+                ACCOUNT_FRIEND_LINKS.ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getAccountId()))
+            .set(
+                ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getFriendAccountId()))
             .set(ACCOUNT_FRIEND_LINKS.STATUS, entity.getStatus())
             .set(
                 ACCOUNT_FRIEND_LINKS.CREATED_AT,
@@ -126,8 +138,9 @@ public class AccountFriendLinkRepository {
 
   private void populate(AccountFriendLinksRecord record, AccountFriendLink entity) {
     record.setTenantId(entity.getTenantId());
-    record.setAccountId(entity.getAccountId());
-    record.setFriendAccountId(entity.getFriendAccountId());
+    record.setAccountId(JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getAccountId()));
+    record.setFriendAccountId(
+        JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getFriendAccountId()));
     record.setStatus(entity.getStatus());
     record.setCreatedAt(JooqSocialGroupsRepositorySupport.toLocalDateTime(entity.getCreatedAt()));
   }
@@ -136,8 +149,12 @@ public class AccountFriendLinkRepository {
     AccountFriendLink entity = new AccountFriendLink();
     entity.setId(record.get(ACCOUNT_FRIEND_LINKS.ID));
     entity.setTenantId(record.get(ACCOUNT_FRIEND_LINKS.TENANT_ID));
-    entity.setAccountId(record.get(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID));
-    entity.setFriendAccountId(record.get(ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID));
+    entity.setAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(
+            record.get(ACCOUNT_FRIEND_LINKS.ACCOUNT_ID)));
+    entity.setFriendAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(
+            record.get(ACCOUNT_FRIEND_LINKS.FRIEND_ACCOUNT_ID)));
     entity.setStatus(record.get(ACCOUNT_FRIEND_LINKS.STATUS));
     entity.setCreatedAt(
         JooqSocialGroupsRepositorySupport.toInstant(record.get(ACCOUNT_FRIEND_LINKS.CREATED_AT)));

@@ -8,7 +8,7 @@ import java.time.Instant;
 public record ModerationActionDto(
     Long id,
     @NotNull Long tenantId,
-    @NotNull Long accountId,
+    @NotNull String accountId,
     @NotBlank @Size(max = 20) String action,
     @Size(max = 255) String reason,
     Instant createdAt,

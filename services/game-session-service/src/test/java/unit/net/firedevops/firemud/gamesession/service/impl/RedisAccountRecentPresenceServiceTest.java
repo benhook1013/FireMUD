@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -34,6 +35,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.serializer.SerializationException;
 
 class RedisAccountRecentPresenceServiceTest {
+  private static final String ACCOUNT_ID = "00000000-0000-4000-8000-000000000123";
 
   @Test
   void recordDisconnectPersistsRoutingBundleFromLivePresence() {
@@ -54,7 +56,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_ID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -76,7 +78,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            "123",
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -101,15 +103,18 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
-    verify(redisTemplate).watch("accountrecentpresence:22:123");
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
+    verify(redisTemplate).watch("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(redisTemplate).multi();
     verify(redisTemplate).exec();
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
     assertEquals(22L, state.tenantId());
-    assertEquals("123", state.accountId());
+    assertEquals(ACCOUNT_ID, state.accountId());
     assertEquals(101L, state.gameInstanceId());
     assertEquals("demo", state.worldSlug());
     assertEquals("production", state.realmSlug());
@@ -137,7 +142,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_ID,
             "demo@example.com",
             0L,
             null,
@@ -159,7 +164,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            "123",
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -185,7 +190,10 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -214,7 +222,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_ID,
             "demo@example.com",
             0L,
             null,
@@ -236,7 +244,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            "123",
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -262,7 +270,10 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -291,7 +302,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            "123",
+            ACCOUNT_ID,
             "demo@example.com",
             7001L,
             "Emberline",
@@ -313,7 +324,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             null,
             17L,
-            "123",
+            ACCOUNT_ID,
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -339,7 +350,10 @@ class RedisAccountRecentPresenceServiceTest {
 
     ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+        .set(
+            eq("accountrecentpresence:22:" + ACCOUNT_ID),
+            stateCaptor.capture(),
+            eq(Duration.ofMinutes(5)));
 
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
@@ -358,7 +372,7 @@ class RedisAccountRecentPresenceServiceTest {
     ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     stubTransactionExecution(redisTemplate);
-    when(valueOperations.get("accountrecentpresence:22:123"))
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID))
         .thenThrow(new SerializationException("old AccountRecentPresenceState record shape"));
 
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
@@ -373,15 +387,105 @@ class RedisAccountRecentPresenceServiceTest {
             presenceProperties,
             () -> 1_700_000_000_000L);
     SessionContext context =
-        new SessionContext(41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt");
+        new SessionContext(41L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, null, "jwt");
 
-    assertEquals(Map.of(), service.findByAccountIds(22L, List.of("123")));
+    assertEquals(Map.of(), service.findByAccountIds(22L, List.of(ACCOUNT_ID)));
     service.recordConnected(context);
 
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
     verify(redisTemplate, never()).multi();
     verify(redisTemplate, never()).exec();
     verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
+  void findByAccountIdsDoesNotExposeMalformedRetainedAccountIdentity() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID))
+        .thenReturn(
+            new AccountRecentPresenceState(
+                22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS));
+
+    RedisAccountRecentPresenceService service =
+        newService(redisTemplate, Mockito.mock(GameplayPresenceService.class));
+
+    assertEquals(Map.of(), service.findByAccountIds(22L, List.of(ACCOUNT_ID)));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+  }
+
+  @Test
+  void findByAccountIdsReturnsExactCanonicalAccountState() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    AccountRecentPresenceState state =
+        new AccountRecentPresenceState(
+            22L, ACCOUNT_ID, 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID)).thenReturn(state);
+    RedisAccountRecentPresenceService service =
+        newService(redisTemplate, Mockito.mock(GameplayPresenceService.class));
+
+    assertEquals(Map.of(ACCOUNT_ID, state), service.findByAccountIds(22L, List.of(ACCOUNT_ID)));
+  }
+
+  @Test
+  void recordConnectedPreservesReadableRetainedStateWithMalformedAccountIdentity() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    stubTransactionExecution(redisTemplate);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID))
+        .thenReturn(
+            new AccountRecentPresenceState(
+                22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS));
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    when(gameplayPresenceService.findConnectedBySessionId(41L)).thenReturn(Optional.empty());
+
+    newService(redisTemplate, gameplayPresenceService).recordConnected(testContext());
+
+    verify(redisTemplate).watch("accountrecentpresence:22:" + ACCOUNT_ID);
+    verify(redisTemplate).unwatch();
+    verify(redisTemplate, never()).multi();
+    verify(redisTemplate, never()).exec();
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
+  void malformedCallerAccountIdsDoNotReadOrWriteRecentPresence() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    RedisAccountRecentPresenceService service = newService(redisTemplate, gameplayPresenceService);
+
+    for (String accountId :
+        List.of(
+            "123",
+            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-4000-8000-00000000000A",
+            " " + ACCOUNT_ID,
+            ACCOUNT_ID + " ")) {
+      assertEquals(Map.of(), service.findByAccountIds(22L, List.of(accountId)));
+      service.recordConnected(
+          new SessionContext(41L, 22L, accountId, "demo@example.com", 0L, null, 0L, null, "jwt"));
+    }
+
+    verify(valueOperations, never()).get(anyString());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(redisTemplate, never()).watch(anyString());
+    verifyNoInteractions(gameplayPresenceService);
   }
 
   @Test
@@ -394,11 +498,11 @@ class RedisAccountRecentPresenceServiceTest {
     stubTransactionExecution(redisTemplate);
     AccountRecentPresenceState retained =
         new AccountRecentPresenceState(
-            22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+            22L, ACCOUNT_ID, 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
     AccountRecentPresenceState concurrentReplacement =
         new AccountRecentPresenceState(
-            22L, "123", 1_699_999_999_500L, AccountRecentPresenceDisposition.LOGOUT);
-    when(valueOperations.get("accountrecentpresence:22:123"))
+            22L, ACCOUNT_ID, 1_699_999_999_500L, AccountRecentPresenceDisposition.LOGOUT);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID))
         .thenReturn(retained, concurrentReplacement);
     when(redisTemplate.exec()).thenReturn(null, List.of("OK"));
 
@@ -408,12 +512,12 @@ class RedisAccountRecentPresenceServiceTest {
 
     service.recordConnected(testContext());
 
-    verify(redisTemplate, times(2)).watch("accountrecentpresence:22:123");
+    verify(redisTemplate, times(2)).watch("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(redisTemplate, times(2)).multi();
     verify(redisTemplate, times(2)).exec();
-    verify(valueOperations, times(2)).get("accountrecentpresence:22:123");
+    verify(valueOperations, times(2)).get("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(valueOperations, times(2))
-        .set(eq("accountrecentpresence:22:123"), any(), eq(Duration.ofMinutes(5)));
+        .set(eq("accountrecentpresence:22:" + ACCOUNT_ID), any(), eq(Duration.ofMinutes(5)));
   }
 
   @Test
@@ -426,8 +530,8 @@ class RedisAccountRecentPresenceServiceTest {
     stubTransactionExecution(redisTemplate);
     AccountRecentPresenceState retained =
         new AccountRecentPresenceState(
-            22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn(retained);
+            22L, ACCOUNT_ID, 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID)).thenReturn(retained);
     when(redisTemplate.exec()).thenReturn(null);
 
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
@@ -436,14 +540,14 @@ class RedisAccountRecentPresenceServiceTest {
 
     service.recordConnected(testContext());
 
-    verify(redisTemplate, times(8)).watch("accountrecentpresence:22:123");
+    verify(redisTemplate, times(8)).watch("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(redisTemplate, times(8)).multi();
     verify(redisTemplate, times(8)).exec();
-    verify(valueOperations, times(8)).get("accountrecentpresence:22:123");
+    verify(valueOperations, times(8)).get("accountrecentpresence:22:" + ACCOUNT_ID);
     // Each null EXEC represents a WATCH conflict, so none of the queued replacement writes
     // committed.
     verify(valueOperations, times(8))
-        .set(eq("accountrecentpresence:22:123"), any(), eq(Duration.ofMinutes(5)));
+        .set(eq("accountrecentpresence:22:" + ACCOUNT_ID), any(), eq(Duration.ofMinutes(5)));
     verify(redisTemplate, never()).delete(anyString());
   }
 
@@ -457,8 +561,8 @@ class RedisAccountRecentPresenceServiceTest {
     stubTransactionExecution(redisTemplate);
     AccountRecentPresenceState retained =
         new AccountRecentPresenceState(
-            22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn(retained);
+            22L, ACCOUNT_ID, 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID)).thenReturn(retained);
     when(redisTemplate.exec()).thenReturn(null);
 
     SessionRoutingNormalizationService sessionRoutingNormalizationService =
@@ -472,14 +576,14 @@ class RedisAccountRecentPresenceServiceTest {
 
     service.recordActivity(41L);
 
-    verify(redisTemplate, times(8)).watch("accountrecentpresence:22:123");
+    verify(redisTemplate, times(8)).watch("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(redisTemplate, times(8)).multi();
     verify(redisTemplate, times(8)).exec();
-    verify(valueOperations, times(8)).get("accountrecentpresence:22:123");
+    verify(valueOperations, times(8)).get("accountrecentpresence:22:" + ACCOUNT_ID);
     // Each null EXEC represents a WATCH conflict, so none of the queued replacement writes
     // committed.
     verify(valueOperations, times(8))
-        .set(eq("accountrecentpresence:22:123"), any(), eq(Duration.ofMinutes(5)));
+        .set(eq("accountrecentpresence:22:" + ACCOUNT_ID), any(), eq(Duration.ofMinutes(5)));
     verify(redisTemplate, never()).delete(anyString());
   }
 
@@ -493,8 +597,8 @@ class RedisAccountRecentPresenceServiceTest {
     stubTransactionExecution(redisTemplate);
     AccountRecentPresenceState retained =
         new AccountRecentPresenceState(
-            22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-    when(valueOperations.get("accountrecentpresence:22:123"))
+            22L, ACCOUNT_ID, 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID))
         .thenReturn(retained)
         .thenThrow(new SerializationException("concurrent replacement has old record shape"));
     when(redisTemplate.exec()).thenReturn(null);
@@ -505,13 +609,13 @@ class RedisAccountRecentPresenceServiceTest {
 
     service.recordConnected(testContext());
 
-    verify(redisTemplate, times(2)).watch("accountrecentpresence:22:123");
+    verify(redisTemplate, times(2)).watch("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(redisTemplate).multi();
     verify(redisTemplate).exec();
     verify(redisTemplate).unwatch();
     // The first queued SET was rejected by EXEC; the unreadable replacement prevents a retry SET.
     verify(valueOperations)
-        .set(eq("accountrecentpresence:22:123"), any(), eq(Duration.ofMinutes(5)));
+        .set(eq("accountrecentpresence:22:" + ACCOUNT_ID), any(), eq(Duration.ofMinutes(5)));
   }
 
   @Test
@@ -522,7 +626,7 @@ class RedisAccountRecentPresenceServiceTest {
     ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     stubTransactionExecution(redisTemplate);
-    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn("legacy value");
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID)).thenReturn("legacy value");
 
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
     when(gameplayPresenceService.findConnectedBySessionId(41L)).thenReturn(Optional.empty());
@@ -530,7 +634,7 @@ class RedisAccountRecentPresenceServiceTest {
 
     service.recordConnected(testContext());
 
-    verify(redisTemplate).watch("accountrecentpresence:22:123");
+    verify(redisTemplate).watch("accountrecentpresence:22:" + ACCOUNT_ID);
     verify(redisTemplate).unwatch();
     verify(redisTemplate, never()).multi();
     verify(redisTemplate, never()).exec();
@@ -546,7 +650,7 @@ class RedisAccountRecentPresenceServiceTest {
     ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     stubTransactionExecution(redisTemplate);
-    when(valueOperations.get("accountrecentpresence:22:123"))
+    when(valueOperations.get("accountrecentpresence:22:" + ACCOUNT_ID))
         .thenThrow(new IllegalStateException("Redis unavailable"));
 
     GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
@@ -582,7 +686,7 @@ class RedisAccountRecentPresenceServiceTest {
   }
 
   private static SessionContext testContext() {
-    return new SessionContext(41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt");
+    return new SessionContext(41L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, null, "jwt");
   }
 
   @SuppressWarnings("unchecked")

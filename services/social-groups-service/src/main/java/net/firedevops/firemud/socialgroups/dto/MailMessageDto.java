@@ -5,8 +5,8 @@ import java.time.Instant;
 public record MailMessageDto(
     Long id,
     Long tenantId,
-    Long senderAccountId,
-    Long recipientAccountId,
+    String senderAccountId,
+    String recipientAccountId,
     String subject,
     String content,
     Instant sentAt,

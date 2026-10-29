@@ -24,10 +24,13 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public final class AccountClient
@@ -59,38 +62,38 @@ public final class AccountClient
   }
 
   public Optional<FriendPresenceVisibilityPolicyValue> getPresenceVisibilityPolicy(
-      long tenantId, long accountId) {
+      long tenantId, String accountId) {
     return getProfileSnapshot(tenantId, accountId)
         .map(AccountProfileSnapshot::presenceVisibilityPolicy);
   }
 
   /** Returns only current persisted policies; callers must fail closed for absent entries. */
-  public Map<Long, FriendPresenceVisibilityPolicyValue> getPresenceVisibilityPolicies(
-      long tenantId, Collection<Long> accountIds) {
+  public Map<String, FriendPresenceVisibilityPolicyValue> getPresenceVisibilityPolicies(
+      long tenantId, Collection<String> accountIds) {
     if (stub() == null || accountIds == null || accountIds.isEmpty()) {
       return Map.of();
     }
-    List<Long> requestedAccountIds =
+    List<String> requestedAccountIds =
         accountIds.stream()
-            .filter(accountId -> accountId != null && accountId > 0)
+            .map(accountId -> JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
             .distinct()
             .toList();
     if (requestedAccountIds.isEmpty()) {
       return Map.of();
     }
     try {
-      Map<Long, FriendPresenceVisibilityPolicyValue> policies = new LinkedHashMap<>();
+      Map<String, FriendPresenceVisibilityPolicyValue> policies = new LinkedHashMap<>();
       for (int offset = 0;
           offset < requestedAccountIds.size();
           offset += PRESENCE_VISIBILITY_POLICY_BATCH_SIZE) {
-        List<Long> batch =
+        List<String> batch =
             requestedAccountIds.subList(
                 offset,
                 Math.min(
                     offset + PRESENCE_VISIBILITY_POLICY_BATCH_SIZE, requestedAccountIds.size()));
         ListPresenceVisibilityPoliciesRequest.Builder request =
             ListPresenceVisibilityPoliciesRequest.newBuilder().setTenantId(Long.toString(tenantId));
-        batch.forEach(accountId -> request.addAccountIds(Long.toString(accountId)));
+        batch.forEach(accountId -> request.addAccountIds(accountId));
 
         ListPresenceVisibilityPoliciesResponse response =
             callStub().listPresenceVisibilityPolicies(request.build());
@@ -100,21 +103,18 @@ public final class AccountClient
               logger, PRESENCE_VISIBILITY_POLICY_READ_OPERATION, response.getError());
           return Map.of();
         }
-        response
-            .getPoliciesList()
-            .forEach(
-                entry -> {
-                  try {
-                    long accountId = Long.parseLong(entry.getAccountId());
-                    if (accountId > 0 && batch.contains(accountId)) {
-                      policies.put(
-                          accountId,
-                          FriendPresenceVisibilityPolicyValue.valueOf(entry.getPolicy()));
-                    }
-                  } catch (IllegalArgumentException ignored) {
-                    // Missing or malformed policy entries remain fail-closed at the caller.
-                  }
-                });
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (var entry : response.getPoliciesList()) {
+          String subject = JwtClaims.requireCanonicalAccountUuid(entry.getAccountId(), "accountId");
+          if (!batch.contains(subject) || !seen.add(subject)) {
+            return Map.of();
+          }
+          try {
+            policies.put(subject, FriendPresenceVisibilityPolicyValue.valueOf(entry.getPolicy()));
+          } catch (IllegalArgumentException ignored) {
+            // Unknown or malformed policy is subject-local private-by-failure.
+          }
+        }
       }
       return Map.copyOf(policies);
     } catch (Exception ex) {
@@ -128,7 +128,7 @@ public final class AccountClient
   }
 
   public boolean updatePresenceVisibilityPolicy(
-      long tenantId, long accountId, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+      long tenantId, String accountId, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     if (stub() == null || visibilityPolicy == null) {
       return false;
     }
@@ -142,7 +142,7 @@ public final class AccountClient
               .updateProfile(
                   UpdateProfileRequest.newBuilder()
                       .setTenantId(Long.toString(tenantId))
-                      .setAccountId(Long.toString(accountId))
+                      .setAccountId(accountId)
                       .setProfileJson(
                           new AccountProfileJson(
                                   snapshot.displayName(), snapshot.bio(), visibilityPolicy.name())
@@ -176,23 +176,35 @@ public final class AccountClient
     return applyStubCustomizer(AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  private Optional<AccountProfileSnapshot> getProfileSnapshot(long tenantId, long accountId) {
+  private Optional<AccountProfileSnapshot> getProfileSnapshot(long tenantId, String accountId) {
     if (stub() == null) {
       return Optional.empty();
     }
+    JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
     GetProfileRequest request =
         GetProfileRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(accountId)
             .build();
     try {
       GetProfileResponse response = callStub().getProfile(request);
       if (response.hasError() || response.getProfileJson().isBlank()) {
         return Optional.empty();
       }
+      JsonNode profileNode = JsonMapper.builder().build().readTree(response.getProfileJson());
+      if (!profileNode.isObject()
+          || !profileNode.path("accountId").isTextual()
+          || !accountId.equals(
+              JwtClaims.requireCanonicalAccountUuid(
+                  profileNode.path("accountId").asString(), "accountId"))
+          || !profileNode.path("tenantId").isIntegralNumber()
+          || !profileNode.path("tenantId").canConvertToLong()
+          || profileNode.path("tenantId").asLong() != tenantId) {
+        return Optional.empty();
+      }
       AccountProfileJson profile =
           AccountProfileJson.parse(
-              response.getProfileJson(), FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY.name());
+              response.getProfileJson(), FriendPresenceVisibilityPolicyValue.PRIVATE.name());
       FriendPresenceVisibilityPolicyValue resolvedPolicy =
           FriendPresenceVisibilityPolicyValue.valueOf(profile.presenceVisibilityPolicy());
       return Optional.of(

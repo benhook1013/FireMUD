@@ -106,6 +106,8 @@ The unregistered canonical `Authenticate` receiver requires the exact same-names
 
 `IssueConnectToken` is not a gRPC method. It is the local Account application operation behind the REST `POST /auth/connect-token` route documented below; no `IssueConnectToken` RPC or protobuf transport is implied.
 
+In the ordinary Account gRPC methods, Account-valued selectors and authentication/bootstrap results use canonical Account UUID text, including `Authenticate`, `IssuePlayerBootstrapToken`, `GetProfile`, and `UpdateProfile`. For these operations Account resolves UUID selectors to numeric rows only for local storage access; the row is not exposed as the Account identity. Separate internal identity-provenance reads retain their own contract. `InternalRuntimeController`'s privileged numeric realm-grant management DTOs remain a separate unconverted boundary; see the [player-access implementation tracker](../../../project-management/implementation-tracking/player-access-and-session.md#ordinary-account-uuid-receiving-preparation).
+
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
 - `CreateAccount` – registers a global Account identity and returns its canonical UUID as REST `AccountDto.id` and gRPC `CreateAccountResponse.account_id`; its platform audit outbox payload carries the same UUID. It does not select a tenant or create membership/profile state.
 - `SendNotification` – deliver account notifications asynchronously.
@@ -243,6 +245,8 @@ The prepared original activation-protection methods authenticate the exact same-
 
 ## REST APIs
 
+Implemented Account-valued REST selectors and response fields use canonical Account UUID text. `AuthenticationResult.accountId`, `PlayerBootstrapResult.accountId`, and `ProfileDto.accountId` serialize as JSON strings; Account-issued login and bootstrap tokens carry the same UUID in `sub` and `accountId`. Current `/accounts/{accountId}` and profile handlers resolve those identities through Account's persisted UUID/provenance boundary before using private local rows. Tenant identifiers retain their existing representation. The Account identity contract is owned here with [ADR 0020](../../decisions/adr-0020-scoped-domain-and-operational-identifiers.md); this paragraph records the local wire and storage boundary.
+
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
@@ -289,6 +293,8 @@ The prepared original activation-protection methods authenticate the exact same-
 | `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
 
+The listed Account UUID representation does not imply full receiver convergence. Numeric legacy fields and privileged internal Account surfaces remain separate gaps; see the [player-access implementation tracker](../../../project-management/implementation-tracking/player-access-and-session.md#ordinary-account-uuid-receiving-preparation).
+
 Current verification routing/auth status: `POST /auth/verify-email` inherits bearer authentication because both HTTP configurations allowlist only `GET /auth/verify-email`, while that allowlisted GET has no controller mapping; see the existing [verification-routing gap in Runtime and Data](./runtime-and-data.md#email-and-notification-design).
 
 Current recovery/verification response and delivery behavior: password-reset, username-recovery, and public email-verification initiation retain the same neutral HTTP success for known and unknown normalized email addresses, including when a known-account post-commit SMTP send throws and is caught/logged; unknown addresses create no token or delivery attempt. This equal outcome does not remove the timing oracle: known-account sends still run synchronously after commit. Durable asynchronous delivery is absent, and focused service-level exception tests do not prove HTTP-level timing parity or timing resistance. This is not full account-enumeration resistance.
@@ -297,7 +303,7 @@ The target `POST /auth/connect-token` REST response body is metadata-only: it co
 
 For the bootstrap-character and connect-token REST routes, authenticated gameplay-admission denials (`CONNECT_TOKEN_REJECTED`, `NON_PUBLIC_ENROLLMENT_REQUIRED`, `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `JOIN_REQUIRED`, and `TENANT_BILLING_BLOCKED`) map to HTTP 403; invalid bootstrap credentials remain 401 and unavailable authority remains 503.
 
-Current authentication, profile, membership, and tenant response examples retain numeric identifiers. Registration `AccountDto.id` and the Account component of the existing Account-local exports carry canonical Account UUIDs; profile and tenant identifiers in those exports remain unchanged. This bounded output change does not claim full portable export or complete ADR 0020 wire migration.
+Registration `AccountDto.id`, authentication and player-bootstrap `accountId` results, the Account component of the current Account-local exports, and `ProfileDto.accountId` carry canonical Account UUIDs. Profile and tenant `tenantId` values remain unchanged. This bounded output change does not claim full portable export or complete ADR 0020 wire migration.
 
 Canonical current `/auth/login` success shape:
 
@@ -305,7 +311,7 @@ Canonical current `/auth/login` success shape:
 {
   "status": "SUCCESS",
   "data": {
-    "accountId": 42,
+    "accountId": "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1",
     "authToken": "jwt-token-here"
   }
 }

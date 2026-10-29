@@ -4,9 +4,12 @@ import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,7 +43,6 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
     implements AutoCloseable {
-  private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -52,6 +54,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           "JoinPublicProductionMembership");
 
   private final Server server;
+  private final Clock clock;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
   private final AtomicBoolean membershipExists = new AtomicBoolean(true);
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
@@ -61,10 +64,17 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
   private final AtomicLong nextConnectScopeId = new AtomicLong(1L);
   private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
+  private final Map<String, Long> accountIdsByUuid = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
   private final Map<String, StubConnectScope> connectScopesById = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
+    this(port, Clock.systemUTC());
+  }
+
+  /** Test-owned time for fresh runtime evidence and its original connect-scope expiry. */
+  public AccountRuntimeStubServer(int port, Clock clock) throws IOException {
+    this.clock = Objects.requireNonNull(clock, "clock");
     this.server = NettyServerBuilder.forPort(port).addService(this).build().start();
   }
 
@@ -84,8 +94,19 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     defaultAccountId.set(accountId);
   }
 
+  /** Returns the stable UUID used by this fake for a numeric test account key. */
+  public static String accountUuidForTestFixture(long accountId) {
+    if (accountId <= 0L) {
+      throw new IllegalArgumentException("accountId must be positive");
+    }
+    return UUID.nameUUIDFromBytes(
+            ("firemud-test-account:" + accountId).getBytes(StandardCharsets.UTF_8))
+        .toString();
+  }
+
   public void mapAccountId(String email, long accountId) {
     accountIdsByEmail.put(EmailCanonicalization.normalize(email), accountId);
+    accountIdsByUuid.put(accountUuidForTestFixture(accountId), accountId);
   }
 
   public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
@@ -137,6 +158,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
+    accountIdsByUuid.clear();
     connectScopesById.clear();
   }
 
@@ -153,9 +175,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     String canonicalEmail = EmailCanonicalization.normalize(request.getEmail());
     long accountId = accountIdsByEmail.getOrDefault(canonicalEmail, defaultAccountId.get());
     profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
+    String accountUuid = accountUuidForTestFixture(accountId);
+    accountIdsByUuid.put(accountUuid, accountId);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(accountUuid)
             .setAuthToken("stub-token-" + accountId)
             .build());
     responseObserver.onCompleted();
@@ -175,7 +199,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setMembershipVersion(exists ? 1L : 0L)
             .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
             .setMembershipAuthorityGeneration(exists ? 1L : 0L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -192,7 +216,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRealmSlug(request.getRealmSlug())
             .setGranted(realmAccessGranted.get())
             .setGrantVersion(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -208,7 +232,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAllowPublicJoin(allowPublicJoin.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -252,7 +276,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .build());
     } else {
       String scopeId = "stub-connect-scope-" + nextConnectScopeId.getAndIncrement();
-      Instant expiresAt = Instant.now().plusSeconds(300);
+      Instant expiresAt = clock.instant().plusSeconds(300);
       connectScopesById.put(
           scopeId,
           new StubConnectScope(
@@ -296,7 +320,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || caller.getTenantId().isBlank()
         || caller.getSessionId().isBlank()
         || scope == null
-        || !scope.expiresAt().isAfter(Instant.now())
+        || !scope.expiresAt().isAfter(clock.instant())
         || !scope.accountId().equals(caller.getAccountId())
         || !scope.tenantId().equals(caller.getTenantId())
         || !scope.realmId().equals(caller.getRealmId())
@@ -338,7 +362,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   @Override
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
-    long accountId = Long.parseLong(request.getAccountId());
+    Long accountId = resolveRegisteredAccountId(request.getAccountId());
+    if (accountId == null) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(ErrorDetail.newBuilder().setCode("ACCOUNT_NOT_FOUND"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
     StubProfile profile = profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     try {
       responseObserver.onNext(
@@ -359,7 +391,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
-      long accountId = Long.parseLong(request.getAccountId());
+      Long accountId = resolveRegisteredAccountId(request.getAccountId());
+      if (accountId == null) {
+        responseObserver.onNext(
+            UpdateProfileResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("ACCOUNT_NOT_FOUND"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
       StubProfile existing =
@@ -377,6 +417,18 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     } catch (Exception ex) {
       responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
       responseObserver.onCompleted();
+    }
+  }
+
+  private Long resolveRegisteredAccountId(String accountUuid) {
+    try {
+      UUID parsed = UUID.fromString(accountUuid);
+      if (parsed.equals(new UUID(0L, 0L)) || !parsed.toString().equals(accountUuid)) {
+        return null;
+      }
+      return accountIdsByUuid.get(accountUuid);
+    } catch (IllegalArgumentException ex) {
+      return null;
     }
   }
 

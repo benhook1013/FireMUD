@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -45,8 +46,11 @@ class VoiceChatControllerTest {
   @Test
   void createTokenReturnsToken() throws Exception {
     when(service.createToken(any())).thenReturn(new VoiceTokenDto("abc", Instant.now()));
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
-    String body = "{\"tenantId\":1,\"accountId\":2,\"channelId\":\"guild-1\"}";
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
+    String body =
+        "{\"tenantId\":1,\"accountId\":\"10000000-0000-4000-8000-000000000002\",\"channelId\":\"guild-1\"}";
 
     mockMvc
         .perform(
@@ -60,7 +64,9 @@ class VoiceChatControllerTest {
 
   @Test
   void createTokenRejectsZeroAccountIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     String body = "{\"tenantId\":1,\"accountId\":0,\"channelId\":\"guild-1\"}";
 
     mockMvc
@@ -72,7 +78,7 @@ class VoiceChatControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("Malformed claim: accountId"));
 
     verifyNoInteractions(service, socialAccessGuard);
   }

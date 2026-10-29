@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.Test;
 
 class GameplayCommandTestFixturesTest {
@@ -12,7 +13,8 @@ class GameplayCommandTestFixturesTest {
 
     assertThat(context.sessionId()).isEqualTo(1L);
     assertThat(context.tenantId()).isEqualTo(22L);
-    assertThat(context.accountId()).isEqualTo("123");
+    assertThat(context.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(123L));
     assertThat(context.characterId()).isEqualTo(911L);
     assertThat(context.gameInstanceId()).isEqualTo(77L);
     assertThat(context.roomInstanceId()).isEqualTo("R-7");
@@ -24,10 +26,12 @@ class GameplayCommandTestFixturesTest {
     SessionContext dispatch = GameplayCommandTestFixtures.authoredDispatchEmberline();
     SessionContext history = GameplayCommandTestFixtures.historyEmberline();
 
-    assertThat(dispatch.accountId()).isEqualTo("41");
+    assertThat(dispatch.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(41L));
     assertThat(dispatch.sessionId()).isEqualTo(7L);
     assertThat(dispatch.tenantId()).isEqualTo(22L);
-    assertThat(history.accountId()).isEqualTo("99");
+    assertThat(history.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(99L));
     assertThat(history.sessionId()).isEqualTo(22L);
     assertThat(history.tenantId()).isEqualTo(7L);
     assertThat(dispatch.characterId()).isEqualTo(7001L);
@@ -41,12 +45,15 @@ class GameplayCommandTestFixturesTest {
     SessionContext context = GameplayCommandTestFixtures.durableDemo();
     var command = GameplayCommandTestFixtures.durableDemoCommand("MOVE", "north");
 
-    assertThat(context.accountId()).isEqualTo("7");
+    assertThat(context.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
     assertThat(context.characterId()).isEqualTo(91L);
     assertThat(context.sessionId()).isEqualTo(42L);
     assertThat(context.tenantId()).isEqualTo(22L);
     assertThat(context.gameInstanceId()).isEqualTo(5L);
     assertThat(command.getCharacterId()).isEqualTo(context.characterId());
+    assertThat(command.getAccountUuid().toString()).isEqualTo(context.accountId());
+    assertThat(command.getAccountId()).isNull();
     assertThat(command.getSessionId()).isEqualTo(context.sessionId());
     assertThat(command.getTenantId()).isEqualTo(context.tenantId());
     assertThat(command.getGameInstanceId()).isEqualTo(context.gameInstanceId());
@@ -98,10 +105,12 @@ class GameplayCommandTestFixturesTest {
     SessionContext browse = GameplayCommandTestFixtures.worldBrowseDemo();
     SessionContext played = GameplayCommandTestFixtures.webSocketEmberline();
 
-    assertThat(sender.accountId()).isEqualTo("123");
+    assertThat(sender.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(123L));
     assertThat(sender.characterId()).isEqualTo(123L);
     assertThat(sender.roomInstanceId()).isEqualTo("R-1");
-    assertThat(target.accountId()).isEqualTo("456");
+    assertThat(target.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(456L));
     assertThat(target.characterId()).isEqualTo(456L);
     assertThat(target.roomInstanceId()).isEqualTo("R-2");
     assertThat(target.localeTag()).isEqualTo("en-NZ");
@@ -133,7 +142,8 @@ class GameplayCommandTestFixturesTest {
     assertThat(dara.characterId()).isEqualTo(104L);
     assertThat(dara.jwt()).isEqualTo("moderator-jwt");
     assertThat(activity.sessionId()).isEqualTo(1L);
-    assertThat(activity.accountId()).isEqualTo("2");
+    assertThat(activity.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(2L));
     assertThat(activity.characterId()).isEqualTo(102L);
     assertThat(activity.connectedAtEpochMs()).isEqualTo(100L);
     assertThat(activity.explicitAfkSinceEpochMs()).isEqualTo(300L);

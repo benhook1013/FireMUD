@@ -81,11 +81,14 @@ public final class RedisFirstPartyConnectContextRegistry
   public void unregister(long sessionId) {
     String key = key(sessionId);
     try {
-      if (valueOperations().get(key) instanceof FirstPartyConnectContext) {
+      if (valueOperations().get(key) instanceof FirstPartyConnectContext context) {
+        // Delete only a verified, complete retained handoff; incompatible evidence is retained.
+        contextService.requireRetained(context);
         redisTemplate.delete(key);
       }
-    } catch (SerializationException | ClassCastException ex) {
-      // Retain unreadable evidence instead of treating it as an absent context.
+    } catch (SerializationException | ClassCastException | IllegalStateException ex) {
+      // Retain unreadable, incomplete or unverifiable evidence instead of treating it as an absent
+      // context.
     }
   }
 

@@ -64,12 +64,12 @@ public class LoggingAdminClient
    * @param accountId account that sent the message
    * @param description details of the violation
    */
-  public void reportChatViolation(long tenantId, long accountId, String description) {
+  public void reportChatViolation(long tenantId, String accountId, String description) {
     CreateReportRequest request =
         CreateReportRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setReporterAccountId(Long.toString(accountId))
-            .setTargetAccountId(Long.toString(accountId))
+            .setReporterAccountId(accountId)
+            .setTargetAccountId(accountId)
             .setType("CHAT_PROFANITY")
             .setDescription(description)
             .build();

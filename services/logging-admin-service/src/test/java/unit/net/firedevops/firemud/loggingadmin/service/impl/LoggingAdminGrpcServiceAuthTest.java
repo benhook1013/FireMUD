@@ -242,7 +242,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.applyModerationAction(
         ApplyModerationActionRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setSessionId("0")
             .setAction("ban")
             .setReason("bad")
@@ -282,7 +282,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.applyModerationAction(
         ApplyModerationActionRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setSessionId("9")
             .setAction("ban")
             .setReason("bad")
@@ -344,7 +344,7 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().getAllowed());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    assertEquals("Malformed claim: accountId", ref.get().getError().getMessage());
     verifyNoInteractions(moderationService);
   }
 
@@ -353,7 +353,8 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext(
         "", List.of(), Map.of(), true, "game-session-service", "test-instance");
     ModerationService moderationService = Mockito.mock(ModerationService.class);
-    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
+    when(moderationService.evaluatePolicy(
+            1L, java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"), "CHAT_SEND"))
         .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
@@ -366,7 +367,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -385,7 +386,9 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().hasError());
     assertEquals(true, ref.get().getAllowed());
-    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
+    verify(moderationService)
+        .evaluatePolicy(
+            1L, java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"), "CHAT_SEND");
   }
 
   @Test
@@ -393,7 +396,8 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext(
         "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
     ModerationService moderationService = Mockito.mock(ModerationService.class);
-    when(moderationService.evaluatePolicy(1L, 2L, "CHAT_SEND"))
+    when(moderationService.evaluatePolicy(
+            1L, java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"), "CHAT_SEND"))
         .thenReturn(new ModerationPolicyDecisionDto(true, "", "allowed", null));
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
@@ -406,7 +410,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -425,7 +429,9 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().hasError());
     assertEquals(true, ref.get().getAllowed());
-    verify(moderationService).evaluatePolicy(1L, 2L, "CHAT_SEND");
+    verify(moderationService)
+        .evaluatePolicy(
+            1L, java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"), "CHAT_SEND");
   }
 
   @Test
@@ -443,7 +449,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -479,7 +485,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -515,7 +521,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {
@@ -551,7 +557,7 @@ class LoggingAdminGrpcServiceAuthTest {
     service.evaluateModerationPolicy(
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
             .setScope("CHAT_SEND")
             .build(),
         new StreamObserver<>() {

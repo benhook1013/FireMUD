@@ -160,13 +160,97 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
+  void ordinaryAuthenticationReturnsPersistedAccountUuidInResponseAndValidatedJwt() throws Exception {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String username = "auth-uuid-" + suffix;
+    String email = username + "@example.com";
+    HttpRequest registrationRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    "{\"username\":\""
+                        + username
+                        + "\",\"email\":\""
+                        + email
+                        + "\",\"password\":\"password123\"}"))
+            .build();
+
+    HttpResponse<String> registrationResponse =
+        HTTP_CLIENT.send(registrationRequest, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(registrationResponse.statusCode()).isEqualTo(200);
+    Number accountId =
+        dsl.resultQuery("SELECT id FROM accounts WHERE email = ?", email).fetchOne(0, Number.class);
+    assertThat(accountId).isNotNull();
+    long numericAccountId = accountId.longValue();
+    UUID persistedAccountUuid =
+        dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", numericAccountId)
+            .fetchOne(0, UUID.class);
+    Long sourceNumericId =
+        dsl.resultQuery(
+                "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
+                numericAccountId)
+            .fetchOne(0, Long.class);
+    String provenance =
+        dsl.resultQuery(
+                "SELECT account_uuid_provenance FROM accounts WHERE id = ?", numericAccountId)
+            .fetchOne(0, String.class);
+    assertThat(persistedAccountUuid).isNotNull();
+    assertThat(jsonMapper.readTree(registrationResponse.body()).path("data").path("id").asText())
+        .isEqualTo(persistedAccountUuid.toString());
+    assertThat(sourceNumericId).isEqualTo(numericAccountId);
+    assertThat(provenance).isEqualTo("ACCOUNT_REPOSITORY_INSERT");
+
+    HttpRequest authenticationRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/auth/login"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    "{\"username\":\""
+                        + username
+                        + "\",\"password\":\"password123\"}"))
+            .build();
+
+    HttpResponse<String> authenticationResponse =
+        HTTP_CLIENT.send(authenticationRequest, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(authenticationResponse.statusCode()).isEqualTo(200);
+    var data = jsonMapper.readTree(authenticationResponse.body()).path("data");
+    assertThat(data.path("accountId").asText()).isEqualTo(persistedAccountUuid.toString());
+    String token = data.path("authToken").asText();
+    assertThat(token).isNotBlank();
+    var claims = jwtUtil.parseToken(token).getPayload();
+    assertThat(claims.getSubject()).isEqualTo(persistedAccountUuid.toString());
+    assertThat(claims.get("accountId", String.class)).isEqualTo(persistedAccountUuid.toString());
+    assertThat(authenticationResponse.body())
+        .doesNotContain("\"accountId\":" + numericAccountId);
+
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", numericAccountId)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(persistedAccountUuid);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
+                    numericAccountId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(sourceNumericId);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_provenance FROM accounts WHERE id = ?", numericAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo(provenance);
+  }
+
+  @Test
   void exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope() throws Exception {
     String token =
         jwtUtil.generateToken(
             "operator", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(
-                URI.create("http://localhost:" + port + "/accounts/not-a-number/export"))
+                URI.create("http://localhost:" + port + "/accounts/not-a-uuid/export"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
@@ -175,12 +259,14 @@ class AccountApplicationIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
+    assertThat(response.body())
+        .contains("\"message\":\"accountId must be a canonical non-nil UUID\"");
   }
 
   @Test
   void linkExternalRouteIsUnavailableWithAuthenticatedRequest() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountUuid = "6bb95a5e-3b0a-4eac-85d0-5c1b83467ad2";
+    String token = jwtUtil.generateToken(accountUuid, java.util.Map.of("accountId", accountUuid));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts/2/external"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -201,9 +287,10 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountUuid = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+    String token = jwtUtil.generateToken(accountUuid, java.util.Map.of("accountId", accountUuid));
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/2"))
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .header(HttpHeaders.CONTENT_TYPE, "application/json")
             .PUT(

@@ -11,12 +11,44 @@ import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class EntityManagementClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, "20", "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L,
+          41L,
+          22L,
+          "00000000-0000-4000-8000-000000000020",
+          "",
+          123L,
+          "",
+          1L,
+          "R-1021",
+          "",
+          null,
+          1L,
+          "world",
+          "realm",
+          17L,
           "SHARED");
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "20",
+        "not-an-account",
+        "00000000-0000-0000-0000-000000000000",
+        " 00000000-0000-4000-8000-000000000020"
+      })
+  void rosterReadRejectsNonCanonicalAccountBeforeTransport(String accountId) {
+    EntityManagementClient client = newClient();
+    assertThatThrownBy(
+            () ->
+                client.listCharactersByAccount(
+                    "22", accountId, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 
   @Test
   void listRoomEntitiesFailsClosedWhenSessionContextDropsPartOfAdmittedRoutingBundle() {

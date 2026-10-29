@@ -140,7 +140,7 @@ public class GuildServiceImpl implements GuildService {
   @Override
   @Transactional
   @Timed(value = "guild.removeMember")
-  public void removeMember(long tenantId, long guildId, long accountId) {
+  public void removeMember(long tenantId, long guildId, String accountId) {
     logger.info("Removing member {} from guild {}", accountId, guildId);
     GuildMember member =
         guildMemberRepository
@@ -153,7 +153,7 @@ public class GuildServiceImpl implements GuildService {
     runAfterCommit(() -> safeReportModeration(tenantId, accountId, "Left guild " + guildId));
   }
 
-  private void safeReportModeration(long tenantId, long accountId, String description) {
+  private void safeReportModeration(long tenantId, String accountId, String description) {
     try {
       loggingAdminClient.reportChatViolation(tenantId, accountId, description);
     } catch (RuntimeException ex) {

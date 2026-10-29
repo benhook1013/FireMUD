@@ -50,7 +50,8 @@ class ModerationActionControllerTest {
 
   @Test
   void applyRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
-    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "");
+    ApplyModerationActionRequest req =
+        new ApplyModerationActionRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 9L, "ban", "");
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
@@ -72,7 +73,8 @@ class ModerationActionControllerTest {
 
   @Test
   void applyRejectsCrossTenantScopedAdmin() throws Exception {
-    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "");
+    ApplyModerationActionRequest req =
+        new ApplyModerationActionRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 9L, "ban", "");
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("moderator"))));
 
@@ -87,7 +89,8 @@ class ModerationActionControllerTest {
 
   @Test
   void applyRejectsZeroSessionIdBeforeDispatch() throws Exception {
-    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 0L, "ban", "");
+    ApplyModerationActionRequest req =
+        new ApplyModerationActionRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 0L, "ban", "");
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc

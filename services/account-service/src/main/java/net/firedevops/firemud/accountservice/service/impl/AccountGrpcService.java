@@ -5,6 +5,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -37,6 +38,7 @@ import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
+import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -54,11 +56,13 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -107,17 +111,19 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         IssueDirectTextConnectScopeResponse.newBuilder();
     try {
       requireGameSessionPeer();
-      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
+      var context = request.getPlayerContext();
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
       UUID realmId = requireCanonicalRealmId(request.getRealmId());
       long gameInstanceId = requirePositiveRequestId(request.getGameInstanceId(), "gameInstanceId");
-      if (caller.tenantId() != tenantId
-          || !caller.realmId().equals(realmId)
-          || caller.gameInstanceId() != gameInstanceId
-          || !caller.playableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
-          || !caller.playableStateScope().equals(request.getPlayableStateScope())) {
+      if (requirePositiveRequestId(context.getTenantId(), "tenantId") != tenantId
+          || !requireCanonicalRealmId(context.getRealmId()).equals(realmId)
+          || requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId")
+              != gameInstanceId
+          || !context.getPlayableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
+          || !context.getPlayableStateScope().equals(request.getPlayableStateScope())) {
         throw new InvalidRequestException("Player context and selected realm disagree", null);
       }
+      DirectTextCallerContext caller = directTextCaller(context);
       var scope =
           accountService.issueDirectTextConnectScope(
               caller,
@@ -160,23 +166,26 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         JoinPublicProductionMembershipResponse.newBuilder();
     try {
       requireGameSessionPeer();
-      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       String requestId = requireText(request.getRequestId(), "requestId");
       if (requestId.length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
         throw new InvalidRequestException("JOIN requestId exceeds the maximum length", null);
       }
-      if (!requestId.equals(caller.requestId())) {
+      if (!requestId.equals(request.getPlayerContext().getRequestId())) {
         throw new InvalidRequestException("Player context and JOIN request ID disagree", null);
       }
+      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       var result =
           accountService.joinPublicProductionFromGameSession(
               caller,
               new JoinPublicProductionRequest(
                   requireText(request.getConnectScopeId(), "connectScopeId"), requestId));
+      if (result.accountId() != caller.accountId() || result.tenantId() != caller.tenantId()) {
+        throw new IllegalStateException("Account JOIN result does not match the validated caller");
+      }
       response
           .setSuccess(result.success())
           .setOutcomeCode(result.outcomeCode())
-          .setAccountId(Long.toString(result.accountId()))
+          .setAccountId(request.getPlayerContext().getAccountId())
           .setTenantId(Long.toString(result.tenantId()))
           .setMembershipId(Long.toString(result.membershipId()))
           .setMembershipVersion(result.membershipVersion())
@@ -210,17 +219,72 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     }
   }
 
+  private void requireRuntimeEntitlementsPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    String namespace = workloadNamespace;
+    if (peer == null
+        || namespace == null
+        || namespace.isBlank()
+        || !(peer.uri().equals("spiffe://firemud/ns/" + namespace + "/sa/game-session-service")
+            || peer.uri()
+                .equals("spiffe://firemud/ns/" + namespace + "/sa/world-management-service"))) {
+      throw new AdminAuthorizationException(
+          "Verified Game Session or World Management workload identity is required");
+    }
+  }
+
+  private void requireSocialGroupsPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null
+        || workloadNamespace == null
+        || workloadNamespace.isBlank()
+        || !peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/social-groups-service")) {
+      throw new AdminAuthorizationException("Verified Social Groups workload identity is required");
+    }
+  }
+
+  private void requireCallerAccountSubject(UUID accountUuid) {
+    if (SessionContext.isInternalService()) {
+      throw new AdminAuthorizationException("Authenticated account subject is required");
+    }
+    if (!accountUuid.toString().equals(SessionContext.getAccountId())) {
+      throw new AdminAuthorizationException("Profile access is restricted to the caller account");
+    }
+  }
+
+  private static UUID requireCanonicalAccountUuid(String value) {
+    UUID accountUuid = AccountUuidText.parseOrNull(value);
+    if (accountUuid == null) {
+      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", null);
+    }
+    return accountUuid;
+  }
+
   private DirectTextCallerContext directTextCaller(
       net.firedevops.firemud.shared.v1.PlayerExecutionContext context) {
+    UUID accountUuid = requireCanonicalAccountUuid(context.getAccountId());
+    long tenantId = requirePositiveRequestId(context.getTenantId(), "tenantId");
+    UUID realmId = requireCanonicalRealmId(context.getRealmId());
+    String namespaceId =
+        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId());
+    String scope = requireText(context.getPlayableStateScope(), "playableStateScope");
+    long gameInstanceId = requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId");
+    String sessionId = requireText(context.getSessionId(), "sessionId");
+    String requestId = requireText(context.getRequestId(), "requestId");
+    long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
+    if (accountStorageId <= 0L) {
+      throw new IllegalStateException("Account UUID did not resolve to a persisted owner");
+    }
     return new DirectTextCallerContext(
-        requirePositiveRequestId(context.getAccountId(), "accountId"),
-        requirePositiveRequestId(context.getTenantId(), "tenantId"),
-        requireCanonicalRealmId(context.getRealmId()),
-        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId()),
-        requireText(context.getPlayableStateScope(), "playableStateScope"),
-        requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
-        requireText(context.getSessionId(), "sessionId"),
-        requireText(context.getRequestId(), "requestId"));
+        accountStorageId,
+        tenantId,
+        realmId,
+        namespaceId,
+        scope,
+        gameInstanceId,
+        sessionId,
+        requestId);
   }
 
   private UUID requireCanonicalRealmId(String value) {
@@ -319,7 +383,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -341,6 +405,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setError(appError("Authenticate", "UNAUTHENTICATED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(appError("Authenticate", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -373,7 +444,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -389,6 +460,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                       AuthenticationErrorCodes.INVALID_CREDENTIALS,
                       "Invalid credentials"))
               .build());
+    } catch (IllegalStateException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  appError(
+                      "VerifyEmailLoginOtp", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
     }
     responseObserver.onCompleted();
   }
@@ -399,14 +477,22 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
       var dto =
           accountService.getTenantMembershipForRuntime(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getRequestId());
+              accountStorageId, tenantId, request.getRequestId());
+      if (dto == null
+          || !Long.valueOf(accountStorageId).equals(dto.accountId())
+          || !Long.valueOf(tenantId).equals(dto.tenantId())) {
+        throw new IllegalStateException(
+            "Account membership authority returned an inconsistent identity");
+      }
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
+              .setAccountId(accountUuid.toString())
               .setTenantId(String.valueOf(dto.tenantId()))
               .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
@@ -416,6 +502,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setEvaluatedAt(dto.evaluatedAt())
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetTenantMembershipForRuntime", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetTenantMembershipForRuntimeResponse response =
@@ -432,6 +525,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  appError(
+                      "GetTenantMembershipForRuntime",
+                      "AUTH_UNAVAILABLE",
+                      AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -441,24 +544,47 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetRealmAccessGrantForRuntimeRequest request,
       StreamObserver<GetRealmAccessGrantForRuntimeResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      String worldSlug = requireText(request.getWorldSlug(), "worldSlug");
+      String realmSlug = requireText(request.getRealmSlug(), "realmSlug");
+      long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
       var dto =
           accountService.getRealmAccessGrantForRuntime(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getWorldSlug(),
-              request.getRealmSlug(),
-              request.getRequestId());
+              accountStorageId,
+              tenantId,
+              worldSlug,
+              realmSlug,
+              requireText(request.getRequestId(), "requestId"));
+      if (dto.accountId() != accountStorageId
+          || dto.tenantId() != tenantId
+          || !worldSlug.equals(dto.worldSlug())
+          || !realmSlug.equals(dto.realmSlug())
+          || (dto.granted() && dto.grantVersion() <= 0L)
+          || dto.evaluatedAt() == null
+          || dto.evaluatedAt().isBlank()
+          || Instant.parse(dto.evaluatedAt()).isAfter(Instant.now().plusSeconds(5))) {
+        throw new IllegalStateException("Account returned mismatched realm-grant authority");
+      }
       GetRealmAccessGrantForRuntimeResponse response =
           GetRealmAccessGrantForRuntimeResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
-              .setTenantId(String.valueOf(dto.tenantId()))
-              .setWorldSlug(dto.worldSlug())
-              .setRealmSlug(dto.realmSlug())
+              .setAccountId(accountUuid.toString())
+              .setTenantId(Long.toString(tenantId))
+              .setWorldSlug(worldSlug)
+              .setRealmSlug(realmSlug)
               .setGranted(dto.granted())
               .setGrantVersion(dto.grantVersion())
               .setEvaluatedAt(dto.evaluatedAt())
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetRealmAccessGrantForRuntime", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetRealmAccessGrantForRuntimeResponse response =
@@ -475,6 +601,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(
+                  appError(
+                      "GetRealmAccessGrantForRuntime",
+                      "AUTH_UNAVAILABLE",
+                      AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -484,9 +620,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetTenantEntitlementsForRuntimeRequest request,
       StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
     try {
-      var dto =
-          accountService.getTenantEntitlementsForRuntime(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getRequestId());
+      requireRuntimeEntitlementsPeer();
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      String requestId = requireText(request.getRequestId(), "requestId");
+      var dto = accountService.getTenantEntitlementsForRuntime(tenantId, requestId);
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(String.valueOf(dto.tenantId()))
@@ -495,6 +632,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setEntitlementVersion(dto.entitlementVersion())
               .setTenantBillingSequence(dto.tenantBillingSequence())
               .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(
+                  appError("GetTenantEntitlementsForRuntime", "PERMISSION_DENIED", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -528,15 +673,28 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
     try {
-      var dto =
-          accountService.getProfile(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"));
+      requireSocialGroupsPeer();
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      requireCallerAccountSubject(accountUuid);
+      long accountId = accountService.resolveAccountStorageId(accountUuid);
+      var dto = accountService.getProfile(tenantId, accountId);
+      if (dto == null
+          || !accountUuid.toString().equals(dto.accountId())
+          || !Long.valueOf(tenantId).equals(dto.tenantId())) {
+        throw new IllegalStateException("Profile authority returned a different owner");
+      }
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
               .setProfileJson(JsonMapper.builder().build().writeValueAsString(dto))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetProfileResponse response =
@@ -552,6 +710,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (RuntimeException ignored) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -562,28 +726,66 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse>
           responseObserver) {
     try {
+      requireSocialGroupsPeer();
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
       if (request.getAccountIdsCount() > MAX_ACCOUNT_IDS_PER_REQUEST) {
         throw new InvalidRequestException(
             "accountIds must contain at most " + MAX_ACCOUNT_IDS_PER_REQUEST + " entries", null);
       }
-      java.util.List<Long> accountIds =
+      java.util.List<UUID> accountUuids =
           request.getAccountIdsList().stream()
-              .map(accountId -> requirePositiveRequestId(accountId, "accountId"))
+              .map(AccountGrpcService::requireCanonicalAccountUuid)
               .distinct()
               .toList();
+      java.util.Map<UUID, Long> storageIdsByAccountUuid = new java.util.LinkedHashMap<>();
+      java.util.Map<Long, UUID> accountUuidsByStorageId = new java.util.HashMap<>();
+      for (UUID accountUuid : accountUuids) {
+        Long storageId;
+        try {
+          storageId = accountService.resolveAccountStorageId(accountUuid);
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+          // Unknown or unproven local subjects are omitted so Social applies complete PRIVATE
+          // redaction rather than receiving a guessed identity or a private storage key.
+          continue;
+        }
+        if (storageId == null || storageId <= 0L) {
+          continue;
+        }
+        UUID previousAccountUuid = accountUuidsByStorageId.putIfAbsent(storageId, accountUuid);
+        if (previousAccountUuid != null && !previousAccountUuid.equals(accountUuid)) {
+          throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+        }
+        storageIdsByAccountUuid.put(accountUuid, storageId);
+      }
+      java.util.List<Long> storageIds = java.util.List.copyOf(storageIdsByAccountUuid.values());
+      java.util.Map<Long, ProfilePresenceVisibilityPolicy> policies =
+          storageIds.isEmpty()
+              ? java.util.Map.of()
+              : accountService.listPresenceVisibilityPolicies(tenantId, storageIds);
+      for (java.util.Map.Entry<Long, ProfilePresenceVisibilityPolicy> policy :
+          policies.entrySet()) {
+        if (!accountUuidsByStorageId.containsKey(policy.getKey()) || policy.getValue() == null) {
+          throw new IllegalStateException(
+              "Presence visibility policy read returned an unexpected Account row");
+        }
+      }
       var builder =
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
-      accountService
-          .listPresenceVisibilityPolicies(tenantId, accountIds)
-          .forEach(
-              (accountId, policy) ->
-                  builder.addPolicies(
-                      net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
-                          .setAccountId(Long.toString(accountId))
-                          .setPolicy(policy.name())
-                          .build()));
+      policies.forEach(
+          (storageId, policy) ->
+              builder.addPolicies(
+                  net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
+                      .setAccountId(accountUuidsByStorageId.get(storageId).toString())
+                      .setPolicy(policy.name())
+                      .build()));
       responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .setError(
+                  appError("ListPresenceVisibilityPolicies", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -601,7 +803,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (RuntimeException ex) {
       responseObserver.onNext(
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
-              .setError(appError("ListPresenceVisibilityPolicies", "INTERNAL", ex.getMessage()))
+              .setError(
+                  appError(
+                      "ListPresenceVisibilityPolicies",
+                      "INTERNAL",
+                      "Presence visibility policy lookup failed"))
               .build());
       responseObserver.onCompleted();
     }
@@ -612,21 +818,57 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
-      JsonNode node = JsonMapper.builder().build().readTree(request.getProfileJson());
+      requireSocialGroupsPeer();
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      requireCallerAccountSubject(accountUuid);
+      try {
+        accountService.resolveAccountStorageId(accountUuid);
+      } catch (IllegalArgumentException ex) {
+        responseObserver.onNext(
+            UpdateProfileResponse.newBuilder()
+                .setSuccess(false)
+                .setError(appError("UpdateProfile", "NOT_FOUND", ex.getMessage()))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
+      JsonNode node;
+      ProfilePresenceVisibilityPolicy policy;
+      try {
+        node = JsonMapper.builder().build().readTree(request.getProfileJson());
+        if (node == null || !node.isObject()) {
+          throw new IllegalArgumentException("Profile update must be an object");
+        }
+        String policyName = node.path("presenceVisibilityPolicy").asText(null);
+        policy =
+            ProfilePresenceVisibilityPolicy.valueOf(
+                policyName == null
+                    ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
+                    : policyName);
+      } catch (JacksonException | IllegalArgumentException ex) {
+        throw new InvalidRequestException("profileJson must contain a valid profile update", ex);
+      }
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);
-      String presenceVisibilityPolicy = node.path("presenceVisibilityPolicy").asText(null);
-      accountService.updateProfile(
-          new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              displayName,
-              bio,
-              ProfilePresenceVisibilityPolicy.valueOf(
-                  presenceVisibilityPolicy == null
-                      ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
-                      : presenceVisibilityPolicy)));
+      var dto =
+          accountService.updateProfile(
+              new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                  tenantId, accountUuid.toString(), displayName, bio, policy));
+      if (dto == null
+          || !accountUuid.toString().equals(dto.accountId())
+          || !Long.valueOf(tenantId).equals(dto.tenantId())) {
+        throw new IllegalStateException("Profile authority returned a different owner");
+      }
       UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("UpdateProfile", "PERMISSION_DENIED", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
@@ -637,13 +879,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (Exception ex) {
+    } catch (IllegalArgumentException ex) {
       UpdateProfileResponse response =
           UpdateProfileResponse.newBuilder()
               .setSuccess(false)
               .setError(appError("UpdateProfile", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (RuntimeException ignored) {
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  appError("UpdateProfile", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
       responseObserver.onCompleted();
     }
   }
@@ -655,7 +905,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var data =
           accountService.exportAccountData(
-              requirePositiveRequestId(request.getAccountId(), "accountId"));
+              accountService.resolveAccountStorageId(
+                  requireCanonicalAccountUuid(request.getAccountId())));
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
               .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
@@ -688,7 +939,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var data =
           accountService.exportTenantData(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"));
+              accountService.resolveAccountStorageId(
+                  requireCanonicalAccountUuid(request.getAccountId())));
       ExportTenantDataResponse response =
           ExportTenantDataResponse.newBuilder()
               .setTenantId(String.valueOf(data.tenantId()))
@@ -723,7 +975,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      accountService.deleteAccount(requirePositiveRequestId(request.getAccountId(), "accountId"));
+      accountService.deleteAccount(
+          accountService.resolveAccountStorageId(
+              requireCanonicalAccountUuid(request.getAccountId())));
       DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -834,7 +1088,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       accountService.linkExternalAccount(
           new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
+              accountService.resolveAccountStorageId(
+                  requireCanonicalAccountUuid(request.getAccountId())),
               request.getProvider(),
               request.getExternalId()));
       var response =
@@ -870,7 +1125,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           responseObserver) {
     try {
       accountService.requestEmailVerification(
-          requirePositiveRequestId(request.getAccountId(), "accountId"));
+          accountService.resolveAccountStorageId(
+              requireCanonicalAccountUuid(request.getAccountId())));
       var response =
           net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
               .setSuccess(true)

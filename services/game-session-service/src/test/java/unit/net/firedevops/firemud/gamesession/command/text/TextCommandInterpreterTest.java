@@ -89,6 +89,7 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
+  private static final String ACCOUNT_ID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private static final String PLAY_DEMO_PRODUCTION = "PLAY demo production";
 
   private final CommandService commandService = Mockito.mock(CommandService.class);
@@ -165,13 +166,13 @@ class TextCommandInterpreterTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
+                .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
@@ -185,7 +186,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
-    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -404,14 +405,14 @@ class TextCommandInterpreterTest {
             lookCacheService,
             new TextPlayerOutputRenderer(new PresentationProperties()));
     when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(ACCOUNT_ID)
                         .setName("demo")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -852,7 +853,9 @@ class TextCommandInterpreterTest {
   @Test
   void gameplayWithRoomOnlyPartialShellStillReturnsPlayRequired() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(56L, 22L, "123", "demo@example.com", 0L, null, 0L, "R-7", null));
+        .save(
+            new SessionContext(
+                56L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "R-7", null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("56", "LOOK", false);
 

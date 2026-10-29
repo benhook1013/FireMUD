@@ -36,15 +36,12 @@ class TestDataSeederTest {
     when(playerReportRepository.findFirstByTenantIdAndReporterAccountIdAndTargetAccountIdAndType(
             1L, 1L, 2L, "bug"))
         .thenReturn(Optional.empty());
-    when(moderationActionRepository.findFirstByTenantIdAndAccountIdAndActionAndReason(
-            1L, 2L, "warning", "initial seed"))
-        .thenReturn(Optional.empty());
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
     verify(logEventRepository).save(any());
     verify(playerReportRepository).save(any());
-    verify(moderationActionRepository).save(any());
+    org.mockito.Mockito.verifyNoInteractions(moderationActionRepository);
   }
 
   @Test
@@ -54,15 +51,12 @@ class TestDataSeederTest {
     when(playerReportRepository.findFirstByTenantIdAndReporterAccountIdAndTargetAccountIdAndType(
             1L, 1L, 2L, "bug"))
         .thenReturn(Optional.of(new net.firedevops.firemud.loggingadmin.entity.PlayerReport()));
-    when(moderationActionRepository.findFirstByTenantIdAndAccountIdAndActionAndReason(
-            1L, 2L, "warning", "initial seed"))
-        .thenReturn(Optional.of(new net.firedevops.firemud.loggingadmin.entity.ModerationAction()));
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
     verify(logEventRepository).save(any());
     verify(playerReportRepository).save(any());
-    verify(moderationActionRepository).save(any());
+    org.mockito.Mockito.verifyNoInteractions(moderationActionRepository);
     verify(logEventRepository, never()).count();
     verify(playerReportRepository, never()).count();
     verify(moderationActionRepository, never()).count();

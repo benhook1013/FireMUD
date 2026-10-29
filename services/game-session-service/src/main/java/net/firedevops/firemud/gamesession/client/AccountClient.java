@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
@@ -164,6 +165,11 @@ public final class AccountClient
     if (stub() == null) {
       return membershipAuthorityUnavailable();
     }
+    try {
+      JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+    } catch (IllegalArgumentException ex) {
+      return membershipAuthorityUnavailable();
+    }
     GetTenantMembershipForRuntimeRequest request =
         GetTenantMembershipForRuntimeRequest.newBuilder()
             .setAccountId(accountId)
@@ -171,14 +177,14 @@ public final class AccountClient
             .setRequestId(requestId == null ? "" : requestId)
             .build();
     try {
-      return callStub().getTenantMembershipForRuntime(request);
+      return correlateMembership(callStub().getTenantMembershipForRuntime(request), request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
             "Account Service unavailable; rebuilding channel and retrying runtime membership", ex);
         try {
           initClient();
-          return callStub().getTenantMembershipForRuntime(request);
+          return correlateMembership(callStub().getTenantMembershipForRuntime(request), request);
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Account Service runtime membership after channel reload", retryEx);
@@ -239,6 +245,11 @@ public final class AccountClient
     if (stub() == null) {
       return realmAccessGrantUnavailable();
     }
+    try {
+      JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+    } catch (IllegalArgumentException ex) {
+      return realmAccessGrantUnavailable();
+    }
     GetRealmAccessGrantForRuntimeRequest request =
         GetRealmAccessGrantForRuntimeRequest.newBuilder()
             .setAccountId(accountId)
@@ -248,7 +259,7 @@ public final class AccountClient
             .setRequestId(requestId == null ? "" : requestId)
             .build();
     try {
-      return callStub().getRealmAccessGrantForRuntime(request);
+      return correlateRealmGrant(callStub().getRealmAccessGrantForRuntime(request), request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -256,7 +267,7 @@ public final class AccountClient
             ex);
         try {
           initClient();
-          return callStub().getRealmAccessGrantForRuntime(request);
+          return correlateRealmGrant(callStub().getRealmAccessGrantForRuntime(request), request);
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Account Service realm access grant read after channel reload",
@@ -269,6 +280,36 @@ public final class AccountClient
       logger.warn("Failed to call Account Service realm access grant endpoint", ex);
     }
     return realmAccessGrantUnavailable();
+  }
+
+  private GetTenantMembershipForRuntimeResponse correlateMembership(
+      GetTenantMembershipForRuntimeResponse response,
+      GetTenantMembershipForRuntimeRequest request) {
+    if (response != null && response.hasError()) {
+      return response;
+    }
+    if (response == null
+        || !request.getAccountId().equals(response.getAccountId())
+        || !request.getTenantId().equals(response.getTenantId())) {
+      return membershipAuthorityUnavailable();
+    }
+    return response;
+  }
+
+  private GetRealmAccessGrantForRuntimeResponse correlateRealmGrant(
+      GetRealmAccessGrantForRuntimeResponse response,
+      GetRealmAccessGrantForRuntimeRequest request) {
+    if (response != null && response.hasError()) {
+      return response;
+    }
+    if (response == null
+        || !request.getAccountId().equals(response.getAccountId())
+        || !request.getTenantId().equals(response.getTenantId())
+        || !request.getWorldSlug().equals(response.getWorldSlug())
+        || !request.getRealmSlug().equals(response.getRealmSlug())) {
+      return realmAccessGrantUnavailable();
+    }
+    return response;
   }
 
   private GetRealmAccessGrantForRuntimeResponse realmAccessGrantUnavailable() {

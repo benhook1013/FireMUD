@@ -5,6 +5,7 @@ import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 
 public final class ChatTestFixtures {
   public static final String ROOM_ID = "R-1021";
@@ -65,7 +66,8 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_EMBERLINE)
           .setTenantId("1")
-          .setAccountId(Long.toString(EMBERLINE_ACCOUNT_ROW_ID))
+          .setAccountId(
+              AccountRuntimeStubServer.accountUuidForTestFixture(EMBERLINE_ACCOUNT_ROW_ID))
           .setName("Emberline")
           .build();
     }
@@ -73,7 +75,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_SORA)
           .setTenantId("1")
-          .setAccountId(Long.toString(SORA_ACCOUNT_ROW_ID))
+          .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(SORA_ACCOUNT_ROW_ID))
           .setName("Sora")
           .build();
     }
@@ -81,7 +83,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_NYX)
           .setTenantId("1")
-          .setAccountId(Long.toString(NYX_ACCOUNT_ROW_ID))
+          .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(NYX_ACCOUNT_ROW_ID))
           .setName("Nyx")
           .build();
     }

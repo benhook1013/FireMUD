@@ -53,14 +53,14 @@ public final class GrpcClientAuth {
   }
 
   static String createBearerToken(JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
-    Long accountId = SessionContext.currentAccountIdOrNull();
+    String accountId = SessionContext.getAccountId();
     List<String> globalRoles = SessionContext.getGlobalRoles();
     Map<String, List<String>> scopedRoles = SessionContext.getScopedRolesMap();
-    if (accountId == null) {
+    if (accountId == null || accountId.isBlank()) {
       return createInternalBearerToken(jwtUtil, runtimeIdentity);
     }
 
-    String accountIdText = Long.toString(accountId);
+    String accountIdText = JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
     Map<String, Object> claims = new HashMap<>();
     claims.put("accountId", accountIdText);
     claims.put("globalRoles", globalRoles == null ? List.of() : globalRoles);

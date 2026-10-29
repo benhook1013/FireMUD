@@ -89,7 +89,10 @@ public class GameplaySessionAttestationService {
     String attestationType = requireClaim(claims, "attestationType");
     String tenantId = requireClaim(claims, "tenantId");
     String sessionId = requireClaim(claims, "sessionId");
-    String accountId = requireClaim(claims, "accountId");
+    String accountId =
+        GAMEPLAY_SESSION.equals(attestationType)
+            ? requireCanonicalAccountUuid(claims.get("accountId"), "accountId")
+            : requireClaim(claims, "accountId");
     String characterId = requireClaim(claims, "characterId");
     String gameInstanceId = requireClaim(claims, "gameInstanceId");
     String roomInstanceId =
@@ -166,13 +169,15 @@ public class GameplaySessionAttestationService {
     }
     requirePositiveId(claims.tenantId(), "tenantId");
     requirePositiveId(claims.sessionId(), "sessionId");
-    requirePositiveId(claims.accountId(), "accountId");
+    String accountUuid = requireCanonicalAccountUuid(claims.accountId(), "accountId");
     requirePositiveId(claims.characterId(), "characterId");
     requirePositiveId(claims.gameInstanceId(), "gameInstanceId");
     requirePositiveId(claims.pointerVersion(), "pointerVersion");
     requirePositiveEquals(claims.tenantId(), tenantId, "tenantId");
     requireOptionalPositiveEquals(claims.sessionId(), sessionId, "sessionId");
-    requireOptionalPositiveEquals(claims.accountId(), accountId, "accountId");
+    if (StringUtils.hasText(accountId)) {
+      requireEquals(accountUuid, requireCanonicalAccountUuid(accountId, "accountId"), "accountId");
+    }
     requireOptionalPositiveEquals(claims.characterId(), characterId, "characterId");
     requireOptionalPositiveEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
     // roomInstanceId remains a routed room identifier string; keep text equality here.
@@ -239,6 +244,15 @@ public class GameplaySessionAttestationService {
   private long requirePositiveId(String value, String fieldName) {
     try {
       return JwtClaims.requireLong(value, fieldName, false);
+    } catch (IllegalArgumentException ex) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", ex.getMessage(), ex);
+    }
+  }
+
+  private String requireCanonicalAccountUuid(Object value, String fieldName) {
+    try {
+      return JwtClaims.requireCanonicalAccountUuid(value, fieldName);
     } catch (IllegalArgumentException ex) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", ex.getMessage(), ex);

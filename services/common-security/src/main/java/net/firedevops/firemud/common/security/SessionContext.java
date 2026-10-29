@@ -107,16 +107,16 @@ public final class SessionContext {
   }
 
   /**
-   * Returns the current account id when present.
+   * Returns the current canonical Account UUID when present.
    *
-   * <p>Blank or missing claims return {@code null}. Malformed or non-positive claims fail closed.
+   * <p>Blank or missing claims return {@code null}. Malformed, nil, or non-UUID claims fail closed.
    */
-  public static Long currentAccountIdOrNull() {
+  public static String currentAccountUuidOrNull() {
     ClaimsData data = currentData();
     if (data == null || data.accountId == null || data.accountId.isBlank()) {
       return null;
     }
-    return JwtClaims.requireLong(data.accountId, "accountId", false);
+    return JwtClaims.requireCanonicalAccountUuid(data.accountId, "accountId");
   }
 
   /** Throws 403 when the current caller cannot act on the provided tenant. */

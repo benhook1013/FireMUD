@@ -7,8 +7,8 @@ import lombok.Data;
 public class MailMessage {
   private Long id;
   private Long tenantId;
-  private Long senderAccountId;
-  private Long recipientAccountId;
+  private String senderAccountId;
+  private String recipientAccountId;
   private String subject;
   private String content;
   private Instant sentAt;

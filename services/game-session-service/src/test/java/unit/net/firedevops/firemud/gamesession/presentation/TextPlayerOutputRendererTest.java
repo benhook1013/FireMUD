@@ -1069,7 +1069,7 @@ class TextPlayerOutputRendererTest {
                     new FriendPresenceViewOutput.Entry(
                         1,
                         77L,
-                        41L,
+                        "00000000-0000-4000-8000-000000000041",
                         "ONLINE",
                         null,
                         "Sora",
@@ -1095,7 +1095,7 @@ class TextPlayerOutputRendererTest {
     assertThat(rendered)
         .isEqualTo(
             "OK FRIENDS\n"
-                + "Friend Sora [acct #41]\n"
+                + "Friend Sora [acct #00000000-0000-4000-8000-000000000041]\n"
                 + "Link: #77\n"
                 + "Status: online\n"
                 + "Presence: online in Demo World / Ember Realm (active)\n"
