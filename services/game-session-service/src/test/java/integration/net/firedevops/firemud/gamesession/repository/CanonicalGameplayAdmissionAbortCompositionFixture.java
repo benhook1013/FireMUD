@@ -74,6 +74,8 @@ import org.testcontainers.containers.GenericContainer;
  * replaces the GS reverse decision read.
  */
 public final class CanonicalGameplayAdmissionAbortCompositionFixture implements AutoCloseable {
+  static final String PHASE_DIAGNOSTICS_PROPERTY = "firemud.gameplay.fixture-phase-diagnostics";
+
   private static final String SERVICE_MIGRATIONS =
       "filesystem:"
           + Path.of("../game-session-service/src/main/resources/db/migration")
@@ -195,9 +197,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap,
       boolean originalInBootstrap) {
+    long phaseStartedAt;
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
     }
+    phaseStartedAt = System.nanoTime();
     this.issuerRedisClient =
         java.util.Objects.requireNonNull(issuerRedisClient, "issuerRedisClient");
     dataSource = new DriverManagerDataSource();
@@ -216,6 +220,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS);
     if (migrationTarget != null) migration.target(migrationTarget);
     migration.load().migrate();
+    logElapsedPhase("schema_migration", phaseStartedAt);
+    phaseStartedAt = System.nanoTime();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     var runtime =
         CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
@@ -238,6 +244,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
             accountCandidate.issuerIndexLayoutVersion(),
             accountCandidate.issuerIndexPartitionCount(),
             accountCandidate.issuerIndexPartitionCapacity());
+    logElapsedPhase("runtime_target_seed", phaseStartedAt);
+    phaseStartedAt = System.nanoTime();
     establishActualLegacyDisposition(dsl);
     if (seedBootstrapMemberCount > 0) {
       seedQualifiedBootstrapMembers(seedBootstrapMemberCount, migrationTarget);
@@ -259,6 +267,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
               null,
               null));
     }
+    logElapsedPhase("legacy_disposition_and_bootstrap_seed", phaseStartedAt);
+    phaseStartedAt = System.nanoTime();
     BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
     BigInteger partitionCount = identity.issuerIndexPartitionCount();
     BigInteger partitionCapacity = identity.issuerIndexPartitionCapacity();
@@ -343,6 +353,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .installInitialOpen(installedAnchor, issuerSource);
     localProjectionRepository =
         new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource);
+    logElapsedPhase("bootstrap_installation_and_admission_open", phaseStartedAt);
+    phaseStartedAt = System.nanoTime();
     if (originalInBootstrap) {
       localOperation = Optional.empty();
       generation =
@@ -379,6 +391,17 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       new CanonicalGameplayIssuerBindingLocalRedisOwner(
               issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
           .projectAndRead(operation);
+    }
+    logElapsedPhase("ordinary_new_initialization", phaseStartedAt);
+  }
+
+  static void logElapsedPhase(String phase, long startedAtNanos) {
+    if (Boolean.getBoolean(PHASE_DIAGNOSTICS_PROPERTY)) {
+      System.out.println(
+          "GAMEPLAY_FIXTURE_PHASE "
+              + phase
+              + " elapsed_ms="
+              + ((System.nanoTime() - startedAtNanos) / 1_000_000));
     }
   }
 
