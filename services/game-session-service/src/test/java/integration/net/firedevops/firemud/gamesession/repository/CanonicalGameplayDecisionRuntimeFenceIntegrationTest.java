@@ -463,7 +463,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
       // These controlled storage rows have no original INSTALLED preparation. They remain
       // valid input for the earlier executor-fence conversion through the V1051 predecessor.
-      migrate(schema, dataSource, "1050.5");
+      migrate(schema, dataSource, "1050.6");
 
       assertThat(requiredRegionSourceImages(dsl)).isEqualTo(before);
       var retainedHistory = migrationHistoryImages(dsl);
@@ -475,7 +475,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
                       "SELECT version FROM flyway_schema_history WHERE success = true"
                           + " ORDER BY installed_rank DESC LIMIT 1")
                   .get("version", String.class))
-          .isEqualTo("1050.5");
+          .isEqualTo("1050.6");
       assertThat(regionExecutorFenceType(dsl, schema)).isEqualTo("bigint");
       assertThat(
               dsl.fetchSingle(
@@ -506,7 +506,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
                           + " WHERE status = 'ACKNOWLEDGED'")
                   .get("count", Long.class))
           .isZero();
-      // Transactional V1051 refusal retains the predecessor schema as well as its data/history.
+      // Transactional V1051 refusal retains the V1050.6 predecessor schema and data/history.
       assertThat(
               dsl.fetchSingle(
                       "SELECT count(*) AS count FROM information_schema.columns"
