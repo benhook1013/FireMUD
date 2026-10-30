@@ -4,6 +4,10 @@ This document defines the Social & Groups Service REST and gRPC surfaces, chat-d
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
+## Account Identity Fields
+
+Social REST and gRPC Account-valued fields and path selectors use Account UUID text, including friend and presence identities, guild owner/member identities, chat and mail sender/recipient identities, and voice-token account selectors. `tenantId` retains its current numeric representation. The [Account API](../account-service/api-contracts.md) and [ADR 0020](../../decisions/adr-0020-scoped-domain-and-operational-identifiers.md) own the identity contract; this section records Social's local wire-field consequence. It does not change the availability or player-safety status of the service-local and Gateway routes described below.
+
 ## Chat and Moderation Contract
 
 **Target state:** Social & Groups is the enforcement owner for `chat_mute` and `chat_ban`. Its local indexed restriction state is evaluated before chat persistence/publication and at participation/history reads; the complete category, revision, command, notice, and appeal-outcome contract is [Moderation Policies](../logging-admin-service/moderation-policies.md) and active [ADR 0146](../../decisions/adr-0146-owner-local-moderation-enforcement.md), mapped from reviewed archive record `archive-ADR-0133`. Every REST and gRPC chat write must traverse that same owner-local restriction boundary before persistence or publication. `chat_mute` rejects sending but permits ordinary receipt, while `chat_ban` rejects ordinary participation, send, and history but permits essential moderation/system notices.
@@ -57,7 +61,7 @@ Current internal/non-player-safe chat request (the Gateway `/api/social/chat` ed
 curl -X POST http://localhost:8080/chat \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":7,"senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":7,"senderAccountId":"b8d093f7-cb70-40ed-9fac-3c82d4bf28f1","content":"hello"}'
 ```
 
 Example voice-token request:
@@ -66,7 +70,7 @@ Example voice-token request:
 curl -X POST http://localhost:8080/voice/token \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":7,"accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":7,"accountId":"b8d093f7-cb70-40ed-9fac-3c82d4bf28f1","channelId":"guild-10"}'
 ```
 
 ## gRPC APIs

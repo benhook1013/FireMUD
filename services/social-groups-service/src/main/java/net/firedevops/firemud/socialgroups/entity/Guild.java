@@ -8,6 +8,6 @@ public class Guild {
   private Long id;
   private Long tenantId;
   private String name;
-  private Long ownerAccountId;
+  private String ownerAccountId;
   private Instant createdAt;
 }

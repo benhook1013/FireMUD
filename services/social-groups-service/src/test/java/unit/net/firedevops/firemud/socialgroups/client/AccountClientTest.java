@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.client;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
+import net.firedevops.firemud.socialgroups.test.AccountUuidFixtures;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -53,15 +55,16 @@ class AccountClientTest {
                   .build();
             });
     AccountClient client = newClient(stub);
-    List<Long> accountIds = LongStream.rangeClosed(1L, 101L).boxed().toList();
+    List<String> accountIds =
+        LongStream.rangeClosed(1L, 101L).mapToObj(AccountUuidFixtures::accountUuid).toList();
 
-    Map<Long, FriendPresenceVisibilityPolicyValue> policies =
+    Map<String, FriendPresenceVisibilityPolicyValue> policies =
         client.getPresenceVisibilityPolicies(11L, accountIds);
 
     assertThat(policies)
         .hasSize(101)
-        .containsEntry(1L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY)
-        .containsEntry(101L, FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
+        .containsEntry(accountUuid(1L), FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY)
+        .containsEntry(accountUuid(101L), FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
     ArgumentCaptor<ListPresenceVisibilityPoliciesRequest> requests =
         ArgumentCaptor.forClass(ListPresenceVisibilityPoliciesRequest.class);
     verify(stub, times(2)).listPresenceVisibilityPolicies(requests.capture());
@@ -81,18 +84,19 @@ class AccountClientTest {
     when(stub.listPresenceVisibilityPolicies(any()))
         .thenReturn(
             ListPresenceVisibilityPoliciesResponse.newBuilder()
-                .addPolicies(policyEntry("1", "HIDDEN_STAFF"))
-                .addPolicies(policyEntry("2", "FUTURE_POLICY"))
-                .addPolicies(policyEntry("3", ""))
+                .addPolicies(policyEntry(accountUuid(1L), "HIDDEN_STAFF"))
+                .addPolicies(policyEntry(accountUuid(2L), "FUTURE_POLICY"))
+                .addPolicies(policyEntry(accountUuid(3L), ""))
                 .build());
     AccountClient client = newClient(stub);
 
-    Map<Long, FriendPresenceVisibilityPolicyValue> policies =
-        client.getPresenceVisibilityPolicies(11L, List.of(1L, 2L, 3L, 4L));
+    Map<String, FriendPresenceVisibilityPolicyValue> policies =
+        client.getPresenceVisibilityPolicies(
+            11L, List.of(accountUuid(1L), accountUuid(2L), accountUuid(3L), accountUuid(4L)));
 
     assertThat(policies)
-        .containsExactly(Map.entry(1L, FriendPresenceVisibilityPolicyValue.PRIVATE))
-        .doesNotContainKeys(2L, 3L, 4L);
+        .containsExactly(Map.entry(accountUuid(1L), FriendPresenceVisibilityPolicyValue.PRIVATE))
+        .doesNotContainKeys(accountUuid(2L), accountUuid(3L), accountUuid(4L));
   }
 
   @Test
@@ -136,113 +140,117 @@ class AccountClientTest {
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     AccountClient client = newClient(stub, meterRegistry);
 
-    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L))).isEmpty();
+    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(accountUuid(1L)))).isEmpty();
     assertThat(meterRegistry.counter("grpc.app_error", "code", "UNAVAILABLE").count())
         .isEqualTo(1.0d);
   }
 
   @Test
-  void refusesDuplicateAndUnrequestedPresencePolicySubjects() throws Exception {
-    AccountServiceGrpc.AccountServiceBlockingStub stub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+  void malformedDuplicateAndUnrequestedPolicySubjectsRedactTheWholeRead() throws Exception {
+    for (String subject : List.of("2", accountUuid(99L), accountUuid(1L))) {
+      var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+      when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+      when(stub.listPresenceVisibilityPolicies(any()))
+          .thenReturn(
+              ListPresenceVisibilityPoliciesResponse.newBuilder()
+                  .addPolicies(
+                      PresenceVisibilityPolicyEntry.newBuilder()
+                          .setAccountId(accountUuid(1L))
+                          .setPolicy("PUBLIC"))
+                  .addPolicies(
+                      PresenceVisibilityPolicyEntry.newBuilder()
+                          .setAccountId(subject)
+                          .setPolicy("PUBLIC"))
+                  .build());
+      assertThat(newClient(stub).getPresenceVisibilityPolicies(11L, List.of(accountUuid(1L))))
+          .isEmpty();
+    }
+  }
+
+  @Test
+  void laterPolicyChunkFailureRedactsEarlierSuccessfulChunks() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.listPresenceVisibilityPolicies(any()))
         .thenReturn(
             ListPresenceVisibilityPoliciesResponse.newBuilder()
-                .addPolicies(policyEntry("1", "FRIENDS_ONLY"))
-                .addPolicies(policyEntry("1", "PRIVATE"))
+                .addPolicies(
+                    PresenceVisibilityPolicyEntry.newBuilder()
+                        .setAccountId(accountUuid(1L))
+                        .setPolicy("PUBLIC"))
                 .build(),
             ListPresenceVisibilityPoliciesResponse.newBuilder()
-                .addPolicies(policyEntry("1", "FRIENDS_ONLY"))
-                .addPolicies(policyEntry("999", "PUBLIC"))
+                .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").setMessage("unavailable"))
                 .build());
-    AccountClient client = newClient(stub);
-
-    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L, 2L))).isEmpty();
-    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L, 2L))).isEmpty();
-  }
-
-  @Test
-  void laterPolicyBatchFailureRedactsEarlierSuccessfulBatch() throws Exception {
-    AccountServiceGrpc.AccountServiceBlockingStub stub =
-        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
-    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
-    AtomicInteger calls = new AtomicInteger();
-    when(stub.listPresenceVisibilityPolicies(any()))
-        .thenAnswer(
-            invocation -> {
-              if (calls.getAndIncrement() == 0) {
-                ListPresenceVisibilityPoliciesRequest request = invocation.getArgument(0);
-                return ListPresenceVisibilityPoliciesResponse.newBuilder()
-                    .addAllPolicies(
-                        request.getAccountIdsList().stream()
-                            .map(accountId -> policyEntry(accountId, "FRIENDS_ONLY"))
-                            .toList())
-                    .build();
-              }
-              return ListPresenceVisibilityPoliciesResponse.newBuilder()
-                  .setError(
-                      ErrorDetail.newBuilder().setCode("UNAVAILABLE").setMessage("Retry later"))
-                  .build();
-            });
-    AccountClient client = newClient(stub);
-
     assertThat(
-            client.getPresenceVisibilityPolicies(
-                11L, LongStream.rangeClosed(1L, 101L).boxed().toList()))
+            newClient(stub)
+                .getPresenceVisibilityPolicies(
+                    11L,
+                    LongStream.rangeClosed(1L, 101L)
+                        .mapToObj(AccountUuidFixtures::accountUuid)
+                        .toList()))
         .isEmpty();
-    assertThat(calls.get()).isEqualTo(2);
-  }
-
-  private static PresenceVisibilityPolicyEntry policyEntry(String accountId, String policy) {
-    return PresenceVisibilityPolicyEntry.newBuilder()
-        .setAccountId(accountId)
-        .setPolicy(policy)
-        .build();
   }
 
   @Test
-  void uuidProfileResponseRemainsReadableWithNumericRequestSelectors() throws Exception {
+  void profileReadRequiresExactCanonicalRequestedAccountAndTenant() throws Exception {
+    for (String json :
+        List.of(
+            "{\"tenantId\":11,\"accountId\":2,\"presenceVisibilityPolicy\":\"PUBLIC\"}",
+            "{\"tenantId\":11,\"accountId\":\""
+                + accountUuid(99L)
+                + "\",\"presenceVisibilityPolicy\":\"PUBLIC\"}",
+            "{\"tenantId\":12,\"accountId\":\""
+                + accountUuid(1L)
+                + "\",\"presenceVisibilityPolicy\":\"PUBLIC\"}",
+            "{\"tenantId\":11,\"presenceVisibilityPolicy\":\"PUBLIC\"}")) {
+      var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+      when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+      when(stub.getProfile(any()))
+          .thenReturn(
+              net.firedevops.firemud.account.v1.GetProfileResponse.newBuilder()
+                  .setProfileJson(json)
+                  .build());
+      var client = newClient(stub);
+      assertThat(client.getPresenceVisibilityPolicy(11L, accountUuid(1L))).isEmpty();
+      assertThat(
+              client.updatePresenceVisibilityPolicy(
+                  11L, accountUuid(1L), FriendPresenceVisibilityPolicyValue.PUBLIC))
+          .isFalse();
+      org.mockito.Mockito.verify(stub, org.mockito.Mockito.never()).updateProfile(any());
+    }
+  }
+
+  @Test
+  void missingPersistedProfilePolicyStaysPrivateAndCanonicalSelfUpdatePreservesProfile()
+      throws Exception {
     var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.getProfile(any()))
         .thenReturn(
             net.firedevops.firemud.account.v1.GetProfileResponse.newBuilder()
                 .setProfileJson(
-                    "{\"accountId\":\"d09f80cb-a46a-415e-8d35-c9e8068e49de\",\"displayName\":\"demo\",\"bio\":\"retained bio\",\"presenceVisibilityPolicy\":\"FRIENDS_ONLY\"}")
+                    "{\"tenantId\":11,\"accountId\":\""
+                        + accountUuid(1L)
+                        + "\",\"displayName\":\"Name\",\"bio\":\"Bio\"}")
                 .build());
     when(stub.updateProfile(any()))
         .thenReturn(
             net.firedevops.firemud.account.v1.UpdateProfileResponse.newBuilder()
                 .setSuccess(true)
                 .build());
-    AccountClient client = newClient(stub);
-    assertThat(client.getPresenceVisibilityPolicy(1L, 2L))
-        .contains(FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
+    var client = newClient(stub);
+    assertThat(client.getPresenceVisibilityPolicy(11L, accountUuid(1L)))
+        .contains(FriendPresenceVisibilityPolicyValue.PRIVATE);
     assertThat(
             client.updatePresenceVisibilityPolicy(
-                1L, 2L, FriendPresenceVisibilityPolicyValue.PRIVATE))
+                11L, accountUuid(1L), FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY))
         .isTrue();
-    ArgumentCaptor<net.firedevops.firemud.account.v1.GetProfileRequest> reads =
-        ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.GetProfileRequest.class);
-    verify(stub, times(2)).getProfile(reads.capture());
-    assertThat(reads.getAllValues())
-        .allSatisfy(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo("1");
-              assertThat(request.getAccountId()).isEqualTo("2");
-            });
-    ArgumentCaptor<net.firedevops.firemud.account.v1.UpdateProfileRequest> update =
+    var request =
         ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.UpdateProfileRequest.class);
-    verify(stub).updateProfile(update.capture());
-    assertThat(update.getValue().getAccountId()).isEqualTo("2");
-    var json =
-        tools.jackson.databind.json.JsonMapper.builder()
-            .build()
-            .readTree(update.getValue().getProfileJson());
-    assertThat(json.path("displayName").asText()).isEqualTo("demo");
-    assertThat(json.path("bio").asText()).isEqualTo("retained bio");
-    assertThat(json.path("presenceVisibilityPolicy").asText()).isEqualTo("PRIVATE");
+    verify(stub).updateProfile(request.capture());
+    assertThat(request.getValue().getAccountId()).isEqualTo(accountUuid(1L));
+    assertThat(request.getValue().getProfileJson()).contains("Name", "Bio", "FRIENDS_ONLY");
   }
 
   private static AccountClient newClient(AccountServiceGrpc.AccountServiceBlockingStub stub)
@@ -277,5 +285,116 @@ class AccountClientTest {
     } catch (ReflectiveOperationException ex) {
       throw new AssertionError(ex);
     }
+  }
+
+  @Test
+  void refusesDuplicateAndUnrequestedPresencePolicySubjects() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.listPresenceVisibilityPolicies(any()))
+        .thenReturn(
+            ListPresenceVisibilityPoliciesResponse.newBuilder()
+                .addPolicies(policyEntry(accountUuid(1L), "FRIENDS_ONLY"))
+                .addPolicies(policyEntry(accountUuid(1L), "PRIVATE"))
+                .build(),
+            ListPresenceVisibilityPoliciesResponse.newBuilder()
+                .addPolicies(policyEntry(accountUuid(1L), "FRIENDS_ONLY"))
+                .addPolicies(policyEntry(accountUuid(999L), "PUBLIC"))
+                .build());
+    AccountClient client = newClient(stub);
+
+    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(accountUuid(1L), accountUuid(2L))))
+        .isEmpty();
+    assertThat(client.getPresenceVisibilityPolicies(11L, List.of(accountUuid(1L), accountUuid(2L))))
+        .isEmpty();
+  }
+
+  @Test
+  void laterPolicyBatchFailureRedactsEarlierSuccessfulBatch() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    AtomicInteger calls = new AtomicInteger();
+    when(stub.listPresenceVisibilityPolicies(any()))
+        .thenAnswer(
+            invocation -> {
+              if (calls.getAndIncrement() == 0) {
+                ListPresenceVisibilityPoliciesRequest request = invocation.getArgument(0);
+                return ListPresenceVisibilityPoliciesResponse.newBuilder()
+                    .addAllPolicies(
+                        request.getAccountIdsList().stream()
+                            .map(accountId -> policyEntry(accountId, "FRIENDS_ONLY"))
+                            .toList())
+                    .build();
+              }
+              return ListPresenceVisibilityPoliciesResponse.newBuilder()
+                  .setError(
+                      ErrorDetail.newBuilder().setCode("UNAVAILABLE").setMessage("Retry later"))
+                  .build();
+            });
+    AccountClient client = newClient(stub);
+
+    assertThat(
+            client.getPresenceVisibilityPolicies(
+                11L,
+                LongStream.rangeClosed(1L, 101L)
+                    .mapToObj(AccountUuidFixtures::accountUuid)
+                    .toList()))
+        .isEmpty();
+    assertThat(calls.get()).isEqualTo(2);
+  }
+
+  private static PresenceVisibilityPolicyEntry policyEntry(String accountId, String policy) {
+    return PresenceVisibilityPolicyEntry.newBuilder()
+        .setAccountId(accountId)
+        .setPolicy(policy)
+        .build();
+  }
+
+  @Test
+  void uuidProfileResponseRemainsReadableWithCanonicalRequestSelectors() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.getProfile(any()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.GetProfileResponse.newBuilder()
+                .setProfileJson(
+                    "{\"tenantId\":11,\"accountId\":\""
+                        + accountUuid(2L)
+                        + "\",\"displayName\":\"demo\",\"bio\":\"retained bio\",\"presenceVisibilityPolicy\":\"FRIENDS_ONLY\"}")
+                .build());
+    when(stub.updateProfile(any()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.UpdateProfileResponse.newBuilder()
+                .setSuccess(true)
+                .build());
+    AccountClient client = newClient(stub);
+    assertThat(client.getPresenceVisibilityPolicy(11L, accountUuid(2L)))
+        .contains(FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
+    assertThat(
+            client.updatePresenceVisibilityPolicy(
+                11L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.PRIVATE))
+        .isTrue();
+    ArgumentCaptor<net.firedevops.firemud.account.v1.GetProfileRequest> reads =
+        ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.GetProfileRequest.class);
+    verify(stub, times(2)).getProfile(reads.capture());
+    assertThat(reads.getAllValues())
+        .allSatisfy(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo("11");
+              assertThat(request.getAccountId()).isEqualTo(accountUuid(2L));
+            });
+    ArgumentCaptor<net.firedevops.firemud.account.v1.UpdateProfileRequest> update =
+        ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.UpdateProfileRequest.class);
+    verify(stub).updateProfile(update.capture());
+    assertThat(update.getValue().getAccountId()).isEqualTo(accountUuid(2L));
+    var json =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(update.getValue().getProfileJson());
+    assertThat(json.path("displayName").asText()).isEqualTo("demo");
+    assertThat(json.path("bio").asText()).isEqualTo("retained bio");
+    assertThat(json.path("presenceVisibilityPolicy").asText()).isEqualTo("PRIVATE");
   }
 }

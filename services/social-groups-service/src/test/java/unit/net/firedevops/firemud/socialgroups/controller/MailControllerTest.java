@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -44,11 +45,16 @@ class MailControllerTest {
 
   @Test
   void sendMailReturnsDto() throws Exception {
-    SendMailRequest request = new SendMailRequest(1L, 2L, 3L, "hello", "test body");
-    MailMessageDto response = new MailMessageDto(1L, 1L, 2L, 3L, "hello", "test body", null, null);
+    SendMailRequest request =
+        new SendMailRequest(1L, accountUuid(2L), accountUuid(3L), "hello", "test body");
+    MailMessageDto response =
+        new MailMessageDto(
+            1L, 1L, accountUuid(2L), accountUuid(3L), "hello", "test body", null, null);
     when(mailService.sendMail(request)).thenReturn(response);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             post("/mail")
@@ -62,7 +68,9 @@ class MailControllerTest {
 
   @Test
   void sendMailRejectsZeroSenderAccountIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
@@ -71,12 +79,12 @@ class MailControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(
                     """
-                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":3,"subject":"hello","content":"test body"}
+                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":"10000000-0000-4000-8000-000000000003","subject":"hello","content":"test body"}
                     """))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("senderAccountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("Request body is malformed"));
 
     verifyNoInteractions(mailService, socialAccessGuard);
   }
@@ -85,9 +93,9 @@ class MailControllerTest {
   void sendMailRejectsSenderImpersonationBeforeAccessCheckAndDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "2",
+            accountUuid(2L),
             Map.of(
-                "accountId", "2",
+                "accountId", accountUuid(2L),
                 "globalRoles", List.of(),
                 "scopedRoles", Map.of("1", List.of("tenantAdmin"))));
 
@@ -98,7 +106,7 @@ class MailControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(
                     """
-                    {"tenantId":1,"senderAccountId":3,"recipientAccountId":4,"subject":"hello","content":"test body"}
+                    {"tenantId":1,"senderAccountId":"10000000-0000-4000-8000-000000000003","recipientAccountId":"10000000-0000-4000-8000-000000000004","subject":"hello","content":"test body"}
                     """))
         .andExpect(status().isForbidden());
 

@@ -32,8 +32,12 @@ public class MailMessageRepository {
     int updated =
         dsl.update(MAIL_MESSAGES)
             .set(MAIL_MESSAGES.TENANT_ID, entity.getTenantId())
-            .set(MAIL_MESSAGES.SENDER_ACCOUNT_ID, entity.getSenderAccountId())
-            .set(MAIL_MESSAGES.RECIPIENT_ACCOUNT_ID, entity.getRecipientAccountId())
+            .set(
+                MAIL_MESSAGES.SENDER_ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getSenderAccountId()))
+            .set(
+                MAIL_MESSAGES.RECIPIENT_ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getRecipientAccountId()))
             .set(MAIL_MESSAGES.SUBJECT, entity.getSubject())
             .set(MAIL_MESSAGES.CONTENT, entity.getContent())
             .set(
@@ -58,8 +62,10 @@ public class MailMessageRepository {
 
   private void populate(MailMessagesRecord record, MailMessage entity) {
     record.setTenantId(entity.getTenantId());
-    record.setSenderAccountId(entity.getSenderAccountId());
-    record.setRecipientAccountId(entity.getRecipientAccountId());
+    record.setSenderAccountId(
+        JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getSenderAccountId()));
+    record.setRecipientAccountId(
+        JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getRecipientAccountId()));
     record.setSubject(entity.getSubject());
     record.setContent(entity.getContent());
     record.setSentAt(JooqSocialGroupsRepositorySupport.toLocalDateTime(entity.getSentAt()));
@@ -70,8 +76,12 @@ public class MailMessageRepository {
     MailMessage entity = new MailMessage();
     entity.setId(record.get(MAIL_MESSAGES.ID));
     entity.setTenantId(record.get(MAIL_MESSAGES.TENANT_ID));
-    entity.setSenderAccountId(record.get(MAIL_MESSAGES.SENDER_ACCOUNT_ID));
-    entity.setRecipientAccountId(record.get(MAIL_MESSAGES.RECIPIENT_ACCOUNT_ID));
+    entity.setSenderAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(
+            record.get(MAIL_MESSAGES.SENDER_ACCOUNT_ID)));
+    entity.setRecipientAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(
+            record.get(MAIL_MESSAGES.RECIPIENT_ACCOUNT_ID)));
     entity.setSubject(record.get(MAIL_MESSAGES.SUBJECT));
     entity.setContent(record.get(MAIL_MESSAGES.CONTENT));
     entity.setSentAt(

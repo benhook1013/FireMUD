@@ -34,6 +34,23 @@ public final class JwtClaims {
     return parsed;
   }
 
+  public static String requireCanonicalAccountUuid(Object value, String claimName) {
+    if (!(value instanceof String text)
+        || !StringUtils.hasText(text)
+        || !text.equals(text.trim())) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName);
+    }
+    try {
+      UUID accountUuid = UUID.fromString(text);
+      if (!accountUuid.toString().equals(text) || accountUuid.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("Invalid claim: " + claimName);
+      }
+      return text;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName, ex);
+    }
+  }
+
   public static long requireSignedActorAccountId(Claims claims, String mismatchMessage) {
     long subjectAccountId = requireLong(claims.getSubject(), "sub", false);
     long claimedAccountId = requireLong(claims.get("accountId"), "accountId", false);

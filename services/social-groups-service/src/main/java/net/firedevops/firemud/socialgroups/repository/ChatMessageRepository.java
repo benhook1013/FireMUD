@@ -40,14 +40,19 @@ public class ChatMessageRepository {
     int updated =
         dsl.update(CHAT_MESSAGES)
             .set(CHAT_MESSAGES.TENANT_ID, entity.getTenantId())
-            .set(CHAT_MESSAGES.SENDER_ACCOUNT_ID, entity.getSenderAccountId())
+            .set(
+                CHAT_MESSAGES.SENDER_ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getSenderAccountId()))
             .set(CHAT_MESSAGES.CONTENT, entity.getContent())
             .set(
                 CHAT_MESSAGES.TIMESTAMP,
                 JooqSocialGroupsRepositorySupport.toLocalDateTime(entity.getTimestamp()))
             .set(CHAT_MESSAGES.GUILD_ID, entity.getGuildId())
             .set(CHAT_MESSAGES.CITY_ID, entity.getCityId())
-            .set(CHAT_MESSAGES.RECIPIENT_ACCOUNT_ID, entity.getRecipientAccountId())
+            .set(
+                CHAT_MESSAGES.RECIPIENT_ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toOptionalAccountUuid(
+                    entity.getRecipientAccountId()))
             .set(CHAT_MESSAGES.EFFECT_ID, entity.getEffectId())
             .set(CHAT_MESSAGES.TYPE, entity.getType() == null ? null : entity.getType().name())
             .where(CHAT_MESSAGES.ID.eq(entity.getId()))
@@ -66,12 +71,14 @@ public class ChatMessageRepository {
 
   private void populate(ChatMessagesRecord record, ChatMessage entity) {
     record.setTenantId(entity.getTenantId());
-    record.setSenderAccountId(entity.getSenderAccountId());
+    record.setSenderAccountId(
+        JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getSenderAccountId()));
     record.setContent(entity.getContent());
     record.setTimestamp(JooqSocialGroupsRepositorySupport.toLocalDateTime(entity.getTimestamp()));
     record.setGuildId(entity.getGuildId());
     record.setCityId(entity.getCityId());
-    record.setRecipientAccountId(entity.getRecipientAccountId());
+    record.setRecipientAccountId(
+        JooqSocialGroupsRepositorySupport.toOptionalAccountUuid(entity.getRecipientAccountId()));
     record.setEffectId(entity.getEffectId());
     record.setType(entity.getType() == null ? null : entity.getType().name());
   }
@@ -80,13 +87,17 @@ public class ChatMessageRepository {
     ChatMessage entity = new ChatMessage();
     entity.setId(record.get(CHAT_MESSAGES.ID));
     entity.setTenantId(record.get(CHAT_MESSAGES.TENANT_ID));
-    entity.setSenderAccountId(record.get(CHAT_MESSAGES.SENDER_ACCOUNT_ID));
+    entity.setSenderAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(
+            record.get(CHAT_MESSAGES.SENDER_ACCOUNT_ID)));
     entity.setContent(record.get(CHAT_MESSAGES.CONTENT));
     entity.setTimestamp(
         JooqSocialGroupsRepositorySupport.toInstant(record.get(CHAT_MESSAGES.TIMESTAMP)));
     entity.setGuildId(record.get(CHAT_MESSAGES.GUILD_ID));
     entity.setCityId(record.get(CHAT_MESSAGES.CITY_ID));
-    entity.setRecipientAccountId(record.get(CHAT_MESSAGES.RECIPIENT_ACCOUNT_ID));
+    entity.setRecipientAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(
+            record.get(CHAT_MESSAGES.RECIPIENT_ACCOUNT_ID)));
     entity.setEffectId(record.get(CHAT_MESSAGES.EFFECT_ID));
     String type = record.get(CHAT_MESSAGES.TYPE);
     entity.setType(type == null ? null : ChatType.valueOf(type));

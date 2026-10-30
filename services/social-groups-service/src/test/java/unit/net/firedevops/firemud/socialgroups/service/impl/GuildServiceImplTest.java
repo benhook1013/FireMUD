@@ -1,31 +1,35 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.socialgroups.dto.AddGuildMemberRequest;
+import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.GuildMemberDto;
 import net.firedevops.firemud.socialgroups.dto.UpdateGuildMemberRoleRequest;
+import net.firedevops.firemud.socialgroups.entity.Guild;
 import net.firedevops.firemud.socialgroups.entity.GuildMember;
+import net.firedevops.firemud.socialgroups.mapper.GuildMapper;
 import net.firedevops.firemud.socialgroups.mapper.GuildMemberMapper;
 import net.firedevops.firemud.socialgroups.repository.GuildMemberRepository;
+import net.firedevops.firemud.socialgroups.repository.GuildRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 
 class GuildServiceImplTest {
-  private GuildMemberRepository repository;
-  private net.firedevops.firemud.socialgroups.repository.GuildRepository guildRepository;
+  private GuildMemberRepository memberRepository;
+  private GuildRepository guildRepository;
   private GuildServiceImpl service;
 
   @BeforeEach
   void setUp() {
-    repository = Mockito.mock(GuildMemberRepository.class);
-    guildRepository =
-        Mockito.mock(net.firedevops.firemud.socialgroups.repository.GuildRepository.class);
+    memberRepository = Mockito.mock(GuildMemberRepository.class);
+    guildRepository = Mockito.mock(GuildRepository.class);
     service =
         new GuildServiceImpl(
             null,
@@ -33,67 +37,59 @@ class GuildServiceImplTest {
             null,
             null,
             guildRepository,
-            Mappers.getMapper(net.firedevops.firemud.socialgroups.mapper.GuildMapper.class),
-            repository,
+            Mappers.getMapper(GuildMapper.class),
+            memberRepository,
             Mappers.getMapper(GuildMemberMapper.class));
   }
 
   @Test
-  void addMemberReturnsDto() throws Exception {
-    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 2L, 3L, "member");
-    GuildMember saved = new GuildMember();
-    saved.setId(1L);
-    saved.setTenantId(1L);
-    saved.setGuildId(2L);
-    saved.setAccountId(3L);
-    saved.setRole("member");
-    when(repository.save(any(GuildMember.class))).thenReturn(saved);
+  void addMemberReturnsDto() {
+    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 2L, accountUuid(3L), "member");
+    GuildMember saved = member("member");
+    when(memberRepository.save(any(GuildMember.class))).thenReturn(saved);
 
     GuildMemberDto dto = service.addMember(request);
-    assertEquals(3L, dto.accountId());
+
+    assertEquals(accountUuid(3L), dto.accountId());
     assertEquals("member", dto.role());
   }
 
   @Test
-  void updateMemberRoleUsesRepositoryLookup() throws Exception {
-    GuildMember member = new GuildMember();
-    member.setId(5L);
-    member.setTenantId(1L);
-    member.setGuildId(2L);
-    member.setAccountId(3L);
-    member.setRole("member");
-    when(repository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, 3L))
+  void updateMemberRoleUsesRepositoryLookup() {
+    GuildMember member = member("member");
+    when(memberRepository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, accountUuid(3L)))
         .thenReturn(java.util.Optional.of(member));
 
     GuildMemberDto dto =
-        service.updateMemberRole(new UpdateGuildMemberRoleRequest(1L, 2L, 3L, "officer"));
+        service.updateMemberRole(
+            new UpdateGuildMemberRoleRequest(1L, 2L, accountUuid(3L), "officer"));
 
     assertEquals("officer", dto.role());
-    verify(repository).findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, 3L);
+    verify(memberRepository).findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, accountUuid(3L));
   }
 
   @Test
-  void removeMemberUsesRepositoryLookup() throws Exception {
-    GuildMember member = new GuildMember();
-    member.setId(5L);
-    member.setTenantId(1L);
-    member.setGuildId(2L);
-    member.setAccountId(3L);
-    member.setRole("member");
-    when(repository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, 3L))
+  void removeMemberUsesRepositoryLookup() {
+    GuildMember member = member("member");
+    when(memberRepository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, accountUuid(3L)))
         .thenReturn(java.util.Optional.of(member));
 
-    service.removeMember(1L, 2L, 3L);
+    service.removeMember(1L, 2L, accountUuid(3L));
 
-    verify(repository).findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, 3L);
-    verify(repository).delete(member);
+    verify(memberRepository).findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, accountUuid(3L));
+    verify(memberRepository).delete(member);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.CsvSource({
-    "CREATE,true", "CREATE,false", "ADD_MEMBER,true", "ADD_MEMBER,false",
-    "UPDATE_MEMBER_ROLE,true", "UPDATE_MEMBER_ROLE,false", "REMOVE_MEMBER,true",
-        "REMOVE_MEMBER,false"
+    "CREATE,true",
+    "CREATE,false",
+    "ADD_MEMBER,true",
+    "ADD_MEMBER,false",
+    "UPDATE_MEMBER_ROLE,true",
+    "UPDATE_MEMBER_ROLE,false",
+    "REMOVE_MEMBER,true",
+    "REMOVE_MEMBER,false"
   })
   void lifecycleLoggingHasCommittedContextAndDoesNotRunOnRollback(String action, boolean commit) {
     var logger =
@@ -124,7 +120,9 @@ class GuildServiceImplTest {
       assertEquals(commit ? 1 : 0, lifecycle.size());
       if (commit) {
         assertEquals(
-            "Guild lifecycle committed tenant=1 guild=2 account=3 action="
+            "Guild lifecycle committed tenant=1 guild=2 account="
+                + accountUuid(3L)
+                + " action="
                 + action
                 + " role="
                 + (action.equals("CREATE")
@@ -163,7 +161,7 @@ class GuildServiceImplTest {
     org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
     try {
       performLifecycle("ADD_MEMBER");
-      verify(repository).save(any(GuildMember.class));
+      verify(memberRepository).save(any(GuildMember.class));
       org.junit.jupiter.api.Assertions.assertFalse(attempted.get());
       org.junit.jupiter.api.Assertions.assertDoesNotThrow(
           () ->
@@ -181,40 +179,44 @@ class GuildServiceImplTest {
   }
 
   private void performLifecycle(String action) {
-    var member = new GuildMember();
-    member.setId(5L);
-    member.setTenantId(1L);
-    member.setGuildId(2L);
-    member.setAccountId(3L);
-    member.setRole("member");
+    GuildMember member = member("member");
     switch (action) {
       case "CREATE" -> {
-        when(guildRepository.save(any()))
+        when(guildRepository.save(any(Guild.class)))
             .thenAnswer(
                 invocation -> {
-                  net.firedevops.firemud.socialgroups.entity.Guild guild =
-                      invocation.getArgument(0);
+                  Guild guild = invocation.getArgument(0);
                   guild.setId(2L);
                   return guild;
                 });
-        service.createGuild(
-            new net.firedevops.firemud.socialgroups.dto.CreateGuildRequest(1L, 3L, "guild"));
+        service.createGuild(new CreateGuildRequest(1L, accountUuid(3L), "guild"));
       }
       case "ADD_MEMBER" -> {
-        when(repository.save(any(GuildMember.class))).thenReturn(member);
-        service.addMember(new AddGuildMemberRequest(1L, 2L, 3L, "member"));
+        when(memberRepository.save(any(GuildMember.class))).thenReturn(member);
+        service.addMember(new AddGuildMemberRequest(1L, 2L, accountUuid(3L), "member"));
       }
       case "UPDATE_MEMBER_ROLE" -> {
-        when(repository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, 3L))
+        when(memberRepository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, accountUuid(3L)))
             .thenReturn(java.util.Optional.of(member));
-        service.updateMemberRole(new UpdateGuildMemberRoleRequest(1L, 2L, 3L, "officer"));
+        service.updateMemberRole(
+            new UpdateGuildMemberRoleRequest(1L, 2L, accountUuid(3L), "officer"));
       }
       case "REMOVE_MEMBER" -> {
-        when(repository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, 3L))
+        when(memberRepository.findFirstByTenantIdAndGuildIdAndAccountId(1L, 2L, accountUuid(3L)))
             .thenReturn(java.util.Optional.of(member));
-        service.removeMember(1L, 2L, 3L);
+        service.removeMember(1L, 2L, accountUuid(3L));
       }
       default -> throw new IllegalArgumentException("Unknown lifecycle action");
     }
+  }
+
+  private GuildMember member(String role) {
+    GuildMember member = new GuildMember();
+    member.setId(5L);
+    member.setTenantId(1L);
+    member.setGuildId(2L);
+    member.setAccountId(accountUuid(3L));
+    member.setRole(role);
+    return member;
   }
 }

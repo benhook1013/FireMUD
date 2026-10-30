@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
@@ -68,7 +69,7 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Transactional
   @Timed(value = "friend.remove")
-  public void removeFriend(long tenantId, long accountId, long friendAccountId) {
+  public void removeFriend(long tenantId, String accountId, String friendAccountId) {
     validateNotSelfLink(accountId, friendAccountId);
     accountFriendLinkRepository
         .findFirstByTenantIdAndAccountIdAndFriendAccountIdAndStatus(
@@ -79,19 +80,18 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Timed(value = "friend.get")
   public Optional<FriendRosterEntryDto> getFriend(
-      long tenantId, long accountId, long friendAccountId) {
+      long tenantId, String accountId, String friendAccountId) {
     return listFriends(tenantId, accountId, FriendRosterFilter.ALL).friends().stream()
         .filter(
             entry ->
-                entry.friendAccountId() != null
-                    && entry.friendAccountId().longValue() == friendAccountId)
+                entry.friendAccountId() != null && entry.friendAccountId().equals(friendAccountId))
         .findFirst();
   }
 
   @Override
   @Timed(value = "friend.get.ordinal")
   public Optional<FriendRosterEntryDto> getFriendByOrdinal(
-      long tenantId, long accountId, int ordinal) {
+      long tenantId, String accountId, int ordinal) {
     validateOrdinal(ordinal);
     return listFriends(tenantId, accountId, FriendRosterFilter.ALL).friends().stream()
         .filter(entry -> entry.ordinal() == ordinal)
@@ -102,14 +102,16 @@ public class FriendServiceImpl implements FriendService {
   @Transactional
   @Timed(value = "friend.remove.ordinal")
   public Optional<FriendRosterEntryDto> removeFriendByOrdinal(
-      long tenantId, long accountId, int ordinal) {
+      long tenantId, String accountId, int ordinal) {
     Optional<FriendRosterEntryDto> friend = getFriendByOrdinal(tenantId, accountId, ordinal);
     friend.ifPresent(entry -> removeFriend(tenantId, accountId, entry.friendAccountId()));
     return friend;
   }
 
-  private void validateNotSelfLink(long accountId, long friendAccountId) {
-    if (accountId == friendAccountId) {
+  private void validateNotSelfLink(String accountId, String friendAccountId) {
+    JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+    JwtClaims.requireCanonicalAccountUuid(friendAccountId, "friendAccountId");
+    if (accountId.equals(friendAccountId)) {
       throw new IllegalArgumentException("Cannot add or remove your own account as a friend");
     }
   }
@@ -138,12 +140,13 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Timed(value = "friend.list")
-  public FriendRosterViewDto listFriends(long tenantId, long accountId, FriendRosterFilter filter) {
+  public FriendRosterViewDto listFriends(
+      long tenantId, String accountId, FriendRosterFilter filter) {
     return loadFriendRoster(tenantId, accountId, filter).view();
   }
 
   private FriendRosterSnapshot loadFriendRoster(
-      long tenantId, long accountId, FriendRosterFilter filter) {
+      long tenantId, String accountId, FriendRosterFilter filter) {
     FriendRosterFilter effectiveFilter = filter;
     List<AccountFriendLink> links =
         accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
@@ -153,18 +156,18 @@ public class FriendServiceImpl implements FriendService {
           new FriendRosterViewDto(effectiveFilter, 0, 0, List.of()), Map.of());
     }
 
-    List<Long> friendAccountIds =
+    List<String> friendAccountIds =
         links.stream().map(AccountFriendLink::getFriendAccountId).distinct().toList();
-    Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies =
+    Map<String, FriendPresenceVisibilityPolicyValue> visibilityPolicies =
         Optional.ofNullable(accountClient.getPresenceVisibilityPolicies(tenantId, friendAccountIds))
             .orElseGet(Map::of);
-    List<Long> presenceAccountIds =
+    List<String> presenceAccountIds =
         friendAccountIds.stream()
             .filter(
                 friendAccountId ->
                     canQueryPresence(visibilityPolicyFor(friendAccountId, visibilityPolicies)))
             .toList();
-    Map<Long, FriendPresenceDto> byAccountId =
+    Map<String, FriendPresenceDto> byAccountId =
         loadFriendPresenceByAccountId(tenantId, accountId, presenceAccountIds, visibilityPolicies);
     List<FriendRosterEntryDto> roster =
         java.util.stream.IntStream.range(0, links.size())
@@ -182,7 +185,7 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Timed(value = "friend.summary")
-  public FriendRosterSummaryDto getFriendRosterSummary(long tenantId, long accountId) {
+  public FriendRosterSummaryDto getFriendRosterSummary(long tenantId, String accountId) {
     FriendRosterSnapshot snapshot = loadFriendRoster(tenantId, accountId, FriendRosterFilter.ALL);
     FriendRosterViewDto roster = snapshot.view();
     int onlineCount = 0;
@@ -230,7 +233,7 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Timed(value = "friend.presence.list")
   public FriendPresenceViewDto listFriendPresence(
-      long tenantId, long accountId, FriendRosterFilter filter) {
+      long tenantId, String accountId, FriendRosterFilter filter) {
     FriendRosterViewDto roster = listFriends(tenantId, accountId, filter);
     return new FriendPresenceViewDto(
         roster.filter(),
@@ -241,7 +244,7 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Timed(value = "friend.visibility.get")
-  public FriendPresencePolicyViewDto getFriendPresencePolicy(long tenantId, long accountId) {
+  public FriendPresencePolicyViewDto getFriendPresencePolicy(long tenantId, String accountId) {
     FriendPresenceVisibilityPolicyValue visibilityPolicy =
         accountClient
             .getPresenceVisibilityPolicy(tenantId, accountId)
@@ -253,7 +256,7 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Timed(value = "friend.visibility.update")
   public FriendPresencePolicyViewDto updateFriendPresencePolicy(
-      long tenantId, long accountId, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
+      long tenantId, String accountId, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     validateVisibilityPolicy(visibilityPolicy);
     if (!accountClient.updatePresenceVisibilityPolicy(tenantId, accountId, visibilityPolicy)) {
       throw new IllegalStateException("Friend presence visibility update unavailable");
@@ -262,7 +265,7 @@ public class FriendServiceImpl implements FriendService {
   }
 
   private FriendRosterEntryDto toRosterEntry(
-      int ordinal, AccountFriendLink link, Map<Long, FriendPresenceDto> byAccountId) {
+      int ordinal, AccountFriendLink link, Map<String, FriendPresenceDto> byAccountId) {
     return new FriendRosterEntryDto(
         ordinal,
         link.getId(),
@@ -278,7 +281,7 @@ public class FriendServiceImpl implements FriendService {
   private boolean matchesFilter(
       FriendRosterFilter filter,
       FriendRosterEntryDto entry,
-      Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
+      Map<String, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
     FriendPresenceDto presence = entry.presence();
     return switch (filter) {
       case ALL -> true;
@@ -302,11 +305,11 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
-  private Map<Long, FriendPresenceDto> loadFriendPresenceByAccountId(
+  private Map<String, FriendPresenceDto> loadFriendPresenceByAccountId(
       long tenantId,
-      long accountId,
-      List<Long> friendAccountIds,
-      Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
+      String accountId,
+      List<String> friendAccountIds,
+      Map<String, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
     if (friendAccountIds.isEmpty()) {
       return Map.of();
     }
@@ -319,9 +322,9 @@ public class FriendServiceImpl implements FriendService {
       throw new IllegalStateException(response.getError().getMessage());
     }
 
-    Map<Long, FriendPresenceDto> byAccountId = new LinkedHashMap<>();
+    Map<String, FriendPresenceDto> byAccountId = new LinkedHashMap<>();
     for (AccountPresenceEntry entry : response.getPresencesList()) {
-      long friendAccountId = requirePositivePresenceId(entry.getAccountId(), "accountId");
+      String friendAccountId = requirePresenceAccountUuid(entry.getAccountId());
       if (!friendAccountIds.contains(friendAccountId) || byAccountId.containsKey(friendAccountId)) {
         throw new IllegalStateException("Unrequested or duplicate account presence subject");
       }
@@ -341,7 +344,7 @@ public class FriendServiceImpl implements FriendService {
   }
 
   private FriendPresenceDto mapPresence(
-      long friendAccountId,
+      String friendAccountId,
       AccountPresenceEntry entry,
       FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     if (visibilityPolicy != FriendPresenceVisibilityPolicyValue.PUBLIC
@@ -365,7 +368,7 @@ public class FriendServiceImpl implements FriendService {
         visibleLastSeenAt(entry, visibilityPolicy));
   }
 
-  private FriendPresenceDto defaultPresence(long friendAccountId) {
+  private FriendPresenceDto defaultPresence(String friendAccountId) {
     return new FriendPresenceDto(
         friendAccountId,
         false,
@@ -494,7 +497,7 @@ public class FriendServiceImpl implements FriendService {
   }
 
   private FriendPresenceVisibilityPolicyValue visibilityPolicyFor(
-      long accountId, Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
+      String accountId, Map<String, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {
     if (visibilityPolicies == null) {
       return FriendPresenceVisibilityPolicyValue.PRIVATE;
     }
@@ -509,6 +512,15 @@ public class FriendServiceImpl implements FriendService {
     return visibilityPolicy;
   }
 
+  private String requirePresenceAccountUuid(String value) {
+    try {
+      return JwtClaims.requireCanonicalAccountUuid(value, "accountId");
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(
+          "Malformed account presence accountId: " + ex.getMessage(), ex);
+    }
+  }
+
   private Long parseOptionalPositivePresenceId(String value, String fieldName) {
     try {
       return RequestIdValidation.parseOptionalPositiveLong(value, fieldName);
@@ -517,16 +529,7 @@ public class FriendServiceImpl implements FriendService {
     }
   }
 
-  private long requirePositivePresenceId(String value, String fieldName) {
-    try {
-      return RequestIdValidation.requirePositiveLong(value, fieldName);
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalStateException(
-          "Malformed account presence " + fieldName + ": " + ex.getMessage(), ex);
-    }
-  }
-
   private record FriendRosterSnapshot(
       FriendRosterViewDto view,
-      Map<Long, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {}
+      Map<String, FriendPresenceVisibilityPolicyValue> visibilityPolicies) {}
 }

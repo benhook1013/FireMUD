@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -28,12 +29,13 @@ class MailServiceImplTest {
 
   @Test
   void sendMailReturnsDto() {
-    SendMailRequest request = new SendMailRequest(1L, 2L, 3L, "hello", "body");
+    SendMailRequest request =
+        new SendMailRequest(1L, accountUuid(2L), accountUuid(3L), "hello", "body");
     MailMessage saved = new MailMessage();
     saved.setId(1L);
     saved.setTenantId(1L);
-    saved.setSenderAccountId(2L);
-    saved.setRecipientAccountId(3L);
+    saved.setSenderAccountId(accountUuid(2L));
+    saved.setRecipientAccountId(accountUuid(3L));
     saved.setSubject("hello");
     saved.setContent("body");
     saved.setSentAt(Instant.now());
@@ -41,6 +43,6 @@ class MailServiceImplTest {
 
     MailMessageDto result = service.sendMail(request);
     assertEquals("hello", result.subject());
-    assertEquals(3L, result.recipientAccountId());
+    assertEquals(accountUuid(3L), result.recipientAccountId());
   }
 }
