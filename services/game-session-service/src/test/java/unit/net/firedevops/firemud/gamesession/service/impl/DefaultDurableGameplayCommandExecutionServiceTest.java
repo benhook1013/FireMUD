@@ -346,8 +346,10 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
         .thenReturn(Optional.of(context));
     when(durableGameplayReplayService.find(22L, 42L, "tfx-rejected-communication"))
         .thenReturn(Optional.empty())
-        .thenReturn(Optional.of(new DurableGameplayReplayService.ReplayRecord(
-            false, code, message, java.util.List.of(output))));
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    false, code, message, java.util.List.of(output))));
     when(communicationCommandHandler.handle(context, parsed, "tfx-rejected-communication"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlingResult(
@@ -361,7 +363,14 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(rejected.failureCode()).isEqualTo(code);
     assertThat(rejected.failureMessage()).isEqualTo(message);
     verify(durableGameplayReplayService)
-        .save(22L, 42L, "tfx-rejected-communication", false, code, message, java.util.List.of(output));
+        .save(
+            22L,
+            42L,
+            "tfx-rejected-communication",
+            false,
+            code,
+            message,
+            java.util.List.of(output));
     verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
 
     DurableGameplayCommandExecutionResult replayed = service.execute(effect, command).orElseThrow();
@@ -372,13 +381,24 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
     assertThat(replayed.failureCode()).isEqualTo(code);
     assertThat(replayed.failureMessage()).isEqualTo(message);
     verify(durableGameplayReplayService)
-        .save(22L, 42L, "tfx-rejected-communication", false, code, message, java.util.List.of(output));
+        .save(
+            22L,
+            42L,
+            "tfx-rejected-communication",
+            false,
+            code,
+            message,
+            java.util.List.of(output));
     verify(communicationCommandHandler).handle(context, parsed, "tfx-rejected-communication");
     verify(playerOutputDeliveryService, Mockito.times(2))
         .deliver(context, java.util.List.of(output), true);
     verify(scriptEventPublisher).publishCommandEvent(context, command);
-    verifyNoInteractions(itemCommandHandler, moveCommandHandler, afkCommandHandler,
-        actionStateCommandHandler, movementEffectIdempotencyService);
+    verifyNoInteractions(
+        itemCommandHandler,
+        moveCommandHandler,
+        afkCommandHandler,
+        actionStateCommandHandler,
+        movementEffectIdempotencyService);
   }
 
   @Test

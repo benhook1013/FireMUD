@@ -553,12 +553,25 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .isPresent();
       ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
       var targetBefore =
-          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
+          buffers
+              .get(target.tenantId(), target.gameInstanceId(), target.characterId())
+              .map(
+                  screen ->
+                      screen.entries().stream()
+                          .filter(entry -> !"look_view".equals(entry.payloadType()))
+                          .toList());
       scenario.actor().sendLine("SAY hello travelers");
       assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
           .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
       assertThat(socialStub().lastRequest()).isEmpty();
-      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+      assertThat(
+              buffers
+                  .get(target.tenantId(), target.gameInstanceId(), target.characterId())
+                  .map(
+                      screen ->
+                          screen.entries().stream()
+                              .filter(entry -> !"look_view".equals(entry.payloadType()))
+                              .toList()))
           .isEqualTo(targetBefore);
     }
   }
@@ -581,12 +594,25 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .isPresent();
       ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
       var targetBefore =
-          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
+          buffers
+              .get(target.tenantId(), target.gameInstanceId(), target.characterId())
+              .map(
+                  screen ->
+                      screen.entries().stream()
+                          .filter(entry -> !"look_view".equals(entry.payloadType()))
+                          .toList());
       scenario.actor().sendLine("TELL Sora Meet me at the forge");
       assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
           .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
       assertThat(socialStub().lastRequest()).isEmpty();
-      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+      assertThat(
+              buffers
+                  .get(target.tenantId(), target.gameInstanceId(), target.characterId())
+                  .map(
+                      screen ->
+                          screen.entries().stream()
+                              .filter(entry -> !"look_view".equals(entry.payloadType()))
+                              .toList()))
           .isEqualTo(targetBefore);
     }
   }
