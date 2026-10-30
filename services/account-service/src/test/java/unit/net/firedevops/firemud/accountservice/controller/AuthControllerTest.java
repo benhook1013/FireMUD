@@ -54,6 +54,21 @@ class AuthControllerTest {
   @MockitoBean private AccountService accountService;
 
   @Test
+  void localJoinResponseCarriesAccountUuidWithoutPublishingTheRoute() throws Exception {
+    String accountUuid = "d09f80cb-a46a-415e-8d35-c9e8068e49de";
+    var request = new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest("scope", "request");
+    when(accountService.joinPublicProduction("bootstrap", request)).thenReturn(
+        new net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult(
+            true, "JOINED", accountUuid, 7L, 8L, 1L, 1L, false));
+    mockMvc.perform(post("/auth/bootstrap/join")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer bootstrap")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.accountId").value(accountUuid));
+  }
+
+  @Test
   void publicOpenApiOmitsUnavailableBootstrapJoin() throws Exception {
     try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
       Map<String, Object> document = new Yaml().load(input);

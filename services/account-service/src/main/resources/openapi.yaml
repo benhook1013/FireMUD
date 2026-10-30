@@ -242,6 +242,7 @@ components:
           type: string
         accountId:
           type: string
+          format: uuid
         displayName:
           type: string
         bio:

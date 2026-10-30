@@ -274,7 +274,7 @@ class AccountGrpcServiceTest {
                 Mockito.any(JoinPublicProductionRequest.class)))
         .thenReturn(
             new JoinPublicProductionResult(
-                false, "ENTITLEMENT_UNAVAILABLE", 10L, 20L, 0L, 0L, 0L, true));
+                false, "ENTITLEMENT_UNAVAILABLE", "d09f80cb-a46a-415e-8d35-c9e8068e49de", 20L, 0L, 0L, 0L, true));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
@@ -286,7 +286,7 @@ class AccountGrpcServiceTest {
     assertTrue(observer.completed());
     assertFalse(observer.response().getSuccess());
     assertEquals("ENTITLEMENT_UNAVAILABLE", observer.response().getOutcomeCode());
-    assertEquals("10", observer.response().getAccountId());
+    assertEquals("d09f80cb-a46a-415e-8d35-c9e8068e49de", observer.response().getAccountId());
     assertEquals("20", observer.response().getTenantId());
     assertEquals("0", observer.response().getMembershipId());
     assertTrue(observer.response().getReplayed());
@@ -877,7 +877,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getProfile(1L, 2L))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
+                1L, 1L, "d09f80cb-a46a-415e-8d35-c9e8068e49de", "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetProfileResponse> ref = new AtomicReference<>();

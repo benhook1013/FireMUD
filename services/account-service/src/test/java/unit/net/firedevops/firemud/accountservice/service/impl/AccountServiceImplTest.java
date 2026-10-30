@@ -123,7 +123,7 @@ class AccountServiceImplTest {
   @Mock private AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
   @Mock private AccountTenantMembershipRepository accountTenantMembershipRepository;
   @Mock private ProfileRepository profileRepository;
-  @Mock private ProfileMapper profileMapper;
+  private final ProfileMapper profileMapper = Mappers.getMapper(ProfileMapper.class);
   @Mock private NotificationService notificationService;
   @Mock private EmailService emailService;
   @Mock private MailProperties mailProperties;
@@ -629,7 +629,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void joinPublicProductionCreatesMembershipAndAuditOnceAndReplaysExactReceipt() {
+  void joinPublicProductionRetainsReceiptAfterProjectionFailureAndReplaysWithoutDuplicateEffects() {
     Account account = new Account();
     account.setId(11L);
     retainAuthenticationIdentity(account);
@@ -670,8 +670,23 @@ class AccountServiceImplTest {
     JoinPublicProductionRequest request =
         new JoinPublicProductionRequest(connectScopeId, requestId);
 
-    JoinPublicProductionResult first =
+    org.mockito.Mockito.doAnswer(invocation -> {
+      when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.empty());
+      return null;
+    }).when(transactionManager).commit(org.mockito.ArgumentMatchers.any());
+    AuthenticationException firstProjectionFailure = assertThrows(AuthenticationException.class,
+        () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+    assertEquals("AUTH_UNAVAILABLE", firstProjectionFailure.getCode());
+    assertEquals("COMMITTED", retainedOperation.get().status());
+    org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.never())
+        .rollback(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.doNothing().when(transactionManager).commit(org.mockito.ArgumentMatchers.any());
+    when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.of(account));
+    JoinPublicProductionResult recovered =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    assertTrue(recovered.replayed());
+    JoinPublicProductionResult first = recovered;
+    assertEquals(account.getAccountUuid().toString(), recovered.accountId());
     var committedOperation = retainedOperation.get();
     org.mockito.Mockito.clearInvocations(transactionManager, gameSessionClient);
     JoinPublicProductionResult retried =
@@ -717,6 +732,7 @@ class AccountServiceImplTest {
                     new ConnectTokenRequest(connectScopeId, "first-play-after-join")));
 
     assertTrue(first.success());
+    assertEquals(account.getAccountUuid().toString(), first.accountId());
     assertEquals("JOINED", first.outcomeCode());
     assertEquals(701L, first.membershipId());
     assertEquals(1L, first.membershipVersion());
@@ -738,7 +754,7 @@ class AccountServiceImplTest {
             retried.membershipId(),
             retried.membershipVersion(),
             retried.membershipAuthorityGeneration(),
-            false));
+            true));
     org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.times(1))
         .bindPolicyEvidence(
             org.mockito.ArgumentMatchers.eq(requestId),
@@ -775,6 +791,17 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(),
                     new JoinPublicProductionRequest("different-scope", requestId)));
     assertEquals("IDEMPOTENCY_CONFLICT", changedDigest.getCode());
+
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.of(account), Optional.empty());
+    AuthenticationException projectionFailure =
+        assertThrows(AuthenticationException.class,
+            () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+    assertEquals("AUTH_UNAVAILABLE", projectionFailure.getCode());
+    assertEquals(committedOperation, retainedOperation.get());
+    when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.of(account));
+    assertEquals(account.getAccountUuid().toString(),
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request).accountId());
   }
 
   @Test
@@ -5265,6 +5292,8 @@ class AccountServiceImplTest {
   void getProfileReturnsDto() {
     Account account = new Account();
     account.setId(2L);
+    retainAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     Profile profile = new Profile();
     profile.setAccount(account);
     profile.setTenantId(1L);
@@ -5272,14 +5301,32 @@ class AccountServiceImplTest {
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
-    when(profileMapper.toDto(profile))
-        .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                1L, 1L, 2L, "demo", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
 
     var dto = service.getProfile(1L, 2L);
 
     assertEquals("demo", dto.displayName());
+    assertEquals(account.getAccountUuid().toString(), dto.accountId());
+  }
+
+  @Test
+  void profileProjectionRereadsFullOwnerAndRejectsWrongOrUnavailableIdentity() {
+    Account owner = new Account();
+    owner.setId(2L);
+    retainAuthenticationIdentity(owner);
+    Account partial = new Account();
+    partial.setId(2L);
+    Profile profile = profile(partial, 1L, "partial");
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
+    when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(owner));
+    assertEquals(owner.getAccountUuid().toString(), service.getProfile(1L, 2L).accountId());
+    partial.setId(3L);
+    assertEquals("AUTH_UNAVAILABLE",
+        assertThrows(AuthenticationException.class, () -> service.getProfile(1L, 2L)).getCode());
+    partial.setId(2L);
+    owner.setAccountUuid(null);
+    assertEquals("AUTH_UNAVAILABLE",
+        assertThrows(AuthenticationException.class, () -> service.getProfile(1L, 2L)).getCode());
   }
 
   @Test
@@ -5301,16 +5348,16 @@ class AccountServiceImplTest {
   @Test
   void updateProfileStoresChanges() {
     Profile profile = new Profile();
-    profile.setAccount(new Account());
+    Account account = new Account();
+    account.setId(2L);
+    retainAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    profile.setAccount(account);
     profile.setTenantId(1L);
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileRepository.save(profile)).thenReturn(profile);
-    when(profileMapper.toDto(profile))
-        .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
 
     var dto =
         service.updateProfile(
@@ -5318,6 +5365,7 @@ class AccountServiceImplTest {
                 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
 
     assertEquals("demo", dto.displayName());
+    assertEquals(account.getAccountUuid().toString(), dto.accountId());
     assertEquals(ProfilePresenceVisibilityPolicy.PRIVATE, profile.getPresenceVisibilityPolicy());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
   }
@@ -5340,7 +5388,7 @@ class AccountServiceImplTest {
                             1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE)))
             .getMessage());
 
-    verifyNoInteractions(profileRepository, profileMapper, notificationService);
+    verifyNoInteractions(profileRepository, notificationService);
   }
 
   @Test
@@ -5368,21 +5416,15 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     Profile tenantOne = profile(account, 1L, "one");
     Profile tenantTwo = profile(account, 2L, "two");
+    when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.of(account));
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(profileRepository.findByAccountId(2L)).thenReturn(java.util.List.of(tenantOne, tenantTwo));
-    when(profileMapper.toDto(tenantOne))
-        .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                10L, 1L, 2L, "one", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
-    when(profileMapper.toDto(tenantTwo))
-        .thenReturn(
-            new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                20L, 2L, 2L, "two", null, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
 
     var export = service.exportAccountData(2L);
 
     assertEquals("d09f80cb-a46a-415e-8d35-c9e8068e49de", export.account().id());
     assertEquals(2, export.profiles().size());
+    export.profiles().forEach(dto -> assertEquals(account.getAccountUuid().toString(), dto.accountId()));
   }
 
   @Test

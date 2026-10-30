@@ -142,13 +142,16 @@ class AccountControllerTest {
         new AccountDto(
             "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "demo@example.com", "player", true);
     when(accountService.exportAccountData(42L))
-        .thenReturn(new AccountDataExportDto(account, List.of()));
+        .thenReturn(new AccountDataExportDto(account, List.of(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 7L, account.id(), "demo", null,
+                net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy.FRIENDS_ONLY))));
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
         .perform(get("/accounts/42/export").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.profiles[0].accountId").value(account.id()));
   }
 
   @Test

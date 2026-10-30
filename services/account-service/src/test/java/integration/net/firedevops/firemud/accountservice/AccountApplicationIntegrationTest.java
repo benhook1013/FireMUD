@@ -487,6 +487,7 @@ class AccountApplicationIntegrationTest {
             browser, "scope-browser-" + suffix);
     var first = accountService.joinPublicProduction(bootstrap.bootstrapToken(), browserJoin);
     assertThat(first.success()).isTrue();
+    assertThat(first.accountId()).isEqualTo(account.id());
     assertThat(
             accountService.joinPublicProduction(bootstrap.bootstrapToken(), browserJoin).replayed())
         .isTrue();
@@ -507,6 +508,30 @@ class AccountApplicationIntegrationTest {
         .isTrue();
     assertThat(accountService.joinPublicProductionFromGameSession(caller, directJoin).replayed())
         .isTrue();
+    assertThat(accountService.joinPublicProductionFromGameSession(caller, directJoin).accountId())
+        .isEqualTo(account.id());
+    dsl.execute("INSERT INTO profiles(account_id,tenant_id,display_name,bio) VALUES(?,?,?,?)",
+        row, tenant, "owner profile", "initial");
+    assertThat(accountService.getProfile(tenant, row).accountId()).isEqualTo(account.id());
+    assertThat(accountService.updateProfile(
+        new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+            tenant, row, "updated profile", "updated",
+            net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy.PRIVATE))
+        .accountId()).isEqualTo(account.id());
+    assertThat(accountService.exportAccountData(row).profiles())
+        .allSatisfy(profile -> assertThat(profile.accountId()).isEqualTo(account.id()));
+    assertThat(accountService.exportTenantData(tenant, row).profile().accountId())
+        .isEqualTo(account.id());
+    String ordinary = accountService.authenticate(username, "password123").authToken();
+    HttpResponse<String> profileResponse = HTTP_CLIENT.send(
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + row + "?tenantId=" + tenant))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary).GET().build(),
+        HttpResponse.BodyHandlers.ofString());
+    assertThat(profileResponse.statusCode()).isEqualTo(200);
+    assertThat(jsonMapper.readTree(profileResponse.body()).path("data").path("accountId").asText())
+        .isEqualTo(account.id());
+    assertThat(dsl.fetchOne("SELECT account_id FROM profiles WHERE account_id=? AND tenant_id=?", row, tenant)
+        .get(0, Long.class)).isEqualTo(row);
     assertThat(scopes.find(browser)).isPresent();
     assertThat(scopes.find(direct)).isPresent();
   }
