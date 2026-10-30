@@ -22,7 +22,7 @@ Implementation and focused proof status are recorded in [Player Experience, Comm
 
 ## Context
 
-FireMUD has global `platformAdmin`, `support`, and `billingAdmin` roles for cross-tenant control-plane work. Those roles express platform operating responsibility, not tenant consent, player identity, or in-world authority. Existing target-state admission rules already prevent global roles from bypassing caller-bound gameplay membership, but current runtime presence classification can still translate a global `platformAdmin` role into an in-game `ADMIN` actor after the account joins normally. That leaks control-plane privilege into gameplay and weakens tenant autonomy.
+FireMUD has global `platformAdmin`, `support`, and `billingAdmin` roles for cross-tenant control-plane work. Those roles express platform operating responsibility, not tenant consent, player identity, or in-world authority. Existing target-state admission rules prevent global roles from bypassing caller-bound gameplay membership. The bounded correction to runtime presence classification and its implementation/proof status are recorded in [EA-2.3](../../project-management/implementation-tracking/player-experience-commands-and-communication.md#communication-social-and-presence); that correction does not establish admission, grant issuance, or complete gameplay capability enforcement.
 
 Support impersonation or hidden live observation could make some investigations more convenient, but neither has a current product requirement. Both would create a privileged path into private player state, conversations, and tenant experiences that would require substantial privacy, audit, notification, and abuse controls.
 
@@ -47,7 +47,7 @@ Support impersonation or hidden live observation could make some investigations 
 - Tenant gameplay authority remains explicit and cannot be inherited accidentally from platform employment or operating access.
 - Global staff can reproduce ordinary player behavior by joining a public game normally, but they receive no special in-world access unless the tenant explicitly grants it.
 - Support investigations cannot inspect private live gameplay by impersonating a player or attaching invisibly. They depend on purpose-built diagnostics and control-plane evidence.
-- Current global-role-to-presence elevation and its tests are implementation drift that must be removed.
+- The bounded runtime presence-classification correction and its remaining proof obligations are tracked in [EA-2.3](../../project-management/implementation-tracking/player-experience-commands-and-communication.md#communication-social-and-presence).
 - Operational emergency actions remain possible, but their APIs and audit records remain visibly separate from player action processing.
 
 ## Alternatives Considered

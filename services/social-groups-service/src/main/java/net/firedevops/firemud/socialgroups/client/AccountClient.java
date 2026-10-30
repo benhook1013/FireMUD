@@ -107,8 +107,21 @@ public final class AccountClient
         }
         Set<String> seen = new HashSet<>();
         for (var entry : response.getPoliciesList()) {
-          String subject = JwtClaims.requireCanonicalAccountUuid(entry.getAccountId(), "accountId");
+          String subject;
+          try {
+            subject = JwtClaims.requireCanonicalAccountUuid(entry.getAccountId(), "accountId");
+          } catch (IllegalArgumentException ignored) {
+            logger.warn(
+                "Rejected malformed account presence visibility policy subject tenantId={} batchSize={}",
+                tenantId,
+                batch.size());
+            return Map.of();
+          }
           if (!batch.contains(subject) || !seen.add(subject)) {
+            logger.warn(
+                "Rejected invalid or duplicate account presence visibility policy subject tenantId={} batchSize={}",
+                tenantId,
+                batch.size());
             return Map.of();
           }
           try {

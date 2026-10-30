@@ -64,6 +64,9 @@ class HelpCommandHandlerTest {
     assertTrue(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_VISIBILITY"));
     assertTrue(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_SCOPE"));
     assertTrue(result.outputs().get(0).text().contains("#entryNumber removal"));
+    assertTrue(result.outputs().get(0).text().contains("Private friends do not expose presence."));
+    assertFalse(result.outputs().get(0).text().contains("hidden-staff"));
+    assertFalse(result.outputs().get(0).text().contains("HIDDEN_STAFF"));
   }
 
   @Test
