@@ -147,10 +147,38 @@ class CaptureTests(unittest.TestCase):
                 with open(f'/proc/{pid}/stat', encoding='ascii') as process_stat:
                     if process_stat.read().split()[2] == 'Z':
                         return
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 return
             time.sleep(0.02)
         self.fail(f'diagnostic child {pid} survived process-group cleanup')
+
+    def test_process_group_child_disappearance_during_stat_read_is_exited(self):
+        class DisappearingProcess:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                raise ProcessLookupError('process disappeared')
+
+        with patch('builtins.open', return_value=DisappearingProcess()):
+            self.assert_process_group_child_exited(12345)
+
+    def test_process_group_child_stat_read_errors_other_than_disappearance_propagate(self):
+        class UnreadableProcess:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                raise PermissionError('stat unavailable')
+
+        with patch('builtins.open', return_value=UnreadableProcess()), self.assertRaises(PermissionError):
+            self.assert_process_group_child_exited(12345)
 
     def test_diagnostic_output_limit_kills_only_its_process_group(self):
         runner = self.write(
@@ -250,6 +278,27 @@ class CaptureTests(unittest.TestCase):
             CAPTURE.collect(self.root, self.log, self.output, 1)
         manifest = json.loads((self.output / 'manifest.json').read_text())
         self.assertTrue(manifest['files'][0]['path'].endswith('/Bad.java'))
+
+    def test_implicated_java_requires_exact_basename_under_file_budget(self):
+        self.write('services/common-saga/build/generated/ABad.java')
+        self.write('services/common-saga/build/generated/Bad.java')
+        with patch.object(CAPTURE, 'MAX_FILES', 1), patch.object(
+                CAPTURE, 'diagnostic', return_value={'status': 'unavailable'}):
+            CAPTURE.collect(self.root, self.log, self.output, 1)
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        self.assertTrue(manifest['files'][0]['path'].endswith('/Bad.java'))
+
+    def test_proto_inputs_are_enumerated_before_generated_budget_is_exhausted(self):
+        for number in range(100):
+            self.write(f'services/common-saga/build/generated/{number}.java')
+        self.write('protos/owner/service.proto')
+        with patch.object(CAPTURE, 'MAX_VISITED_ENTRIES', 4), patch.object(
+                CAPTURE, 'diagnostic', return_value={'status': 'unavailable'}):
+            CAPTURE.collect(self.root, self.log, self.output, 1)
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        paths = [entry['path'] for entry in manifest['files']]
+        self.assertIn('protos/owner/service.proto', paths)
+        self.assertTrue(manifest['enumeration']['truncated'])
 
     def test_cancellation_skips_direct_collection_and_cli_diagnostics(self):
         for status in [130, 143]:
