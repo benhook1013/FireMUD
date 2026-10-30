@@ -1,6 +1,8 @@
 package net.firedevops.firemud.socialgroups.controller;
 
 import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,6 +15,7 @@ import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
@@ -26,6 +29,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(MailController.class)
@@ -111,5 +115,29 @@ class MailControllerTest {
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(mailService, socialAccessGuard);
+  }
+
+  @Test
+  void malformedCallerIdentityIsForbiddenBeforeAccessChecksOrMailDispatch() {
+    SendMailRequest request =
+        new SendMailRequest(1L, accountUuid(2L), accountUuid(3L), "hello", "test body");
+    MailController controller = new MailController(mailService, socialAccessGuard);
+    for (String caller :
+        List.of(
+            "2",
+            "not-an-account",
+            "00000000-0000-0000-0000-000000000000",
+            "A0000000-0000-4000-8000-000000000002")) {
+      SessionContext.setContext(caller, List.of(), Map.of());
+      try {
+        assertThatThrownBy(() -> controller.sendMail(request))
+            .isInstanceOfSatisfying(
+                ResponseStatusException.class,
+                failure -> assertThat(failure.getStatusCode().value()).isEqualTo(403));
+        verifyNoInteractions(mailService, socialAccessGuard);
+      } finally {
+        SessionContext.clear();
+      }
+    }
   }
 }

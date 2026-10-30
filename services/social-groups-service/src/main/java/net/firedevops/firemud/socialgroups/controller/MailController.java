@@ -29,12 +29,21 @@ public class MailController {
   @PostMapping
   public ResponseEntity<ApiResponse<MailMessageDto>> sendMail(
       @Valid @RequestBody SendMailRequest request) {
-    if (!request.senderAccountId().equals(SessionContext.currentAccountUuidOrNull())) {
+    String callerAccountUuid = currentAccountUuidOrNull();
+    if (!request.senderAccountId().equals(callerAccountUuid)) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Sender must match authenticated account");
     }
     socialAccessGuard.requireAccountAccess(request.tenantId(), request.senderAccountId());
     MailMessageDto dto = mailService.sendMail(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  private static String currentAccountUuidOrNull() {
+    try {
+      return SessionContext.currentAccountUuidOrNull();
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 }

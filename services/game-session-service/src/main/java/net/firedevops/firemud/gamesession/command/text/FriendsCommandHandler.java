@@ -805,7 +805,7 @@ public class FriendsCommandHandler {
     if (!StringUtils.hasText(targetToken)) {
       return null;
     }
-    String normalized = targetToken.trim().toUpperCase(Locale.ROOT);
+    String normalized = targetToken.trim().toUpperCase(Locale.ROOT).replace('-', '_');
     return switch (normalized) {
       case "PUBLIC" ->
           net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
