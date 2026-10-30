@@ -670,8 +670,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(DEMO_ACCOUNT_ID)))
-        .doesNotContainKey(DEMO_ACCOUNT_ID);
+    assertNoAccountPresenceWritten();
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
