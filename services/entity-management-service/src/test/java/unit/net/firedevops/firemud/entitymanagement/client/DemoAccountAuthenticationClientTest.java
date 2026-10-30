@@ -88,6 +88,10 @@ class DemoAccountAuthenticationClientTest {
     Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     field.setAccessible(true);
     field.set(client, stub);
+    Field initialized =
+        AbstractReloadingBlockingGrpcClient.class.getDeclaredField("explicitlyInitialized");
+    initialized.setAccessible(true);
+    initialized.setBoolean(client, true);
     return client;
   }
 }

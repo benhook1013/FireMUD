@@ -47,11 +47,28 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
     var jdbc = new JdbcTemplate(source);
     jdbc.update(
         "INSERT INTO characters (tenant_id, account_id, name) VALUES (1, 98765, 'retained')");
-    List<Map<String, Object>> retained = jdbc.queryForList("SELECT * FROM characters");
+    List<Map<String, Object>> retained =
+        jdbc.queryForList("SELECT *, xmin::text AS retained_xmin FROM characters");
     List<Map<String, Object>> history =
         jdbc.queryForList("SELECT * FROM flyway_schema_history ORDER BY installed_rank");
+    String parentCore =
+        java.util.Objects.requireNonNull(
+            jdbc.queryForObject(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'characters'::regclass AND conname = 'ck_character_created_core'",
+                String.class));
     configuration.target(MigrationVersion.fromVersion("1024")).load().migrate();
-    assertThat(jdbc.queryForList("SELECT * FROM characters")).isEqualTo(retained);
+    String currentCore =
+        java.util.Objects.requireNonNull(
+            jdbc.queryForObject(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'characters'::regclass AND conname = 'ck_character_created_core'",
+                String.class));
+    assertThat(parentCore).contains("'PLAYER_CREATED'");
+    assertThat(currentCore).contains("'PLAYER_CREATED'");
+    assertThat(currentCore.substring(currentCore.indexOf("'PLAYER_CREATED'")))
+        .isEqualTo(parentCore.substring(parentCore.indexOf("'PLAYER_CREATED'")));
+
+    assertThat(jdbc.queryForList("SELECT *, xmin::text AS retained_xmin FROM characters"))
+        .isEqualTo(retained);
     var after = jdbc.queryForList("SELECT * FROM flyway_schema_history ORDER BY installed_rank");
     assertThat(after).hasSize(history.size() + 1);
     assertThat(after.subList(0, history.size())).isEqualTo(history);
@@ -64,6 +81,9 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
     ordinary.setPlayableStateKey("shared-live");
     ordinary.setName("owned");
     Character saved = repository.save(ordinary);
+    Character loaded = repository.findById(saved.getId()).orElseThrow();
+    assertThat(loaded.getAccountUuid()).isEqualTo(owner);
+    assertThat(loaded.getAccountId()).isNull();
     assertThat(saved.getAccountId()).isNull();
     assertThat(saved.getAccountUuid()).isEqualTo(owner);
     assertThat(saved.getActorIdentity().accountUuid()).isEqualTo(owner);
@@ -87,14 +107,72 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
                     1L, UUID.randomUUID(), "shared-live", null)
                 .getContent())
         .isEmpty();
-    assertThat(jdbc.queryForList("SELECT * FROM characters WHERE name = 'retained'"))
+    assertThat(
+            jdbc.queryForList(
+                "SELECT *, xmin::text AS retained_xmin FROM characters WHERE name = 'retained'"))
         .isEqualTo(retained);
-    assertThatThrownBy(
-            () ->
-                jdbc.update(
-                    "UPDATE characters SET account_uuid = ? WHERE id = ?",
-                    new UUID(0, 0),
-                    saved.getId()))
-        .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    List<Map<String, Object>> ordinaryBeforeRefusals =
+        jdbc.queryForList(
+            "SELECT *, xmin::text AS retained_xmin FROM characters WHERE id = ?", saved.getId());
+    for (String invalidChange :
+        List.of(
+            "account_uuid = NULL",
+            "account_uuid = '00000000-0000-0000-0000-000000000000'::UUID",
+            "tenant_uuid = '11111111-1111-4111-8111-111111111111'::UUID",
+            "playable_state_namespace_id = '22222222-2222-4222-8222-222222222222'::UUID",
+            "playable_state_scope = 'PLAYABLE_STATE_SCOPE_SHARED'",
+            "actor_identity_status = 'OWNER_RESOLVED', actor_identity_quarantine_reason = NULL",
+            "actor_identity_status = 'OWNER_RESOLVED', actor_identity_quarantine_reason = NULL, "
+                + "tenant_uuid = '11111111-1111-4111-8111-111111111111'::UUID, "
+                + "playable_state_namespace_id = '22222222-2222-4222-8222-222222222222'::UUID, "
+                + "playable_state_scope = 'PLAYABLE_STATE_SCOPE_SHARED'",
+            "actor_identity_quarantine_reason = NULL",
+            "actor_entry_policy = 'PLAYER_CREATED'",
+            "creation_target_namespace = 'dev'",
+            "creation_operation_id = '33333333-3333-4333-8333-333333333333'::UUID",
+            "authored_initial_core_json = '{}'",
+            "creation_descriptor_json = '{}'",
+            "creation_descriptor_digest = 'sha256:" + "a".repeat(64) + "'")) {
+      assertThatThrownBy(
+              () ->
+                  jdbc.update(
+                      "UPDATE characters SET " + invalidChange + " WHERE id = ?", saved.getId()))
+          .as(invalidChange)
+          .isInstanceOf(org.springframework.dao.DataAccessException.class);
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT *, xmin::text AS retained_xmin FROM characters WHERE id = ?",
+                  saved.getId()))
+          .isEqualTo(ordinaryBeforeRefusals);
+    }
+    for (String requiredColumn :
+        List.of(
+            "playable_state_key",
+            "level",
+            "experience",
+            "strength",
+            "agility",
+            "intelligence",
+            "stamina",
+            "health",
+            "mana",
+            "body_layout_key")) {
+      assertThatThrownBy(
+              () ->
+                  jdbc.update(
+                      "UPDATE characters SET " + requiredColumn + " = NULL WHERE id = ?",
+                      saved.getId()))
+          .as(requiredColumn)
+          .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+    assertThat(
+            jdbc.queryForList(
+                "SELECT *, xmin::text AS retained_xmin FROM characters WHERE id = ?",
+                saved.getId()))
+        .isEqualTo(ordinaryBeforeRefusals);
+    assertThat(
+            jdbc.queryForList(
+                "SELECT *, xmin::text AS retained_xmin FROM characters WHERE name = 'retained'"))
+        .isEqualTo(retained);
   }
 }
