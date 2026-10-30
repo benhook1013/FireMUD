@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
@@ -34,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
@@ -52,6 +54,9 @@ import tools.jackson.databind.ObjectMapper;
       "firemud.auth.http.public-routes[1].path-pattern=/accounts/"
     })
 class AccountControllerTest {
+  private static final String ACCOUNT_UUID_TEXT = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
+  private static final UUID ACCOUNT_UUID = UUID.fromString(ACCOUNT_UUID_TEXT);
+  private static final long ACCOUNT_ROW_ID = 42L;
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -115,33 +120,44 @@ class AccountControllerTest {
   }
 
   @Test
-  void deleteAccountAllowsScopedTenantAdmin() throws Exception {
+  void deleteAccountAllowsGlobalPlatformAdmin() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
-        .perform(delete("/accounts/42").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            delete("/accounts/" + ACCOUNT_UUID_TEXT)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+    verify(accountService).deleteAccount(ACCOUNT_ROW_ID);
   }
 
   @Test
   void deleteAccountRejectsScopedTenantAdminBecauseFullDeletionIsAccountScoped() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("tenantAdmin"))));
 
     mockMvc
-        .perform(delete("/accounts/42").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            delete("/accounts/" + ACCOUNT_UUID_TEXT)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
         .andExpect(jsonPath("$.error.message").value("Account access required"));
+
+    verify(accountService, never()).deleteAccount(ACCOUNT_ROW_ID);
   }
 
   @Test
   void exportAccountAllowsCurrentAccountWithoutTenantScope() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     AccountDto account =
         new AccountDto(
             "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "demo@example.com", "player", true);
-    when(accountService.exportAccountData(42L))
+    when(accountService.exportAccountData(ACCOUNT_ROW_ID))
         .thenReturn(
             new AccountDataExportDto(
                 account,
@@ -157,53 +173,104 @@ class AccountControllerTest {
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
-        .perform(get("/accounts/42/export").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.profiles[0].accountId").value(account.id()));
+
+    verify(accountService).resolveAccountStorageId(ACCOUNT_UUID);
+    verify(accountService).exportAccountData(ACCOUNT_ROW_ID);
   }
 
   @Test
   void exportTenantDataAllowsScopedTenantRole() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     AccountDto account =
         new AccountDto(
             "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "demo@example.com", "player", true);
-    when(accountService.exportTenantData(7L, 42L))
+    when(accountService.exportTenantData(7L, ACCOUNT_ROW_ID))
         .thenReturn(new TenantDataExportDto(7L, account, null));
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("moderator"))));
 
     mockMvc
         .perform(
-            get("/accounts/42/tenant-export")
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/tenant-export")
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+    verify(accountService).resolveAccountStorageId(ACCOUNT_UUID);
+    verify(accountService).exportTenantData(7L, ACCOUNT_ROW_ID);
   }
 
   @Test
-  void exportAccountRejectsMalformedAccountIdBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+  void accountSubjectCannotSelectAnotherAccountWithoutGlobalPrivilege() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(43L);
+    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
         .perform(
-            get("/accounts/not-a-number/export")
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/login-auth-modes")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.error.message").value("Account access required"));
+
+    mockMvc
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    mockMvc
+        .perform(
+            delete("/accounts/" + ACCOUNT_UUID_TEXT)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verify(accountService, never()).getLoginAuthModes(43L);
+    verify(accountService, never()).exportAccountData(43L);
+    verify(accountService, never()).deleteAccount(43L);
+  }
+
+  @Test
+  void allAccountSelectorRoutesRejectMalformedNumericNilAndNoncanonicalUuidsBeforeDispatch()
+      throws Exception {
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    List<String> invalidSelectors =
+        List.of(
+            "42",
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000000",
+            ACCOUNT_UUID_TEXT.toUpperCase(java.util.Locale.ROOT));
+
+    for (String selector : invalidSelectors) {
+      for (org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request :
+          accountSelectorRequests(selector)) {
+        mockMvc
+            .perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+            .andExpect(
+                jsonPath("$.error.message")
+                    .value("accountId must be a canonical non-nil Account UUID"));
+      }
+    }
 
     verifyNoInteractions(accountService);
   }
 
   @Test
   void exportTenantDataRejectsZeroTenantIdBeforeDispatch() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            get("/accounts/42/tenant-export")
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/tenant-export")
                 .param("tenantId", "0")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
@@ -215,26 +282,34 @@ class AccountControllerTest {
 
   @Test
   void deleteAccountAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
         .perform(
-            delete("/accounts/42")
+            delete("/accounts/" + ACCOUNT_UUID_TEXT)
                 .param("tenantId", "7")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+    verify(accountService).deleteAccount(ACCOUNT_ROW_ID);
   }
 
   @Test
-  void deleteAccountRejectsZeroAccountIdBeforeDispatch() throws Exception {
+  void deleteAccountRejectsNilUuidBeforeDispatch() throws Exception {
+    String nilAccountUuid = "00000000-0000-0000-0000-000000000000";
     String token = jwtUtil.generateToken("1", Map.of("accountId", "1"));
 
     mockMvc
-        .perform(delete("/accounts/0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            delete("/accounts/" + nilAccountUuid)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(
+            jsonPath("$.error.message")
+                .value("accountId must be a canonical non-nil Account UUID"));
 
     verifyNoInteractions(accountService);
   }
@@ -257,21 +332,24 @@ class AccountControllerTest {
 
   @Test
   void loginAuthModesAllowCurrentAccountWithoutTenantScope() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     AccountLoginAuthModesDto modes =
         new AccountLoginAuthModesDto(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP));
-    when(accountService.getLoginAuthModes(42L)).thenReturn(modes);
+    when(accountService.getLoginAuthModes(ACCOUNT_ROW_ID)).thenReturn(modes);
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
         .perform(
-            get("/accounts/42/login-auth-modes")
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/login-auth-modes")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.loginAuthModes[0]").value("EMAIL_OTP"));
+    verify(accountService).resolveAccountStorageId(ACCOUNT_UUID);
+    verify(accountService).getLoginAuthModes(ACCOUNT_ROW_ID);
 
     mockMvc
         .perform(
-            put("/accounts/42/login-auth-modes")
+            put("/accounts/" + ACCOUNT_UUID_TEXT + "/login-auth-modes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[\"EMAIL_OTP\"]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -288,19 +366,21 @@ class AccountControllerTest {
 
   @Test
   void updateLoginAuthModesRejectsPlatformAdminBeforeDispatch() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token =
         jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            put("/accounts/42/login-auth-modes")
+            put("/accounts/" + ACCOUNT_UUID_TEXT + "/login-auth-modes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[\"PASSWORD\"]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isNotImplemented())
         .andExpect(jsonPath("$.error.code").value("NOT_IMPLEMENTED"));
 
-    verifyNoInteractions(accountService);
+    verify(accountService, never())
+        .updateLoginAuthModes(anyLong(), any(UpdateAccountLoginAuthModesRequest.class));
   }
 
   @Test
@@ -309,7 +389,7 @@ class AccountControllerTest {
 
     mockMvc
         .perform(
-            put("/accounts/42/login-auth-modes")
+            put("/accounts/" + ACCOUNT_UUID_TEXT + "/login-auth-modes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -317,5 +397,42 @@ class AccountControllerTest {
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
 
     verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void accountOwnerReadbackInconsistencyAndOutageReturnRetryableUnavailable() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
+        .thenThrow(new IllegalStateException("Account UUID provenance is inconsistent"));
+    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+
+    mockMvc
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/login-auth-modes")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"));
+
+    org.mockito.Mockito.reset(accountService);
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
+        .thenThrow(new DataAccessResourceFailureException("Account owner read failed"));
+
+    mockMvc
+        .perform(
+            get("/accounts/" + ACCOUNT_UUID_TEXT + "/export")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"));
+  }
+
+  private static List<org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder>
+      accountSelectorRequests(String selector) {
+    return List.of(
+        get("/accounts/" + selector + "/login-auth-modes"),
+        put("/accounts/" + selector + "/login-auth-modes")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"loginAuthModes\":[\"PASSWORD\"]}"),
+        get("/accounts/" + selector + "/export"),
+        get("/accounts/" + selector + "/tenant-export").param("tenantId", "7"),
+        delete("/accounts/" + selector));
   }
 }

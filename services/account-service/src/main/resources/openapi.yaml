@@ -24,6 +24,18 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    AccountUuidPathSelector:
+      name: accountId
+      in: path
+      required: true
+      description: >-
+        Canonical lowercase non-nil persisted Account UUID. Numeric Account storage IDs and
+        noncanonical UUID text are rejected.
+      schema:
+        type: string
+        format: uuid
+        pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
   responses:
     RetryableAuthenticationUnavailable:
       description: Retryable authority outage; error code is AUTH_UNAVAILABLE or ENTITLEMENT_UNAVAILABLE
@@ -642,29 +654,25 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
   /accounts/{accountId}/export:
     get:
-      summary: Export full account data across tenants
+      summary: Export Account and profile-local data across tenants
       operationId: exportAccount
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
       responses:
         '200':
           description: Exported data
         '400':
           description: Invalid account ID
+        '403':
+          description: Account access required
+        '503':
+          description: Account UUID owner evidence is unavailable
   /accounts/{accountId}/login-auth-modes:
     get:
       summary: Get allowed primary login mechanisms for an account
       operationId: getLoginAuthModes
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
       responses:
         '200':
           description: Allowed login mechanisms
@@ -676,15 +684,13 @@ paths:
           description: Invalid account ID or authentication-mode data
         '403':
           description: Account access required
+        '503':
+          description: Account UUID owner evidence is unavailable
     put:
       summary: Replace allowed primary login mechanisms for an account (currently unavailable)
       operationId: updateLoginAuthModes
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
       requestBody:
         required: true
         content:
@@ -698,41 +704,47 @@ paths:
           description: Account access required
         '501':
           description: Recent ordinary reauthentication is required, but this mutation is unavailable until Account implements its evidence mechanism
+        '503':
+          description: Account UUID owner evidence is unavailable
   /accounts/{accountId}/tenant-export:
     get:
       summary: Export tenant-scoped account data
       operationId: exportTenantData
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
         - name: tenantId
           in: query
           required: true
           schema:
-            type: string
+            type: integer
+            format: int64
+            minimum: 1
       responses:
         '200':
           description: Exported tenant data
         '400':
           description: Invalid account or tenant ID
+        '403':
+          description: Account access required
+        '503':
+          description: Account UUID owner evidence is unavailable
   /accounts/{accountId}:
     delete:
       summary: Delete global account after billing preconditions pass
       operationId: deleteAccount
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
       responses:
         '200':
           description: Deletion success
         '400':
           description: Invalid account ID
+        '403':
+          description: Account access required
+        '409':
+          description: Account deletion is blocked or unavailable
+        '503':
+          description: Account UUID owner evidence is unavailable
   /profiles/{accountId}:
     get:
       summary: Get the caller's tenant profile

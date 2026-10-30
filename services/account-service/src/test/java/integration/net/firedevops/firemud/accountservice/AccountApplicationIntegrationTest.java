@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
@@ -792,7 +793,213 @@ class AccountApplicationIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
+    assertThat(response.body())
+        .contains("\"message\":\"accountId must be a canonical non-nil Account UUID\"");
+  }
+
+  @Test
+  void accountSelectorRoutesUsePersistedUuidAndPreserveCurrentAuthorizationAndDenials()
+      throws Exception {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String username = "account-selector-" + suffix;
+    String email = username + "@example.com";
+    var account =
+        accountService.createAccount(
+            new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
+                username, email, "password123"));
+    var otherAccount =
+        accountService.createAccount(
+            new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
+                "other-selector-" + suffix,
+                "other-selector-" + suffix + "@example.com",
+                "password123"));
+    long accountRow =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT id FROM accounts WHERE account_uuid = ?", UUID.fromString(account.id()))
+                .fetchOne(0, Long.class),
+            "Expected registered Account row");
+    long otherAccountRow =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT id FROM accounts WHERE account_uuid = ?",
+                    UUID.fromString(otherAccount.id()))
+                .fetchOne(0, Long.class),
+            "Expected other registered Account row");
+    long tenantId = 987654321L;
+    dsl.execute(
+        "INSERT INTO profiles(account_id, tenant_id, display_name, bio) VALUES (?, ?, ?, ?)",
+        accountRow,
+        tenantId,
+        "Account selector profile",
+        "retained during denied deletion");
+
+    String ordinary = accountService.authenticate(username, "password123").authToken();
+    String accountUuid = account.id();
+
+    HttpResponse<String> modesResponse =
+        sendAccountRequest("GET", "/accounts/" + accountUuid + "/login-auth-modes", ordinary, null);
+    assertThat(modesResponse.statusCode()).isEqualTo(200);
+    assertThat(
+            jsonMapper.readTree(modesResponse.body()).path("data").path("loginAuthModes").isArray())
+        .isTrue();
+
+    HttpResponse<String> exportResponse =
+        sendAccountRequest("GET", "/accounts/" + accountUuid + "/export", ordinary, null);
+    assertThat(exportResponse.statusCode()).isEqualTo(200);
+    assertThat(
+            jsonMapper
+                .readTree(exportResponse.body())
+                .path("data")
+                .path("account")
+                .path("id")
+                .asText())
+        .isEqualTo(accountUuid);
+    assertThat(
+            jsonMapper
+                .readTree(exportResponse.body())
+                .path("data")
+                .path("profiles")
+                .path(0)
+                .path("accountId")
+                .asText())
+        .isEqualTo(accountUuid);
+
+    HttpResponse<String> tenantExportResponse =
+        sendAccountRequest(
+            "GET",
+            "/accounts/" + accountUuid + "/tenant-export?tenantId=" + tenantId,
+            ordinary,
+            null);
+    assertThat(tenantExportResponse.statusCode()).isEqualTo(200);
+    assertThat(
+            jsonMapper
+                .readTree(tenantExportResponse.body())
+                .path("data")
+                .path("profile")
+                .path("accountId")
+                .asText())
+        .isEqualTo(accountUuid);
+
+    for (java.util.Map.Entry<String, String> request :
+        List.of(
+            java.util.Map.entry("GET", "/accounts/" + otherAccount.id() + "/login-auth-modes"),
+            java.util.Map.entry("PUT", "/accounts/" + otherAccount.id() + "/login-auth-modes"),
+            java.util.Map.entry("GET", "/accounts/" + otherAccount.id() + "/export"),
+            java.util.Map.entry(
+                "GET", "/accounts/" + otherAccount.id() + "/tenant-export?tenantId=" + tenantId),
+            java.util.Map.entry("DELETE", "/accounts/" + otherAccount.id()))) {
+      String body = request.getKey().equals("PUT") ? "{\"loginAuthModes\":[\"PASSWORD\"]}" : null;
+      HttpResponse<String> refused =
+          sendAccountRequest(request.getKey(), request.getValue(), ordinary, body);
+      assertThat(refused.statusCode()).isEqualTo(403);
+      assertThat(refused.body()).contains("\"code\":\"PERMISSION_DENIED\"");
+    }
+
+    String originalLoginModes =
+        dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+            .fetchOne(0, String.class);
+    Long originalUuidSourceNumericId =
+        dsl.resultQuery(
+                "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?", accountRow)
+            .fetchOne(0, Long.class);
+    String originalUuidProvenance =
+        dsl.resultQuery("SELECT account_uuid_provenance FROM accounts WHERE id = ?", accountRow)
+            .fetchOne(0, String.class);
+
+    HttpResponse<String> factorUpdateResponse =
+        sendAccountRequest(
+            "PUT",
+            "/accounts/" + accountUuid + "/login-auth-modes",
+            ordinary,
+            "{\"loginAuthModes\":[\"PASSWORD\"]}");
+    assertThat(factorUpdateResponse.statusCode()).isEqualTo(501);
+    assertThat(factorUpdateResponse.body()).contains("\"code\":\"NOT_IMPLEMENTED\"");
+    assertThat(
+            dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalLoginModes);
+    HttpResponse<String> deleteRefused =
+        sendAccountRequest("DELETE", "/accounts/" + accountUuid, ordinary, null);
+    assertThat(deleteRefused.statusCode()).isEqualTo(409);
+    assertThat(deleteRefused.body()).contains("\"code\":\"ACCOUNT_DELETE_UNAVAILABLE\"");
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(UUID.fromString(accountUuid));
+    assertThat(
+            dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalLoginModes);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM profiles WHERE account_id = ? AND tenant_id = ?",
+                accountRow,
+                tenantId))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, Long.class))
+        .isEqualTo(originalUuidSourceNumericId);
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid_provenance FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalUuidProvenance);
+    assertThat(
+            dsl.resultQuery("SELECT id FROM accounts WHERE id = ?", otherAccountRow)
+                .fetchOne(0, Long.class))
+        .isEqualTo(otherAccountRow);
+
+    List<String> invalidSelectors =
+        List.of(
+            Long.toString(accountRow),
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000000",
+            accountUuid.toUpperCase(java.util.Locale.ROOT));
+    for (String selector : invalidSelectors) {
+      List<java.util.Map.Entry<String, String>> requests =
+          List.of(
+              java.util.Map.entry("GET", "/accounts/" + selector + "/login-auth-modes"),
+              java.util.Map.entry("PUT", "/accounts/" + selector + "/login-auth-modes"),
+              java.util.Map.entry("GET", "/accounts/" + selector + "/export"),
+              java.util.Map.entry(
+                  "GET", "/accounts/" + selector + "/tenant-export?tenantId=" + tenantId),
+              java.util.Map.entry("DELETE", "/accounts/" + selector));
+      for (java.util.Map.Entry<String, String> request : requests) {
+        String body = request.getKey().equals("PUT") ? "{\"loginAuthModes\":[\"PASSWORD\"]}" : null;
+        HttpResponse<String> rejected =
+            sendAccountRequest(request.getKey(), request.getValue(), ordinary, body);
+        assertThat(rejected.statusCode()).isEqualTo(400);
+        assertThat(rejected.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+      }
+    }
+
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(UUID.fromString(accountUuid));
+    assertThat(
+            dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalLoginModes);
+  }
+
+  private HttpResponse<String> sendAccountRequest(
+      String method, String path, String token, String body) throws Exception {
+    HttpRequest.Builder request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    switch (method) {
+      case "GET" -> request.GET();
+      case "DELETE" -> request.DELETE();
+      case "PUT" ->
+          request
+              .header(HttpHeaders.CONTENT_TYPE, "application/json")
+              .PUT(HttpRequest.BodyPublishers.ofString(body));
+      default -> throw new IllegalArgumentException("Unsupported Account test request method");
+    }
+    return HTTP_CLIENT.send(request.build(), HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
