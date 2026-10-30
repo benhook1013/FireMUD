@@ -5321,6 +5321,27 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void profileProjectionRedactsRetainedLegacyPolicyWithoutRewritingEntity() {
+    Account account = new Account();
+    account.setId(2L);
+    retainAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    Profile profile = new Profile();
+    profile.setAccount(account);
+    profile.setTenantId(1L);
+    profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
+    when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
+
+    var dto = service.getProfile(1L, 2L);
+
+    assertEquals(ProfilePresenceVisibilityPolicy.PRIVATE, dto.presenceVisibilityPolicy());
+    assertEquals(
+        ProfilePresenceVisibilityPolicy.HIDDEN_STAFF, profile.getPresenceVisibilityPolicy());
+    org.mockito.Mockito.verify(profileRepository, org.mockito.Mockito.never()).save(profile);
+  }
+
+  @Test
   void profileProjectionRereadsFullOwnerAndRejectsWrongOrUnavailableIdentity() {
     Account owner = new Account();
     owner.setId(2L);
@@ -5414,8 +5435,7 @@ class AccountServiceImplTest {
     IllegalArgumentException exception =
         assertThrows(IllegalArgumentException.class, () -> service.updateProfile(request));
 
-    assertEquals(
-        "Profile presence visibility policy HIDDEN_STAFF is reserved", exception.getMessage());
+    assertEquals("Profile presence visibility policy is not selectable", exception.getMessage());
     verifyNoInteractions(profileRepository, notificationService);
   }
 

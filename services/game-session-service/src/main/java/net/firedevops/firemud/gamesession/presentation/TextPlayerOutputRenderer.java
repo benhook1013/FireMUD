@@ -555,8 +555,6 @@ public class TextPlayerOutputRenderer {
         + output.friendsOnlyCount()
         + "\nVisibility private: "
         + output.privateCount()
-        + "\nVisibility hidden-staff: "
-        + output.hiddenStaffCount()
         + "\nVisibility unspecified: "
         + output.unspecifiedVisibilityCount()
         + "\nScope shared: "
@@ -614,14 +612,7 @@ public class TextPlayerOutputRenderer {
       return line.toString();
     }
     if (entry.lastSeenAtEpochMs() != null) {
-      String qualifier =
-          switch (entry.recentDisposition()) {
-            case "LOGOUT" -> "logged out";
-            case "TAKEOVER" -> "replaced session";
-            case "TRANSPORT_LOSS" -> "connection lost";
-            default -> "last seen";
-          };
-      return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
+      return "last seen " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
     }
     return "offline";
   }

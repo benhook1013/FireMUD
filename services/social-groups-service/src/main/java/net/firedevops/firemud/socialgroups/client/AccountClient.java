@@ -4,10 +4,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -100,21 +102,28 @@ public final class AccountClient
               logger, PRESENCE_VISIBILITY_POLICY_READ_OPERATION, response.getError());
           return Map.of();
         }
-        response
-            .getPoliciesList()
-            .forEach(
-                entry -> {
-                  try {
-                    long accountId = Long.parseLong(entry.getAccountId());
-                    if (accountId > 0 && batch.contains(accountId)) {
-                      policies.put(
-                          accountId,
-                          FriendPresenceVisibilityPolicyValue.valueOf(entry.getPolicy()));
-                    }
-                  } catch (IllegalArgumentException ignored) {
-                    // Missing or malformed policy entries remain fail-closed at the caller.
-                  }
-                });
+        Set<Long> seenAccountIds = new HashSet<>();
+        for (var entry : response.getPoliciesList()) {
+          long accountId;
+          try {
+            accountId = Long.parseLong(entry.getAccountId());
+          } catch (IllegalArgumentException ex) {
+            return Map.of();
+          }
+          if (accountId <= 0 || !batch.contains(accountId) || !seenAccountIds.add(accountId)) {
+            return Map.of();
+          }
+          try {
+            String policy = entry.getPolicy();
+            policies.put(
+                accountId,
+                "HIDDEN_STAFF".equals(policy)
+                    ? FriendPresenceVisibilityPolicyValue.PRIVATE
+                    : FriendPresenceVisibilityPolicyValue.valueOf(policy));
+          } catch (IllegalArgumentException ignored) {
+            // An unknown or malformed policy is private for this subject only.
+          }
+        }
       }
       return Map.copyOf(policies);
     } catch (Exception ex) {

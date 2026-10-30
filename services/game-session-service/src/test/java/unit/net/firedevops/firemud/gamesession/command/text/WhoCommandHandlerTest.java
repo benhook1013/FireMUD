@@ -62,7 +62,7 @@ class WhoCommandHandlerTest {
                 "globalRoles",
                 java.util.List.of("platformAdmin"),
                 "scopedRoles",
-                java.util.Map.of()));
+                java.util.Map.of("22", java.util.List.of("god"))));
 
     gameplayPresenceService.registerConnected(
         GameplayPresenceTestFixtures.whoAster("god@example.com", godJwt));
@@ -86,6 +86,24 @@ class WhoCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(render(result)).isEqualTo("Gods [2]: Aster, Dara\nPlayers [2]: Ben, Cara");
+  }
+
+  @Test
+  void normallyJoinedGlobalStaffAppearsAsAnOrdinaryPlayer() {
+    for (String role : java.util.List.of("platformAdmin", "support", "billingAdmin", "god")) {
+      FakeGameplayPresenceService presence = new FakeGameplayPresenceService(jwtUtil);
+      String token =
+          jwtUtil.generateToken(
+              "1", java.util.Map.of("accountId", "1", "globalRoles", java.util.List.of(role)));
+      var context = GameplayPresenceTestFixtures.whoAster("staff@example.com", token);
+      presence.registerConnected(context);
+      WhoCommandHandler handler =
+          new WhoCommandHandler(presence, activityResolver, scriptEventPublisher);
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"), context);
+      assertThat(result.commandResult().accepted()).isTrue();
+      assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [1]: Aster");
+    }
   }
 
   @Test

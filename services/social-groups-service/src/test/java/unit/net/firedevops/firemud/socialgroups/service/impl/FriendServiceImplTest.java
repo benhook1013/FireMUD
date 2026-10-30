@@ -214,7 +214,6 @@ class FriendServiceImplTest {
     assertEquals(0, result.publicCount());
     assertEquals(2, result.friendsOnlyCount());
     assertEquals(0, result.privateCount());
-    assertEquals(0, result.hiddenStaffCount());
     assertEquals(0, result.unspecifiedVisibilityCount());
     assertEquals(0, result.sharedCount());
     assertEquals(0, result.isolatedCount());
@@ -390,9 +389,9 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void getFriendPresencePolicyRedactsLegacyHiddenStaff() {
+  void getFriendPresencePolicyUsesPrivateAccountProjection() {
     when(accountClient.getPresenceVisibilityPolicy(11L, 2L))
-        .thenReturn(Optional.of(FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF));
+        .thenReturn(Optional.of(FriendPresenceVisibilityPolicyValue.PRIVATE));
 
     var result = service.getFriendPresencePolicy(11L, 2L);
 
@@ -400,15 +399,13 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void updateFriendPresencePolicyRejectsHiddenStaff() {
+  void updateFriendPresencePolicyRejectsMissingPolicy() {
     IllegalArgumentException error =
         assertThrows(
             IllegalArgumentException.class,
-            () ->
-                service.updateFriendPresencePolicy(
-                    11L, 2L, FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF));
+            () -> service.updateFriendPresencePolicy(11L, 2L, null));
 
-    assertEquals("Friend presence visibility policy HIDDEN_STAFF is reserved", error.getMessage());
+    assertEquals("Friend presence visibility policy is required", error.getMessage());
   }
 
   @Test
@@ -525,7 +522,6 @@ class FriendServiceImplTest {
     assertEquals(17L, result.presences().get(0).pointerVersion());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.presences().get(0).activityState());
     assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.presences().get(0).lastSeenAt());
-    assertNull(result.presences().get(0).recentDisposition());
   }
 
   @Test
@@ -580,7 +576,6 @@ class FriendServiceImplTest {
     assertEquals(true, result.friends().get(0).presence().online());
     assertEquals("SHARED", result.friends().get(0).presence().playableStateScope());
     assertEquals("Ben", result.friends().get(0).presence().characterName());
-    assertNull(result.friends().get(0).presence().recentDisposition());
   }
 
   @Test
@@ -616,6 +611,49 @@ class FriendServiceImplTest {
     assertEquals(1, result.friends().size());
     assertEquals(1, result.friends().get(0).ordinal());
     assertEquals(3L, result.friends().get(0).friendAccountId());
+  }
+
+  @Test
+  void listFriendsRejectsDuplicateRawPresenceSubjects() {
+    AccountFriendLink first = activeLink(3L);
+    AccountFriendLink second = activeLink(4L);
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(first, second));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true))
+                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(false))
+                .build());
+
+    assertThrows(
+        IllegalStateException.class, () -> service.listFriends(11L, 2L, FriendRosterFilter.ALL));
+  }
+
+  @Test
+  void listFriendsRejectsUnrequestedRawPresenceSubjects() {
+    AccountFriendLink first = activeLink(3L);
+    AccountFriendLink second = activeLink(4L);
+    when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(first, second));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true))
+                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("99").setOnline(true))
+                .build());
+
+    assertThrows(
+        IllegalStateException.class, () -> service.listFriends(11L, 2L, FriendRosterFilter.ALL));
+  }
+
+  private static AccountFriendLink activeLink(long friendAccountId) {
+    AccountFriendLink link = new AccountFriendLink();
+    link.setTenantId(11L);
+    link.setAccountId(2L);
+    link.setFriendAccountId(friendAccountId);
+    link.setStatus("active");
+    return link;
   }
 
   @Test
@@ -707,55 +745,24 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void listFriendPresenceRedactsLegacyHiddenStaffAsPrivate() {
+  void listFriendPresenceRedactsPrivatePoliciesWithoutRawPresenceLookup() {
     AccountFriendLink privateLink = new AccountFriendLink();
     privateLink.setTenantId(11L);
     privateLink.setAccountId(2L);
     privateLink.setFriendAccountId(3L);
     privateLink.setStatus("active");
-    AccountFriendLink hiddenLink = new AccountFriendLink();
-    hiddenLink.setTenantId(11L);
-    hiddenLink.setAccountId(2L);
-    hiddenLink.setFriendAccountId(4L);
-    hiddenLink.setStatus("active");
+    AccountFriendLink secondPrivateLink = new AccountFriendLink();
+    secondPrivateLink.setTenantId(11L);
+    secondPrivateLink.setAccountId(2L);
+    secondPrivateLink.setFriendAccountId(4L);
+    secondPrivateLink.setStatus("active");
     when(accountRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
-        .thenReturn(List.of(privateLink, hiddenLink));
+        .thenReturn(List.of(privateLink, secondPrivateLink));
     when(accountClient.getPresenceVisibilityPolicies(11L, List.of(3L, 4L)))
         .thenReturn(
             Map.of(
                 3L, FriendPresenceVisibilityPolicyValue.PRIVATE,
-                4L, FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF));
-    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
-        .thenReturn(
-            QueryAccountPresenceResponse.newBuilder()
-                .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
-                        .setOnline(true)
-                        .setGameInstanceId("9")
-                        .setWorldSlug("demo")
-                        .setWorldDisplayName("Demo World")
-                        .setRealmSlug("production")
-                        .setRealmDisplayName("Live Realm")
-                        .setCharacterId("99")
-                        .setCharacterName("Ben")
-                        .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
-                        .setRecentDisposition(
-                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
-                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT)
-                        .build())
-                .addPresences(
-                    AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
-                        .setOnline(true)
-                        .setGameInstanceId("10")
-                        .setCharacterId("100")
-                        .setCharacterName("Admin")
-                        .setRecentDisposition(
-                            net.firedevops.firemud.gamesession.v1.AccountRecentPresenceDisposition
-                                .ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER)
-                        .build())
-                .build());
+                4L, FriendPresenceVisibilityPolicyValue.PRIVATE));
 
     var result = service.listFriendPresence(11L, 2L);
 
@@ -774,7 +781,6 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).characterId());
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
-    assertNull(result.presences().get(0).recentDisposition());
     assertEquals(false, result.presences().get(1).online());
     assertNull(result.presences().get(1).visibilityPolicy());
     assertEquals(null, result.presences().get(1).gameInstanceId());
@@ -788,7 +794,6 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(1).characterName());
     assertEquals(null, result.presences().get(1).activityState());
     assertEquals(null, result.presences().get(1).lastSeenAt());
-    assertNull(result.presences().get(1).recentDisposition());
 
     var privateFiltered = service.listFriends(11L, 2L, FriendRosterFilter.PRIVATE);
     assertEquals(2, privateFiltered.totalCount());
@@ -800,14 +805,6 @@ class FriendServiceImplTest {
     assertEquals(4L, privateFiltered.friends().get(1).friendAccountId());
     assertNull(privateFiltered.friends().get(1).presence().visibilityPolicy());
 
-    var hiddenStaffFiltered = service.listFriends(11L, 2L, FriendRosterFilter.HIDDEN_STAFF);
-    assertEquals(FriendRosterFilter.PRIVATE, hiddenStaffFiltered.filter());
-    assertEquals(2, hiddenStaffFiltered.totalCount());
-    assertEquals(2, hiddenStaffFiltered.matchCount());
-    assertEquals(2, hiddenStaffFiltered.friends().size());
-    assertTrue(
-        hiddenStaffFiltered.friends().stream()
-            .allMatch(entry -> entry.presence().visibilityPolicy() == null));
     Mockito.verify(gameSessionClient, Mockito.never())
         .queryAccountPresence(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
 
@@ -819,7 +816,6 @@ class FriendServiceImplTest {
     assertEquals(0, summary.publicCount());
     assertEquals(0, summary.friendsOnlyCount());
     assertEquals(2, summary.privateCount());
-    assertEquals(0, summary.hiddenStaffCount());
     assertEquals(0, summary.unspecifiedVisibilityCount());
     assertEquals(2, summary.unspecifiedScopeCount());
   }
@@ -879,7 +875,6 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
-    assertNull(result.presences().get(0).recentDisposition());
     Mockito.verify(gameSessionClient, Mockito.never())
         .queryAccountPresence(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
 

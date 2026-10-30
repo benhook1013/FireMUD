@@ -257,7 +257,9 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       ArrayList<GameplayPresence> accountMatches = new ArrayList<>();
       for (Object member : members) {
         String sessionIdText = String.valueOf(member);
-        String presenceKey = presenceKey(sessionIdText);
+        Long indexedSessionId =
+            PositiveLongParsing.parseOptionalText(sessionIdText, "sessionId").value();
+        String presenceKey = indexedSessionId == null ? null : presenceKey(indexedSessionId);
         if (presenceKey == null) {
           setOps.remove(accountKey, sessionIdText);
           continue;
@@ -270,6 +272,9 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         }
         if (presence == null) {
           setOps.remove(accountKey, sessionIdText);
+          continue;
+        }
+        if (presence.sessionId() != indexedSessionId) {
           continue;
         }
         if (presence.tenantId() != tenantId

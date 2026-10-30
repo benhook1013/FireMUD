@@ -8,7 +8,6 @@ public enum FriendRosterFilter {
   PUBLIC,
   FRIENDS_ONLY,
   PRIVATE,
-  HIDDEN_STAFF,
   UNSPECIFIED_VISIBILITY,
   SHARED,
   ISOLATED,

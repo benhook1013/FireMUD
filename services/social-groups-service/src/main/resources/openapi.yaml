@@ -90,16 +90,13 @@ components:
           type: string
         visibilityPolicy:
           type: string
-          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
         activityState:
           type: string
           enum: [ACTIVE, AUTO_AFK, EXPLICIT_AFK]
         lastSeenAt:
           type: string
           format: date-time
-        recentDisposition:
-          type: string
-          enum: [TRANSPORT_LOSS, LOGOUT, TAKEOVER]
     FriendPresenceViewDto:
       type: object
       properties:
@@ -114,7 +111,6 @@ components:
               PUBLIC,
               FRIENDS_ONLY,
               PRIVATE,
-              HIDDEN_STAFF,
               UNSPECIFIED_VISIBILITY,
               SHARED,
               ISOLATED,
@@ -133,7 +129,7 @@ components:
       properties:
         currentPolicy:
           type: string
-          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
     UpdateFriendPresencePolicyRequest:
       type: object
       properties:
@@ -145,7 +141,7 @@ components:
           format: int64
         visibilityPolicy:
           type: string
-          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
       required:
         - tenantId
         - accountId
@@ -188,7 +184,6 @@ components:
               PUBLIC,
               FRIENDS_ONLY,
               PRIVATE,
-              HIDDEN_STAFF,
               UNSPECIFIED_VISIBILITY,
               SHARED,
               ISOLATED,
@@ -218,8 +213,6 @@ components:
         friendsOnlyCount:
           type: integer
         privateCount:
-          type: integer
-        hiddenStaffCount:
           type: integer
         unspecifiedVisibilityCount:
           type: integer
@@ -595,7 +588,6 @@ paths:
                 PUBLIC,
                 FRIENDS_ONLY,
                 PRIVATE,
-                HIDDEN_STAFF,
                 UNSPECIFIED_VISIBILITY,
                 SHARED,
                 ISOLATED,
@@ -821,7 +813,6 @@ paths:
                 PUBLIC,
                 FRIENDS_ONLY,
                 PRIVATE,
-                HIDDEN_STAFF,
                 UNSPECIFIED_VISIBILITY,
                 SHARED,
                 ISOLATED,

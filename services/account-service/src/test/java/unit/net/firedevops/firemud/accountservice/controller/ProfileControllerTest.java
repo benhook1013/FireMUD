@@ -219,7 +219,7 @@ class ProfileControllerTest {
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(
             jsonPath("$.error.message")
-                .value("Profile presence visibility policy HIDDEN_STAFF is reserved"));
+                .value("Profile presence visibility policy is not selectable"));
 
     verifyNoProfileDispatch();
   }

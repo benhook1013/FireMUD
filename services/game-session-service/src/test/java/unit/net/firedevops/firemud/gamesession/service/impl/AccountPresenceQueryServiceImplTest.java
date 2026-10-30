@@ -1,9 +1,13 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
@@ -636,6 +640,265 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals("Production", result.get(0).realmSlug());
     assertEquals("Builder Sandbox", result.get(0).worldDisplayName());
     assertEquals("Live Realm", result.get(0).realmDisplayName());
+  }
+
+  @Test
+  void queryAccountPresenceRejectsRecentStateWithWrongTenantOrAccount() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3", "4")))
+        .thenReturn(
+            Map.of(
+                "3",
+                new AccountRecentPresenceState(
+                    2L,
+                    "3",
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    1_700_000_000_000L,
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)),
+            Map.of(
+                "4",
+                new AccountRecentPresenceState(
+                    1L,
+                    "999",
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    1_700_000_000_000L,
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, "2", List.of("3", "4")));
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, "2", List.of("3", "4")));
+    verifyNoInteractions(presenceService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsActiveStateWithWrongMapKeyOrTenant() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3", "4", "5")))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3", "4", "5")))
+        .thenReturn(
+            Map.of("3", List.of(presence(97L, 1L, "4"))),
+            Map.of("4", List.of(presence(98L, 2L, "4"))),
+            Map.of("unrequested", List.of(presence(99L, 1L, "5"))));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, "2", List.of("3", "4", "5")));
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, "2", List.of("3", "4", "5")));
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, "2", List.of("3", "4", "5")));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsSessionIdRepeatedAcrossAccountBuckets() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3", "4")))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3", "4")))
+        .thenReturn(
+            Map.of(
+                "3", List.of(presence(97L, 1L, "3")),
+                "4", List.of(presence(97L, 1L, "4"))));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, "2", List.of("3", "4")));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsUnrequestedRecentState() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3")))
+        .thenReturn(
+            Map.of(
+                "unrequested",
+                new AccountRecentPresenceState(
+                    1L,
+                    "3",
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    1_700_000_000_000L,
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
+
+    assertThrows(
+        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
+    verifyNoInteractions(presenceService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsNullRecentState() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    Map<String, AccountRecentPresenceState> recentStates = new HashMap<>();
+    recentStates.put("3", null);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3")))
+        .thenReturn(recentStates);
+
+    assertThrows(
+        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
+    verifyNoInteractions(presenceService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsNullActiveListsAndPayloads() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3"))).thenReturn(Map.of());
+    Map<String, List<GameplayPresence>> nullListResponse = new HashMap<>();
+    nullListResponse.put("3", null);
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3")))
+        .thenReturn(
+            nullListResponse, Map.of("3", Collections.<GameplayPresence>singletonList(null)));
+
+    assertThrows(
+        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
+    assertThrows(
+        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsNonpositiveActiveSessionId() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3"))).thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3")))
+        .thenReturn(Map.of("3", List.of(presence(0L, 1L, "3"))));
+
+    assertThrows(
+        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceTreatsEmptyActiveListAsOffline() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3"))).thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3")))
+        .thenReturn(Map.of("3", List.of()));
+
+    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+
+    assertEquals(1, result.size());
+    assertEquals("3", result.get(0).accountId());
+    assertEquals(false, result.get(0).online());
+    assertEquals(null, result.get(0).gameInstanceId());
+    assertEquals(null, result.get(0).lastSeenAt());
+  }
+
+  private static GameplayPresence presence(long sessionId, long tenantId, String accountId) {
+    return new GameplayPresence(
+        sessionId,
+        tenantId,
+        2L,
+        "SHARED",
+        "sandbox",
+        "production",
+        17L,
+        accountId,
+        99L,
+        "Ben",
+        GameplayPresenceRole.PLAYER,
+        100L,
+        null,
+        120L,
+        150L);
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(

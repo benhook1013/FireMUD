@@ -524,6 +524,10 @@ The five current AccountController account-selector handlers (login-auth-mode GE
 
 This local selector transition does not convert ordinary JWT identity, shared authorization, gRPC selector contracts, Logging & Admin deletion callers, or account registration. Canonical tenant-qualified profile routes/authorization, target async and tenant-wide export routes, token-registry behavior, gameplay activation, and production credential custody remain held; Account deletion still retains its existing JOIN receipt, billing-owner, and child-retention denials.
 
+#### Presence-owner correlation prerequisite
+
+The independently reviewable presence correlation source preserves current Account identity representation while checking Game Session live/recent ownership and Social batch-result correlation. It is separate from ordinary UUID credential and shared-context convergence. Its implementation and proof status belong to [EA-2.3](./player-experience-commands-and-communication.md#communication-social-and-presence); it grants no ordinary issuer, registry, custody or activation authority.
+
 ### Text Protocol and Credential Policy
 
 Telnet and generic WebSocket clients share one Game Session line-oriented parser/interpreter and gameplay queue. The parser trims input, accepts case-insensitive command names, handles empty or malformed lines, and maps unknown commands to `UNKNOWN`; Telnet performs no separate gameplay parsing. The current canonical flow is optional `WORLDS`, `LOGIN`, `PLAY`, and gameplay commands such as `LOOK` and `SAY`, with built-in `LOGOUT`. `LOGON` remains an accepted login spelling where the protocol documents it. The old typed `SESSION` attach flow is not part of the canonical initial-development protocol; future smart-client metadata, if revived, is transport metadata rather than a player command and is never authoritative.
