@@ -172,56 +172,19 @@ public final class CanonicalPreseededActorRuntimeReferenceClient
     }
   }
 
-  /** Numeric runtime entity identity qualified by its actual Entity-owned scope. */
-  public static final class RuntimeEntityId {
-    private final UUID tenantId;
-    private final String gameInstanceId;
-    private final long value;
-
-    private RuntimeEntityId(UUID tenantId, String gameInstanceId, long value) {
-      this.tenantId = tenantId;
-      this.gameInstanceId = gameInstanceId;
-      this.value = value;
-    }
-
-    public UUID tenantId() {
-      return tenantId;
-    }
-
-    public String gameInstanceId() {
-      return gameInstanceId;
-    }
-
-    public long value() {
-      return value;
-    }
-
-    @Override
-    public boolean equals(Object other) {
-      return other instanceof RuntimeEntityId id
-          && value == id.value
-          && tenantId.equals(id.tenantId)
-          && gameInstanceId.equals(id.gameInstanceId);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(tenantId, gameInstanceId, value);
-    }
-  }
-
   /** Constructible only after an authenticated, exact, closed Entity response passes validation. */
-  public static final class RuntimeActorReference {
+  public static final class RuntimeActorReference
+      implements CanonicalGameplayRuntimeActorReference {
     private final String workloadNamespace;
     private final ReadPreseededActorRuntimeReferenceResponse receipt;
-    private final RuntimeEntityId runtimeEntityId;
+    private final CanonicalRuntimeEntityId runtimeEntityId;
 
     private RuntimeActorReference(
         String workloadNamespace, ReadPreseededActorRuntimeReferenceResponse receipt) {
       this.workloadNamespace = workloadNamespace;
       this.receipt = receipt;
       this.runtimeEntityId =
-          new RuntimeEntityId(
+          new CanonicalRuntimeEntityId(
               UUID.fromString(receipt.getExpectedTarget().getCanonicalTenantUuid()),
               receipt.getExpectedTarget().getGameInstanceId(),
               receipt.getRuntimeEntityId());
@@ -231,7 +194,7 @@ public final class CanonicalPreseededActorRuntimeReferenceClient
       return workloadNamespace;
     }
 
-    public RuntimeEntityId runtimeEntityId() {
+    public CanonicalRuntimeEntityId runtimeEntityId() {
       return runtimeEntityId;
     }
 
@@ -241,6 +204,29 @@ public final class CanonicalPreseededActorRuntimeReferenceClient
 
     public long projectionFence() {
       return receipt.getProjectionFence();
+    }
+
+    @Override
+    public ActorOrigin origin() {
+      return new AssignmentOrigin(assignmentUuid(), intentDigest());
+    }
+
+    @Override
+    public boolean matchesWorldRequest(
+        net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
+      return request != null
+          && request.getSchemaVersion() == 1
+          && !request.hasPlayerCreatedOrigin()
+          && receipt.getAssignmentUuid().equals(request.getAssignmentUuid())
+          && receipt.getIntentDigest().equals(request.getAssignmentIntentDigest())
+          && receipt.getCanonicalAccountUuid().equals(request.getCanonicalAccountUuid())
+          && receipt.getCharacterUuid().equals(request.getCharacterUuid())
+          && receipt.getExpectedTarget().equals(request.getExpectedTarget());
+    }
+
+    @Override
+    public byte[] canonicalEvidenceBytes() {
+      return receipt.toByteArray();
     }
 
     public UUID assignmentUuid() {

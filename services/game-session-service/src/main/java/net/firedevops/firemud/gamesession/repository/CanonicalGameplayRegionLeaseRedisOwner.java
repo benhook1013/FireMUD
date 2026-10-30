@@ -22,7 +22,6 @@ import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
@@ -415,7 +414,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   void applySessionBinding(
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatus durableOwner,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
       String sessionId,
       BigInteger bindingGeneration) {
     long outcome =
@@ -427,7 +426,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   BindingPreimage probeSessionBinding(
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatus durableOwner,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
       String sessionId,
       BigInteger bindingGeneration) {
     long outcome =
@@ -447,7 +446,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   BindingReadback readBackSessionBinding(
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatus durableOwner,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
       String sessionId,
       BigInteger bindingGeneration) {
     long outcome =
@@ -468,7 +467,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   private long executeBinding(
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatus durableOwner,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
       String sessionId,
       BigInteger bindingGeneration,
       String action) {
@@ -515,7 +514,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   private static void requireGrantBackedStatus(
       LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatus status,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId) {
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId) {
     if (!status.tenantId().equals(grant.source.tenantId())
         || !status.gameInstanceId().equals(grant.source.gameInstanceId())
         || !status.canonicalRegionId().equals(grant.source.canonicalRegionId())
@@ -807,7 +806,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   /** Private-construction proof that a second region Lua call read the exact live tuple. */
   static final class BindingReadback {
-    private final CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId;
+    private final net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId
+        runtimeEntityId;
     private final String sessionId;
     private final BigInteger bindingGeneration;
     private final long regionEpoch;
@@ -816,7 +816,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final String digest;
 
     private BindingReadback(
-        CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+        net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
         String sessionId,
         BigInteger bindingGeneration,
         long regionEpoch,
@@ -832,7 +832,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.digest = digest;
     }
 
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId() {
+    net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId() {
       return runtimeEntityId;
     }
 
@@ -863,7 +863,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   /** Private-construction result of a lease/epoch-checked read of the exact key preimage. */
   static final class BindingPreimage {
-    private final CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId;
+    private final net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId
+        runtimeEntityId;
     private final String sessionId;
     private final BigInteger bindingGeneration;
     private final long regionEpoch;
@@ -872,7 +873,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final PreimageState state;
 
     private BindingPreimage(
-        CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+        net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
         String sessionId,
         BigInteger bindingGeneration,
         long regionEpoch,
@@ -888,7 +889,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.state = state;
     }
 
-    CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId() {
+    net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId() {
       return runtimeEntityId;
     }
 

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -12,6 +13,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -457,15 +459,68 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       seedRequiredRegionSource(dsl, target, null);
       seedRequiredRegionSource(dsl, target, Long.toString(Long.MAX_VALUE));
       var before = requiredRegionSourceImages(dsl);
+      var predecessorHistory = migrationHistoryImages(dsl);
 
-      migrate(schema, dataSource);
+      // These controlled storage rows have no original INSTALLED preparation. They remain
+      // valid input for the earlier executor-fence conversion through the V1051 predecessor.
+      migrate(schema, dataSource, "1050.6");
 
       assertThat(requiredRegionSourceImages(dsl)).isEqualTo(before);
+      var retainedHistory = migrationHistoryImages(dsl);
+      assertThat(retainedHistory.size()).isGreaterThan(predecessorHistory.size());
+      assertThat(retainedHistory.subList(0, predecessorHistory.size()))
+          .isEqualTo(predecessorHistory);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT version FROM flyway_schema_history WHERE success = true"
+                          + " ORDER BY installed_rank DESC LIMIT 1")
+                  .get("version", String.class))
+          .isEqualTo("1050.6");
       assertThat(regionExecutorFenceType(dsl, schema)).isEqualTo("bigint");
       assertThat(
               dsl.fetchSingle(
                       "SELECT count(*) AS count FROM game_session_canonical_binding_region_bridge_obligation"
                           + " WHERE status = 'ACKNOWLEDGED'")
+                  .get("count", Long.class))
+          .isZero();
+
+      var retainedPhysicalRows = requiredRegionSourcePhysicalImages(dsl);
+      Throwable failure = catchThrowable(() -> migrate(schema, dataSource));
+      assertThat(failure).hasRootCauseInstanceOf(PSQLException.class);
+      while (failure.getCause() != null) failure = failure.getCause();
+      var databaseFailure = (PSQLException) failure;
+      assertThat(databaseFailure.getSQLState()).isEqualTo("23514");
+      assertThat(databaseFailure.getServerErrorMessage()).isNotNull();
+      assertThat(databaseFailure.getServerErrorMessage().getConstraint())
+          .isEqualTo("gs_region_bridge_original_preparation_upgrade");
+      assertThat(databaseFailure.getServerErrorMessage().getMessage())
+          .isEqualTo("Retained region bridge requires its exact original installed preparation");
+
+      assertThat(requiredRegionSourceImages(dsl)).isEqualTo(before);
+      assertThat(requiredRegionSourcePhysicalImages(dsl)).isEqualTo(retainedPhysicalRows);
+      assertThat(migrationHistoryImages(dsl)).isEqualTo(retainedHistory);
+      assertThat(regionExecutorFenceType(dsl, schema)).isEqualTo("bigint");
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS count FROM game_session_canonical_binding_region_bridge_obligation"
+                          + " WHERE status = 'ACKNOWLEDGED'")
+                  .get("count", Long.class))
+          .isZero();
+      // Transactional V1051 refusal retains the V1050.6 predecessor schema and data/history.
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS count FROM information_schema.columns"
+                          + " WHERE table_schema = ? AND column_name = 'entity_created_origin'"
+                          + " AND table_name IN ('game_session_canonical_binding_region_bridge_obligation',"
+                          + " 'game_session_region_timeline_preparation')",
+                      schema)
+                  .get("count", Long.class))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) AS count FROM pg_proc WHERE pronamespace = ?::regnamespace"
+                          + " AND proname = 'gs_region_bridge_original_preparation_matches'",
+                      schema)
                   .get("count", Long.class))
           .isZero();
     } finally {
@@ -513,9 +568,24 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
   private static java.util.List<String> requiredRegionSourceImages(DSLContext dsl) {
     return dsl.fetch(
-            "SELECT to_jsonb(obligation)::text AS image"
+            "SELECT (to_jsonb(obligation) - 'entity_created_origin')::text AS image"
                 + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
                 + " ORDER BY transition_id")
+        .getValues("image", String.class);
+  }
+
+  private static java.util.List<String> requiredRegionSourcePhysicalImages(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT jsonb_build_object('row', to_jsonb(obligation), 'xmin', xmin::text)::text AS image"
+                + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                + " ORDER BY transition_id")
+        .getValues("image", String.class);
+  }
+
+  private static java.util.List<String> migrationHistoryImages(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT to_jsonb(history)::text AS image FROM flyway_schema_history history"
+                + " ORDER BY installed_rank")
         .getValues("image", String.class);
   }
 
@@ -573,14 +643,20 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
   }
 
   private static void migrate(String schema, DriverManagerDataSource dataSource) {
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    migrate(schema, dataSource, null);
+  }
+
+  private static void migrate(
+      String schema, DriverManagerDataSource dataSource, String targetVersion) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (targetVersion != null) configuration.target(targetVersion);
+    configuration.load().migrate();
   }
 
   private static void assertSnapshotObligationIdentifiersCanonicalized(

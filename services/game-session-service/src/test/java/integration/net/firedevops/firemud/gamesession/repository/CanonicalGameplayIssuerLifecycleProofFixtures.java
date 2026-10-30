@@ -65,6 +65,9 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
     administrator = createRedisClient(null, null);
     administratorConnection = administrator.connect(ByteArrayCodec.INSTANCE);
     administratorCommands = administratorConnection.sync();
+    // Each inheriting test class owns a non-reused Redis container. Reset only between methods;
+    // retained-state and retry assertions within each method keep the same physical database.
+    administratorCommands.flushdb();
     administratorCommands.aclSetuser(
         OWNER_PRINCIPAL,
         new AclSetuserArgs()

@@ -5,9 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
-import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
-import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
@@ -16,24 +15,10 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationR
 final class CanonicalGameplayRegionBindingBridgeProofs {
   private CanonicalGameplayRegionBindingBridgeProofs() {}
 
-  static String entityReferenceDigest(
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference) {
-    var response =
-        ReadPreseededActorRuntimeReferenceResponse.newBuilder()
-            .setSchemaVersion(1)
-            .setAssignmentUuid(reference.assignmentUuid().toString())
-            .setCanonicalAccountUuid(reference.canonicalAccountUuid().toString())
-            .setCharacterUuid(reference.characterUuid().toString())
-            .setIntentDigest(reference.intentDigest())
-            .setExpectedTarget(reference.target())
-            .setPublishedOwnerProofDigest(reference.publishedOwnerProofDigest())
-            .setRuntimeEntityId(reference.runtimeEntityId().value())
-            .setProjectionGeneration(reference.projectionGeneration())
-            .setProjectionFence(reference.projectionFence())
-            .setCorePayload(reference.corePayload())
-            .build();
+  static String entityReferenceDigest(CanonicalGameplayRuntimeActorReference reference) {
     return sha256(
-        reference.workloadNamespace().getBytes(StandardCharsets.UTF_8), response.toByteArray());
+        reference.workloadNamespace().getBytes(StandardCharsets.UTF_8),
+        reference.canonicalEvidenceBytes());
   }
 
   static String worldSourceDigest(
@@ -115,7 +100,7 @@ final class CanonicalGameplayRegionBindingBridgeProofs {
 
   static String redisReadbackDigest(
       CanonicalGameplayRegionRuntimeStatus status,
-      CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId runtimeEntityId,
+      net.firedevops.firemud.gamesession.client.CanonicalRuntimeEntityId runtimeEntityId,
       String sessionId,
       String bindingGeneration) {
     String exact =

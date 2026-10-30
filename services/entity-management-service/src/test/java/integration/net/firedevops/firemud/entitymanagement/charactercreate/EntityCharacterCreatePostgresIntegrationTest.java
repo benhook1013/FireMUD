@@ -6,12 +6,22 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import io.grpc.ManagedChannel;
+import io.grpc.Server;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -24,6 +34,7 @@ import net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateProtectionRe
 import net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateRequest;
 import net.firedevops.firemud.account.v1.ReadOriginalCharacterCreateResponse;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
 import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.CommandSource;
@@ -36,10 +47,16 @@ import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreat
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.EntityEmptySelectedSourceIntakePostgresFixture;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRuntimeReferenceServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CharacterCreateProtectionReference;
 import net.firedevops.firemud.entitymanagement.v1.CommitProtectedCharacterCreateRequest;
 import net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateOutcome;
 import net.firedevops.firemud.entitymanagement.v1.EntityCharacterCreateTerminal;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceResponse;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.v1.WorldCharacterCreateLifecycleProtection;
 import org.flywaydb.core.Flyway;
@@ -50,6 +67,7 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -119,7 +137,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
       DSLContext upgradedDsl = DSL.using(parentDataSource, SQLDialect.POSTGRES);
       assertThat(migrationHistory(upgradedDsl).subList(0, parentHistory.size()))
           .containsExactlyElementsOf(parentHistory);
-      assertThat(migrationVersions(upgradedDsl)).contains("1017").last().isEqualTo("1022");
+      assertThat(migrationVersions(upgradedDsl)).contains("1017").last().isEqualTo("1023");
       assertThat(retainedParentRows(upgradedDsl, character, snapshot))
           .containsExactlyElementsOf(retainedRows);
       assertThat(
@@ -149,7 +167,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
           new EntityCharacterCreateRepository(retainedDsl, Clock.fixed(NOW, ZoneOffset.UTC));
       var retainedSource = retainControlledSource(retainedDsl);
       var retainedProof = proof(retainedSource, UUID.randomUUID(), UUID.randomUUID(), false, null);
-      var terminal = retainedRepository.settle(retainedProof, null);
+      var terminal = retainHistoricalCreatedActor(retainedDsl, retainedProof);
       UUID operation = UUID.fromString(retainedProof.original().getOperationId());
       String operationNamespace = retainedProof.action().scope().targetNamespace();
       String retainedRowsSql =
@@ -165,10 +183,18 @@ class EntityCharacterCreatePostgresIntegrationTest {
 
       assertThat(migrationHistory(retainedDsl).subList(0, historyBefore.size()))
           .containsExactlyElementsOf(historyBefore);
-      assertThat(migrationVersions(retainedDsl)).last().isEqualTo("1022");
+      assertThat(migrationVersions(retainedDsl)).last().isEqualTo("1023");
       assertThat(retainedDsl.fetch(retainedRowsSql).getValues(0, String.class))
           .containsExactlyElementsOf(before);
       assertThat(retainedRepository.settle(retainedProof, null)).isEqualTo(terminal);
+      assertThat(retainedDsl.fetchCount(DSL.table("entity_player_created_runtime_projections")))
+          .isZero();
+      assertThatThrownBy(
+              () ->
+                  new EntityPlayerCreatedRuntimeProjectionRepository()
+                      .read(retainedDsl, terminal, retainedProof.action()))
+          .isInstanceOf(io.grpc.StatusRuntimeException.class)
+          .hasMessageContaining("FAILED_PRECONDITION");
       assertThat(retainedRepository.replay(retainedProof.request()).orElseThrow())
           .isEqualTo(terminal);
       for (String change :
@@ -219,7 +245,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
       var retainedSource = retainControlledSource(retainedDsl);
       UUID accountId = UUID.randomUUID();
       var proof = proof(retainedSource, accountId, UUID.randomUUID(), false, null);
-      EntityCharacterCreateTerminal terminal = retainedRepository.settle(proof, null);
+      EntityCharacterCreateTerminal terminal = retainHistoricalCreatedActor(retainedDsl, proof);
       UUID characterId = UUID.fromString(terminal.getCharacterId());
       String actorBefore = retainedRow(retainedDsl, "characters", "character_uuid", characterId);
       String operationBefore =
@@ -230,7 +256,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
 
       migrate(retainedDataSource, retainedSchema, null);
 
-      assertThat(migrationVersions(retainedDsl)).contains("1017").last().isEqualTo("1022");
+      assertThat(migrationVersions(retainedDsl)).contains("1017").last().isEqualTo("1023");
       assertThat(retainedRow(retainedDsl, "characters", "character_uuid", characterId))
           .isEqualTo(actorBefore);
       assertThat(
@@ -302,6 +328,318 @@ class EntityCharacterCreatePostgresIntegrationTest {
                     "UPDATE characters SET name = 'substituted' WHERE character_uuid = ?",
                     UUID.fromString(terminal.getCharacterId())))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  @Test
+  void freshRuntimeProjectionSurvivesReplayAndRepositoryRecreation() throws Exception {
+    var proof = proof(UUID.randomUUID(), UUID.randomUUID());
+    var terminal = repository.settle(proof, null);
+    var projections = new EntityPlayerCreatedRuntimeProjectionRepository();
+    var reference = projections.read(dsl, terminal, proof.action());
+    assertThat(reference.runtimeEntityId().value()).isPositive();
+    assertThat(reference.projectionGeneration()).isOne();
+    assertThat(reference.projectionFence()).isOne();
+    assertThat(reference.creationTerminal()).isEqualTo(terminal);
+    assertRuntimeSelectorUnavailable(
+        () ->
+            projections.read(
+                dsl,
+                terminal.toBuilder().setTerminalId(UUID.randomUUID().toString()).build(),
+                proof.action()));
+    assertThat(reference.terminalDigest())
+        .isEqualTo(CommandSource.sha256(terminal.toByteArray()).substring("sha256:".length()));
+    var restarted = new EntityCharacterCreateRepository(dsl, Clock.fixed(NOW, ZoneOffset.UTC));
+    assertThat(restarted.settle(proof, null)).isEqualTo(terminal);
+    assertThat(restarted.replay(proof.request()).orElseThrow()).isEqualTo(terminal);
+    assertThat(
+            new EntityPlayerCreatedRuntimeProjectionRepository()
+                .read(dsl, terminal, proof.action()))
+        .isEqualTo(reference);
+    assertThat(dsl.fetchCount(DSL.table("entity_player_created_runtime_projections"))).isOne();
+    // A changed original target cannot borrow the retained projection.
+    var target = proof.action().target();
+    var changed =
+        new CharacterCreateOperatorAction(
+            proof.action().scope(),
+            new CharacterCreateOperatorAction.Target(
+                target.accountId(),
+                target.realmId(),
+                target.worldSlug(),
+                target.realmSlug(),
+                UUID.randomUUID().toString(),
+                target.versionId()),
+            proof.action().expectedVersion(),
+            proof.action().mutation(),
+            proof.action().auditReason());
+    assertRuntimeSelectorUnavailable(() -> projections.read(dsl, terminal, changed));
+    dsl.execute(
+        "UPDATE characters SET actor_identity_status = 'QUARANTINED', actor_identity_quarantine_reason = 'REVOKED' WHERE character_uuid = ?",
+        UUID.fromString(terminal.getCharacterId()));
+    assertRuntimeSelectorUnavailable(() -> projections.read(dsl, terminal, proof.action()));
+    assertThat(restarted.replay(proof.request()).orElseThrow()).isEqualTo(terminal);
+  }
+
+  /** Actual Entity SQL and mTLS proof; upstream creation protections remain controlled inputs. */
+  @Test
+  void actualCreatedRuntimeOwnerServesBothRolesWithoutReadAllocation(@TempDir Path directory)
+      throws Exception {
+    var proof = proof(UUID.randomUUID(), UUID.randomUUID());
+    var terminal = repository.settle(proof, null);
+    var action = proof.action();
+    var selector = runtimeSelector(terminal, action);
+    var actual = new EntityPlayerCreatedRuntimeProjectionRepository().read(dsl, terminal, action);
+    String namespace = action.scope().targetNamespace();
+    var pki =
+        LoopbackMtlsTestPki.create(
+            directory,
+            "Created SQL owner proof CA",
+            new IdentitySpec(
+                "entity",
+                "spiffe://firemud/ns/" + namespace + "/sa/entity-management-service",
+                true),
+            new IdentitySpec(
+                "world",
+                "spiffe://firemud/ns/" + namespace + "/sa/world-management-service",
+                false),
+            new IdentitySpec(
+                "game-session",
+                "spiffe://firemud/ns/" + namespace + "/sa/game-session-service",
+                false));
+    UUID character = UUID.fromString(terminal.getCharacterId());
+    UUID operation = UUID.fromString(terminal.getAccountOriginal().getOperationId());
+    String actorBefore = retainedRow(dsl, "characters", "character_uuid", character);
+    String operationBefore = retainedOperationRow(dsl, namespace, operation);
+    String projectionSql =
+        "SELECT xmin::text || ':' || row_to_json(p)::text FROM entity_player_created_runtime_projections p";
+    String projectionBefore = dsl.fetchSingle(projectionSql).get(0, String.class);
+    String sequenceSql =
+        "SELECT last_value::text || ':' || is_called::text FROM entity_runtime_entity_id_sequence";
+    String sequenceBefore = dsl.fetchSingle(sequenceSql).get(0, String.class);
+    PlayerCreatedActorRuntimeReferenceResponse first = null;
+
+    // Recreate both repository and transport owner against the same retained SQL state.
+    for (int incarnation = 0; incarnation < 2; incarnation++) {
+      var restartedRepository =
+          new EntityCharacterCreateRepository(dsl, Clock.fixed(NOW, ZoneOffset.UTC));
+      var owner =
+          new EntityPlayerCreatedRuntimeReferenceService(namespace, dsl, restartedRepository);
+      Server server = runtimeServer(owner, namespace, pki);
+      var channels = new ArrayList<ManagedChannel>();
+      try {
+        var worldChannel = runtimeChannel(server.getPort(), pki, "world");
+        channels.add(worldChannel);
+        var gameChannel = runtimeChannel(server.getPort(), pki, "game-session");
+        channels.add(gameChannel);
+        var world =
+            CanonicalPlayerCreatedRuntimeReferenceServiceGrpc.newBlockingStub(worldChannel)
+                .withDeadlineAfter(10, TimeUnit.SECONDS);
+        var game =
+            CanonicalPlayerCreatedRuntimeReferenceServiceGrpc.newBlockingStub(gameChannel)
+                .withDeadlineAfter(10, TimeUnit.SECONDS);
+        var placement =
+            CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(
+                selector, world.readPlayerCreatedActorPlacementReceipt(selector));
+        var runtime =
+            CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(
+                selector, game.readPlayerCreatedActorRuntimeReference(selector));
+        assertThat(runtime).isEqualTo(placement);
+        assertThat(placement.getSelector()).isEqualTo(selector);
+        assertThat(placement.getRuntimeEntityId()).isEqualTo(actual.runtimeEntityId().value());
+        assertThat(placement.getProjectionGeneration()).isEqualTo(actual.projectionGeneration());
+        assertThat(placement.getProjectionFence()).isEqualTo(actual.projectionFence());
+        assertThat(placement.getOriginalCatalogRevision())
+            .isEqualTo(Long.parseLong(action.expectedVersion().catalogRevision()));
+        assertThat(placement.getOriginalPointerVersion())
+            .isEqualTo(Long.parseLong(action.expectedVersion().pointerVersion()));
+        assertThat(placement.getOriginalActiveLifecycleEpoch())
+            .isEqualTo(Long.parseLong(action.expectedVersion().activeLifecycleEpoch()));
+        assertThat(placement.getOriginalDescriptorDigest())
+            .isEqualTo(action.mutation().authoredSource().descriptor().digest());
+        assertThat(placement.getOriginalAuthoredBindingDigest())
+            .isEqualTo(action.mutation().authoredSource().bindingDigest());
+        assertThat(placement.getOriginalPolicyContentDigest())
+            .isEqualTo(action.mutation().authoredSource().policy().contentDigest());
+        if (first == null) first = placement;
+        else assertThat(placement).isEqualTo(first);
+        assertThat(world.readPlayerCreatedActorPlacementReceipt(selector)).isEqualTo(placement);
+        assertThat(game.readPlayerCreatedActorRuntimeReference(selector)).isEqualTo(runtime);
+        assertThat(restartedRepository.settle(proof, null)).isEqualTo(terminal);
+        assertThat(restartedRepository.replay(proof.request()).orElseThrow()).isEqualTo(terminal);
+        var changedOrigin =
+            selector.toBuilder()
+                .setOrigin(
+                    selector.getOrigin().toBuilder().setTerminalUuid(UUID.randomUUID().toString()))
+                .build();
+        var changedCharacter =
+            selector.toBuilder().setCharacterUuid(UUID.randomUUID().toString()).build();
+        var changedTarget =
+            selector.toBuilder().setGameInstanceUuid(UUID.randomUUID().toString()).build();
+        var changedDigest =
+            selector.toBuilder()
+                .setOrigin(selector.getOrigin().toBuilder().setMutationDigest("f".repeat(64)))
+                .build();
+        var missingOperation =
+            selector.toBuilder()
+                .setOrigin(
+                    selector.getOrigin().toBuilder()
+                        .setCreationOperationUuid(UUID.randomUUID().toString()))
+                .build();
+        assertThatThrownBy(
+                () ->
+                    restartedRepository.read(
+                        proof.request().getOriginal().toBuilder()
+                            .setMutationDigest(changedDigest.getOrigin().getMutationDigest())
+                            .build()))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.ALREADY_EXISTS));
+        for (var changed :
+            List.of(
+                changedOrigin, changedCharacter, changedTarget, changedDigest, missingOperation)) {
+          assertRuntimeSelectorUnavailable(
+              () -> world.readPlayerCreatedActorPlacementReceipt(changed));
+          assertRuntimeSelectorUnavailable(
+              () -> game.readPlayerCreatedActorRuntimeReference(changed));
+        }
+        assertThat(retainedRow(dsl, "characters", "character_uuid", character))
+            .isEqualTo(actorBefore);
+        assertThat(retainedOperationRow(dsl, namespace, operation)).isEqualTo(operationBefore);
+        assertThat(dsl.fetchSingle(projectionSql).get(0, String.class)).isEqualTo(projectionBefore);
+        assertThat(dsl.fetchSingle(sequenceSql).get(0, String.class)).isEqualTo(sequenceBefore);
+        if (incarnation == 1) {
+          dsl.execute(
+              "UPDATE characters SET actor_identity_status = 'QUARANTINED', actor_identity_quarantine_reason = 'REVOKED' WHERE character_uuid = ?",
+              character);
+          String quarantined = retainedRow(dsl, "characters", "character_uuid", character);
+          assertRuntimeSelectorUnavailable(
+              () -> world.readPlayerCreatedActorPlacementReceipt(selector));
+          assertRuntimeSelectorUnavailable(
+              () -> game.readPlayerCreatedActorRuntimeReference(selector));
+          assertThat(retainedRow(dsl, "characters", "character_uuid", character))
+              .isEqualTo(quarantined);
+          assertThat(retainedOperationRow(dsl, namespace, operation)).isEqualTo(operationBefore);
+          assertThat(dsl.fetchSingle(projectionSql).get(0, String.class))
+              .isEqualTo(projectionBefore);
+          assertThat(dsl.fetchSingle(sequenceSql).get(0, String.class)).isEqualTo(sequenceBefore);
+        }
+        assertThat(dsl.fetchCount(DSL.table("characters"))).isOne();
+        assertThat(dsl.fetchCount(DSL.table("entity_character_create_operations"))).isOne();
+        assertThat(dsl.fetchCount(DSL.table("entity_player_created_runtime_projections"))).isOne();
+      } finally {
+        channels.forEach(ManagedChannel::shutdownNow);
+        server.shutdownNow();
+        try {
+          for (var channel : channels)
+            assertThat(channel.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+          assertThat(server.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        }
+      }
+    }
+  }
+
+  @Test
+  void runtimeProjectionFailureRollsBackActorAndTerminalAndNeverReusesAllocatedId()
+      throws Exception {
+    var proof = proof(UUID.randomUUID(), UUID.randomUUID());
+    dsl.execute(
+        "CREATE FUNCTION reject_test_runtime_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled projection failure'; END; $$");
+    dsl.execute(
+        "CREATE TRIGGER test_runtime_insert_failure BEFORE INSERT ON entity_player_created_runtime_projections FOR EACH ROW EXECUTE FUNCTION reject_test_runtime_insert()");
+    assertThatThrownBy(() -> repository.settle(proof, null))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining("controlled projection failure");
+    long abandoned =
+        dsl.fetchSingle("SELECT last_value FROM entity_runtime_entity_id_sequence")
+            .get(0, Long.class);
+    assertThat(dsl.fetchCount(DSL.table("characters"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_character_create_operations"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_player_created_runtime_projections"))).isZero();
+    dsl.execute(
+        "DROP TRIGGER test_runtime_insert_failure ON entity_player_created_runtime_projections");
+    var terminal = repository.settle(proof, null);
+    var reference =
+        new EntityPlayerCreatedRuntimeProjectionRepository().read(dsl, terminal, proof.action());
+    assertThat(reference.runtimeEntityId().value()).isGreaterThan(abandoned);
+    assertThat(
+            dsl.fetch(
+                    "SELECT column_default FROM information_schema.columns WHERE table_schema = ? AND table_name IN ('entity_preseeded_actor_runtime_projections', 'entity_player_created_runtime_projections') AND column_name = 'runtime_entity_id'",
+                    schema)
+                .getValues(0, String.class))
+        .hasSize(2)
+        .allSatisfy(value -> assertThat(value).contains("entity_runtime_entity_id_sequence"));
+    // Both projection families consume this same physical sequence.
+    assertThat(
+            dsl.fetchSingle("SELECT nextval('entity_runtime_entity_id_sequence')")
+                .get(0, Long.class))
+        .isGreaterThan(reference.runtimeEntityId().value());
+  }
+
+  @Test
+  void rawProjectionMismatchAndAllHistoryMutationFailClosed() throws Exception {
+    var proof = proof(UUID.randomUUID(), UUID.randomUUID());
+    repository.settle(proof, null);
+    for (String mutation :
+        List.of(
+            "UPDATE entity_player_created_runtime_projections SET projection_fence = projection_fence + 1",
+            "DELETE FROM entity_player_created_runtime_projections",
+            "TRUNCATE entity_player_created_runtime_projections")) {
+      assertThatThrownBy(() -> dsl.execute(mutation))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    }
+    // Valid self-assignments bypass CHECK(projection_fence = 1); only the retained-history
+    // trigger may reject these, so removal of that guard must fail the test.
+    for (String immutableColumn : List.of("game_instance_id", "terminal_digest")) {
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE entity_player_created_runtime_projections SET "
+                          + immutableColumn
+                          + " = "
+                          + immutableColumn))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Entity assignment evidence cannot be removed");
+    }
+    for (String mismatch :
+        List.of("account_uuid", "tenant_uuid", "canonical_version_id", "character_uuid")) {
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "INSERT INTO entity_player_created_runtime_projections "
+                          + "(tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest) "
+                          + "SELECT "
+                          + (mismatch.equals("tenant_uuid") ? "?::uuid" : "tenant_uuid")
+                          + ", playable_state_namespace_id, game_instance_id, "
+                          + (mismatch.equals("character_uuid") ? "?::uuid" : "character_uuid")
+                          + ", "
+                          + (mismatch.equals("account_uuid") ? "?::uuid" : "account_uuid")
+                          + ", "
+                          + (mismatch.equals("canonical_version_id")
+                              ? "?::uuid"
+                              : "canonical_version_id")
+                          + ", realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest FROM entity_player_created_runtime_projections",
+                      UUID.randomUUID()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("exact committed PLAYER_CREATED provenance");
+    }
+    for (String mismatch : List.of("mutation_digest", "terminal_digest")) {
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "INSERT INTO entity_player_created_runtime_projections "
+                          + "(tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest) "
+                          + "SELECT tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, "
+                          + (mismatch.equals("mutation_digest") ? "?" : "mutation_digest")
+                          + ", terminal_id, "
+                          + (mismatch.equals("terminal_digest") ? "?" : "terminal_digest")
+                          + " FROM entity_player_created_runtime_projections",
+                      "f".repeat(64)))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("exact committed PLAYER_CREATED provenance");
+    }
+    assertThat(dsl.fetchCount(DSL.table("entity_player_created_runtime_projections"))).isOne();
   }
 
   @Test
@@ -787,6 +1125,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
     assertThat(repository.settle(proof, null).toByteArray())
         .containsExactly(terminal.toByteArray());
     assertThat(dsl.fetchCount(DSL.table("characters"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("entity_player_created_runtime_projections"))).isZero();
     assertThatThrownBy(
             () ->
                 repository.read(
@@ -1305,6 +1644,159 @@ class EntityCharacterCreatePostgresIntegrationTest {
             namespace,
             operationId)
         .get(0, String.class);
+  }
+
+  private static PlayerCreatedActorRuntimeReferenceRequest runtimeSelector(
+      EntityCharacterCreateTerminal terminal, CharacterCreateOperatorAction action) {
+    return PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
+        .setSchemaVersion(1)
+        .setOrigin(
+            PlayerCreatedActorOrigin.newBuilder()
+                .setTargetNamespace(action.scope().targetNamespace())
+                .setCreationOperationUuid(terminal.getAccountOriginal().getOperationId())
+                .setMutationDigest(terminal.getAccountOriginal().getMutationDigest())
+                .setTerminalUuid(terminal.getTerminalId())
+                .setTerminalSha256(
+                    CommandSource.sha256(terminal.toByteArray()).substring("sha256:".length())))
+        .setTenantUuid(action.scope().tenantId())
+        .setAccountUuid(action.target().accountId())
+        .setPlayableStateNamespaceUuid(action.scope().playableStateNamespaceId())
+        .setGameInstanceUuid(action.target().gameInstanceId())
+        .setCharacterUuid(terminal.getCharacterId())
+        .setCanonicalVersionUuid(action.target().versionId())
+        .setRealmUuid(action.target().realmId())
+        .setWorldSlug(action.target().worldSlug())
+        .setRealmSlug(action.target().realmSlug())
+        .build();
+  }
+
+  private static Server runtimeServer(
+      EntityPlayerCreatedRuntimeReferenceService owner,
+      String namespace,
+      LoopbackMtlsTestPki.Pki pki)
+      throws Exception {
+    var identity = pki.identity("entity");
+    return NettyServerBuilder.forPort(0)
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                .trustManager(pki.caCertificate())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .maxInboundMessageSize(CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_REQUEST_BYTES)
+        .addService(EntityPlayerCreatedRuntimeReferenceIngressFactory.bind(owner, namespace))
+        .build()
+        .start();
+  }
+
+  private static ManagedChannel runtimeChannel(int port, LoopbackMtlsTestPki.Pki pki, String alias)
+      throws Exception {
+    var identity = pki.identity(alias);
+    return NettyChannelBuilder.forAddress("localhost", port)
+        .sslContext(
+            GrpcSslContexts.forClient()
+                .trustManager(pki.caCertificate())
+                .keyManager(identity.privateKey(), identity.certificate(), pki.caCertificate())
+                .build())
+        .maxInboundMessageSize(CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_RESPONSE_BYTES)
+        .build();
+  }
+
+  private static void assertRuntimeSelectorUnavailable(Runnable call) {
+    assertThatThrownBy(call::run)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(status.getDescription())
+                  .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
+            });
+  }
+
+  /** Controlled historical pre-V1023 storage cohort; this is not the current creation writer. */
+  private static EntityCharacterCreateTerminal retainHistoricalCreatedActor(
+      DSLContext ownerDsl, EntityCharacterCreateProofs proof) {
+    var action = proof.action();
+    UUID character = UUID.randomUUID();
+    var terminal =
+        EntityCharacterCreateTerminal.newBuilder()
+            .setOriginalRequest(proof.request())
+            .setAccountOriginal(proof.original())
+            .setOriginalAccountProtection(proof.account().toByteString())
+            .setOriginalGameSessionProtection(proof.gameSession().originalOwnerReadback())
+            .setOriginalWorldProtection(proof.world().toByteString())
+            .setEntityIntakeRequestId(proof.entitySource().intakeRequestId().toString())
+            .setEntitySourceReceiptDigest(proof.entitySource().receiptDigest())
+            .setOutcome(EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
+            .setCharacterId(character.toString())
+            .setTerminalId(UUID.randomUUID().toString())
+            .setTerminalFence(1L)
+            .setCompletedAt(NOW.toString())
+            .build();
+    ownerDsl.transaction(
+        configuration -> {
+          var tx = DSL.using(configuration);
+          UUID tenant = UUID.fromString(action.scope().tenantId());
+          UUID namespace = UUID.fromString(action.scope().playableStateNamespaceId());
+          UUID account = UUID.fromString(action.target().accountId());
+          UUID operation = UUID.fromString(proof.original().getOperationId());
+          String scope = action.scope().playableStateScope().name();
+          tx.execute(
+              "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?) ON CONFLICT DO NOTHING",
+              tenant);
+          Long tenantRow =
+              tx.fetchSingle(
+                      "SELECT entity_tenant_row_id FROM entity_tenant_identities WHERE canonical_tenant_uuid = ?",
+                      tenant)
+                  .get(0, Long.class);
+          tx.execute(
+              "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+              tenant,
+              namespace,
+              scope);
+          tx.execute(
+              "INSERT INTO entity_character_create_roster_guards (tenant_uuid, playable_state_namespace_id, account_uuid) VALUES (?, ?, ?)",
+              tenant,
+              namespace,
+              account);
+          tx.execute(
+              "INSERT INTO entity_character_create_operations (target_namespace, operation_id, create_character_request_id, mutation_digest, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_uuid, canonical_version_id, original_request, original_account, original_account_protection, original_game_session_protection, original_world_protection, entity_source_receipt, status, terminal_bytes, character_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMMITTED', ?, ?)",
+              action.scope().targetNamespace(),
+              operation,
+              UUID.fromString(proof.original().getCreateCharacterRequestId()),
+              proof.original().getMutationDigest(),
+              tenant,
+              namespace,
+              scope,
+              account,
+              UUID.fromString(action.target().versionId()),
+              proof.request().toByteArray(),
+              proof.original().toByteArray(),
+              proof.account().toByteArray(),
+              proof.gameSession().originalOwnerReadback().toByteArray(),
+              proof.world().toByteArray(),
+              proof.entitySource().canonicalBytes(),
+              terminal.toByteArray(),
+              character);
+          tx.execute(
+              "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) VALUES (?, ?, ?, ?, ?, 'OWNER_RESOLVED', NULL, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'PLAYER_CREATED', ?, ?, ?)",
+              character,
+              account,
+              tenant,
+              namespace,
+              scope,
+              tenantRow,
+              new AuthoredInitialActorCoreProjection.AuthoredCore(
+                      action.mutation().authoredSource().core().canonicalJson())
+                  .displayName(),
+              action.scope().targetNamespace(),
+              operation,
+              action.mutation().authoredSource().core().canonicalJson(),
+              action.mutation().authoredSource().descriptor().canonicalJson(),
+              action.mutation().authoredSource().descriptor().digest());
+        });
+    return terminal;
   }
 
   private static void migrate(DriverManagerDataSource dataSource, String schema, String target) {

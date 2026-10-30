@@ -3141,6 +3141,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1042.13");
     versions.add("1044");
     versions.add("1044.1");
+    versions.add("1045");
     return List.copyOf(versions);
   }
 

@@ -6,6 +6,7 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.EntityPreseededActorAssignmentReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
 import org.jooq.DSLContext;
@@ -42,11 +43,15 @@ public final class CanonicalInitialPlayerLocationManualFactory {
     EntityPreseededActorAssignmentReceiptClient entityClient =
         new EntityPreseededActorAssignmentReceiptClient(
             endpoints, tlsProperties, channelFactory, trustedNamespace);
+    EntityPlayerCreatedActorPlacementReceiptClient createdClient =
+        new EntityPlayerCreatedActorPlacementReceiptClient(
+            endpoints, tlsProperties, channelFactory, trustedNamespace);
     GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionClient =
         new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
             endpoints, tlsProperties, channelFactory, trustedNamespace);
     try {
       entityClient.init();
+      createdClient.init();
       gameSessionClient.init();
       CanonicalInitialPlayerLocationService service =
           new CanonicalInitialPlayerLocationService(
@@ -55,11 +60,18 @@ public final class CanonicalInitialPlayerLocationManualFactory {
               holdRepository,
               locationRepository,
               gameSessionClient,
-              entityClient);
+              entityClient,
+              createdClient);
       var grpcService = new CanonicalInitialPlayerLocationGrpcService(trustedNamespace, service);
       var interceptor = new CanonicalInitialPlayerLocationPeerInterceptor(trustedNamespace);
-      return new Components(grpcService, interceptor, entityClient, gameSessionClient);
+      return new Components(
+          grpcService, interceptor, entityClient, gameSessionClient, createdClient);
     } catch (IOException | RuntimeException failure) {
+      try {
+        createdClient.close();
+      } catch (IOException closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
       try {
         entityClient.close();
       } catch (IOException closeFailure) {
@@ -79,13 +91,15 @@ public final class CanonicalInitialPlayerLocationManualFactory {
       CanonicalInitialPlayerLocationGrpcService service,
       CanonicalInitialPlayerLocationPeerInterceptor peerInterceptor,
       EntityPreseededActorAssignmentReceiptClient entityClient,
-      GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionClient)
+      GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionClient,
+      EntityPlayerCreatedActorPlacementReceiptClient createdClient)
       implements AutoCloseable {
     public Components {
       Objects.requireNonNull(service, "service");
       Objects.requireNonNull(peerInterceptor, "peerInterceptor");
       Objects.requireNonNull(entityClient, "entityClient");
       Objects.requireNonNull(gameSessionClient, "gameSessionClient");
+      Objects.requireNonNull(createdClient, "createdClient");
     }
 
     @Override
@@ -98,6 +112,12 @@ public final class CanonicalInitialPlayerLocationManualFactory {
       }
       try {
         gameSessionClient.close();
+      } catch (IOException closeFailure) {
+        if (failure == null) failure = closeFailure;
+        else failure.addSuppressed(closeFailure);
+      }
+      try {
+        createdClient.close();
       } catch (IOException closeFailure) {
         if (failure == null) failure = closeFailure;
         else failure.addSuppressed(closeFailure);

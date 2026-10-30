@@ -49,6 +49,11 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   private static final List<String> PROBE_TABLES =
       List.of(
           "world_instance",
+          "world_canonical_instance_association",
+          "world_canonical_initial_player_location_operation",
+          "world_canonical_preparation_start_location",
+          "world_canonical_instance_topology_identity",
+          "room_instance",
           "initial_admission_bind_hold",
           "world_topology_draft_commit",
           "world_design_publication_fence_owner",
@@ -58,6 +63,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
           "world_draft_graph_application",
           "world_design_aggregate_epoch",
           "world_design_scope_epoch",
+          "character_location",
           "region",
           "zone",
           "room",
@@ -69,7 +75,10 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
           GRAPH_GUARD,
           RECEIPT_GUARD,
           "world_reject_authored_source_history_mutation",
-          "world_reject_draft_start_location_receipt_mutation");
+          "world_reject_draft_start_location_receipt_mutation",
+          "world_guard_initial_location_operation",
+          "world_guard_initial_character_location",
+          "world_require_initial_location_operation_result");
   private static final List<String> FAMILY_NAMES =
       List.of(
           "REGION", "ZONE", "ROOM", "ROOM_EXIT", "GENERATION_RULE", "WORLD_ENTITY_SPAWN_BINDING");
@@ -93,7 +102,9 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     DSLContext freshDsl = DSL.using(freshSource, SQLDialect.POSTGRES);
     DSLContext probeDsl = DSL.using(probeSource, SQLDialect.POSTGRES);
 
-    try {
+    try (AutoCloseable upgradeCleanup = () -> dropSchema(upgradeSource, upgradeSchema);
+        AutoCloseable freshCleanup = () -> dropSchema(freshSource, freshSchema);
+        AutoCloseable probeCleanup = () -> dropSchema(probeSource, probeSchema)) {
       Flyway through104211 =
           flyway(
               upgradeSource,
@@ -188,7 +199,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       probeCurrent.validate();
       assertThat(probeCurrent.info().pending()).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1044.1");
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1045");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);
@@ -198,10 +209,13 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       assertThat(migrationHistory(upgradeDsl, "1042.13")).isNotNull();
       assertThat(migrationHistory(upgradeDsl, "1044")).isNotNull();
       assertThat(migrationHistory(upgradeDsl, "1044.1")).isNotNull();
+      assertThat(migrationHistory(upgradeDsl, "1045")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.12")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.13")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1044")).isNotNull();
+      assertThat(migrationHistory(freshDsl, "1045")).isNotNull();
       assertThat(migrationHistory(probeDsl, "1044")).isNotNull();
+      assertThat(migrationHistory(probeDsl, "1045")).isNotNull();
       assertCanonicalInitialAdmissionHoldLifecycleGuard(upgradeDsl, upgradeSchema);
       assertCanonicalInitialAdmissionHoldLifecycleGuard(freshDsl, freshSchema);
       assertCanonicalInitialAdmissionHoldLifecycleGuard(probeDsl, probeSchema);
@@ -266,10 +280,6 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               persistFixture(
                   probeDsl, probeSchema, fixture(), Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH),
           "23514");
-    } finally {
-      dropSchema(upgradeSource, upgradeSchema);
-      dropSchema(freshSource, freshSchema);
-      dropSchema(probeSource, probeSchema);
     }
   }
 

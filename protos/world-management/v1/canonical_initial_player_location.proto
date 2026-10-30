@@ -3,6 +3,7 @@ syntax = "proto3";
 package world_management.v1;
 
 import "entity-management/v1/preseeded_actor_assignment.proto";
+import "entity-management/v1/player_created_runtime_reference.proto";
 
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
@@ -17,8 +18,9 @@ service CanonicalInitialPlayerLocationService {
       returns (CanonicalInitialPlayerLocationRegionResponse);
 }
 
-// Closed selectors for one immutable Entity assignment, one World initial-admission hold, and
-// its matching Game Session terminal. No caller-supplied owner proof bytes are accepted.
+// Closed selectors for one original Entity actor origin, one World initial-admission hold, and
+// its matching Game Session terminal. Schema 1 uses the PRESEEDED assignment fields; schema 2
+// uses player_created_origin and requires both assignment fields empty. No supplied proof bytes.
 message CanonicalInitialPlayerLocationRequest {
   uint32 schema_version = 1;
   string placement_operation_uuid = 2;
@@ -35,6 +37,7 @@ message CanonicalInitialPlayerLocationRequest {
   string terminal_proof_digest = 13;
   int64 committed_pointer_version = 14;
   int64 audit_event_id = 15;
+  entity_management.v1.PlayerCreatedActorOrigin player_created_origin = 16;
 }
 
 enum CanonicalInitialPlayerLocationOutcome {
@@ -57,6 +60,8 @@ message CanonicalInitialPlayerLocationResponse {
   CanonicalInitialPlayerLocationRoom start_location = 11;
   // Private World runtime room key; not a canonical RoomInstanceRef or current occupancy.
   string private_runtime_room_key = 12;
+  // Present only for schema 2; schema 1 retains its original immutable assignment fields.
+  entity_management.v1.PlayerCreatedActorOrigin player_created_origin = 13;
 }
 
 // This is the retained initial ROOM binding, not a read of current occupancy or activation.

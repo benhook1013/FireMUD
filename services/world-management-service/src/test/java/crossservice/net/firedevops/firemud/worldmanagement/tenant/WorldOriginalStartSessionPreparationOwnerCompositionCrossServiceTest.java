@@ -106,6 +106,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.entity.CanonicalPlayerCreatedRuntimeReferenceEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
@@ -146,6 +147,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEviden
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
+import net.firedevops.firemud.entitymanagement.charactercreate.EntityPlayerCreatedRuntimeReferencePeerInterceptor;
 import net.firedevops.firemud.entitymanagement.config.PreseededActorAssignmentConfiguration;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAccountIdentityPort;
@@ -159,8 +161,13 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorStagingElig
 import net.firedevops.firemud.entitymanagement.service.impl.CanonicalPreseededActorAssignmentGrpcService;
 import net.firedevops.firemud.entitymanagement.v1.AssignPreseededActorRequest;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind;
+import net.firedevops.firemud.entitymanagement.v1.CanonicalPlayerCreatedRuntimeReferenceServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalPreseededActorAssignmentServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorRuntimeReferenceResponse;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient;
@@ -202,6 +209,7 @@ import net.firedevops.firemud.gamesession.service.impl.ProtectedCanonicalInitial
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec;
 import net.firedevops.firemud.test.TestContainerImages;
+import net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.EntityPreseededActorAssignmentReceiptClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionCanonicalInitialAdmissionOwnerClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
@@ -244,6 +252,7 @@ import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
@@ -424,6 +433,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         Refusal.NONE, 9_007_199_254_740_993L, temporary, ActivationFailure.NONE, false, true, true);
   }
 
+  @Test
+  void actualWorldOwnersRetainCreatedOriginPlacementAndExactRetry() throws Exception {
+    compose(
+        Refusal.NONE,
+        9_007_199_254_740_993L,
+        temporary,
+        ActivationFailure.NONE,
+        false,
+        true,
+        false,
+        true);
+  }
+
   private enum Refusal {
     NONE,
     MISMATCHED_ATTEMPT,
@@ -493,8 +515,34 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       boolean exerciseCoupledCanonicalInitialAdmission,
       boolean abortCanonicalInitialAdmission)
       throws Exception {
+    compose(
+        refusal,
+        reservationClaimFence,
+        proofDirectory,
+        activationFailure,
+        exerciseCanonicalInitialAdmissionHold,
+        exerciseCoupledCanonicalInitialAdmission,
+        abortCanonicalInitialAdmission,
+        false);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure,
+      boolean exerciseCanonicalInitialAdmissionHold,
+      boolean exerciseCoupledCanonicalInitialAdmission,
+      boolean abortCanonicalInitialAdmission,
+      boolean playerCreatedPlacement)
+      throws Exception {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
+    }
+    if (playerCreatedPlacement
+        && (!exerciseCoupledCanonicalInitialAdmission || abortCanonicalInitialAdmission)) {
+      throw new IllegalArgumentException(
+          "Created placement proof requires the committed coupled owner path");
     }
     UUID tenant = UUID.randomUUID();
     try (var account =
@@ -591,7 +639,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       assertThat(storedAttempt.get("account_redemption_projection", byte[].class))
           .containsExactly(tuple.canonicalBytes());
 
-      var preparedInput = preparationInputs(world, gs, tuple, claim.get(), tenant);
+      var createdPublication = new AtomicReference<RealmPolicyPublishedEvidence.PublishedSet>();
+      var preparedInput =
+          preparationInputs(
+              world, gs, tuple, claim.get(), tenant, playerCreatedPlacement, createdPublication);
       var input =
           refusal == Refusal.MISMATCHED_ATTEMPT
               ? new WorldCanonicalInstancePreparation.Input(
@@ -673,7 +724,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           server("game-session-service", pki, gameSessionReceivers.toArray(BindableService[]::new));
       var gsEndpoints = new ServiceEndpointsProperties();
       gsEndpoints.setGameSessionService("localhost:" + gsServer.getPort());
-      try (var currentAttempt =
+      // Keep the World listener bound while its mutually dependent Account owners are assembled.
+      // Both clients copy endpoints in their constructors, so publish the actual port first.
+      try (var boundWorld = new DeferredWorldServer(pki);
+          var currentAttempt =
               new GrpcOriginalStartSessionCurrentAttemptClient(
                   gsEndpoints, pki.client("account-service"), factory, NAMESPACE);
           var launchAssociation =
@@ -710,12 +764,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               .isEqualTo(beforeAuthenticatedRead);
         }
 
-        int accountPort = availablePort();
-        int worldPort = availablePort();
         var accountEndpoints = new ServiceEndpointsProperties();
-        accountEndpoints.setAccountService("localhost:" + accountPort);
         var worldEndpoints = new ServiceEndpointsProperties();
-        worldEndpoints.setWorldManagementService("localhost:" + worldPort);
+        worldEndpoints.setWorldManagementService("localhost:" + boundWorld.server().getPort());
         var accountWorldTerminalRead =
             new WorldStartSessionExecutionTerminalReadClient(
                 worldEndpoints, pki.client("account-service"), factory, NAMESPACE);
@@ -760,7 +811,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             buildServer(
                 "account-service",
                 pki,
-                accountPort,
+                0,
                 () -> accountActivationSettlementReceiver,
                 new AccountStartSessionWorldParticipationAcquisitionGrpcService(
                     issuer.worldParticipationAcquisitionService(currentAttempt), NAMESPACE),
@@ -778,6 +829,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         accountManager(issuer.sourceDsl()),
                         NAMESPACE),
                     NAMESPACE));
+        accountEndpoints.setAccountService("localhost:" + accountServer.getPort());
         try (var acquisition =
                 new AccountStartSessionWorldParticipationAcquisitionClient(
                     accountEndpoints, pki.client("world-management-service"), factory, NAMESPACE);
@@ -955,13 +1007,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             worldReceivers.add(
                 new WorldCanonicalInitialAdmissionHoldGrpcService(canonicalHoldOwner, NAMESPACE));
           }
-          Server worldServer =
-              buildServer(
-                  "world-management-service",
-                  pki,
-                  worldPort,
-                  () -> socket,
-                  worldReceivers.toArray(BindableService[]::new));
+          boundWorld.addService(socket);
+          for (var receiver : worldReceivers) boundWorld.addService(receiver.bindService());
+          Server worldServer = boundWorld.server();
           accountWorldTerminalRead.init();
           accountActivationTerminalRead.init();
           worldProtectedActivation.init();
@@ -1703,13 +1751,13 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   claim.get(),
                   retainedProtectionRequest,
                   recovered.get(),
-                  abortCanonicalInitialAdmission);
+                  abortCanonicalInitialAdmission,
+                  createdPublication.get());
             }
             // Current Game Session association remains STARTING; this is not admission or delivery.
           } finally {
             channel.shutdownNow();
             assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
-            shutdown(worldServer);
           }
         } finally {
           shutdown(accountServer);
@@ -2268,7 +2316,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       AccountStartSessionActivationProtectionRequest originalProtectionRequest,
       net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal
           authenticatedWorldTerminal,
-      boolean abortCanonicalInitialAdmission)
+      boolean abortCanonicalInitialAdmission,
+      RealmPolicyPublishedEvidence.PublishedSet createdPublication)
       throws Exception {
     var association =
         associationRepository
@@ -2815,6 +2864,20 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
       var finalWorldState = worldHoldOwner.readState(identity, lifecycleRequest).orElseThrow();
       assertThat(finalWorldState.holdStatus().name()).isEqualTo("COMMITTED");
+      if (createdPublication != null) {
+        composeCreatedWorldPlacement(
+            gs,
+            world,
+            proofDirectory,
+            pki,
+            factory,
+            gsEndpoints,
+            association,
+            identity,
+            accountUuid,
+            createdPublication);
+        return;
+      }
       composeActualEntityWorldRegionPrerequisite(
           gs,
           world,
@@ -3366,6 +3429,311 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     }
   }
 
+  /**
+   * Reuses the actual guarded ACTIVE, committed hold and authenticated GS terminal owners. Only
+   * Entity's historical creation response is stipulated on an authenticated loopback socket; this
+   * qualifies World v2 storage, not genuine Entity issuance, production PKI or playable admission.
+   * The separately composed publication/catalog is PLAYER_CREATED with its own authored descriptor
+   * and initial core; the retained PRESEEDED proof runs under its original separate invocation.
+   */
+  private static void composeCreatedWorldPlacement(
+      Database gs,
+      Database world,
+      Path proofDirectory,
+      WorldOriginalStartSessionPreparationProofPki worldPki,
+      GrpcChannelFactory channels,
+      ServiceEndpointsProperties gsEndpoints,
+      WorldCanonicalInstanceAssociation association,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity holdIdentity,
+      UUID accountUuid,
+      RealmPolicyPublishedEvidence.PublishedSet publication)
+      throws Exception {
+    var catalogs = new GameSessionCanonicalRealmCatalogRepository(gs.dsl());
+    var admissionOwner =
+        new CanonicalInitialAdmissionRepository(
+            gs.dsl(),
+            catalogs,
+            new GameSessionCanonicalAdmissionPointerRepository(
+                gs.dsl(), catalogs, new GameplayAdmissionPointerEventRepository(gs.dsl())));
+    var currentTarget =
+        new CanonicalPlayerRouteReadService(
+                NAMESPACE,
+                catalogs,
+                admissionOwner,
+                new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE))
+            .readCurrentTarget(association.identity().canonicalTenantId());
+    assertThat(currentTarget.characterCreationPolicy()).isEqualTo("PLAYER_CREATED");
+    assertThat(publication.target().canonicalVersionId())
+        .isEqualTo(currentTarget.canonicalVersionId());
+    var policy = publication.policies().getFirst().source().policy();
+    assertThat(policy.entryPolicy()).isEqualTo(RealmEntryPolicy.EntryPolicy.PLAYER_CREATED);
+    assertThat(policy.worldSlug()).isEqualTo(currentTarget.worldSlug());
+    assertThat(policy.realmSlug()).isEqualTo(currentTarget.realmSlug());
+    assertThat(policy.initialActorCore()).isNotNull();
+    var characterId = UUID.randomUUID();
+    var placementId = UUID.randomUUID();
+    // Stipulated original creation coordinates. No creation action, terminal or protection is
+    // manufactured in an Entity owner table, and no genuine issuing-chain proof is claimed.
+    var origin =
+        PlayerCreatedActorOrigin.newBuilder()
+            .setTargetNamespace(NAMESPACE)
+            .setCreationOperationUuid(UUID.randomUUID().toString())
+            .setMutationDigest("a".repeat(64))
+            .setTerminalUuid(UUID.randomUUID().toString())
+            .setTerminalSha256("b".repeat(64))
+            .build();
+    var selector =
+        PlayerCreatedActorRuntimeReferenceRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setOrigin(origin)
+            .setTenantUuid(currentTarget.canonicalTenantId().toString())
+            .setAccountUuid(accountUuid.toString())
+            .setPlayableStateNamespaceUuid(currentTarget.playableStateNamespaceId().toString())
+            .setGameInstanceUuid(currentTarget.canonicalGameInstanceId().toString())
+            .setCharacterUuid(characterId.toString())
+            .setCanonicalVersionUuid(currentTarget.canonicalVersionId().toString())
+            .setRealmUuid(currentTarget.realmId().toString())
+            .setWorldSlug(currentTarget.worldSlug())
+            .setRealmSlug(currentTarget.realmSlug())
+            .build();
+    var controlledReceipt =
+        PlayerCreatedActorRuntimeReferenceResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setSelector(selector)
+            .setRuntimeEntityId(900_003L)
+            .setProjectionGeneration(1L)
+            .setProjectionFence(1L)
+            .setOriginalCatalogRevision(currentTarget.catalogRevision())
+            .setOriginalPointerVersion(currentTarget.pointerVersion())
+            .setOriginalActiveLifecycleEpoch(currentTarget.activeWorldEpoch())
+            .setOriginalDescriptorDigest(policy.creationDescriptor().digest())
+            // The authored binding is an explicitly controlled foreign-owner input. Policy and
+            // descriptor are taken from this invocation's actual retained publication preimage.
+            .setOriginalAuthoredBindingDigest("sha256:" + "c".repeat(64))
+            .setOriginalPolicyContentDigest(
+                prefixedSha256(policy.canonicalJson().getBytes(StandardCharsets.UTF_8)))
+            .build();
+    CanonicalPlayerCreatedRuntimeReferenceEvidence.requireResponse(selector, controlledReceipt);
+    var reads = new AtomicInteger();
+    var controlledEntity =
+        new CanonicalPlayerCreatedRuntimeReferenceServiceGrpc
+            .CanonicalPlayerCreatedRuntimeReferenceServiceImplBase() {
+          @Override
+          public void readPlayerCreatedActorPlacementReceipt(
+              PlayerCreatedActorRuntimeReferenceRequest request,
+              io.grpc.stub.StreamObserver<PlayerCreatedActorRuntimeReferenceResponse> observer) {
+            if (!selector.equals(request)) {
+              observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
+              return;
+            }
+            reads.incrementAndGet();
+            observer.onNext(controlledReceipt);
+            observer.onCompleted();
+          }
+        };
+    var entityPkiDirectory = Files.createDirectories(proofDirectory.resolve("created-entity-pki"));
+    var entityPki =
+        LoopbackMtlsTestPki.create(
+            entityPkiDirectory,
+            "Controlled created-placement Entity CA",
+            new IdentitySpec(
+                "entity-server",
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service",
+                true),
+            new IdentitySpec(
+                "world-client",
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service",
+                false));
+    var serverFactory =
+        new BoundedGrpcServerFactory(
+            "127.0.0.1:0",
+            List.of(),
+            entityPki.keyManagerFactory(entityPki.identity("entity-server")),
+            entityPki.trustManagerFactory(),
+            io.grpc.TlsServerCredentials.ClientAuth.REQUIRE,
+            GrpcRequestBytePolicy.ordinary(),
+            GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+    serverFactory.addService(
+        ServerInterceptors.intercept(
+            controlledEntity,
+            new EntityPlayerCreatedRuntimeReferencePeerInterceptor(
+                NAMESPACE, "ReadPlayerCreatedActorPlacementReceipt", "world-management-service"),
+            new GrpcPeerIdentityInterceptor()));
+    Server entityServer = serverFactory.createServer().start();
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setEntityManagementService("127.0.0.1:" + entityServer.getPort());
+      var associationRepository =
+          new WorldCanonicalInstanceAssociationRepository(
+              world.dsl(),
+              new WorldCompleteLaunchBindingRepository(world.dsl()),
+              new WorldAuthoredSourceIntakeRepository(world.dsl()),
+              new WorldAuthoredVersionIdentityRepository(world.dsl()));
+      var lifecycleRepository =
+          new WorldCanonicalInstanceLifecycleReadRepository(
+              world.dsl(), world.manager(), associationRepository);
+      var locationRepository =
+          new WorldCanonicalInitialPlayerLocationRepository(
+              world.dsl(), world.manager(), lifecycleRepository);
+      try (var createdClient =
+              new EntityPlayerCreatedActorPlacementReceiptClient(
+                  endpoints,
+                  entityPki.clientProperties(
+                      entityPkiDirectory, entityPki.identity("world-client")),
+                  channels,
+                  NAMESPACE);
+          var gsOwnerClient =
+              new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
+                  gsEndpoints, worldPki.client("world-management-service"), channels, NAMESPACE)) {
+        createdClient.init();
+        gsOwnerClient.init();
+        var owner =
+            new CanonicalInitialPlayerLocationService(
+                NAMESPACE,
+                associationRepository,
+                new WorldCanonicalInitialAdmissionHoldRepository(
+                    world.dsl(), world.manager(), associationRepository, lifecycleRepository),
+                locationRepository,
+                gsOwnerClient,
+                ignored -> {
+                  throw new AssertionError("Created placement requested an assignment");
+                },
+                createdClient);
+        var grpc = new CanonicalInitialPlayerLocationGrpcService(NAMESPACE, owner);
+        BindableService authenticatedGrpc =
+            () ->
+                ServerInterceptors.intercept(
+                    grpc, new CanonicalInitialPlayerLocationPeerInterceptor(NAMESPACE));
+        Server worldServer =
+            server(
+                "world-management-service",
+                worldPki,
+                authenticatedGrpc,
+                new WorldCanonicalInstanceLifecycleReadGrpcService(lifecycleRepository, NAMESPACE));
+        try {
+          var worldEndpoints = new ServiceEndpointsProperties();
+          worldEndpoints.setWorldManagementService("127.0.0.1:" + worldServer.getPort());
+          try (var client =
+              new CanonicalInitialPlayerLocationClient(
+                  worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE)) {
+            client.init();
+            var target =
+                new PreseededActorAssignmentExpectedTarget(
+                    currentTarget.canonicalTenantId(),
+                    currentTarget.realmId(),
+                    currentTarget.worldSlug(),
+                    currentTarget.realmSlug(),
+                    currentTarget.canonicalGameInstanceId().toString(),
+                    currentTarget.catalogRevision(),
+                    currentTarget.canonicalVersionId(),
+                    prefixedSha256(policy.canonicalJson().getBytes(StandardCharsets.UTF_8))
+                        .substring("sha256:".length()),
+                    currentTarget.playableStateNamespaceId(),
+                    association.worldPrepareFields().publishedReleaseBundleRef(),
+                    net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                        .PLAYABLE_STATE_SCOPE_SHARED);
+            var request =
+                CanonicalInitialPlayerLocationRequest.newBuilder()
+                    .setSchemaVersion(2)
+                    .setPlacementOperationUuid(placementId.toString())
+                    .setExpectedTarget(toWire(target))
+                    .setCanonicalAccountUuid(accountUuid.toString())
+                    .setCharacterUuid(characterId.toString())
+                    .setPlayerCreatedOrigin(origin)
+                    .setInitialAdmissionHoldUuid(holdIdentity.holdId().toString())
+                    .setInitialAdmissionHoldFence(holdIdentity.holdFence().toString())
+                    .setInitialAdmissionRequestId(
+                        holdIdentity.request().initialAdmissionRequestId())
+                    .setInitialAdmissionRequestDigest(
+                        holdIdentity.request().initialAdmissionRequestDigest())
+                    .setActiveLifecycleEpoch(currentTarget.activeWorldEpoch())
+                    .setTerminalProofDigest(currentTarget.ownerProofDigest())
+                    .setCommittedPointerVersion(currentTarget.pointerVersion())
+                    .setAuditEventId(currentTarget.auditEventId())
+                    .build();
+            var placed = client.placeInitialPlayer(request);
+            assertThat(placed.getSchemaVersion()).isEqualTo(2);
+            assertThat(placed.getOutcome())
+                .isEqualTo(
+                    net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome
+                        .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED);
+            var operation =
+                world
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT * FROM world_canonical_initial_player_location_operation WHERE operation_id=?",
+                        placementId);
+            var retainedRequest =
+                new WorldCanonicalInitialPlayerLocationRepository.Request(
+                    placementId,
+                    operation.get("request_digest", String.class),
+                    operation.get("request_bytes", byte[].class),
+                    operation.get("original_lifecycle_evidence_bytes", byte[].class));
+            var storedRequest = JSON.readTree(retainedRequest.requestBytes());
+            assertThat(storedRequest.get("schema").asText())
+                .isEqualTo("world-canonical-initial-player-location-request/v2");
+            assertThat(storedRequest.has("entityAssignmentOperationId")).isFalse();
+            assertThat(storedRequest.has("entityAssignmentDigest")).isFalse();
+            assertThat(
+                    CanonicalPlayerCreatedRuntimeReferenceEvidence.originFromStoredJson(
+                        storedRequest.get("entityCreatedOrigin").toString()))
+                .isEqualTo(origin);
+            var retained = locationRepository.read(retainedRequest).orElseThrow();
+            assertThat(retained.outcome())
+                .isEqualTo(WorldCanonicalInitialPlayerLocationRepository.Outcome.APPLIED);
+            assertThat(retained.resultBytes())
+                .containsExactly(operation.get("result_bytes", byte[].class));
+            assertThat(retained.resultDigest()).isEqualTo(placed.getResultDigest());
+            assertThat(retained.requestDigest()).isEqualTo(placed.getRequestDigest());
+            var location =
+                world
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT * FROM character_location WHERE initial_location_operation_id=?",
+                        placementId);
+            assertThat(location.get("entity_assignment_operation_id")).isNull();
+            assertThat(location.get("entity_assignment_digest")).isNull();
+            assertThat(
+                    CanonicalPlayerCreatedRuntimeReferenceEvidence.originFromStoredJson(
+                        location.get("entity_created_origin", org.jooq.JSONB.class).data()))
+                .isEqualTo(origin);
+            assertThat(location.get("runtime_room_instance_id", Long.class))
+                .isEqualTo(retained.runtimeRoomInstanceId());
+            assertThat(location.get("initial_runtime_room_instance_id", Long.class))
+                .isEqualTo(retained.runtimeRoomInstanceId());
+            var beforeRetry = createdPlacementSnapshot(world.dsl(), placementId);
+            assertThat(client.placeInitialPlayer(request).toByteArray())
+                .containsExactly(placed.toByteArray());
+            assertThat(client.readInitialPlayerLocation(request).toByteArray())
+                .containsExactly(placed.toByteArray());
+            assertThat(locationRepository.read(retainedRequest)).contains(retained);
+            var region = client.readInitialPlayerLocationRegion(request);
+            assertThat(region.getPlacementResult().toByteArray())
+                .containsExactly(placed.toByteArray());
+            assertThat(createdPlacementSnapshot(world.dsl(), placementId)).isEqualTo(beforeRetry);
+            assertThat(reads.get()).isEqualTo(4);
+          }
+        } finally {
+          shutdown(worldServer);
+        }
+      }
+    } finally {
+      shutdown(entityServer);
+    }
+  }
+
+  private static List<String> createdPlacementSnapshot(DSLContext dsl, UUID placementId) {
+    // Include all retained bytes, room columns and physical row versions, not just row counts.
+    return dsl.fetch(
+            "SELECT to_jsonb(o)::text || ':' || o.xmin::text AS snapshot "
+                + "FROM world_canonical_initial_player_location_operation o WHERE operation_id=? "
+                + "UNION ALL SELECT to_jsonb(l)::text || ':' || l.xmin::text AS snapshot "
+                + "FROM character_location l WHERE initial_location_operation_id=? ORDER BY snapshot",
+            placementId,
+            placementId)
+        .getValues("snapshot", String.class);
+  }
+
   private static CanonicalInitialPlayerLocationRequest toWorldLocationRequest(
       CanonicalPlayableTarget currentTarget,
       PreseededActorAssignmentRequest assignmentRequest,
@@ -3487,34 +3855,6 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             initialLocationClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));
 
     var entityReferenceClient = Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.class);
-    var runtimeReference =
-        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference.class);
-    var runtimeEntityId =
-        Mockito.mock(CanonicalPreseededActorRuntimeReferenceClient.RuntimeEntityId.class);
-    when(runtimeEntityId.tenantId()).thenReturn(currentTarget.canonicalTenantId());
-    when(runtimeEntityId.gameInstanceId())
-        .thenReturn(currentTarget.canonicalGameInstanceId().toString());
-    when(runtimeEntityId.value()).thenReturn(900_002L);
-    when(runtimeReference.workloadNamespace()).thenReturn(currentTarget.targetNamespace());
-    when(runtimeReference.runtimeEntityId()).thenReturn(runtimeEntityId);
-    when(runtimeReference.projectionGeneration()).thenReturn(2L);
-    when(runtimeReference.projectionFence()).thenReturn(2L);
-    when(runtimeReference.assignmentUuid()).thenReturn(assignmentId);
-    when(runtimeReference.canonicalAccountUuid())
-        .thenReturn(UUID.fromString(secondRequest.getCanonicalAccountUuid()));
-    when(runtimeReference.characterUuid()).thenReturn(characterId);
-    when(runtimeReference.intentDigest()).thenReturn(secondRequest.getAssignmentIntentDigest());
-    when(runtimeReference.playableStateNamespaceId())
-        .thenReturn(currentTarget.playableStateNamespaceId());
-    when(runtimeReference.target()).thenReturn(toWire(assignmentTarget));
-    when(runtimeReference.publishedOwnerProofDigest()).thenReturn(currentTarget.ownerProofDigest());
-    when(runtimeReference.corePayload())
-        .thenReturn(
-            net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
-                .newBuilder()
-                .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
-                .setDisplayName("Controlled Second Region Player")
-                .build());
     var secondEntityReferenceSelector =
         ReadPreseededActorRuntimeReferenceRequest.newBuilder()
             .setSchemaVersion(1)
@@ -3524,6 +3864,40 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .setCharacterUuid(secondRequest.getCharacterUuid())
             .setIntentDigest(secondRequest.getAssignmentIntentDigest())
             .build();
+    var secondEntityReferenceResponse =
+        ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(secondEntityReferenceSelector.getAssignmentUuid())
+            .setCanonicalAccountUuid(secondEntityReferenceSelector.getCanonicalAccountUuid())
+            .setCharacterUuid(secondEntityReferenceSelector.getCharacterUuid())
+            .setIntentDigest(secondEntityReferenceSelector.getIntentDigest())
+            .setExpectedTarget(secondEntityReferenceSelector.getExpectedTarget())
+            .setPublishedOwnerProofDigest(
+                currentTarget.ownerProofDigest().substring("sha256:".length()))
+            .setRuntimeEntityId(900_002L)
+            .setProjectionGeneration(2L)
+            .setProjectionFence(2L)
+            .setCorePayload(
+                net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentCorePayload
+                    .newBuilder()
+                    .setActorKind(
+                        CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                    .setDisplayName("Controlled Second Region Player"))
+            .build();
+    // Only the second actor's transport response is controlled. Use the actual reader's validation
+    // and closed reference so origin, exact matching and canonical bytes share one immutable
+    // receipt.
+    var controlledStub =
+        Mockito.mock(
+            CanonicalPreseededActorAssignmentServiceGrpc
+                .CanonicalPreseededActorAssignmentServiceBlockingStub.class,
+            Mockito.RETURNS_SELF);
+    when(controlledStub.readPreseededActorRuntimeReference(secondEntityReferenceSelector))
+        .thenReturn(secondEntityReferenceResponse);
+    var controlledReferenceClient = Mockito.spy(actualEntityReferenceClient);
+    ReflectionTestUtils.setField(controlledReferenceClient, "stub", controlledStub);
+    // The spy borrows the initialized client's channel; its lifecycle stays with the actual client.
+    var runtimeReference = controlledReferenceClient.read(secondEntityReferenceSelector);
     Mockito.doAnswer(
             invocation -> {
               ReadPreseededActorRuntimeReferenceRequest request = invocation.getArgument(0);
@@ -3658,7 +4032,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       Database gs,
       StartSessionPostAuthorizationExecutionTuple tuple,
       GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
-      UUID tenant)
+      UUID tenant,
+      boolean playerCreatedPlacement,
+      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication)
       throws Exception {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(world.dsl());
     var versionRepository = new WorldAuthoredVersionIdentityRepository(world.dsl());
@@ -3876,7 +4252,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             true,
             true,
             "SHARED",
-            "PRESEEDED_ONLY",
+            playerCreatedPlacement ? "PLAYER_CREATED" : "PRESEEDED_ONLY",
             null,
             null);
     var publishedSet =
@@ -3891,6 +4267,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             2L,
             selector,
             inventoryEvidence);
+    if (playerCreatedPlacement) createdPublication.set(publishedSet);
     assertThat(
             GameDesignPublicationOperationBinding.fromStored(publishedSet.operationBytes())
                 .account()
@@ -4128,6 +4505,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       java.util.function.Supplier<ServerServiceDefinition> additionalService,
       BindableService... receivers)
       throws Exception {
+    return buildServer(service, pki, port, additionalService, null, receivers);
+  }
+
+  private static Server buildServer(
+      String service,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      int port,
+      java.util.function.Supplier<ServerServiceDefinition> additionalService,
+      io.grpc.util.MutableHandlerRegistry deferredServices,
+      BindableService... receivers)
+      throws Exception {
     var identity = pki.server(service);
     var builder =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", port))
@@ -4136,6 +4524,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    if (deferredServices != null) builder.fallbackHandlerRegistry(deferredServices);
     if (Arrays.stream(receivers)
         .anyMatch(AccountInitialAdmissionSettlementReadGrpcService.class::isInstance)) {
       builder.maxInboundMessageSize(
@@ -4149,18 +4538,40 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     return builder.build().start();
   }
 
+  /** Owns the early kernel-assigned World socket through all owner-assembly failure paths. */
+  private static final class DeferredWorldServer implements AutoCloseable {
+    private final io.grpc.util.MutableHandlerRegistry services =
+        new io.grpc.util.MutableHandlerRegistry();
+    private final Server server;
+
+    private DeferredWorldServer(WorldOriginalStartSessionPreparationProofPki pki) throws Exception {
+      server = buildServer("world-management-service", pki, 0, null, services);
+    }
+
+    private Server server() {
+      return server;
+    }
+
+    private void addService(ServerServiceDefinition service) {
+      if (services.addService(
+              ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+          != null) {
+        throw new IllegalArgumentException("Duplicate deferred World service");
+      }
+    }
+
+    @Override
+    public void close() throws InterruptedException {
+      shutdown(server);
+    }
+  }
+
   private static DataSourceTransactionManager accountManager(DSLContext account) {
     // Reuse this fixture's actual schema datasource; no second Account schema or owner rows.
     var provider =
         (org.jooq.impl.DataSourceConnectionProvider) account.configuration().connectionProvider();
     var source = (TransactionAwareDataSourceProxy) provider.dataSource();
     return new DataSourceTransactionManager(Objects.requireNonNull(source.getTargetDataSource()));
-  }
-
-  private static int availablePort() throws java.io.IOException {
-    try (var socket = new java.net.ServerSocket(0)) {
-      return socket.getLocalPort();
-    }
   }
 
   private static void shutdown(Server server) throws InterruptedException {
@@ -4813,27 +5224,31 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               .derivedWorkflowIdentity();
       var world = seed;
       var operation = new GameDesignPublicationOperationBinding(account, world, inventoryEvidence);
-      String policyJson =
-          RealmPolicySource.canonical(
-              Map.of(
-                  "schemaVersion",
-                  1,
-                  "worldSlug",
-                  source.worldSlug(),
-                  "worldDisplayName",
-                  source.worldDisplayName(),
-                  "realmSlug",
-                  request.realmSlug(),
-                  "realmDisplayName",
-                  request.realmDisplayName(),
-                  "visible",
-                  request.visible(),
-                  "publicProduction",
-                  request.publicProduction(),
-                  "stateScope",
-                  request.stateScope(),
-                  "entryPolicy",
-                  request.characterCreationPolicy()));
+      var policyFields = new java.util.LinkedHashMap<String, Object>();
+      boolean playerCreated = "PLAYER_CREATED".equals(request.characterCreationPolicy());
+      policyFields.put("schemaVersion", playerCreated ? 3 : 1);
+      policyFields.put("worldSlug", source.worldSlug());
+      policyFields.put("worldDisplayName", source.worldDisplayName());
+      policyFields.put("realmSlug", request.realmSlug());
+      policyFields.put("realmDisplayName", request.realmDisplayName());
+      policyFields.put("visible", request.visible());
+      policyFields.put("publicProduction", request.publicProduction());
+      policyFields.put("stateScope", request.stateScope());
+      policyFields.put("entryPolicy", request.characterCreationPolicy());
+      if (playerCreated) {
+        policyFields.put(
+            "creationDescriptor",
+            Map.of(
+                "schemaVersion", 1,
+                "descriptorId", id("created-placement-descriptor").toString(),
+                "descriptorRevisionId", id("created-placement-descriptor-revision").toString(),
+                "inputKind", "EMPTY_OBJECT",
+                "dependencies", List.of()));
+        policyFields.put(
+            "initialActorCore",
+            Map.of("displayName", "Created Placement Player", "dispositionKey", "newcomer"));
+      }
+      String policyJson = RealmPolicySource.canonical(policyFields);
       var policySource =
           new RealmPolicySource.Policy(
               draft.commitId(),

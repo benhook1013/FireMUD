@@ -209,7 +209,26 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       assertThat(
               normalizeFunctionSource(
                   locationFunctionMetadata(freshDsl, freshSchema).functionSource(), freshSchema))
-          .isEqualTo(normalizeFunctionSource(after.functionSource(), upgradeSchema));
+          .isEqualTo(normalizeFunctionSource(atCurrentFrontier.functionSource(), upgradeSchema));
+      // Copied deferred-guard probes only: these do not allocate production owner facts.
+      exerciseLocationOperationProbe(
+          upgradeSource, upgradeSchema, atCurrentFrontier.functionSource(), false, false);
+      exerciseLocationOperationProbe(
+          upgradeSource,
+          upgradeSchema,
+          atCurrentFrontier.functionSource(),
+          false,
+          false,
+          true,
+          false);
+      exerciseLocationOperationProbe(
+          upgradeSource,
+          upgradeSchema,
+          atCurrentFrontier.functionSource(),
+          false,
+          true,
+          true,
+          true);
       TerminalFunctionMetadata freshTerminal = terminalFunctionMetadata(freshDsl, freshSchema);
       assertThat(freshTerminal.publicExecuteGrant()).isFalse();
       assertThat(freshTerminal.securityDefiner()).isTrue();
@@ -824,6 +843,19 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       boolean borrowedOperation,
       boolean shouldReject)
       throws SQLException {
+    exerciseLocationOperationProbe(
+        source, schema, functionSource, borrowedOperation, shouldReject, false, false);
+  }
+
+  private static void exerciseLocationOperationProbe(
+      DriverManagerDataSource source,
+      String schema,
+      String functionSource,
+      boolean borrowedOperation,
+      boolean shouldReject,
+      boolean createdOrigin,
+      boolean mismatchedOrigin)
+      throws SQLException {
     PlacementEvidence evidence = PlacementEvidence.create();
     UUID locationOperationId = UUID.randomUUID();
     UUID operationId = borrowedOperation ? UUID.randomUUID() : locationOperationId;
@@ -848,7 +880,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
               + "initial_admission_request_id TEXT, initial_admission_request_digest TEXT, "
               + "catalog_revision BIGINT, initial_admission_owner_proof_id TEXT, "
               + "initial_admission_owner_proof_digest TEXT, pointer_audit_id TEXT, "
-              + "pointer_version BIGINT, initial_location_operation_id UUID) ON COMMIT DROP");
+              + "pointer_version BIGINT, initial_location_operation_id UUID, entity_created_origin JSONB) ON COMMIT DROP");
       statement.execute(
           "CREATE TEMP TABLE initial_location_operation_probe ("
               + "operation_id UUID NOT NULL, canonical_tenant_id UUID NOT NULL, "
@@ -867,7 +899,28 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
               + "pg_temp.initial_location_operation_probe DEFERRABLE INITIALLY DEFERRED FOR EACH ROW "
               + "EXECUTE FUNCTION pg_temp.initial_location_operation_result_probe()");
       insertPlacement(connection, evidence, locationOperationId);
-      insertLocationOperation(connection, evidence, operationId);
+      String operationOrigin = null;
+      if (createdOrigin) {
+        String origin =
+            "{\"targetNamespace\":\"firemud\",\"creationOperationId\":\""
+                + UUID.randomUUID()
+                + "\",\"mutationDigest\":\""
+                + "d".repeat(64)
+                + "\",\"terminalId\":\""
+                + UUID.randomUUID()
+                + "\",\"terminalSha256\":\""
+                + "e".repeat(64)
+                + "\"}";
+        try (PreparedStatement update =
+            connection.prepareStatement(
+                "UPDATE pg_temp.initial_location_probe SET entity_assignment_operation_id=NULL, entity_assignment_digest=NULL, entity_created_origin=?::jsonb")) {
+          update.setString(1, origin);
+          update.executeUpdate();
+        }
+        operationOrigin =
+            mismatchedOrigin ? origin.replace("e".repeat(64), "f".repeat(64)) : origin;
+      }
+      insertLocationOperation(connection, evidence, operationId, operationOrigin);
       try {
         connection.commit();
       } catch (SQLException failure) {
@@ -894,7 +947,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
     try (PreparedStatement insert =
         connection.prepareStatement(
             "INSERT INTO pg_temp.initial_location_probe VALUES ("
-                + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)")) {
       int i = 1;
       insert.setObject(i++, evidence.tenantId());
       insert.setObject(i++, evidence.playableNamespaceId());
@@ -925,7 +978,17 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
   }
 
   private static void insertLocationOperation(
-      Connection connection, PlacementEvidence evidence, UUID operationId) throws SQLException {
+      Connection connection, PlacementEvidence evidence, UUID operationId, String createdOrigin)
+      throws SQLException {
+    String requestJson = evidence.requestJson();
+    if (createdOrigin != null) {
+      var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+      var request = (tools.jackson.databind.node.ObjectNode) mapper.readTree(requestJson);
+      request.remove("entityAssignmentOperationId");
+      request.remove("entityAssignmentDigest");
+      request.set("entityCreatedOrigin", mapper.readTree(createdOrigin));
+      requestJson = mapper.writeValueAsString(request);
+    }
     try (PreparedStatement insert =
         connection.prepareStatement(
             "INSERT INTO pg_temp.initial_location_operation_probe VALUES (?, ?, ?, ?, ?, ?, 'APPLIED')")) {
@@ -933,7 +996,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       insert.setObject(2, evidence.tenantId());
       insert.setObject(3, evidence.playableNamespaceId());
       insert.setObject(4, evidence.gameInstanceId());
-      insert.setBytes(5, evidence.requestJson().getBytes(StandardCharsets.UTF_8));
+      insert.setBytes(5, requestJson.getBytes(StandardCharsets.UTF_8));
       insert.setBytes(6, evidence.resultJson().getBytes(StandardCharsets.UTF_8));
       insert.executeUpdate();
     }

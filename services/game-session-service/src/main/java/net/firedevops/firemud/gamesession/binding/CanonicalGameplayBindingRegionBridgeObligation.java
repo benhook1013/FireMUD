@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.binding;
 import java.math.BigInteger;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference.ActorOrigin;
+import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference.CreationOrigin;
 
 /**
  * Durable region bridge obligation projection; a private repository receipt carries ACK authority.
@@ -26,8 +28,7 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
     Long entityProjectionGeneration,
     Long entityProjectionFence,
     String entityWorkloadNamespace,
-    UUID assignmentId,
-    String assignmentIntentDigest,
+    ActorOrigin actorOrigin,
     String entityReferenceDigest,
     String worldSourceDigest,
     UUID canonicalRegionId,
@@ -86,7 +87,6 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
         null,
         null,
         null,
-        null,
         null);
   }
 
@@ -111,8 +111,7 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
         || prepared != (entityProjectionGeneration != null)
         || prepared != (entityProjectionFence != null)
         || prepared != (entityWorkloadNamespace != null)
-        || prepared != (assignmentId != null)
-        || prepared != (assignmentIntentDigest != null)
+        || prepared != (actorOrigin != null)
         || prepared != (entityReferenceDigest != null)
         || prepared != (worldSourceDigest != null)
         || prepared != (canonicalRegionId != null)
@@ -130,14 +129,16 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
       requirePositive(runtimeEntityId, "runtimeEntityId");
       requirePositive(entityProjectionGeneration, "entityProjectionGeneration");
       requirePositive(entityProjectionFence, "entityProjectionFence");
-      requireNonNil(assignmentId, "assignmentId");
       requireNonNil(canonicalRegionId, "canonicalRegionId");
       requireNonNil(worldCaptureId, "worldCaptureId");
-      requireDigest(assignmentIntentDigest, "assignmentIntentDigest");
       requireDigest(entityReferenceDigest, "entityReferenceDigest");
       requireDigest(worldSourceDigest, "worldSourceDigest");
       requireDigest(worldGraphSha256, "worldGraphSha256");
       requirePrefixedDigest(worldPreparationInputDigest, "worldPreparationInputDigest");
+      if (actorOrigin instanceof CreationOrigin created
+          && !entityWorkloadNamespace.equals(created.original().getTargetNamespace())) {
+        throw new IllegalArgumentException("Created actor origin changed its Entity namespace");
+      }
       if (entityWorkloadNamespace.isBlank()
           || !entityWorkloadNamespace.equals(entityWorkloadNamespace.trim())
           || worldLifecycleEpoch <= 0L

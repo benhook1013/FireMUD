@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
@@ -133,11 +134,11 @@ public final class CanonicalInitialPlayerLocationClient
 
   private static void requireRequest(CanonicalInitialPlayerLocationRequest request) {
     Objects.requireNonNull(request, "request");
-    if (request.getSchemaVersion() != SCHEMA_VERSION
+    if ((request.getSchemaVersion() != 1 && request.getSchemaVersion() != 2)
         || !request.getUnknownFields().asMap().isEmpty()
         || !request.hasExpectedTarget()) {
       throw new IllegalArgumentException(
-          "Closed complete schema-1 initial player location request required");
+          "Closed complete initial player location request required");
     }
     var target = request.getExpectedTarget();
     if (!target.getUnknownFields().asMap().isEmpty()) {
@@ -147,7 +148,7 @@ public final class CanonicalInitialPlayerLocationClient
     requireCanonicalNonNilUuid(request.getPlacementOperationUuid(), "placement_operation_uuid");
     requireCanonicalNonNilUuid(request.getCanonicalAccountUuid(), "canonical_account_uuid");
     requireCanonicalNonNilUuid(request.getCharacterUuid(), "character_uuid");
-    requireCanonicalNonNilUuid(request.getAssignmentUuid(), "assignment_uuid");
+    CanonicalGameplayActorOrigins.fromWorldRequest(request);
     requireCanonicalNonNilUuid(target.getCanonicalTenantUuid(), "canonical_tenant_uuid");
     requireCanonicalNonNilUuid(target.getRealmUuid(), "realm_uuid");
     requireCanonicalNonNilUuid(target.getCanonicalVersionUuid(), "canonical_version_uuid");
@@ -174,7 +175,6 @@ public final class CanonicalInitialPlayerLocationClient
     if (target.getPlayableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
       throw new IllegalArgumentException("Initial admission requires SHARED playable state");
     }
-    requireDigest(request.getAssignmentIntentDigest(), "assignment_intent_digest");
     requireBoundedText(
         request.getInitialAdmissionRequestId(),
         "initial_admission_request_id",
@@ -196,20 +196,25 @@ public final class CanonicalInitialPlayerLocationClient
       CanonicalInitialPlayerLocationRequest request,
       CanonicalInitialPlayerLocationResponse response) {
     if (response == null
-        || response.getSchemaVersion() != SCHEMA_VERSION
+        || response.getSchemaVersion() != request.getSchemaVersion()
         || !response.getUnknownFields().asMap().isEmpty()
         || !request.getPlacementOperationUuid().equals(response.getPlacementOperationUuid())
         || !request.getCanonicalAccountUuid().equals(response.getCanonicalAccountUuid())
         || !request.getCharacterUuid().equals(response.getCharacterUuid())
         || !request.getAssignmentUuid().equals(response.getAssignmentUuid())
-        || !request.getAssignmentIntentDigest().equals(response.getAssignmentIntentDigest())) {
+        || !request.getAssignmentIntentDigest().equals(response.getAssignmentIntentDigest())
+        || request.hasPlayerCreatedOrigin() != response.hasPlayerCreatedOrigin()
+        || (request.hasPlayerCreatedOrigin()
+            && !request.getPlayerCreatedOrigin().equals(response.getPlayerCreatedOrigin()))) {
       throw invalidResponse("World response changed the schema, operation, scope, or assignment");
     }
     requireResponseUuid(response.getPlacementOperationUuid(), "placement_operation_uuid");
     requireResponseUuid(response.getCanonicalAccountUuid(), "canonical_account_uuid");
     requireResponseUuid(response.getCharacterUuid(), "character_uuid");
-    requireResponseUuid(response.getAssignmentUuid(), "assignment_uuid");
-    requireResponseRawDigest(response.getAssignmentIntentDigest(), "assignment_intent_digest");
+    if (request.getSchemaVersion() == 1) {
+      requireResponseUuid(response.getAssignmentUuid(), "assignment_uuid");
+      requireResponseRawDigest(response.getAssignmentIntentDigest(), "assignment_intent_digest");
+    }
     requireResponseDigest(response.getRequestDigest(), "request_digest");
     requireResponseDigest(response.getResultDigest(), "result_digest");
 

@@ -120,6 +120,62 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
   }
 
   @Test
+  void creationOriginIsClosedAndMutuallyExclusiveWithAssignment() {
+    var origin =
+        net.firedevops.firemud.entitymanagement.v1.PlayerCreatedActorOrigin.newBuilder()
+            .setTargetNamespace("firemud")
+            .setCreationOperationUuid(ASSIGNMENT.toString())
+            .setMutationDigest("a".repeat(64))
+            .setTerminalUuid(OPERATION.toString())
+            .setTerminalSha256("b".repeat(64))
+            .build();
+    var created =
+        request().toBuilder()
+            .setSchemaVersion(2)
+            .clearAssignmentUuid()
+            .clearAssignmentIntentDigest()
+            .setPlayerCreatedOrigin(origin)
+            .build();
+    var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(created);
+    assertThat(selection.playerCreatedOrigin()).isEqualTo(origin);
+    assertThat(selection.assignmentId()).isNull();
+    assertThat(selection.assignmentIntentDigest()).isNull();
+    assertInvalid(created.toBuilder().setAssignmentUuid(ASSIGNMENT.toString()).build());
+    assertInvalid(created.toBuilder().setAssignmentIntentDigest("a".repeat(64)).build());
+    assertInvalid(created.toBuilder().clearPlayerCreatedOrigin().build());
+    assertInvalid(request().toBuilder().setPlayerCreatedOrigin(origin).build());
+    assertInvalid(
+        created.toBuilder()
+            .setPlayerCreatedOrigin(origin.toBuilder().setTerminalSha256("bad"))
+            .build());
+    assertInvalid(
+        created.toBuilder()
+            .setPlayerCreatedOrigin(
+                origin.toBuilder()
+                    .mergeUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build()))
+            .build());
+    var conflict =
+        new Result(
+            Outcome.CONFLICT,
+            "CHARACTER_ALREADY_PLACED",
+            null,
+            null,
+            new byte[] {1},
+            "sha256:" + "a".repeat(64),
+            new byte[] {2},
+            "sha256:" + "b".repeat(64),
+            true);
+    var response = CanonicalInitialPlayerLocationGrpcCodec.toResponse(selection, conflict);
+    assertThat(response.getSchemaVersion()).isEqualTo(2);
+    assertThat(response.getPlayerCreatedOrigin()).isEqualTo(origin);
+    assertThat(response.getAssignmentUuid()).isEmpty();
+    assertThat(response.getAssignmentIntentDigest()).isEmpty();
+  }
+
+  @Test
   void acceptsReleaseReferencesAt128Characters() {
     var candidate =
         request().toBuilder()
