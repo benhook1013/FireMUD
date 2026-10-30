@@ -160,6 +160,105 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
+  void ordinaryAuthenticationAndBootstrapPreservePersistedOwnerAndCurrentNumericContract()
+      throws Exception {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String username = "auth-uuid-" + suffix;
+    String email = username + "@example.com";
+    HttpRequest registrationRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    "{\"username\":\""
+                        + username
+                        + "\",\"email\":\""
+                        + email
+                        + "\",\"password\":\"password123\"}"))
+            .build();
+
+    HttpResponse<String> registrationResponse =
+        HTTP_CLIENT.send(registrationRequest, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(registrationResponse.statusCode()).isEqualTo(200);
+    Number accountId =
+        dsl.resultQuery("SELECT id FROM accounts WHERE email = ?", email).fetchOne(0, Number.class);
+    assertThat(accountId).isNotNull();
+    long numericAccountId = accountId.longValue();
+    UUID persistedAccountUuid =
+        dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", numericAccountId)
+            .fetchOne(0, UUID.class);
+    Long sourceNumericId =
+        dsl.resultQuery(
+                "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
+                numericAccountId)
+            .fetchOne(0, Long.class);
+    String provenance =
+        dsl.resultQuery(
+                "SELECT account_uuid_provenance FROM accounts WHERE id = ?", numericAccountId)
+            .fetchOne(0, String.class);
+    assertThat(persistedAccountUuid).isNotNull();
+    assertThat(jsonMapper.readTree(registrationResponse.body()).path("data").path("id").asText())
+        .isEqualTo(persistedAccountUuid.toString());
+    assertThat(sourceNumericId).isEqualTo(numericAccountId);
+    assertThat(provenance).isEqualTo("ACCOUNT_REPOSITORY_INSERT");
+
+    HttpRequest authenticationRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/auth/login"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    "{\"username\":\"" + username + "\",\"password\":\"password123\"}"))
+            .build();
+
+    HttpResponse<String> authenticationResponse =
+        HTTP_CLIENT.send(authenticationRequest, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(authenticationResponse.statusCode()).isEqualTo(200);
+    var data = jsonMapper.readTree(authenticationResponse.body()).path("data");
+    assertThat(data.path("accountId").asLong()).isEqualTo(numericAccountId);
+    String token = data.path("authToken").asText();
+    assertThat(token).isNotBlank();
+    var claims = jwtUtil.parseToken(token).getPayload();
+    assertThat(claims.getSubject()).isEqualTo(Long.toString(numericAccountId));
+    assertThat(((Number) claims.get("accountId")).longValue()).isEqualTo(numericAccountId);
+
+    HttpRequest bootstrapRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/auth/player-bootstrap"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    jsonMapper.writeValueAsString(
+                        java.util.Map.of("accountIdentifier", username, "secret", "password123"))))
+            .build();
+    HttpResponse<String> bootstrapResponse =
+        HTTP_CLIENT.send(bootstrapRequest, HttpResponse.BodyHandlers.ofString());
+    assertThat(bootstrapResponse.statusCode()).isEqualTo(200);
+    var bootstrapData = jsonMapper.readTree(bootstrapResponse.body()).path("data");
+    assertThat(bootstrapData.path("accountId").asLong()).isEqualTo(numericAccountId);
+    var bootstrapClaims =
+        jwtUtil.parseToken(bootstrapData.path("bootstrapToken").asText()).getPayload();
+    assertThat(bootstrapClaims.getSubject()).isEqualTo(Long.toString(numericAccountId));
+    assertThat(((Number) bootstrapClaims.get("accountId")).longValue()).isEqualTo(numericAccountId);
+
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", numericAccountId)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(persistedAccountUuid);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?",
+                    numericAccountId)
+                .fetchOne(0, Long.class))
+        .isEqualTo(sourceNumericId);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_provenance FROM accounts WHERE id = ?", numericAccountId)
+                .fetchOne(0, String.class))
+        .isEqualTo(provenance);
+  }
+
+  @Test
   void exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope() throws Exception {
     String token =
         jwtUtil.generateToken(

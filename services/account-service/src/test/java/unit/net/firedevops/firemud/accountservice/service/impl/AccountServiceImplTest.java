@@ -144,6 +144,7 @@ class AccountServiceImplTest {
       passwordResetTokenRepository;
 
   private AccountServiceImpl service;
+  private JwtUtil jwtUtil;
 
   @BeforeEach
   void setup() {
@@ -164,7 +165,7 @@ class AccountServiceImplTest {
     when(subscriptionRepository.findByTenantId(8L))
         .thenReturn(java.util.List.of(explicitActiveEntitlementForSecondTenant));
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
-    JwtUtil jwtUtil = new ReloadableJwtUtil(JWT_SECRET, 3600000L);
+    jwtUtil = org.mockito.Mockito.spy(new ReloadableJwtUtil(JWT_SECRET, 3600000L));
     jwtAuthProperties.setJwtSecret(JWT_SECRET);
     tokenProperties.setPlayerBootstrapExpirationMs(300000L);
     tokenProperties.setConnectScopeExpirationMs(120000L);
@@ -251,6 +252,176 @@ class AccountServiceImplTest {
             jwtUtil,
             sessionService,
             transactionManager);
+  }
+
+  private enum OrdinaryIssuance {
+    CONTROL_UI,
+    GAMEPLAY_PASSWORD,
+    EMAIL_OTP,
+    PLAYER_BOOTSTRAP
+  }
+
+  private enum IdentityFailure {
+    MISSING_UUID,
+    NIL_UUID,
+    MISSING_PROVENANCE,
+    MISSING_SOURCE_ROW,
+    WRONG_SOURCE_ROW,
+    MISSING_LOOKUP,
+    DIFFERENT_LOOKUP_OWNER,
+    DIFFERENT_LOOKUP_UUID,
+    READBACK_UNAVAILABLE
+  }
+
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      ordinaryIssuanceIdentityFailures() {
+    return java.util.Arrays.stream(OrdinaryIssuance.values())
+        .flatMap(
+            mode ->
+                java.util.Arrays.stream(IdentityFailure.values())
+                    .map(failure -> org.junit.jupiter.params.provider.Arguments.of(mode, failure)));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("ordinaryIssuanceIdentityFailures")
+  void ordinaryIssuanceRejectsUnverifiedOwnerBeforeSigningOrConsumingChallenge(
+      OrdinaryIssuance mode, IdentityFailure failure) {
+    Account account = ordinaryIssuanceAccount();
+    var challenge = ordinaryIssuanceChallenge(account);
+    switch (failure) {
+      case MISSING_UUID -> account.setAccountUuid(null);
+      case NIL_UUID -> account.setAccountUuid(new UUID(0L, 0L));
+      case MISSING_PROVENANCE -> account.setAccountUuidProvenance(null);
+      case MISSING_SOURCE_ROW -> account.setAccountUuidSourceNumericId(null);
+      case WRONG_SOURCE_ROW -> account.setAccountUuidSourceNumericId(43L);
+      case MISSING_LOOKUP ->
+          when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+              .thenReturn(Optional.empty());
+      case DIFFERENT_LOOKUP_OWNER, DIFFERENT_LOOKUP_UUID -> {
+        Account different = new Account();
+        different.setId(failure == IdentityFailure.DIFFERENT_LOOKUP_OWNER ? 43L : 42L);
+        different.setAccountUuid(
+            failure == IdentityFailure.DIFFERENT_LOOKUP_UUID
+                ? UUID.randomUUID()
+                : account.getAccountUuid());
+        different.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+        different.setAccountUuidSourceNumericId(different.getId());
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+            .thenReturn(Optional.of(different));
+      }
+      case READBACK_UNAVAILABLE ->
+          when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+              .thenThrow(
+                  new org.springframework.dao.DataAccessResourceFailureException(
+                      "private storage detail"));
+    }
+
+    AuthenticationException denied =
+        assertThrows(AuthenticationException.class, () -> issueOrdinaryCredential(mode));
+
+    assertEquals("AUTH_UNAVAILABLE", denied.getCode());
+    assertEquals("Account authority is unavailable", denied.getMessage());
+    org.mockito.Mockito.verify(jwtUtil, org.mockito.Mockito.never())
+        .generateToken(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyMap());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .delete(challenge);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(sessionService);
+  }
+
+  @ParameterizedTest
+  @EnumSource(OrdinaryIssuance.class)
+  void ordinaryIssuanceKeepsNumericContractAfterExactOwnerReadback(OrdinaryIssuance mode) {
+    Account account = ordinaryIssuanceAccount();
+    var challenge = ordinaryIssuanceChallenge(account);
+
+    String token = issueOrdinaryCredential(mode);
+
+    var claims = jwtUtil.parseToken(token).getPayload();
+    assertEquals("42", claims.getSubject());
+    assertEquals(42L, ((Number) claims.get("accountId")).longValue());
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    if (mode != OrdinaryIssuance.GAMEPLAY_PASSWORD) {
+      org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
+    }
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(
+            org.mockito.ArgumentMatchers.eq(42L),
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @ParameterizedTest
+  @EnumSource(OrdinaryIssuance.class)
+  void invalidCredentialsDoNotConsultUuidOwnerReadback(OrdinaryIssuance mode) {
+    Account account = ordinaryIssuanceAccount();
+    ordinaryIssuanceChallenge(account);
+    account.setAccountUuid(null);
+
+    AuthenticationException denied =
+        assertThrows(
+            AuthenticationException.class,
+            () -> {
+              switch (mode) {
+                case CONTROL_UI -> service.authenticate("owner@example.com", "wrong");
+                case GAMEPLAY_PASSWORD ->
+                    service.authenticateForGameplay("owner@example.com", "wrong");
+                case EMAIL_OTP -> service.verifyEmailLoginOtp("owner@example.com", "wrong");
+                case PLAYER_BOOTSTRAP -> service.issuePlayerBootstrap("owner@example.com", "wrong");
+              }
+            });
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, denied.getCode());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByAccountUuid(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(sessionService);
+  }
+
+  private Account ordinaryIssuanceAccount() {
+    Account account = new Account();
+    account.setId(42L);
+    account.setUsername("owner");
+    account.setEmail("owner@example.com");
+    account.setEmailVerified(true);
+    account.setLoginAuthModes("PASSWORD,EMAIL_OTP");
+    account.setPasswordHash(hash("password"));
+    retainAuthenticationIdentity(account);
+    when(accountRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(account));
+    return account;
+  }
+
+  private net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge
+      ordinaryIssuanceChallenge(Account account) {
+    var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(3L);
+    challenge.setAccountId(account.getId());
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountEmailLoginChallengeRepository.findByAccountId(account.getId()))
+        .thenReturn(Optional.of(challenge));
+    return challenge;
+  }
+
+  private String issueOrdinaryCredential(OrdinaryIssuance mode) {
+    if (mode == OrdinaryIssuance.PLAYER_BOOTSTRAP) {
+      PlayerBootstrapResult result = service.issuePlayerBootstrap("owner@example.com", "123456");
+      assertEquals(42L, result.accountId());
+      return result.bootstrapToken();
+    }
+    AuthenticationResult result =
+        switch (mode) {
+          case CONTROL_UI -> service.authenticate("owner@example.com", "123456");
+          case GAMEPLAY_PASSWORD ->
+              service.authenticateForGameplay("owner@example.com", "password");
+          case EMAIL_OTP -> service.verifyEmailLoginOtp("owner@example.com", "123456");
+          case PLAYER_BOOTSTRAP -> throw new IllegalStateException("Bootstrap handled above");
+        };
+    assertEquals(42L, result.accountId());
+    return result.authToken();
   }
 
   @ParameterizedTest
@@ -455,6 +626,7 @@ class AccountServiceImplTest {
   void joinPublicProductionCreatesMembershipAndAuditOnceAndReplaysExactReceipt() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -639,6 +811,7 @@ class AccountServiceImplTest {
       AccountLifecycleState lifecycleState, String expectedCode) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -671,6 +844,7 @@ class AccountServiceImplTest {
   void closedPublicJoinRetainsFailureAndCannotCreateMembershipOrAudit() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -726,6 +900,7 @@ class AccountServiceImplTest {
   void committedJoinRetryRejectsChangedPolicyWithoutMutatingStoredOutcomeOrMembership() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -813,6 +988,7 @@ class AccountServiceImplTest {
   void missingOrAmbiguousEntitlementRetainsUnavailableJoinReceipt(boolean ambiguous) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -895,6 +1071,7 @@ class AccountServiceImplTest {
   void joinPublicProductionRevalidatesPolicyAtTheMembershipCommitGate() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -961,6 +1138,7 @@ class AccountServiceImplTest {
   void changedPolicyOnRetryTerminalizesPreviouslyBoundPendingJoin() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1027,6 +1205,7 @@ class AccountServiceImplTest {
   void unboundFailedJoinReplaysOnlyAfterCurrentScopeAndAuthorityChecks() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1149,6 +1328,7 @@ class AccountServiceImplTest {
   void joinIntentCommitsSeparatelyWhenPolicyTransactionRollsBack() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1194,6 +1374,7 @@ class AccountServiceImplTest {
   void expiredPersistedPendingJoinFailsTerminallyWithoutAuthorityOrMembershipTransition() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1305,6 +1486,7 @@ class AccountServiceImplTest {
   void expiredTerminalJoinScopeFailsClosedWithoutReplayingStoredSuccess() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1416,6 +1598,7 @@ class AccountServiceImplTest {
   void joinPublicProductionHidesAnotherAccountsGlobalRequestIdEvidence(String originalStatus) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1514,6 +1697,7 @@ class AccountServiceImplTest {
   void reclaimedScopeRaceReturnsConnectScopeInvalid() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1560,6 +1744,7 @@ class AccountServiceImplTest {
   void quarantinedLegacyMembershipIsNeverRestoredByPublicJoin() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1828,6 +2013,7 @@ class AccountServiceImplTest {
   void emailLoginOtpVerificationAuthenticatesAndConsumesMatchingChallenge() {
     Account account = new Account();
     account.setId(9L);
+    retainAuthenticationIdentity(account);
     account.setEmail("verified@example.com");
     account.setEmailVerified(true);
     account.setRole("player");
@@ -1876,6 +2062,7 @@ class AccountServiceImplTest {
   void authenticateUsesMatchingEmailLoginOtpBeforePasswordFallback() {
     Account account = new Account();
     account.setId(9L);
+    retainAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -1901,6 +2088,7 @@ class AccountServiceImplTest {
   void authenticateFallsBackToPasswordWithoutBurningUnmatchedEmailLoginOtp() {
     Account account = new Account();
     account.setId(9L);
+    retainAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -1926,6 +2114,7 @@ class AccountServiceImplTest {
   void authenticateCountsFailedMixedModeSecretAgainstActiveEmailLoginOtp() {
     Account account = new Account();
     account.setId(9L);
+    retainAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -1982,6 +2171,7 @@ class AccountServiceImplTest {
   void emailLoginOtpVerificationLocksChallengeBeforeConsumingIt() {
     Account account = new Account();
     account.setId(9L);
+    retainAuthenticationIdentity(account);
     account.setEmail("verified@example.com");
     account.setRole("player");
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -2011,6 +2201,7 @@ class AccountServiceImplTest {
   void authenticateReturnsControlUiTokenWithoutGameplayMembership() {
     Account account = new Account();
     account.setId(1L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2040,6 +2231,7 @@ class AccountServiceImplTest {
       AccountLifecycleState lifecycleState, String expectedCode) {
     Account account = new Account();
     account.setId(1L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     account.setLifecycleState(lifecycleState);
@@ -2056,6 +2248,7 @@ class AccountServiceImplTest {
   void authenticateForGameplayReturnsTokenWhenPasswordMatches() {
     Account account = new Account();
     account.setId(1L);
+    retainAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
@@ -2079,6 +2272,7 @@ class AccountServiceImplTest {
   void issuePlayerBootstrapReturnsShortLivedToken() {
     Account account = new Account();
     account.setId(7L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     account.setLoginAuthModes("PASSWORD");
@@ -2107,6 +2301,7 @@ class AccountServiceImplTest {
   void issuePlayerBootstrapPrefersEmailLookupOverCollidingUsername() {
     Account emailAccount = new Account();
     emailAccount.setId(7L);
+    retainAuthenticationIdentity(emailAccount);
     emailAccount.setUsername("email-owner");
     emailAccount.setEmail("player@example.com");
     emailAccount.setPasswordHash(hash("password"));
@@ -2125,6 +2320,7 @@ class AccountServiceImplTest {
   void issuePlayerBootstrapAcceptsAndConsumesEmailLoginOtp() {
     Account account = new Account();
     account.setId(7L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setLoginAuthModes("EMAIL_OTP");
@@ -2267,6 +2463,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsWorldWithMalformedRuntimeRealmRow() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2306,6 +2503,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsMapsZeroPublicAuthorityFromGameSession() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2329,6 +2527,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsWorldWithUnknownStateScope() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2367,6 +2566,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsMultipleVisiblePublicRealms() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2395,6 +2595,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsAcceptsExactlyOneVisiblePublicRealm() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2433,6 +2634,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsDoesNotIssueScopeWhenPublicPointerBecomesPrivateBeforeFinalRead() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2468,6 +2670,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsDoesNotIssueScopeWhenPointerChangesDuringDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2503,6 +2706,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsNoncanonicalRealmIds(String realmId) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2542,6 +2746,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsMalformedConnectScopeId() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2571,6 +2776,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsBlankConnectScopeId() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2600,6 +2806,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsNonPositiveConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2653,6 +2860,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsMalformedConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2707,6 +2915,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsNoncanonicalRealmIdClaims(String realmId) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2759,6 +2968,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsConnectScopeAccountSubjectMismatch() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2812,6 +3022,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsBlankWorldSlugConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2865,6 +3076,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsZeroPointerVersionInConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2918,6 +3130,7 @@ class AccountServiceImplTest {
   void authenticateForGameplayUsesNormalizedEmailLookup() {
     Account account = new Account();
     account.setId(1L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
@@ -2962,6 +3175,7 @@ class AccountServiceImplTest {
   void authenticateAllowsGlobalIdentityWithoutTenantMembership() {
     Account account = new Account();
     account.setId(7L);
+    retainAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
@@ -3225,6 +3439,7 @@ class AccountServiceImplTest {
   private ConnectScopeFixture prepareConnectScopeForIssue() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3281,6 +3496,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesEntityManagementForResolvedRealm() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3324,6 +3540,7 @@ class AccountServiceImplTest {
       boolean membershipExists) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3371,6 +3588,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersChecksPublicJoinPolicyBeforeReturningJoinRequired() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3407,6 +3625,7 @@ class AccountServiceImplTest {
       String subscriptionStatus, String expectedCode) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3447,6 +3666,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersKeepsSelectedTargetFailClosedWhenEntitlementsAreUnavailable() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3480,6 +3700,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersDoesNotUsePublicJoinForPrivateMembershipLostAfterDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3549,6 +3770,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsAmbiguousRealmBeforeAdmissionFiltering() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3602,6 +3824,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersSkipsMalformedUnrelatedRealm() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3651,6 +3874,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsIncludesRealmStatePolicy() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3689,6 +3913,7 @@ class AccountServiceImplTest {
       String namespaceId) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3730,6 +3955,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsReadsFreshEntitlementsOncePerTenantPerInvocation() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3809,6 +4035,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsReadsFreshEntitlementsOncePerTenantPerInvocation() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3858,6 +4085,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsOmitsCanceledTenantAndFailsWhenEntitlementIsUnavailable() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3941,6 +4169,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsPropagatesUnavailableEntitlements() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3961,6 +4190,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsFailsInsteadOfReturningIncompleteWorldDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4014,6 +4244,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRethrowsOtherAuthenticationErrors() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4055,6 +4286,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsRealmWithMalformedTenantId() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4112,6 +4344,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsRealmWithUnknownStateScope() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4153,6 +4386,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesIsolatedRealmRoster() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4228,6 +4462,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsAdmissionPointerWithMalformedGameInstanceId() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4276,6 +4511,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsAdmissionPointerWithUnknownStateScope() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4324,6 +4560,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesWorldQualifiedPointerLookupWhenRealmSlugDuplicatesAcrossWorlds() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4422,6 +4659,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesSignedScopeToDisambiguateTenantIdentity() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4497,6 +4735,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsPathThatDoesNotMatchSignedScope() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4524,6 +4763,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsChangedCanonicalRealmId() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4562,6 +4802,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsExcludesNonPublicRealmWithoutGrant() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4610,6 +4851,7 @@ class AccountServiceImplTest {
       boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4674,6 +4916,7 @@ class AccountServiceImplTest {
       boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5616,6 +5859,14 @@ class AccountServiceImplTest {
                       .getBytes(java.nio.charset.StandardCharsets.UTF_8))
               .toString();
     };
+  }
+
+  private void retainAuthenticationIdentity(Account account) {
+    account.setAccountUuid(UUID.randomUUID());
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(account.getId());
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.of(account));
   }
 
   private static AccountTenantMembership membership(Account account, long tenantId) {

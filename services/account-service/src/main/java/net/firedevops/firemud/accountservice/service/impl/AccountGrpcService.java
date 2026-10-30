@@ -380,7 +380,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           AuthenticateResponse.newBuilder()
               .setError(appError("VerifyEmailLoginOtp", "INVALID_ARGUMENT", ex.getMessage()))
               .build());
-    } catch (AuthenticationException | IllegalArgumentException ex) {
+    } catch (AuthenticationException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  appError(
+                      "VerifyEmailLoginOtp",
+                      "AUTH_UNAVAILABLE".equals(ex.getCode())
+                          ? "AUTH_UNAVAILABLE"
+                          : AuthenticationErrorCodes.INVALID_CREDENTIALS,
+                      "AUTH_UNAVAILABLE".equals(ex.getCode())
+                          ? AUTHORITY_UNAVAILABLE_MESSAGE
+                          : "Invalid credentials"))
+              .build());
+    } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setError(

@@ -298,6 +298,7 @@ public class AccountServiceImpl implements AccountService {
       String username, String password) {
     PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
+    requireAuthenticationAccountOwner(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
@@ -322,6 +323,7 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
+    requireAuthenticationAccountOwner(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
@@ -396,6 +398,7 @@ public class AccountServiceImpl implements AccountService {
       throw invalidCredentials();
     }
     requireAuthenticationEligible(account);
+    requireAuthenticationAccountOwner(account);
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         mintToken(
@@ -415,6 +418,7 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(accountIdentifier, secret, true);
     Account account = authentication.account();
+    requireAuthenticationAccountOwner(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
@@ -2031,6 +2035,19 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository
         .findById(accountId)
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+  }
+
+  /** Requires the authenticated identity to resolve back to its exact persisted Account owner. */
+  private void requireAuthenticationAccountOwner(Account account) {
+    try {
+      requireAuthenticationPersistedIdentity(account);
+      Long storageId = resolveAccountStorageId(account.getAccountUuid());
+      if (!Objects.equals(account.getId(), storageId)) {
+        throw new IllegalStateException("Account identity does not match its persisted owner");
+      }
+    } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
+    }
   }
 
   /** Resolves a canonical public identity at the Account persistence boundary only. */
