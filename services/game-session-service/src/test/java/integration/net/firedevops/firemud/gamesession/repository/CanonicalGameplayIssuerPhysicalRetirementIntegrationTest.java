@@ -6,10 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -155,6 +157,8 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
   @Test
   void retiresOriginalReleasesAndContinuesPastThePhysicalHistoryBound() throws Exception {
     try (var fixture = newFixture()) {
+      assertNonDefaultSchema(fixture.dsl());
+      assertFunctionLocalJoinCollapseLimit(fixture.dsl(), List.of());
       assertThat(currentOperationIds(fixture.dsl())).containsExactly(fixture.originalOperationId());
       byte[] partitionKey = fixture.issuerPartitionKey();
       byte[] initialFields = physicalFieldSet(partitionKey);
@@ -163,8 +167,9 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       assertThat(decodeFields(initialFields).size()).isEqualTo(baselineFieldCount + 3);
 
       fixture.publishOriginalWithControlledAccountLease();
-      var originalAbort = fixture.recordOriginalAccountAbort();
-      assertThat(originalAbort.isAccountAborted()).isTrue();
+      recordOriginalAccountAbortAndAssertCallerSetting(fixture);
+      assertThat(accountObligationStatus(fixture.dsl(), fixture.transitionId()))
+          .containsExactly("REQUIRED", "REPAIR_REQUIRED");
 
       byte[] beforePrematureRetirement = physicalFieldSet(partitionKey);
       String historyBeforePrematureRetirement = durableHistoryImage(fixture.dsl(), NIL_UUID);
@@ -583,6 +588,81 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
       assertThat(durableHistoryImage(fixture.dsl(), finalTransitionId))
           .isEqualTo(historyBefore257thRelease);
     }
+  }
+
+  @Test
+  void acknowledgedAccountAbortRestoresCallerJoinCollapseLimit() throws Exception {
+    try (var fixture = newFixture(BigInteger.valueOf(43), BigInteger.ONE, 0)) {
+      assertNonDefaultSchema(fixture.dsl());
+      assertFunctionLocalJoinCollapseLimit(fixture.dsl(), List.of());
+
+      fixture.prepareMemberRepairRedis();
+      fixture.publishOriginalWithControlledAccountLease();
+      fixture.repairAccountMember();
+      assertThat(accountObligationStatus(fixture.dsl(), fixture.transitionId()))
+          .containsExactly("ACKNOWLEDGED", "ACKNOWLEDGED");
+
+      recordOriginalAccountAbortAndAssertCallerSetting(fixture);
+      assertThat(accountObligationStatus(fixture.dsl(), fixture.transitionId()))
+          .containsExactly("ACKNOWLEDGED", "ACKNOWLEDGED");
+    }
+  }
+
+  @Test
+  void populated1051UpgradeChangesOnlyTheFirstNewAbortGuardPlanningSetting() throws Exception {
+    try (var fixture =
+        newFixture(
+            controlledCandidate(BigInteger.valueOf(41), BigInteger.ONE),
+            1,
+            MigrationVersion.fromVersion("1051"),
+            this::upgradeFirstNewAbortGuardPlanningSetting)) {
+      assertNonDefaultSchema(fixture.dsl());
+      assertFunctionLocalJoinCollapseLimit(fixture.dsl(), List.of());
+      fixture.publishOriginalWithControlledAccountLease();
+      recordOriginalAccountAbortAndAssertCallerSetting(fixture);
+    }
+  }
+
+  private void upgradeFirstNewAbortGuardPlanningSetting(
+      DriverManagerDataSource dataSource, CanonicalGameplayIssuerLayoutBootstrapIntent intent) {
+    DSLContext parent = DSL.using(dataSource, org.jooq.SQLDialect.POSTGRES);
+    assertThat(intent.operationId()).isNotNull();
+    assertNonDefaultSchema(parent);
+
+    Map<String, List<String>> rowsBefore = retainedTableRowsWithXmin(parent);
+    List<String> historyBefore = migrationHistoryWithXmin(parent);
+    FunctionCatalogSnapshot functionBefore = firstNewAbortFunctionCatalog(parent);
+    String callerJoinCollapseLimit = callerJoinCollapseLimit(parent);
+    assertThat(functionBefore.settings())
+        .noneMatch(setting -> setting.startsWith("join_collapse_limit="));
+
+    assertThat(
+            CanonicalGameplayAdmissionAbortCompositionFixture
+                .upgradeWithDefaultGameSessionMigrations(
+                    MigrationVersion.fromVersion("1051.1"), dataSource))
+        .isOne();
+
+    assertThat(retainedTableRowsWithXmin(parent)).isEqualTo(rowsBefore);
+    List<String> historyAfter = migrationHistoryWithXmin(parent);
+    assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+    assertThat(historyAfter.subList(0, historyBefore.size()))
+        .containsExactlyElementsOf(historyBefore);
+    assertThat(
+            parent
+                .fetchSingle(
+                    "SELECT count(*) FROM flyway_schema_history"
+                        + " WHERE version = '1051.1' AND success")
+                .get(0, Long.class))
+        .isOne();
+    FunctionCatalogSnapshot functionAfter = firstNewAbortFunctionCatalog(parent);
+    assertThat(functionAfter.oid()).isEqualTo(functionBefore.oid());
+    assertThat(functionAfter.body()).isEqualTo(functionBefore.body());
+    assertThat(functionAfter.metadata()).isEqualTo(functionBefore.metadata());
+    assertThat(functionAfter.triggers()).containsExactlyElementsOf(functionBefore.triggers());
+    List<String> expectedSettings = new ArrayList<>(functionBefore.settings());
+    expectedSettings.add("join_collapse_limit=1");
+    assertThat(functionAfter.settings()).containsExactlyInAnyOrderElementsOf(expectedSettings);
+    assertThat(callerJoinCollapseLimit(parent)).isEqualTo(callerJoinCollapseLimit);
   }
 
   @Test
@@ -1404,6 +1484,133 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
                 + " ORDER BY current.operation_id")
         .getValues("operation_id", UUID.class);
   }
+
+  private static void assertNonDefaultSchema(DSLContext dsl) {
+    assertThat(dsl.fetchSingle("SELECT current_schema()").get(0, String.class))
+        .isNotEqualTo("public");
+  }
+
+  private static String callerJoinCollapseLimit(DSLContext dsl) {
+    return dsl.fetchSingle("SHOW join_collapse_limit").get(0, String.class);
+  }
+
+  private static void recordOriginalAccountAbortAndAssertCallerSetting(
+      CanonicalGameplayAdmissionAbortCompositionFixture fixture) throws Exception {
+    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    String jdbcUrl = POSTGRES.getJdbcUrl();
+    var dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName("org.postgresql.Driver");
+    dataSource.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+    dataSource.setUsername(POSTGRES.getUsername());
+    dataSource.setPassword(POSTGRES.getPassword());
+
+    // Retain one actual caller session across the real abort owner transaction. A non-default
+    // caller value makes failure to restore the function-local setting observable.
+    try (var connection = dataSource.getConnection()) {
+      DSLContext ownerDsl = DSL.using(connection, org.jooq.SQLDialect.POSTGRES);
+      ownerDsl.execute("SET join_collapse_limit = 4");
+      Integer backendPid = ownerDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+      assertThat(callerJoinCollapseLimit(ownerDsl)).isEqualTo("4");
+      assertFunctionLocalJoinCollapseLimit(ownerDsl, List.of());
+
+      var repository = new CanonicalGameplayBindingInventoryRepository(ownerDsl);
+      var source = repository.readFirstNewAdmissionAbortSource(fixture.transitionId());
+      var abort =
+          repository.recordFirstNewAccountAbort(
+              source,
+              UUID.nameUUIDFromBytes(
+                  "original-controller-cleanup".getBytes(StandardCharsets.UTF_8)));
+
+      assertThat(abort.isAccountAborted()).isTrue();
+      assertThat(ownerDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
+          .isEqualTo(backendPid);
+      assertThat(callerJoinCollapseLimit(ownerDsl)).isEqualTo("4");
+    }
+  }
+
+  private static void assertFunctionLocalJoinCollapseLimit(
+      DSLContext dsl, List<String> unchangedSettings) {
+    List<String> expected = new ArrayList<>(unchangedSettings);
+    expected.add("join_collapse_limit=1");
+    assertThat(firstNewAbortFunctionCatalog(dsl).settings()).containsExactlyElementsOf(expected);
+  }
+
+  private static FunctionCatalogSnapshot firstNewAbortFunctionCatalog(DSLContext dsl) {
+    String routine =
+        "format('%I.require_first_new_abort_source_complete()', current_schema())::regprocedure";
+    var function =
+        dsl.fetchSingle(
+            "SELECT function_row.oid::text AS oid, function_row.prosrc AS body,"
+                + " (to_jsonb(function_row) - 'proconfig')::text AS metadata"
+                + " FROM pg_proc function_row WHERE function_row.oid = "
+                + routine);
+    List<String> settings =
+        dsl.fetch(
+                "SELECT unnest(coalesce(function_row.proconfig, ARRAY[]::text[])) AS setting"
+                    + " FROM pg_proc function_row WHERE function_row.oid = "
+                    + routine
+                    + " ORDER BY setting")
+            .getValues(0, String.class);
+    List<String> triggers =
+        dsl.fetch(
+                "SELECT to_jsonb(trigger_row)::text FROM pg_trigger trigger_row"
+                    + " WHERE trigger_row.tgfoid = "
+                    + routine
+                    + " ORDER BY trigger_row.tgname")
+            .getValues(0, String.class);
+    return new FunctionCatalogSnapshot(
+        function.get("oid", String.class),
+        function.get("body", String.class),
+        function.get("metadata", String.class),
+        settings,
+        triggers);
+  }
+
+  private static Map<String, List<String>> retainedTableRowsWithXmin(DSLContext dsl) {
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    List<String> tables =
+        dsl.fetch(
+                "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
+                    + " AND tablename <> 'flyway_schema_history' ORDER BY tablename")
+            .getValues(0, String.class);
+    Map<String, List<String>> images = new TreeMap<>();
+    for (String table : tables) {
+      String relation = DSL.name(schema, table).toString();
+      images.put(
+          table,
+          dsl.fetch(
+                  "SELECT (to_jsonb(retained) || jsonb_build_object('__test_xmin',"
+                      + " retained.xmin::text))::text FROM "
+                      + relation
+                      + " retained ORDER BY to_jsonb(retained)::text, retained.xmin::text")
+              .getValues(0, String.class));
+    }
+    return images;
+  }
+
+  private static List<String> migrationHistoryWithXmin(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT (to_jsonb(history_row) || jsonb_build_object('__test_xmin',"
+                + " history_row.xmin::text))::text FROM flyway_schema_history history_row"
+                + " ORDER BY history_row.installed_rank")
+        .getValues(0, String.class);
+  }
+
+  private static List<String> accountObligationStatus(DSLContext dsl, UUID transitionId) {
+    var row =
+        dsl.fetchSingle(
+            "SELECT obligation.status, candidate.account_index_state"
+                + " FROM game_session_canonical_binding_account_index_obligation obligation"
+                + " JOIN game_session_canonical_gameplay_binding_inventory candidate"
+                + " ON candidate.transition_id = obligation.transition_id"
+                + " AND candidate.binding_ref = obligation.binding_ref"
+                + " WHERE obligation.transition_id = ? AND obligation.obligation_ordinal = 0",
+            transitionId);
+    return List.of(row.get(0, String.class), row.get(1, String.class));
+  }
+
+  private record FunctionCatalogSnapshot(
+      String oid, String body, String metadata, List<String> settings, List<String> triggers) {}
 
   private static long reservationCount(DSLContext dsl) {
     return dsl.fetchSingle(
