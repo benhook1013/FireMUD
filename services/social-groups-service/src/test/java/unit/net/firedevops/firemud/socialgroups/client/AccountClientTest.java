@@ -54,7 +54,9 @@ class AccountClientTest {
     logger.addAppender(appender);
 
     try {
-      assertThat(client.getPresenceVisibilityPolicies(11L, List.of(accountUuid(1L), accountUuid(2L)))).isEmpty();
+      assertThat(
+              client.getPresenceVisibilityPolicies(11L, List.of(accountUuid(1L), accountUuid(2L))))
+          .isEmpty();
 
       assertThat(appender.list).hasSize(1);
       ILoggingEvent warning = appender.list.get(0);
@@ -67,7 +69,6 @@ class AccountClientTest {
       appender.stop();
     }
   }
-
 
   @Test
   void batchesPresenceVisibilityPolicyReadsAtTheAccountServiceLimit() throws Exception {
