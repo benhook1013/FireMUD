@@ -982,8 +982,7 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals(
-        "accountId must be a canonical non-nil UUID", ref.get().getError().getMessage());
+    assertEquals("accountId must be a canonical non-nil UUID", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(accountService);
   }
 
@@ -1486,8 +1485,7 @@ class AccountGrpcServiceTest {
                 observer));
 
     assertTrue(observer.response().getSuccess());
-    org.mockito.ArgumentCaptor<
-            net.firedevops.firemud.accountservice.dto.UpdateProfileRequest>
+    org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.UpdateProfileRequest>
         requestCaptor =
             org.mockito.ArgumentCaptor.forClass(
                 net.firedevops.firemud.accountservice.dto.UpdateProfileRequest.class);

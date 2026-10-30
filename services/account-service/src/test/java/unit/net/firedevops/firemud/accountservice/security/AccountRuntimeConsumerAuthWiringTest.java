@@ -88,7 +88,8 @@ class AccountRuntimeConsumerAuthWiringTest {
             assertThat(valid.handlerDispatched()).isTrue();
             assertThat(valid.observer().completed).isTrue();
             assertThat(valid.observer().response.getAccountId()).isEqualTo(ACCOUNT_ID);
-            verify(accountService).getRealmAccessGrantForRuntime(42L, 1L, "demo", "preview", "req-1");
+            verify(accountService)
+                .getRealmAccessGrantForRuntime(42L, 1L, "demo", "preview", "req-1");
 
             AccountService deniedService = mock(AccountService.class);
             AccountGrpcService deniedHandler =

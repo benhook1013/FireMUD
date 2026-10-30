@@ -1419,7 +1419,7 @@ public class CharacterRepository {
     dsl.update(CHARACTERS)
         .set(CHARACTERS.TENANT_ID, entity.getTenantId())
         .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
-              .set(CHARACTERS.ACCOUNT_UUID, entity.getAccountUuid())
+        .set(CHARACTERS.ACCOUNT_UUID, entity.getAccountUuid())
         .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
         .set(CHARACTERS.NAME, entity.getName())
         .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())

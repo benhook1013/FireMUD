@@ -2285,7 +2285,8 @@ public class AccountServiceImpl implements AccountService {
     profile.setPresenceVisibilityPolicy(request.presenceVisibilityPolicy());
     profile = profileRepository.save(profile);
     runAfterCommit(
-        () -> notificationService.sendNotification(request.tenantId(), accountId, "Profile updated"));
+        () ->
+            notificationService.sendNotification(request.tenantId(), accountId, "Profile updated"));
     return projectProfile(profile, request.tenantId(), accountId);
   }
 
