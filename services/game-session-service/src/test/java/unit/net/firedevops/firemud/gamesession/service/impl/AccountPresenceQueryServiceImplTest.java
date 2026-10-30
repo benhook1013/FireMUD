@@ -24,6 +24,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AccountPresenceQueryServiceImplTest {
+  private static final String VIEWER_ACCOUNT_ID = "00000000-0000-4000-8000-000000000002";
+  private static final String ONLINE_ACCOUNT_ID = "00000000-0000-4000-8000-000000000003";
+  private static final String OFFLINE_ACCOUNT_ID = "00000000-0000-4000-8000-000000000004";
+
   @Test
   void queryAccountPresenceReturnsOnlineAndOfflineSnapshotsInRequestOrder() {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
@@ -39,13 +43,16 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.containsAll(List.of("3", "4")) && ids.size() == 2)))
+                ids ->
+                    ids != null
+                        && ids.containsAll(List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID))
+                        && ids.size() == 2)))
         .thenReturn(
             java.util.Map.of(
-                "4",
+                OFFLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "4",
+                    OFFLINE_ACCOUNT_ID,
                     2L,
                     "SHARED",
                     "sandbox",
@@ -56,10 +63,13 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.containsAll(List.of("3", "4")) && ids.size() == 2)))
+                ids ->
+                    ids != null
+                        && ids.containsAll(List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID))
+                        && ids.size() == 2)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -69,7 +79,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         17L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -82,10 +92,12 @@ class AccountPresenceQueryServiceImplTest {
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3", "4"));
+    var result =
+        service.queryAccountPresence(
+            1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID));
 
     assertEquals(2, result.size());
-    assertEquals("3", result.get(0).accountId());
+    assertEquals(ONLINE_ACCOUNT_ID, result.get(0).accountId());
     assertEquals(true, result.get(0).online());
     assertEquals(2L, result.get(0).gameInstanceId());
     assertEquals("sandbox", result.get(0).worldSlug());
@@ -98,7 +110,7 @@ class AccountPresenceQueryServiceImplTest {
         net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState.EXPLICIT_AFK,
         result.get(0).activityState());
     assertEquals(null, result.get(0).recentDisposition());
-    assertEquals("4", result.get(1).accountId());
+    assertEquals(OFFLINE_ACCOUNT_ID, result.get(1).accountId());
     assertEquals(false, result.get(1).online());
     assertEquals(2L, result.get(1).gameInstanceId());
     assertEquals("sandbox", result.get(1).worldSlug());
@@ -126,13 +138,13 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "3",
+                    ONLINE_ACCOUNT_ID,
                     9L,
                     "SHARED",
                     "sandbox",
@@ -143,10 +155,10 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -156,7 +168,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         18L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -169,7 +181,7 @@ class AccountPresenceQueryServiceImplTest {
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(false, result.get(0).online());
@@ -192,13 +204,13 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "3",
+                    ONLINE_ACCOUNT_ID,
                     2L,
                     "SHARED",
                     "sandbox",
@@ -209,10 +221,10 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -222,7 +234,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         0L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -235,7 +247,7 @@ class AccountPresenceQueryServiceImplTest {
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(false, result.get(0).online());
@@ -261,13 +273,13 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "3",
+                    ONLINE_ACCOUNT_ID,
                     2L,
                     "SHARED",
                     "sandbox",
@@ -278,10 +290,10 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -291,7 +303,7 @@ class AccountPresenceQueryServiceImplTest {
                         " ",
                         "production",
                         17L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -304,7 +316,7 @@ class AccountPresenceQueryServiceImplTest {
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(false, result.get(0).online());
@@ -330,15 +342,15 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(Map.of());
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -348,7 +360,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         18L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -364,7 +376,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         17L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         100L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -377,7 +389,7 @@ class AccountPresenceQueryServiceImplTest {
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(true, result.get(0).online());
@@ -401,13 +413,13 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "3",
+                    ONLINE_ACCOUNT_ID,
                     2L,
                     "SHARED",
                     "sandbox",
@@ -418,10 +430,10 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -431,7 +443,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         17L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -445,7 +457,7 @@ class AccountPresenceQueryServiceImplTest {
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L),
                 pointer("sandbox", "Builder Sandbox", "preview", "Preview Realm", 1L, 2L, 18L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(false, result.get(0).online());
@@ -471,13 +483,13 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "3",
+                    ONLINE_ACCOUNT_ID,
                     2L,
                     "SHARED",
                     "sandbox",
@@ -488,10 +500,10 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -501,7 +513,7 @@ class AccountPresenceQueryServiceImplTest {
                         "sandbox",
                         "production",
                         17L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -526,7 +538,7 @@ class AccountPresenceQueryServiceImplTest {
                     "",
                     "ALLOW_NEW")));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(false, result.get(0).online());
@@ -552,15 +564,15 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(Map.of());
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("3") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(ONLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "3",
+                ONLINE_ACCOUNT_ID,
                 List.of(
                     new GameplayPresence(
                         97L,
@@ -570,7 +582,7 @@ class AccountPresenceQueryServiceImplTest {
                         "Sandbox",
                         "Production",
                         17L,
-                        "3",
+                        ONLINE_ACCOUNT_ID,
                         99L,
                         "Ben",
                         GameplayPresenceRole.PLAYER,
@@ -583,7 +595,7 @@ class AccountPresenceQueryServiceImplTest {
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(true, result.get(0).online());
@@ -608,13 +620,13 @@ class AccountPresenceQueryServiceImplTest {
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("4") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(OFFLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(
             Map.of(
-                "4",
+                OFFLINE_ACCOUNT_ID,
                 new AccountRecentPresenceState(
                     1L,
-                    "4",
+                    OFFLINE_ACCOUNT_ID,
                     2L,
                     "SHARED",
                     "Sandbox",
@@ -625,14 +637,14 @@ class AccountPresenceQueryServiceImplTest {
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
             org.mockito.ArgumentMatchers.argThat(
-                ids -> ids != null && ids.contains("4") && ids.size() == 1)))
+                ids -> ids != null && ids.contains(OFFLINE_ACCOUNT_ID) && ids.size() == 1)))
         .thenReturn(Map.of());
     when(pointerAuthorityService.listByRuntimeTarget(1L, 2L))
         .thenReturn(
             List.of(
                 pointer("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, 17L)));
 
-    var result = service.queryAccountPresence(1L, "2", List.of("4"));
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(OFFLINE_ACCOUNT_ID));
 
     assertEquals(1, result.size());
     assertEquals(false, result.get(0).online());
@@ -643,7 +655,7 @@ class AccountPresenceQueryServiceImplTest {
   }
 
   @Test
-  void queryAccountPresenceRejectsRecentStateWithWrongTenantOrAccount() {
+  void queryAccountPresenceRejectsNonCanonicalAccountIdsBeforeReadingPresence() {
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
     AccountRecentPresenceService recentPresenceService =
         Mockito.mock(AccountRecentPresenceService.class);
@@ -655,250 +667,23 @@ class AccountPresenceQueryServiceImplTest {
             new GameplayPresenceActivityResolver(new PresenceProperties()),
             recentPresenceService,
             pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3", "4")))
-        .thenReturn(
-            Map.of(
-                "3",
-                new AccountRecentPresenceState(
-                    2L,
-                    "3",
-                    2L,
-                    "SHARED",
-                    "sandbox",
-                    "production",
-                    17L,
-                    1_700_000_000_000L,
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)),
-            Map.of(
-                "4",
-                new AccountRecentPresenceState(
-                    1L,
-                    "999",
-                    2L,
-                    "SHARED",
-                    "sandbox",
-                    "production",
-                    17L,
-                    1_700_000_000_000L,
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.queryAccountPresence(1L, "2", List.of("3", "4")));
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.queryAccountPresence(1L, "2", List.of("3", "4")));
-    verifyNoInteractions(presenceService);
-  }
+    for (String invalidAccountId :
+        List.of(
+            "3",
+            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-4000-8000-00000000000A",
+            " " + ONLINE_ACCOUNT_ID,
+            ONLINE_ACCOUNT_ID + " ")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> service.queryAccountPresence(1L, invalidAccountId, List.of(ONLINE_ACCOUNT_ID)));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(invalidAccountId)));
+    }
 
-  @Test
-  void queryAccountPresenceRejectsActiveStateWithWrongMapKeyOrTenant() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3", "4", "5")))
-        .thenReturn(Map.of());
-    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3", "4", "5")))
-        .thenReturn(
-            Map.of("3", List.of(presence(97L, 1L, "4"))),
-            Map.of("4", List.of(presence(98L, 2L, "4"))),
-            Map.of("unrequested", List.of(presence(99L, 1L, "5"))));
-
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.queryAccountPresence(1L, "2", List.of("3", "4", "5")));
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.queryAccountPresence(1L, "2", List.of("3", "4", "5")));
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.queryAccountPresence(1L, "2", List.of("3", "4", "5")));
-    verifyNoInteractions(pointerAuthorityService);
-  }
-
-  @Test
-  void queryAccountPresenceRejectsSessionIdRepeatedAcrossAccountBuckets() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3", "4")))
-        .thenReturn(Map.of());
-    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3", "4")))
-        .thenReturn(
-            Map.of(
-                "3", List.of(presence(97L, 1L, "3")),
-                "4", List.of(presence(97L, 1L, "4"))));
-
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.queryAccountPresence(1L, "2", List.of("3", "4")));
-    verifyNoInteractions(pointerAuthorityService);
-  }
-
-  @Test
-  void queryAccountPresenceRejectsUnrequestedRecentState() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3")))
-        .thenReturn(
-            Map.of(
-                "unrequested",
-                new AccountRecentPresenceState(
-                    1L,
-                    "3",
-                    2L,
-                    "SHARED",
-                    "sandbox",
-                    "production",
-                    17L,
-                    1_700_000_000_000L,
-                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
-
-    assertThrows(
-        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
-    verifyNoInteractions(presenceService);
-  }
-
-  @Test
-  void queryAccountPresenceRejectsNullRecentState() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    Map<String, AccountRecentPresenceState> recentStates = new HashMap<>();
-    recentStates.put("3", null);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3")))
-        .thenReturn(recentStates);
-
-    assertThrows(
-        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
-    verifyNoInteractions(presenceService);
-  }
-
-  @Test
-  void queryAccountPresenceRejectsNullActiveListsAndPayloads() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3"))).thenReturn(Map.of());
-    Map<String, List<GameplayPresence>> nullListResponse = new HashMap<>();
-    nullListResponse.put("3", null);
-    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3")))
-        .thenReturn(
-            nullListResponse, Map.of("3", Collections.<GameplayPresence>singletonList(null)));
-
-    assertThrows(
-        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
-    assertThrows(
-        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
-    verifyNoInteractions(pointerAuthorityService);
-  }
-
-  @Test
-  void queryAccountPresenceRejectsNonpositiveActiveSessionId() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3"))).thenReturn(Map.of());
-    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3")))
-        .thenReturn(Map.of("3", List.of(presence(0L, 1L, "3"))));
-
-    assertThrows(
-        IllegalStateException.class, () -> service.queryAccountPresence(1L, "2", List.of("3")));
-    verifyNoInteractions(pointerAuthorityService);
-  }
-
-  @Test
-  void queryAccountPresenceTreatsEmptyActiveListAsOffline() {
-    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
-    AccountRecentPresenceService recentPresenceService =
-        Mockito.mock(AccountRecentPresenceService.class);
-    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(
-            presenceService,
-            new GameplayPresenceActivityResolver(new PresenceProperties()),
-            recentPresenceService,
-            pointerAuthorityService);
-    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of("3"))).thenReturn(Map.of());
-    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of("3")))
-        .thenReturn(Map.of("3", List.of()));
-
-    var result = service.queryAccountPresence(1L, "2", List.of("3"));
-
-    assertEquals(1, result.size());
-    assertEquals("3", result.get(0).accountId());
-    assertEquals(false, result.get(0).online());
-    assertEquals(null, result.get(0).gameInstanceId());
-    assertEquals(null, result.get(0).lastSeenAt());
-  }
-
-  private static GameplayPresence presence(long sessionId, long tenantId, String accountId) {
-    return new GameplayPresence(
-        sessionId,
-        tenantId,
-        2L,
-        "SHARED",
-        "sandbox",
-        "production",
-        17L,
-        accountId,
-        99L,
-        "Ben",
-        GameplayPresenceRole.PLAYER,
-        100L,
-        null,
-        120L,
-        150L);
+    verifyNoInteractions(presenceService, recentPresenceService, pointerAuthorityService);
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
@@ -922,5 +707,310 @@ class AccountPresenceQueryServiceImplTest {
         false,
         "SHARED",
         "ALLOW_NEW");
+  }
+
+  @Test
+  void queryAccountPresenceRejectsRecentStateWithWrongTenantOrAccount() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(
+            1L, java.util.Set.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID)))
+        .thenReturn(
+            Map.of(
+                ONLINE_ACCOUNT_ID,
+                new AccountRecentPresenceState(
+                    2L,
+                    ONLINE_ACCOUNT_ID,
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    1_700_000_000_000L,
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)),
+            Map.of(
+                OFFLINE_ACCOUNT_ID,
+                new AccountRecentPresenceState(
+                    1L,
+                    "00000000-0000-4000-8000-000000000999",
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    1_700_000_000_000L,
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.queryAccountPresence(
+                1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID)));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.queryAccountPresence(
+                1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID)));
+    verifyNoInteractions(presenceService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsActiveStateWithWrongMapKeyOrTenant() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(
+            1L,
+            java.util.Set.of(
+                ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID, "00000000-0000-4000-8000-000000000005")))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(
+            1L,
+            java.util.Set.of(
+                ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID, "00000000-0000-4000-8000-000000000005")))
+        .thenReturn(
+            Map.of(ONLINE_ACCOUNT_ID, List.of(presence(97L, 1L, OFFLINE_ACCOUNT_ID))),
+            Map.of(OFFLINE_ACCOUNT_ID, List.of(presence(98L, 2L, OFFLINE_ACCOUNT_ID))),
+            Map.of(
+                "unrequested", List.of(presence(99L, 1L, "00000000-0000-4000-8000-000000000005"))));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.queryAccountPresence(
+                1L,
+                VIEWER_ACCOUNT_ID,
+                List.of(
+                    ONLINE_ACCOUNT_ID,
+                    OFFLINE_ACCOUNT_ID,
+                    "00000000-0000-4000-8000-000000000005")));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.queryAccountPresence(
+                1L,
+                VIEWER_ACCOUNT_ID,
+                List.of(
+                    ONLINE_ACCOUNT_ID,
+                    OFFLINE_ACCOUNT_ID,
+                    "00000000-0000-4000-8000-000000000005")));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.queryAccountPresence(
+                1L,
+                VIEWER_ACCOUNT_ID,
+                List.of(
+                    ONLINE_ACCOUNT_ID,
+                    OFFLINE_ACCOUNT_ID,
+                    "00000000-0000-4000-8000-000000000005")));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsSessionIdRepeatedAcrossAccountBuckets() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(
+            1L, java.util.Set.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID)))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(
+            1L, java.util.Set.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID)))
+        .thenReturn(
+            Map.of(
+                ONLINE_ACCOUNT_ID, List.of(presence(97L, 1L, ONLINE_ACCOUNT_ID)),
+                OFFLINE_ACCOUNT_ID, List.of(presence(97L, 1L, OFFLINE_ACCOUNT_ID))));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.queryAccountPresence(
+                1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID)));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsUnrequestedRecentState() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(
+            Map.of(
+                "unrequested",
+                new AccountRecentPresenceState(
+                    1L,
+                    ONLINE_ACCOUNT_ID,
+                    2L,
+                    "SHARED",
+                    "sandbox",
+                    "production",
+                    17L,
+                    1_700_000_000_000L,
+                    AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID)));
+    verifyNoInteractions(presenceService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsNullRecentState() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    Map<String, AccountRecentPresenceState> recentStates = new HashMap<>();
+    recentStates.put(ONLINE_ACCOUNT_ID, null);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(recentStates);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID)));
+    verifyNoInteractions(presenceService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsNullActiveListsAndPayloads() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(Map.of());
+    Map<String, List<GameplayPresence>> nullListResponse = new HashMap<>();
+    nullListResponse.put(ONLINE_ACCOUNT_ID, null);
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(
+            nullListResponse,
+            Map.of(ONLINE_ACCOUNT_ID, Collections.<GameplayPresence>singletonList(null)));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID)));
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID)));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceRejectsNonpositiveActiveSessionId() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(Map.of(ONLINE_ACCOUNT_ID, List.of(presence(0L, 1L, ONLINE_ACCOUNT_ID))));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID)));
+    verifyNoInteractions(pointerAuthorityService);
+  }
+
+  @Test
+  void queryAccountPresenceTreatsEmptyActiveListAsOffline() {
+    GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AccountPresenceQueryServiceImpl service =
+        new AccountPresenceQueryServiceImpl(
+            presenceService,
+            new GameplayPresenceActivityResolver(new PresenceProperties()),
+            recentPresenceService,
+            pointerAuthorityService);
+    when(recentPresenceService.findByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(Map.of());
+    when(presenceService.listConnectedByAccountIds(1L, java.util.Set.of(ONLINE_ACCOUNT_ID)))
+        .thenReturn(Map.of(ONLINE_ACCOUNT_ID, List.of()));
+
+    var result = service.queryAccountPresence(1L, VIEWER_ACCOUNT_ID, List.of(ONLINE_ACCOUNT_ID));
+
+    assertEquals(1, result.size());
+    assertEquals(ONLINE_ACCOUNT_ID, result.get(0).accountId());
+    assertEquals(false, result.get(0).online());
+    assertEquals(null, result.get(0).gameInstanceId());
+    assertEquals(null, result.get(0).lastSeenAt());
+  }
+
+  private static GameplayPresence presence(long sessionId, long tenantId, String accountId) {
+    return new GameplayPresence(
+        sessionId,
+        tenantId,
+        2L,
+        "SHARED",
+        "sandbox",
+        "production",
+        17L,
+        accountId,
+        99L,
+        "Ben",
+        GameplayPresenceRole.PLAYER,
+        100L,
+        null,
+        120L,
+        150L);
   }
 }

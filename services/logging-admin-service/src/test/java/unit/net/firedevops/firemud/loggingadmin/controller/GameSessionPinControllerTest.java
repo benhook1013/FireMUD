@@ -32,6 +32,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @WithFiremudPrivilegedHttpAuthTestProperties
 class GameSessionPinControllerTest {
+  private static final String ACCOUNT_ID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
 
@@ -47,7 +49,7 @@ class GameSessionPinControllerTest {
     when(gameSessionPinService.getPinnedScriptPatchVersion(1L, 7L)).thenReturn(pinnedVersionDto());
     String token =
         jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(get("/game-session-pins/1/7").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -62,7 +64,7 @@ class GameSessionPinControllerTest {
         .thenReturn(pinConvergenceDto());
     String token =
         jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -77,7 +79,9 @@ class GameSessionPinControllerTest {
   @Test
   void getPinnedScriptPatchVersionRejectsCrossTenantScopedAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            ACCOUNT_ID,
+            Map.of("accountId", ACCOUNT_ID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(get("/game-session-pins/1/7").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -88,7 +92,7 @@ class GameSessionPinControllerTest {
   void getPinnedScriptPatchVersionRejectsMalformedTenantIdBeforeDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -105,7 +109,7 @@ class GameSessionPinControllerTest {
   void getGameSessionPinConvergenceRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "42", Map.of("accountId", "42", "globalRoles", List.of("platformAdmin")));
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

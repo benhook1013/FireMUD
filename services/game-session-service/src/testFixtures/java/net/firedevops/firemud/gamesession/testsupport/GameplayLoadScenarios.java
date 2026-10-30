@@ -9,6 +9,7 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 
 /** Shared load-oriented gameplay scenario helpers above the base cross-service stack. */
 public final class GameplayLoadScenarios {
@@ -73,7 +74,7 @@ public final class GameplayLoadScenarios {
           Character.newBuilder()
               .setId(Long.toString(accountId))
               .setTenantId(Long.toString(tenantId))
-              .setAccountId(Long.toString(accountId))
+              .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(accountId))
               .setName(label)
               .build());
       players.add(

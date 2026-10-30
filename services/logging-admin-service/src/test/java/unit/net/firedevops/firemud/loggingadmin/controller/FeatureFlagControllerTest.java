@@ -34,6 +34,8 @@ import tools.jackson.databind.ObjectMapper;
 @WithFiremudPrivilegedHttpAuthTestProperties
 class FeatureFlagControllerTest {
 
+  private static final String ACCOUNT_ID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -47,7 +49,9 @@ class FeatureFlagControllerTest {
   @Test
   void toggleRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -68,7 +72,9 @@ class FeatureFlagControllerTest {
   void toggleRejectsCrossTenantScopedAdmin() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            ACCOUNT_ID,
+            Map.of("accountId", ACCOUNT_ID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -82,7 +88,9 @@ class FeatureFlagControllerTest {
   @Test
   void toggleRejectsZeroTenantIdBeforeDispatch() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(0L, "demo", true);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

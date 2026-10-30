@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -43,9 +43,24 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class GameLogicClientTest {
+  private static final String ACCOUNT_UUID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, "0", "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L,
+          22L,
+          ACCOUNT_UUID,
+          "",
+          123L,
+          "",
+          1L,
+          "R-1021",
+          "",
+          null,
+          1L,
+          "world",
+          "realm",
+          17L,
+          "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
@@ -345,7 +360,7 @@ class GameLogicClientTest {
         PickupVisibleRoomItemRequest.newBuilder()
             .setTenantId("22")
             .setSessionId("41")
-            .setAccountId("0")
+            .setAccountId(ACCOUNT_UUID)
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setRoomInstanceId("R-1021")
@@ -369,7 +384,7 @@ class GameLogicClientTest {
   }
 
   @Test
-  void sendCommunicationMapsNullAccountToEmptyAndPreservesOpaqueAccount() throws Exception {
+  void sendCommunicationForwardsCanonicalAccountUuidUnchanged() throws Exception {
     GameLogicClient client = newClient();
     GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
         mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
@@ -379,7 +394,7 @@ class GameLogicClientTest {
     setStub(client, stub);
 
     client.sendCommunication(
-        sessionContextWithAccountId(null),
+        sessionContextWithAccountId(ACCOUNT_UUID),
         "Sora",
         "R-1021",
         CommunicationType.SAY,
@@ -387,22 +402,47 @@ class GameLogicClientTest {
         null,
         null,
         null);
-    client.sendCommunication(
-        sessionContextWithAccountId("acct:opaque/legacy"),
-        "Sora",
-        "R-1021",
-        CommunicationType.SAY,
-        "hello",
-        null,
-        null,
-        null);
-
     ArgumentCaptor<SendCommunicationRequest> requestCaptor =
         ArgumentCaptor.forClass(SendCommunicationRequest.class);
-    verify(stub, times(2)).sendCommunication(requestCaptor.capture());
-    assertThat(requestCaptor.getAllValues())
-        .extracting(SendCommunicationRequest::getAccountId)
-        .containsExactly("", "acct:opaque/legacy");
+    verify(stub).sendCommunication(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getAccountId()).isEqualTo(ACCOUNT_UUID);
+  }
+
+  @Test
+  void sendCommunicationRejectsInvalidAccountUuidBeforeRpc() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    setStub(client, stub);
+
+    for (String accountId :
+        new String[] {
+          null,
+          "",
+          "42",
+          "00000000-0000-0000-0000-000000000000",
+          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
+          " " + ACCOUNT_UUID + " ",
+          "   ",
+          "not-a-uuid"
+        }) {
+      assertThatThrownBy(
+              () ->
+                  client.sendCommunication(
+                      sessionContextWithAccountId(accountId),
+                      "Sora",
+                      "R-1021",
+                      CommunicationType.SAY,
+                      "hello",
+                      null,
+                      null,
+                      null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("canonical non-nil Account UUID");
+    }
+
+    verify(stub, never()).sendCommunication(any(SendCommunicationRequest.class));
   }
 
   @Test
@@ -487,7 +527,7 @@ class GameLogicClientTest {
         DropCarriedItemRequest.newBuilder()
             .setTenantId("22")
             .setSessionId("41")
-            .setAccountId("0")
+            .setAccountId(ACCOUNT_UUID)
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setRoomInstanceId("R-1021")
@@ -511,45 +551,30 @@ class GameLogicClientTest {
   }
 
   @Test
-  void pickupVisibleRoomItemMapsNullAccountToEmptyAndPreservesOpaqueAccount() throws Exception {
+  void pickupVisibleRoomItemRejectsInvalidAccountUuidBeforeDispatch() throws Exception {
     GameLogicClient client = newClient();
     GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
         mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
-    when(stub.pickupVisibleRoomItem(any(PickupVisibleRoomItemRequest.class)))
-        .thenReturn(PickupItemFromRoomResponse.getDefaultInstance());
     setStub(client, stub);
 
-    client.pickupVisibleRoomItem(sessionContextWithAccountId(null), "torch1", 1);
-    client.pickupVisibleRoomItem(sessionContextWithAccountId("acct:opaque/legacy"), "torch1", 1);
-
-    ArgumentCaptor<PickupVisibleRoomItemRequest> requestCaptor =
-        ArgumentCaptor.forClass(PickupVisibleRoomItemRequest.class);
-    verify(stub, times(2)).pickupVisibleRoomItem(requestCaptor.capture());
-    assertThat(requestCaptor.getAllValues())
-        .extracting(PickupVisibleRoomItemRequest::getAccountId)
-        .containsExactly("", "acct:opaque/legacy");
+    assertInvalidAccountUuidsAreRejectedBeforeRpc(
+        accountId ->
+            client.pickupVisibleRoomItem(sessionContextWithAccountId(accountId), "torch1", 1));
+    verify(stub, never()).pickupVisibleRoomItem(any(PickupVisibleRoomItemRequest.class));
   }
 
   @Test
-  void dropCarriedItemMapsNullAccountToEmptyAndPreservesOpaqueAccount() throws Exception {
+  void dropCarriedItemRejectsInvalidAccountUuidBeforeDispatch() throws Exception {
     GameLogicClient client = newClient();
     GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
         mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
-    when(stub.dropCarriedItem(any(DropCarriedItemRequest.class)))
-        .thenReturn(DropItemToRoomResponse.getDefaultInstance());
     setStub(client, stub);
 
-    client.dropCarriedItem(sessionContextWithAccountId(null), "torch1", 1);
-    client.dropCarriedItem(sessionContextWithAccountId("acct:opaque/legacy"), "torch1", 1);
-
-    ArgumentCaptor<DropCarriedItemRequest> requestCaptor =
-        ArgumentCaptor.forClass(DropCarriedItemRequest.class);
-    verify(stub, times(2)).dropCarriedItem(requestCaptor.capture());
-    assertThat(requestCaptor.getAllValues())
-        .extracting(DropCarriedItemRequest::getAccountId)
-        .containsExactly("", "acct:opaque/legacy");
+    assertInvalidAccountUuidsAreRejectedBeforeRpc(
+        accountId -> client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1));
+    verify(stub, never()).dropCarriedItem(any(DropCarriedItemRequest.class));
   }
 
   @Test
@@ -634,25 +659,10 @@ class GameLogicClientTest {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);
     when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", "0", "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
     when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", null, "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
-        .thenReturn("attestation");
-    when(attestationService.issueGameplaySessionAttestation(
-            "22",
-            "41",
-            "acct:opaque/legacy",
-            "123",
-            "1",
-            "R-1021",
-            "world",
-            "realm",
-            "17",
-            "SHARED"))
-        .thenReturn("attestation");
-    when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", "0", "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
         .thenReturn("destination-attestation");
     return new GameLogicClient(
         new ServiceEndpointsProperties(),
@@ -679,6 +689,25 @@ class GameLogicClientTest {
         SESSION_CONTEXT.realmSlug(),
         SESSION_CONTEXT.pointerVersion(),
         SESSION_CONTEXT.playableStateScope());
+  }
+
+  private static void assertInvalidAccountUuidsAreRejectedBeforeRpc(
+      java.util.function.Consumer<String> invocation) {
+    for (String accountId :
+        new String[] {
+          null,
+          "",
+          "42",
+          "acct:opaque/legacy",
+          "00000000-0000-0000-0000-000000000000",
+          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
+          " " + ACCOUNT_UUID + " ",
+          "not-a-uuid"
+        }) {
+      assertThatThrownBy(() -> invocation.accept(accountId))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("accountId");
+    }
   }
 
   private static void setStub(GameLogicClient client, Object stub) throws Exception {

@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.v1.GameplayCommandStatus;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
@@ -64,7 +65,7 @@ public class GameplayCommandStatusServiceImpl implements GameplayCommandStatusSe
         parseLong(command.getTenantId(), "tenant_id"),
         parseLong(command.getGameInstanceId(), "game_instance_id"),
         parseLong(command.getSessionId(), "session_id"),
-        parseOptionalLong(command.getAccountId(), "account_id"),
+        parseOptionalAccountUuid(command.getAccountId()),
         parseOptionalLong(command.getCharacterId(), "character_id"),
         command.getCommandName(),
         command.getSanitizedCommandText(),
@@ -193,6 +194,18 @@ public class GameplayCommandStatusServiceImpl implements GameplayCommandStatusSe
           default -> HttpStatus.INTERNAL_SERVER_ERROR;
         },
         error.getMessage());
+  }
+
+  private String parseOptionalAccountUuid(String value) {
+    if (value == null || value.isEmpty()) {
+      return null;
+    }
+    try {
+      return JwtClaims.requireCanonicalAccountUuid(value, "account_id");
+    } catch (IllegalArgumentException ex) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR, "control-plane account_id was invalid");
+    }
   }
 
   private long parseLong(String value, String field) {

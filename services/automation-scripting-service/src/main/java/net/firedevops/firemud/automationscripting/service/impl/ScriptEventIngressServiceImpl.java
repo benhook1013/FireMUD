@@ -38,6 +38,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
@@ -798,7 +799,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (!request.getIsDryRun()) {
       return null;
     }
-    String principalKey = dryRunPrincipalKey();
+    final String principalKey;
+    try {
+      principalKey = dryRunPrincipalKey();
+    } catch (IllegalArgumentException ex) {
+      // A malformed Account subject is a permanent principal-validation failure. Keep it in the
+      // claimed event's normal finalization path so retries converge on a bounded denial.
+      return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, "dry_run_principal_invalid", 0);
+    }
     if (principalKey.isBlank()) {
       return new TriggerAdmission(false, OUTCOME_QUOTA_DENIED, "dry_run_principal_missing", 0);
     }
@@ -1611,9 +1619,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String dryRunPrincipalKey() {
-    Long accountId = SessionContext.currentAccountIdOrNull();
-    if (accountId != null) {
-      return "account:" + accountId;
+    String accountId = SessionContext.getAccountId();
+    String accountUuid =
+        accountId == null || accountId.isBlank()
+            ? null
+            : JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+    if (accountUuid != null) {
+      return "account:" + accountUuid;
     }
     String serviceName = SessionContext.getServiceName();
     if (serviceName != null && !serviceName.isBlank()) {

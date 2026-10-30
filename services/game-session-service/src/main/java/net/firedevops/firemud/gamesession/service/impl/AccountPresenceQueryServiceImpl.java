@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -61,11 +62,17 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   public List<AccountPresenceSnapshot> queryAccountPresence(
       long tenantId, String viewerAccountId, List<String> accountIds) {
     Objects.requireNonNull(accountIds, "accountIds");
+    if (!SessionContext.isCanonicalAccountIdentity(viewerAccountId)) {
+      throw new IllegalArgumentException(
+          "viewerAccountId must be a canonical non-nil Account UUID");
+    }
     LinkedHashSet<String> requestedIds = new LinkedHashSet<>();
     for (String accountId : accountIds) {
-      if (accountId != null && !accountId.isBlank()) {
-        requestedIds.add(accountId);
+      if (!SessionContext.isCanonicalAccountIdentity(accountId)) {
+        throw new IllegalArgumentException(
+            "accountIds must contain canonical non-nil Account UUIDs");
       }
+      requestedIds.add(accountId);
     }
     if (requestedIds.isEmpty()) {
       return List.of();
@@ -82,16 +89,19 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     validateActivePresenceResponse(tenantId, requestedIds, activePresences);
 
     for (String accountId : requestedIds) {
-      results.put(
-          accountId,
-          offline(tenantId, accountId, recentStates.get(accountId), currentRuntimePointers));
+      AccountRecentPresenceState recentState = recentStates.get(accountId);
+      results.put(accountId, offline(tenantId, accountId, recentState, currentRuntimePointers));
     }
 
     for (Map.Entry<String, List<GameplayPresence>> entry : activePresences.entrySet()) {
       String accountId = entry.getKey();
+      if (!requestedIds.contains(accountId)
+          || !SessionContext.isCanonicalAccountIdentity(accountId)) {
+        continue;
+      }
       GameplayPresence presence =
           selectCurrentPresence(tenantId, entry.getValue(), currentRuntimePointers);
-      if (presence == null) {
+      if (presence == null || !accountId.equals(presence.accountId())) {
         continue;
       }
       GameplayPresenceActivityState activityState =
@@ -197,6 +207,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       GameplayPresence presence,
       Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
     if (presence == null
+        || !SessionContext.isCanonicalAccountIdentity(presence.accountId())
         || presence.sessionId() <= 0
         || presence.tenantId() != tenantId
         || presence.gameInstanceId() <= 0) {

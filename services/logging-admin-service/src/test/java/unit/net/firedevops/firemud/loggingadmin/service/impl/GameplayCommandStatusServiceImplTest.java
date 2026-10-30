@@ -54,7 +54,7 @@ class GameplayCommandStatusServiceImplTest {
         () -> assertEquals(2L, result.tenantId()),
         () -> assertEquals(7L, result.gameInstanceId()),
         () -> assertEquals(11L, result.sessionId()),
-        () -> assertEquals(42L, result.accountId()),
+        () -> assertEquals("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", result.accountId()),
         () -> assertEquals(99L, result.characterId()),
         () -> assertEquals("LOOK", result.commandName()),
         () -> assertEquals("look", result.sanitizedCommandText()),
@@ -255,13 +255,37 @@ class GameplayCommandStatusServiceImplTest {
         ResponseStatusException.class, () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "42",
+        "not-a-uuid",
+        "00000000-0000-0000-0000-000000000000",
+        "B8D093F7-CB70-40ED-9FAC-3C82D4BF28F1",
+        " b8d093f7-cb70-40ed-9fac-3c82d4bf28f1 "
+      })
+  void rejectsMalformedControlPlaneAccountUuid(String account) {
+    SessionContext.setContext(
+        "e830a76a-a786-43de-9416-5840fa6e0578", List.of("platformAdmin"), Map.of());
+    when(gameSessionControlPlaneClient.getGameplayCommandStatus(2L, 7L, "cmd-123"))
+        .thenReturn(
+            GetGameplayCommandStatusResponse.newBuilder()
+                .setCommand(commandStatus("2").toBuilder().setAccountId(account))
+                .build());
+    ResponseStatusException failure =
+        assertThrows(
+            ResponseStatusException.class,
+            () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
+    assertEquals(500, failure.getStatusCode().value());
+  }
+
   private GameplayCommandStatus commandStatus(String tenantId) {
     return GameplayCommandStatus.newBuilder()
         .setCommandId("cmd-123")
         .setTenantId(tenantId)
         .setGameInstanceId("7")
         .setSessionId("11")
-        .setAccountId("42")
+        .setAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
         .setCharacterId("99")
         .setCommandName("LOOK")
         .setSanitizedCommandText("look")
