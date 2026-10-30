@@ -3,10 +3,12 @@
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -92,7 +94,7 @@ class CaptureTests(unittest.TestCase):
         arguments = (self.root / 'diagnostic-args').read_text().splitlines()
         self.assertIn('--offline', arguments)
         self.assertIn('--no-configuration-cache', arguments)
-        self.assertEqual('firemudCompileFailureFacts', arguments[-1])
+        self.assertEqual(':common-saga:firemudCompileFailureFacts', arguments[-1])
         self.assertFalse(any(arg.endswith(':check') for arg in arguments))
         self.assertNotIn('--refresh-dependencies', arguments)
 
@@ -104,6 +106,18 @@ class CaptureTests(unittest.TestCase):
             CAPTURE.collect(self.root, self.log, self.root / 'linked-output/capture', 1)
         self.assertEqual([], list(external.iterdir()))
 
+    def test_symlink_workspace_root_keeps_lexical_output_relation(self):
+        actual_root = self.root / 'actual-workspace'
+        actual_root.mkdir()
+        (actual_root / 'check.log').write_text('> Task :common-saga:compileJava FAILED\n')
+        linked_root = self.root / 'workspace-link'
+        linked_root.symlink_to(actual_root, target_is_directory=True)
+        with patch.object(CAPTURE, 'diagnostic', return_value={'status': 'unavailable'}):
+            CAPTURE.collect(linked_root, linked_root / 'check.log', linked_root / 'evidence', 1)
+        manifest = actual_root / 'evidence/manifest.json'
+        self.assertTrue(manifest.is_file())
+        self.assertEqual(1, json.loads(manifest.read_text())['check_exit'])
+
     def test_exact_diagnostic_cap_never_claims_complete(self):
         data = b'FIREMUD_COMPILE_FACTS={"attribution":"post-failure"}\n'
         data += b'x' * (128 - len(data))
@@ -114,6 +128,67 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual('limited', result['status'])
         self.assertTrue(result['output_limit_reached'])
         self.assertTrue(result['output_possibly_truncated'])
+
+    def test_diagnostic_cache_write_is_not_limited_by_stdout_cap(self):
+        runner = self.write(
+            'gradlew', f'#!{sys.executable}\n'
+            'from pathlib import Path\n'
+            f'Path("unrelated-cache.bin").write_bytes(b"x" * {CAPTURE.MAX_FILE_BYTES + 4096})\n'
+            'print(\'FIREMUD_COMPILE_FACTS={"attribution":"post-failure"}\')\n')
+        runner.chmod(0o755)
+        result = CAPTURE.diagnostic(self.root, ':common-saga:compileJava', self.root / 'facts.json')
+        self.assertEqual('complete', result['status'])
+        self.assertEqual(CAPTURE.MAX_FILE_BYTES + 4096, (self.root / 'unrelated-cache.bin').stat().st_size)
+        self.assertEqual({'attribution': 'post-failure'}, json.loads((self.root / 'facts.json').read_text()))
+
+    def assert_process_group_child_exited(self, pid):
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                with open(f'/proc/{pid}/stat', encoding='ascii') as process_stat:
+                    if process_stat.read().split()[2] == 'Z':
+                        return
+            except FileNotFoundError:
+                return
+            time.sleep(0.02)
+        self.fail(f'diagnostic child {pid} survived process-group cleanup')
+
+    def test_diagnostic_output_limit_kills_only_its_process_group(self):
+        runner = self.write(
+            'gradlew', f'#!{sys.executable}\n'
+            'import os, subprocess, sys\n'
+            'from pathlib import Path\n'
+            'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+            'Path("child.pid").write_text(str(child.pid))\n'
+            'while True: os.write(1, b"x" * 4096)\n')
+        runner.chmod(0o755)
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(unrelated.wait)
+        self.addCleanup(unrelated.kill)
+        with patch.object(CAPTURE, 'MAX_FILE_BYTES', 128):
+            result = CAPTURE.diagnostic(self.root, ':common-saga:compileJava', self.root / 'facts.json')
+        self.assertIn(result['status'], ['limited', 'unavailable'])
+        self.assertTrue(result['output_limit_reached'])
+        self.assert_process_group_child_exited(int((self.root / 'child.pid').read_text()))
+        self.assertIsNone(unrelated.poll())
+
+    def test_diagnostic_deadline_kills_its_process_group(self):
+        runner = self.write(
+            'gradlew', f'#!{sys.executable}\n'
+            'import subprocess, sys, time\n'
+            'from pathlib import Path\n'
+            'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+            'Path("child.pid").write_text(str(child.pid))\n'
+            'time.sleep(30)\n')
+        runner.chmod(0o755)
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(unrelated.wait)
+        self.addCleanup(unrelated.kill)
+        with patch.object(CAPTURE, 'DIAGNOSTIC_TIMEOUT_SECONDS', 0.2):
+            result = CAPTURE.diagnostic(self.root, ':common-saga:compileJava', self.root / 'facts.json')
+        self.assertEqual('timeout', result['status'])
+        self.assert_process_group_child_exited(int((self.root / 'child.pid').read_text()))
+        self.assertIsNone(unrelated.poll())
 
     def test_streamed_tail_is_bounded_and_output_is_live(self):
         destination = io.BytesIO()
