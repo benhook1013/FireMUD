@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AbortGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.account.v1.AbortNeverAdmittedGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.account.v1.ConfirmOriginalNewGameplayAdmissionRequest;
@@ -37,6 +39,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmission
 import net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwner;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
@@ -224,7 +227,84 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   }
 
   @Test
-  void manualFactoryExposesExactlyTheSixPurposeSpecificMethodsWithoutSpringRegistration() {
+  void neverAdmittedAbortAuthenticatesTheExactPeerBeforeInspectingItsRequest() {
+    var request = AbortNeverAdmittedGameplayAdmissionLeaseRequest.getDefaultInstance();
+    assertNeverAdmittedCode(request, null, Status.Code.UNAUTHENTICATED);
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "world-management-service"), Status.Code.PERMISSION_DENIED);
+    assertNeverAdmittedCode(
+        request, peer("other", "game-session-service"), Status.Code.PERMISSION_DENIED);
+
+    SessionContext.setContext("123", List.of(), Map.of());
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+    SessionContext.clear();
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "instance");
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+    SessionContext.clear();
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  @Test
+  void neverAdmittedAbortRejectsNullOversizedAndMalformedWireBeforeCallingEitherOwner() {
+    var peer = peer(NAMESPACE, "game-session-service");
+    assertNeverAdmittedCode(null, peer, Status.Code.INVALID_ARGUMENT);
+    var oversized =
+        AbortNeverAdmittedGameplayAdmissionLeaseRequest.newBuilder()
+            .addOriginalLeaseEvidenceUtf8(
+                ByteString.copyFrom(
+                    new byte[AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES + 1]))
+            .build();
+    assertNeverAdmittedCode(oversized, peer, Status.Code.INVALID_ARGUMENT);
+    assertNeverAdmittedCode(
+        AbortNeverAdmittedGameplayAdmissionLeaseRequest.getDefaultInstance(),
+        peer,
+        Status.Code.INVALID_ARGUMENT);
+    var malformed =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toRequest(
+                JWT, lease(NAMESPACE), DECISION_ID, OTHER_ID)
+            .toBuilder()
+            .addSchemaVersion(1)
+            .build();
+    assertNeverAdmittedCode(malformed, peer, Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  @Test
+  void neverAdmittedAbortRejectsAStructurallyValidForeignNamespaceLeaseBeforeCallingEitherOwner() {
+    var foreignLease = lease("other");
+    var request =
+        AccountGameplayAdmissionNeverAdmittedGrpcCodec.toRequest(
+            JWT, foreignLease, DECISION_ID, OTHER_ID);
+    assertThat(
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(request)
+                .originalLeaseEvidence()
+                .canonicalJson())
+        .isEqualTo(foreignLease.canonicalJson());
+    assertNeverAdmittedCode(
+        request, peer(NAMESPACE, "game-session-service"), Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(owner, credentialOwner);
+  }
+
+  private void assertNeverAdmittedCode(
+      AbortNeverAdmittedGameplayAdmissionLeaseRequest request,
+      GrpcPeerIdentity peer,
+      Status.Code expected) {
+    var observer = new Capture<AbortNeverAdmittedGameplayAdmissionLeaseResponse>();
+    withPeer(peer, () -> service.abortNeverAdmittedGameplayAdmissionLease(request, observer));
+    assertThat(observer.code()).isEqualTo(expected);
+    assertThat(observer.description)
+        .isEqualTo("Account gameplay admission lease operation denied or unavailable");
+    assertThat(observer.failureHadCause).isFalse();
+    assertThat(observer.errors).isEqualTo(1);
+    assertThat(observer.responses).isZero();
+    assertThat(observer.completed).isFalse();
+  }
+
+  @Test
+  void manualFactoryExposesExactlyTheSevenPurposeSpecificMethodsWithoutSpringRegistration() {
     assertThat(service.bindService().getServiceDescriptor().getMethods())
         .extracting(method -> method.getFullMethodName())
         .containsExactlyInAnyOrder(
@@ -233,7 +313,8 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             "account.v1.AccountGameplayAdmissionLeaseService/ReadGameplayAdmissionLease",
             "account.v1.AccountGameplayAdmissionLeaseService/AbortGameplayAdmissionLease",
             "account.v1.AccountGameplayAdmissionLeaseService/IssueOriginalNewGameplayCredential",
-            "account.v1.AccountGameplayAdmissionLeaseService/ConfirmOriginalNewGameplayAdmission");
+            "account.v1.AccountGameplayAdmissionLeaseService/ConfirmOriginalNewGameplayAdmission",
+            "account.v1.AccountGameplayAdmissionLeaseService/AbortNeverAdmittedGameplayAdmissionLease");
   }
 
   @Test

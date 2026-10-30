@@ -2752,7 +2752,14 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               .reset()
               .on()
               .addPassword(ISSUER_OWNER_PASSWORD)
-              .keyPattern("session:game:index:issuer:*")
+              // Match the canonical original-NEW session, index, and admission-barrier families.
+              .keyPattern("session:game:{*}:*")
+              .keyPattern("session:game:index:character:{*}:*")
+              .keyPattern("session:game:index:account-tenant:{*}:*")
+              .keyPattern("session:game:index:tenant:{*}")
+              .keyPattern("session:game:index:issuer:{*}:*")
+              .keyPattern("session:game:account-admission:{*}:*")
+              .keyPattern("session:game:issuer-admission:{*}:*")
               .addCommand(CommandType.HELLO)
               .addCommand(CommandType.PING)
               .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
@@ -2765,7 +2772,13 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               .addCommand(CommandType.HLEN)
               .addCommand(CommandType.HGETALL)
               .addCommand(CommandType.HSET)
-              .addCommand(CommandType.HDEL));
+              .addCommand(CommandType.HDEL)
+              .addCommand(CommandType.GET)
+              .addCommand(CommandType.SET)
+              .addCommand(CommandType.DEL)
+              .addCommand(CommandType.SISMEMBER)
+              .addCommand(CommandType.SADD)
+              .addCommand(CommandType.SREM));
     }
 
     private static void awaitLocalAndReplicaAof(RedisCommands<byte[], byte[]> commands)

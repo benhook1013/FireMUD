@@ -13,7 +13,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +54,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
@@ -59,7 +63,10 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
  * PROVISIONAL reverse read and guarded abort CAS, physical PostgreSQL/Redis and manual mTLS.
  * Launch/publication/initial-target and test PKI inputs remain controlled. The physical issuer
  * proof is binding-local only; it does not prove runtime registration, admission, production PKI,
- * or completion of the remaining Account and region terminal obligations.
+ * or completion of the remaining Account and region terminal obligations. The never-admitted cases
+ * use actual dispatch claims, qualified closure and both directions of mTLS without a positive
+ * decision/ACK. External reset/restore/promotion exclusion is a controlled fixture input, not proof
+ * of a production qualification provider.
  */
 @Execution(ExecutionMode.SAME_THREAD)
 class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
@@ -82,6 +89,400 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   @AfterEach
   void cleanupAccountSchemas() {
     accountFixtures.dropRunOwnedSchemas();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void claimedBeforeCreateProcessLossSettlesThroughActualBidirectionalMtlsAndIssuerRetirement(
+      boolean installedBootstrap) throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
+      var frozenProofs =
+          session
+              .gs
+              .dsl()
+              .fetch(
+                  "SELECT to_jsonb(proof)::text FROM game_session_canonical_issuer_bootstrap_partition_proof proof ORDER BY partition_id")
+              .formatJSON();
+      var claimed =
+          session
+              .gs
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, original_new_candidate_state, original_new_candidate_readback_digest, admission_lease_id"
+                      + " FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                  session.gs.transitionId());
+      assertThat(claimed.get("status", String.class)).isEqualTo("PREPARED");
+      assertThat(claimed.get("original_new_candidate_state", String.class))
+          .isEqualTo("DISPATCH_POSSIBLE");
+      assertThat(claimed.get("original_new_candidate_readback_digest")).isNull();
+      assertThat(claimed.get("admission_lease_id")).isNull();
+      var terminal = session.abortNeverAdmitted();
+      assertThat(terminal.cleanupComplete()).isTrue();
+      assertThat(terminal.transition().status().name()).isEqualTo("ABORTED");
+      assertThat(terminal.inventory().lifecycle())
+          .isEqualTo(CanonicalGameplayBindingInventoryEntry.Lifecycle.TERMINAL);
+      assertThat(terminal.reservation().lifecycle())
+          .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASED);
+      assertThat(terminal.candidate().leaseEvidence().canonicalJson())
+          .isEqualTo(session.lease.canonicalJson());
+      assertThat(terminal.orphanCleanupId()).isNotNull();
+      assertThat(terminal.negativeResolutionId()).isNotNull();
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      assertThat(session.gs.negativeFence())
+          .isEqualTo(
+              "original-new-never-admitted-closure/v1:"
+                  + terminal.abandonmentId()
+                  + ":"
+                  + terminal.candidateDigest());
+      assertThat(session.gs.maximumConcurrentClosureQualifications()).isGreaterThanOrEqualTo(2);
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+      var account = session.client.read(session.jwt, session.leaseBytes());
+      assertThat(account.state()).isEqualTo(State.ABORTED);
+      assertThat(account.bindingDecisionId()).isNull();
+      assertThat(account.originalAckReceipt()).isNull();
+      assertThat(account.orphanCleanupId()).isEqualTo(terminal.orphanCleanupId());
+      org.mockito.Mockito.verify(session.reverse)
+          .readOriginalNewNeverAdmitted(
+              org.mockito.ArgumentMatchers.eq(session.gs.transitionId()),
+              org.mockito.ArgumentMatchers.eq(terminal.abandonmentId()),
+              any());
+      org.mockito.Mockito.verify(session.reverse, org.mockito.Mockito.never()).read(any(), any());
+      var releaseSource =
+          session
+              .gs
+              .dsl()
+              .fetchSingle(
+                  "SELECT original_local_operation_id, original_bootstrap_member_operation_id FROM game_session_canonical_issuer_binding_local_release_operation WHERE transition_id = ?",
+                  session.gs.transitionId());
+      assertThat(releaseSource.get("original_bootstrap_member_operation_id") != null)
+          .isEqualTo(installedBootstrap);
+      assertThat(releaseSource.get("original_local_operation_id") != null)
+          .isEqualTo(!installedBootstrap);
+      session.assertNeverAdmittedExactRetryPreservesState();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetch(
+                      "SELECT to_jsonb(proof)::text FROM game_session_canonical_issuer_bootstrap_partition_proof proof ORDER BY partition_id")
+                  .formatJSON())
+          .isEqualTo(frozenProofs);
+      if (installedBootstrap) {
+        session.gs.assertUnaffectedBootstrapFieldsPresent();
+        assertThat(
+                session
+                    .gs
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT count(*) FROM game_session_canonical_issuer_binding_local_operation WHERE transition_id = ?",
+                        session.gs.transitionId())
+                    .get(0, Long.class))
+            .isZero();
+        session.gs.prepareOtherControllerNew("after-bootstrap-retirement");
+        assertThat(
+                session.gs.projectOtherControllerNew("after-bootstrap-retirement").scriptOutcome())
+            .isEqualTo(1L);
+        session.gs.assertUnaffectedBootstrapFieldsPresent();
+        assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void neverAdmittedUnknownAccountTerminalAndRestartRetainOriginalCleanupAndNegativeResolution(
+      boolean installedBootstrap) throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      var unknown = session.client.abort(session.jwt, session.leaseBytes(), null);
+      assertThat(unknown.state()).isEqualTo(State.ABORTED);
+      assertThat(unknown.bindingDecisionId()).isNull();
+      String originalAccountTerminal = session.accountOperationImage();
+      var terminal = session.abortNeverAdmitted();
+      assertThat(terminal.cleanupComplete()).isTrue();
+      assertThat(terminal.orphanCleanupId()).isEqualTo(unknown.orphanCleanupId());
+      assertThat(session.accountOperationImage()).isEqualTo(originalAccountTerminal);
+      String originalResolution = session.negativeResolutionImage();
+      String settledGs = session.image();
+      byte[] settledIssuer = session.gs.issuerPartitionFieldSetBytes();
+      String fence = session.gs.negativeFence();
+      session.restartAccount();
+      var replay = session.abortNeverAdmitted();
+      assertThat(replay.cleanupComplete()).isTrue();
+      assertThat(replay.abandonmentId()).isEqualTo(terminal.abandonmentId());
+      assertThat(replay.negativeResolutionId()).isEqualTo(terminal.negativeResolutionId());
+      assertThat(replay.orphanCleanupId()).isEqualTo(unknown.orphanCleanupId());
+      assertThat(replay.closureDigest()).isEqualTo(terminal.closureDigest());
+      assertThat(session.accountOperationImage()).isEqualTo(originalAccountTerminal);
+      assertThat(session.negativeResolutionImage()).isEqualTo(originalResolution);
+      assertThat(session.image()).isEqualTo(settledGs);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(settledIssuer);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+    }
+  }
+
+  @Test
+  void installedBootstrapNegativeCleanupResumesOriginalReleaseAndRetirementAfterLostReplies()
+      throws Exception {
+    try (var session = openNeverAdmitted(true)) {
+      // Actual Account negative RPC completes; the changed controlled issuer incarnation holds GS
+      // cleanup.
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      assertThat(session.client.read(session.jwt, session.leaseBytes()).state())
+          .isEqualTo(State.ABORTED);
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      session.gs.restoreIssuerState();
+      session.gs.prepareOtherControllerNew("pending-bootstrap-cleanup");
+      var release = session.gs.prepareIssuerRelease();
+      assertThatThrownBy(() -> session.gs.projectOtherControllerNew("pending-bootstrap-cleanup"))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(() -> session.gs.projectIssuerReleaseAndLoseReply(release))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled lost issuer release reply");
+      var retry = session.gs.prepareIssuerRelease();
+      assertThat(retry.operationId()).isEqualTo(release.operationId());
+      assertThat(retry.exactReleasedMemberValueBytes())
+          .containsExactly(release.exactReleasedMemberValueBytes());
+      var readback = session.gs.projectIssuerRelease(retry);
+      assertThat(readback.scriptOutcome()).isEqualTo(2L);
+      session.gs.completeIssuerRelease(retry, readback);
+      var releasedFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(session.gs::replayOriginalBootstrapPartition)
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(releasedFields);
+      session.gs.prepareIssuerRetirement(session.gs.transitionId());
+      assertThatThrownBy(() -> session.gs.projectOtherControllerNew("pending-bootstrap-cleanup"))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(
+              () ->
+                  session.gs.retireIssuerCapacityAndLoseReplyForTransition(
+                      session.gs.transitionId()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled lost retirement reply");
+      assertThat(
+              session.gs.isIssuerRetirementComplete(
+                  session.gs.prepareIssuerRetirement(session.gs.transitionId())))
+          .isTrue();
+      var retiredFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(() -> session.gs.projectIssuerRelease(release))
+          .isInstanceOf(RuntimeException.class);
+      assertThatThrownBy(session.gs::replayOriginalBootstrapPartition)
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(retiredFields);
+      session.restartAccount();
+      assertThat(session.abortNeverAdmitted().cleanupComplete()).isTrue();
+      assertThat(session.gs.projectOtherControllerNew("pending-bootstrap-cleanup").scriptOutcome())
+          .isEqualTo(1L);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void negativeCleanupOwnerResumesAfterCommittedReleasePreparationReplyLoss(
+      boolean installedBootstrap) throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      assertThat(session.client.read(session.jwt, session.leaseBytes()).state())
+          .isEqualTo(State.ABORTED);
+      String account = session.accountOperationImage();
+      String resolution = session.negativeResolutionImage();
+      String fence = session.gs.negativeFence();
+      session.gs.restoreIssuerState();
+
+      assertThatThrownBy(session.gs::prepareIssuerReleaseAndLoseReply)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled lost issuer release preparation reply");
+      String originalRelease = session.issuerReleaseIdentityImage();
+      var release = session.gs.prepareIssuerRelease();
+      var preparedRetry = session.gs.prepareIssuerRelease();
+      assertThat(preparedRetry.operationId()).isEqualTo(release.operationId());
+      assertThat(preparedRetry.exactOriginalMemberValueBytes())
+          .containsExactly(release.exactOriginalMemberValueBytes());
+      assertThat(preparedRetry.exactReleasedMemberValueBytes())
+          .containsExactly(release.exactReleasedMemberValueBytes());
+      session.restartAccount();
+      var completed = session.abortNeverAdmitted();
+
+      assertThat(completed.cleanupComplete()).isTrue();
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.issuerReleaseIdentityImage()).isEqualTo(originalRelease);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      if (installedBootstrap) session.gs.assertUnaffectedBootstrapFieldsPresent();
+      session.assertNeverAdmittedExactRetryPreservesState();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void negativeCleanupOwnerResumesAfterCommittedRetirementReplyLoss(boolean installedBootstrap)
+      throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      String account = session.accountOperationImage();
+      String resolution = session.negativeResolutionImage();
+      String fence = session.gs.negativeFence();
+      session.gs.restoreIssuerState();
+      var release = session.gs.prepareIssuerRelease();
+      session.gs.completeIssuerRelease(release, session.gs.projectIssuerRelease(release));
+      assertThatThrownBy(
+              () ->
+                  session.gs.retireIssuerCapacityAndLoseReplyForTransition(
+                      session.gs.transitionId()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("controlled lost retirement reply");
+      String history = session.issuerCleanupHistoryImage();
+      byte[] retiredFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+
+      session.restartAccount();
+      assertThat(session.abortNeverAdmitted().cleanupComplete()).isTrue();
+
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(retiredFields);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      if (installedBootstrap) session.gs.assertUnaffectedBootstrapFieldsPresent();
+      session.assertNeverAdmittedExactRetryPreservesState();
+    }
+  }
+
+  @Test
+  void neverAdmittedMissingQualificationChangedCredentialAndMismatchedAbandonmentRemainUnsettled()
+      throws Exception {
+    try (var session = openNeverAdmitted()) {
+      String accountPending = session.accountOperationImage();
+      assertThatThrownBy(
+              () ->
+                  session.client.abortNeverAdmitted(
+                      session.jwt, session.lease, session.gs.transitionId(), UUID.randomUUID()))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.accountOperationImage()).isEqualTo(accountPending);
+      assertThatThrownBy(
+              () ->
+                  session
+                      .gs
+                      .neverAdmittedOwner(session.client)
+                      .abort(session.gs.transitionId(), "invalid-current-caller-token"))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.accountOperationImage()).isEqualTo(accountPending);
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      assertThat(session.gs.abandonmentSource().orphanCleanupId()).isNull();
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
+      session.gs.withdrawControlledClosureQualification();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      assertThat(session.accountOperationImage()).isEqualTo(accountPending);
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retainedNegativeSettlementResumesIssuerCleanupAfterPresentedCallerExpires(
+      boolean installedBootstrap) throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      session.gs.moveIssuerIncarnation();
+      assertThatThrownBy(session::abortNeverAdmitted).isInstanceOf(RuntimeException.class);
+      var retained = session.gs.abandonmentSource();
+      assertThat(retained.transition().status().name()).isEqualTo("ABORTED");
+      assertThat(retained.orphanCleanupId()).isNotNull();
+      assertThat(retained.negativeResolutionId()).isNotNull();
+      assertThat(retained.cleanupComplete()).isFalse();
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
+      String account = session.accountOperationImage();
+      String resolution = session.negativeResolutionImage();
+      String fence = session.gs.negativeFence();
+
+      session.restartAccountAfterPresentedCallerExpiry();
+      // The actual receiving verifier now rejects the unchanged original signed JWT.
+      assertThatThrownBy(
+              () ->
+                  session.client.abortNeverAdmitted(
+                      session.jwt,
+                      session.lease,
+                      session.gs.transitionId(),
+                      retained.abandonmentId()))
+          .isInstanceOf(IllegalStateException.class);
+      var expiredAccount = spy(session.client);
+      var recreatedOwner = session.gs.neverAdmittedOwner(expiredAccount);
+      byte[] pendingIssuer = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(() -> recreatedOwner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.gs.abandonmentSource().cleanupComplete()).isFalse();
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(pendingIssuer);
+      session.gs.restoreIssuerState();
+
+      var completed = recreatedOwner.abort(session.gs.transitionId(), session.jwt);
+      assertThat(completed.cleanupComplete()).isTrue();
+      assertThat(completed.abandonmentId()).isEqualTo(retained.abandonmentId());
+      assertThat(completed.orphanCleanupId()).isEqualTo(retained.orphanCleanupId());
+      assertThat(completed.negativeResolutionId()).isEqualTo(retained.negativeResolutionId());
+      assertThat(completed.closureDigest()).isEqualTo(retained.closureDigest());
+      assertThat(completed.candidate().canonicalBytes())
+          .containsExactly(retained.candidate().canonicalBytes());
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isTrue();
+      if (installedBootstrap) session.gs.assertUnaffectedBootstrapFieldsPresent();
+      session.assertNeverAdmittedExactRetryPreservesState();
+
+      String terminalRows = session.completedNegativeCleanupCurrentImage();
+      String history = session.issuerCleanupHistoryImage();
+      byte[] retiredIssuer = session.gs.issuerPartitionFieldSetBytes();
+      session.gs.withdrawControlledClosureQualification();
+      assertThatThrownBy(() -> recreatedOwner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(session.completedNegativeCleanupCurrentImage()).isEqualTo(terminalRows);
+      assertThat(session.issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(retiredIssuer);
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+      org.mockito.Mockito.verify(expiredAccount, org.mockito.Mockito.never())
+          .abortNeverAdmitted(any(), any(), any(), any());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void expiredPresentedCallerCannotEstablishDurableNegativeSettlement(boolean installedBootstrap)
+      throws Exception {
+    try (var session = openNeverAdmitted(installedBootstrap)) {
+      String account = session.accountOperationImage();
+      session.restartAccountAfterPresentedCallerExpiry();
+      var expiredAccount = spy(session.client);
+      var owner = session.gs.neverAdmittedOwner(expiredAccount);
+      assertThatThrownBy(() -> owner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(IllegalStateException.class);
+      var closed = session.gs.abandonmentSource();
+      assertThat(closed.closureDigest()).isNotNull();
+      assertThat(closed.orphanCleanupId()).isNull();
+      assertThat(closed.negativeResolutionId()).isNull();
+      assertThat(closed.cleanupComplete()).isFalse();
+      String closedRows = session.completedNegativeCleanupCurrentImage();
+      String history = session.issuerCleanupHistoryImage();
+      String fence = session.gs.negativeFence();
+      byte[] issuerFields = session.gs.issuerPartitionFieldSetBytes();
+      assertThatThrownBy(() -> owner.abort(session.gs.transitionId(), session.jwt))
+          .isInstanceOf(IllegalStateException.class);
+      org.mockito.Mockito.verify(expiredAccount, org.mockito.Mockito.times(2))
+          .abortNeverAdmitted(any(), any(), any(), any());
+      assertThat(session.accountOperationImage()).isEqualTo(account);
+      assertThat(session.completedNegativeCleanupCurrentImage()).isEqualTo(closedRows);
+      assertThat(session.issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(session.gs.negativeFence()).isEqualTo(fence);
+      assertThat(session.gs.issuerPartitionFieldSetBytes()).containsExactly(issuerFields);
+      assertThat(session.gs.originalIssuerCapacityAbsent()).isFalse();
+      assertThat(session.gs.heldClosureQualifications()).isZero();
+    }
   }
 
   @Test
@@ -926,6 +1327,15 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     return new Session(prepareMemberRepair);
   }
 
+  private Session openNeverAdmitted() throws Exception {
+    return openNeverAdmitted(false);
+  }
+
+  private Session openNeverAdmitted(boolean installedBootstrap) throws Exception {
+    accountFixtures.temporaryDirectory = temporaryDirectory;
+    return new Session(false, true, installedBootstrap);
+  }
+
   private final class Session implements AutoCloseable {
     private final PhysicalRedisFixture redis = PhysicalRedisFixture.start();
     private final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.Fixture
@@ -942,6 +1352,16 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     private AccountGameplayAdmissionLeaseEvidence lease;
 
     private Session(boolean prepareMemberRepair) throws Exception {
+      this(prepareMemberRepair, false);
+    }
+
+    private Session(boolean prepareMemberRepair, boolean claimedNeverAdmitted) throws Exception {
+      this(prepareMemberRepair, claimedNeverAdmitted, false);
+    }
+
+    private Session(
+        boolean prepareMemberRepair, boolean claimedNeverAdmitted, boolean installedBootstrap)
+        throws Exception {
       try {
         accountFixture = accountFixtures.newFixture(redis.client());
         var issuance = accountFixture.committedCandidate.identity();
@@ -970,10 +1390,13 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 candidate.issuerAuthGeneration(),
                 candidate.issuerIndexLayoutVersion(),
                 candidate.issuerIndexPartitionCount(),
-                java.math.BigInteger.valueOf(prepareMemberRepair ? 3 : 2));
+                java.math.BigInteger.valueOf(prepareMemberRepair || installedBootstrap ? 3 : 2));
         gs =
             new CanonicalGameplayAdmissionAbortCompositionFixture(
-                accountFixture.dataSource, capacityCandidate, redis.issuerOwnerClient(), 0);
+                accountFixture.dataSource,
+                capacityCandidate,
+                redis.issuerOwnerClient(),
+                installedBootstrap);
         if (prepareMemberRepair) gs.prepareMemberRepairRedis();
         pkiDirectory = Files.createTempDirectory(temporaryDirectory, "actual-abort-mtls-");
         pki =
@@ -986,13 +1409,25 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 new LoopbackMtlsTestPki.IdentitySpec("account-client", ACCOUNT, false),
                 new LoopbackMtlsTestPki.IdentitySpec(
                     "wrong", "spiffe://firemud/ns/test/sa/world-management-service", false));
-        gsServer =
-            CanonicalGameplayAdmissionAbortManualFactory.createUnregisteredDecisionReadServer(
-                "127.0.0.1:0",
-                pki.keyManagerFactory(pki.identity("gs")),
-                pki.trustManagerFactory(),
-                gs.dsl(),
-                "test");
+        if (claimedNeverAdmitted) {
+          gsServer =
+              CanonicalGameplayAdmissionAbortManualFactory
+                  .createUnregisteredNegativeDecisionReadServer(
+                      "127.0.0.1:0",
+                      pki.keyManagerFactory(pki.identity("gs")),
+                      pki.trustManagerFactory(),
+                      gs.dsl(),
+                      "test",
+                      gs.negativeClosure());
+        } else {
+          gsServer =
+              CanonicalGameplayAdmissionAbortManualFactory.createUnregisteredDecisionReadServer(
+                  "127.0.0.1:0",
+                  pki.keyManagerFactory(pki.identity("gs")),
+                  pki.trustManagerFactory(),
+                  gs.dsl(),
+                  "test");
+        }
         gsServer.start();
         var endpoints = new ServiceEndpointsProperties();
         endpoints.setGameSessionService("127.0.0.1:" + gsServer.getPort());
@@ -1022,7 +1457,8 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
             client
                 .acquire(requestId, jwt, gs.candidate(), gs.target(), gs.generation())
                 .originalLeaseEvidence();
-        gs.publish(lease);
+        if (claimedNeverAdmitted) gs.claimOriginalNewCandidateWithoutDispatch(lease);
+        else gs.publish(lease);
       } catch (Exception | Error setupFailure) {
         try {
           close();
@@ -1034,6 +1470,27 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     }
 
     private void restartAccount() throws Exception {
+      restartAccount(verifier);
+    }
+
+    private void restartAccountAfterPresentedCallerExpiry() throws Exception {
+      var expiredClock =
+          Clock.fixed(
+              Instant.ofEpochSecond(
+                  accountFixture.committedCandidate.identity().expiresAtEpochSecond() + 6L),
+              ZoneOffset.UTC);
+      var expiredVerifier =
+          new AccountGameplayAdmissionCallerVerifier(
+              accountFixture.signerFixture.trustedJwksSource(),
+              accountFixture.committedIssuanceOwner,
+              expiredClock);
+      assertThatThrownBy(() -> expiredVerifier.verifyPresentedCompactToken(jwt))
+          .isInstanceOf(IllegalStateException.class);
+      restartAccount(expiredVerifier);
+    }
+
+    private void restartAccount(AccountGameplayAdmissionCallerVerifier receivingVerifier)
+        throws Exception {
       if (client != null) client.close();
       if (accountServer != null) {
         accountServer.shutdownNow();
@@ -1042,7 +1499,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
       }
       var owner =
           new AccountGameplayAdmissionLeaseOwner(
-              verifier, reverse, "test", accountFixture.dataSource);
+              receivingVerifier, reverse, "test", accountFixture.dataSource);
       accountServer =
           AccountGameplayAdmissionLeaseManualFactory.createUnregisteredServer(
               "127.0.0.1:0",
@@ -1080,8 +1537,105 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
           .collect(java.util.stream.Collectors.joining("\n"));
     }
 
+    private String issuerReleaseIdentityImage() {
+      return gs.dsl()
+          .fetchSingle(
+              "SELECT (to_jsonb(release) - ARRAY['status', 'completion_inventory_revision',"
+                  + " 'physical_readback_field_set_bytes', 'physical_readback_field_set_digest', 'completed_at'])::text"
+                  + " FROM game_session_canonical_issuer_binding_local_release_operation release WHERE transition_id = ?",
+              gs.transitionId())
+          .get(0, String.class);
+    }
+
+    private String issuerCleanupHistoryImage() {
+      return java.util.List.of(
+              "game_session_canonical_issuer_binding_local_operation",
+              "game_session_canonical_issuer_bootstrap_member_operation",
+              "game_session_canonical_issuer_bootstrap_partition_proof",
+              "game_session_canonical_issuer_binding_local_release_operation",
+              "game_session_canonical_issuer_binding_local_retirement",
+              "game_session_canonical_issuer_partition_mutation")
+          .stream()
+          .map(
+              table ->
+                  gs.dsl()
+                      .fetch(
+                          "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
+                              + table
+                              + " t ORDER BY 1")
+                      .getValues("image")
+                      .toString())
+          .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    private void assertNeverAdmittedExactRetryPreservesState() {
+      String terminal = image();
+      String history = issuerCleanupHistoryImage();
+      String current = completedNegativeCleanupCurrentImage();
+      String account = accountOperationImage();
+      String resolution = negativeResolutionImage();
+      String fence = gs.negativeFence();
+      byte[] fields = gs.issuerPartitionFieldSetBytes();
+      assertThat(abortNeverAdmitted().cleanupComplete()).isTrue();
+      gs.assertCompletedNegativeReleaseAndRetirementReplay();
+      assertThat(image()).isEqualTo(terminal);
+      assertThat(issuerCleanupHistoryImage()).isEqualTo(history);
+      assertThat(completedNegativeCleanupCurrentImage()).isEqualTo(current);
+      assertThat(accountOperationImage()).isEqualTo(account);
+      assertThat(negativeResolutionImage()).isEqualTo(resolution);
+      assertThat(gs.negativeFence()).isEqualTo(fence);
+      assertThat(gs.issuerPartitionFieldSetBytes()).containsExactly(fields);
+      assertThat(gs.heldClosureQualifications()).isZero();
+    }
+
+    private String completedNegativeCleanupCurrentImage() {
+      return java.util.List.of(
+              "game_session_canonical_binding_transition",
+              "game_session_canonical_gameplay_binding_inventory",
+              "game_session_canonical_issuer_partition_reservation",
+              "game_session_canonical_binding_account_index_obligation",
+              "game_session_canonical_binding_issuer_index_obligation",
+              "game_session_canonical_binding_region_bridge_obligation",
+              "game_session_canonical_issuer_current_local_operation",
+              "game_session_canonical_issuer_partition_mutation_head",
+              "game_session_canonical_binding_inventory_clock")
+          .stream()
+          .map(
+              table ->
+                  gs.dsl()
+                      .fetch(
+                          "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
+                              + table
+                              + " t ORDER BY 1")
+                      .getValues("image")
+                      .toString())
+          .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
     private byte[] leaseBytes() {
       return lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private net.firedevops.firemud.gamesession.repository
+            .CanonicalGameplayOriginalNewAbandonmentSource
+        abortNeverAdmitted() {
+      return gs.neverAdmittedOwner(client).abort(gs.transitionId(), jwt);
+    }
+
+    private String accountOperationImage() {
+      return DSL.using(accountFixture.dataSource, SQLDialect.POSTGRES)
+          .fetchSingle(
+              "SELECT to_jsonb(operation)::text FROM account_gameplay_admission_lease_operations operation WHERE lease_id = ?",
+              UUID.fromString((String) lease.carrier().get("leaseId")))
+          .get(0, String.class);
+    }
+
+    private String negativeResolutionImage() {
+      return DSL.using(accountFixture.dataSource, SQLDialect.POSTGRES)
+          .fetchSingle(
+              "SELECT to_jsonb(resolution)::text FROM account_gameplay_admission_abort_resolutions resolution WHERE original_lease_id = ?",
+              UUID.fromString((String) lease.carrier().get("leaseId")))
+          .get(0, String.class);
     }
 
     private CanonicalGameplayAdmissionAbortOutcome abort() {

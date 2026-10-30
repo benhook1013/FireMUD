@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
@@ -19,6 +20,31 @@ import org.jooq.DSLContext;
 /** Explicit unregistered construction paths for the first-NEW abort owner and reverse read. */
 public final class CanonicalGameplayAdmissionAbortManualFactory {
   private CanonicalGameplayAdmissionAbortManualFactory() {}
+
+  public static CanonicalGameplayOriginalNewNeverAdmittedAbortOwner
+      createUnregisteredNeverAdmittedOwner(
+          DSLContext dsl,
+          io.lettuce.core.RedisClient redis,
+          net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog catalog,
+          CanonicalGameplayTenantGameplayTagRepository tags,
+          CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource issuerSource,
+          CanonicalGameplayOriginalNewClosureQualification qualification,
+          AccountGameplayAdmissionLeaseClient accountClient) {
+    return new CanonicalGameplayOriginalNewNeverAdmittedAbortOwner(
+        dsl, redis, catalog, tags, issuerSource, qualification, accountClient);
+  }
+
+  public static CanonicalGameplayAdmissionDecisionReadGrpcService
+      createUnregisteredNegativeDecisionReadReceiver(
+          DSLContext dsl,
+          String workloadNamespace,
+          CanonicalGameplayOriginalNewCandidateClosureRedisOwner closure) {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcService(
+        new CanonicalGameplayBindingInventoryRepository(dsl),
+        new CanonicalGameplayAdmissionDecisionReadWorkloadGuard(workloadNamespace),
+        workloadNamespace,
+        Objects.requireNonNull(closure));
+  }
 
   public static CanonicalGameplayAdmissionAbortOwner createUnregisteredOwner(
       DSLContext dsl, AccountGameplayAdmissionLeaseClient accountClient) {
@@ -67,6 +93,42 @@ public final class CanonicalGameplayAdmissionAbortManualFactory {
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+    factory.addService(
+        ServerInterceptors.interceptForward(receiver, new GrpcPeerIdentityInterceptor(), guard));
+    return factory.createServer();
+  }
+
+  /**
+   * Creates an unstarted mutual-TLS server for the unregistered never-admitted reverse read;
+   * production registration remains an explicit owner decision.
+   */
+  public static Server createUnregisteredNegativeDecisionReadServer(
+      String address,
+      KeyManagerFactory keys,
+      TrustManagerFactory trust,
+      DSLContext dsl,
+      String workloadNamespace,
+      CanonicalGameplayOriginalNewCandidateClosureRedisOwner closure) {
+    Objects.requireNonNull(address, "gRPC server address required");
+    Objects.requireNonNull(keys, "gRPC server key manager required");
+    Objects.requireNonNull(trust, "gRPC server trust manager required");
+    var guard = new CanonicalGameplayAdmissionDecisionReadWorkloadGuard(workloadNamespace);
+    var receiver =
+        new CanonicalGameplayAdmissionDecisionReadGrpcService(
+            new CanonicalGameplayBindingInventoryRepository(
+                Objects.requireNonNull(dsl, "Game Session SQL context required")),
+            guard,
+            workloadNamespace,
+            Objects.requireNonNull(closure, "negative closure owner required"));
+    var factory =
+        new BoundedGrpcServerFactory(
+            address,
+            List.of(),
+            keys,
+            trust,
+            TlsServerCredentials.ClientAuth.REQUIRE,
+            GrpcRequestBytePolicy.ordinary(),
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES);
     factory.addService(
         ServerInterceptors.interceptForward(receiver, new GrpcPeerIdentityInterceptor(), guard));
     return factory.createServer();

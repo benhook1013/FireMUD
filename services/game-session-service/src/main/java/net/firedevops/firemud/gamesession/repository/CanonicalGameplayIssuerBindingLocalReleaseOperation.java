@@ -16,8 +16,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
     RELEASED
   }
 
-  private final CanonicalGameplayAdmissionAbortSource abortSource;
-  private final CanonicalGameplayIssuerBindingLocalOperation originalOperation;
+  private final CanonicalGameplayIssuerCleanupSource abortSource;
+  private final CanonicalGameplayIssuerOriginalMemberSource originalOperation;
   private final UUID operationId;
   private final BigInteger operationFence;
   private final BigInteger localMemberGeneration;
@@ -32,8 +32,8 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
   private final Status status;
 
   CanonicalGameplayIssuerBindingLocalReleaseOperation(
-      CanonicalGameplayAdmissionAbortSource abortSource,
-      CanonicalGameplayIssuerBindingLocalOperation originalOperation,
+      CanonicalGameplayIssuerCleanupSource abortSource,
+      CanonicalGameplayIssuerOriginalMemberSource originalOperation,
       UUID operationId,
       BigInteger operationFence,
       BigInteger localMemberGeneration,
@@ -99,17 +99,17 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
             original.sourceCheckpoint(),
             original.incarnation());
 
-    if (!abortSource.isAccountAborted()
+    if ((originalOperation instanceof CanonicalGameplayIssuerOriginalMemberSource.InstalledBootstrap
+            && !abortSource.neverAdmitted())
+        || !abortSource.isAccountAborted()
         || abortSource.transition().status()
             != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
                 .Status.ABORTED
-        || abortSource.candidate().lifecycle()
-            != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
-                .Lifecycle.TERMINAL_UNRESOLVED
-        || !abortSource
-            .transition()
-            .transitionId()
-            .equals(originalOperation.request().transitionId())
+        || (abortSource.candidate().lifecycle()
+                != net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                    .Lifecycle.TERMINAL_UNRESOLVED
+            && !(status == Status.RELEASED && abortSource.cleanupComplete()))
+        || !abortSource.transition().transitionId().equals(originalOperation.transitionId())
         || !sourceReservation.reservationId().equals(original.reservation().reservationId())
         || !sourceReservation.transitionId().equals(original.reservation().transitionId())
         || !sourceReservation.owner().equals(original.owner())
@@ -134,7 +134,14 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
             && (sourceReservation.lifecycle()
                     != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED
                 || this.completionInventoryRevision == null
-                || !sourceReservation.inventoryRevision().equals(this.completionInventoryRevision)
+                || (abortSource.cleanupComplete()
+                    ? sourceReservation
+                            .inventoryRevision()
+                            .compareTo(this.completionInventoryRevision)
+                        <= 0
+                    : !sourceReservation
+                        .inventoryRevision()
+                        .equals(this.completionInventoryRevision))
                 || this.completionInventoryRevision.compareTo(sourceInventoryRevision) <= 0))
         || !operationId.equals(releasedMemberValue.memberOperation().operationId())
         || !operationFence.equals(releasedMemberValue.memberOperation().operationFence())
@@ -205,10 +212,22 @@ public final class CanonicalGameplayIssuerBindingLocalReleaseOperation {
   }
 
   public CanonicalGameplayAdmissionAbortSource abortSource() {
+    return abortSource.positiveSource();
+  }
+
+  CanonicalGameplayIssuerCleanupSource cleanupSource() {
     return abortSource;
   }
 
+  public boolean neverAdmitted() {
+    return abortSource.neverAdmitted();
+  }
+
   CanonicalGameplayIssuerBindingLocalOperation originalOperation() {
+    return originalOperation.ordinary();
+  }
+
+  CanonicalGameplayIssuerOriginalMemberSource originalSource() {
     return originalOperation;
   }
 

@@ -8,6 +8,16 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 public final class CanonicalGameplayOriginalNewCandidateRedisOwnerFactory {
   private CanonicalGameplayOriginalNewCandidateRedisOwnerFactory() {}
 
+  public static CanonicalGameplayOriginalNewCandidateClosureRedisOwner createClosure(
+      RedisClient redisClient,
+      RedisScriptCatalog scriptCatalog,
+      CanonicalGameplayBindingInventoryRepository inventoryRepository,
+      CanonicalGameplayTenantGameplayTagRepository tenantGameplayTags,
+      CanonicalGameplayOriginalNewClosureQualification qualification) {
+    return new CanonicalGameplayOriginalNewCandidateClosureRedisOwner(
+        redisClient, scriptCatalog, inventoryRepository, tenantGameplayTags, qualification);
+  }
+
   public static CanonicalGameplayOriginalNewCandidateRedisOwner create(
       RedisClient redisClient,
       RedisScriptCatalog scriptCatalog,

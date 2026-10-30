@@ -3,8 +3,11 @@ package net.firedevops.firemud.gamesession.service.impl;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import io.lettuce.core.RedisCommandTimeoutException;
+import io.lettuce.core.RedisConnectionException;
 import java.sql.SQLException;
 import java.util.Objects;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
@@ -13,10 +16,13 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryConflictException;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewCandidateClosureRedisOwner;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuard;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionDecisionReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionResponse;
+import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionRequest;
+import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionResponse;
 import org.jooq.exception.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
@@ -30,11 +36,20 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
   private final CanonicalGameplayBindingInventoryRepository repository;
   private final CanonicalGameplayAdmissionDecisionReadWorkloadGuard workloadGuard;
   private final String workloadNamespace;
+  private final CanonicalGameplayOriginalNewCandidateClosureRedisOwner closureOwner;
 
   public CanonicalGameplayAdmissionDecisionReadGrpcService(
       CanonicalGameplayBindingInventoryRepository repository,
       CanonicalGameplayAdmissionDecisionReadWorkloadGuard workloadGuard,
       String workloadNamespace) {
+    this(repository, workloadGuard, workloadNamespace, null);
+  }
+
+  public CanonicalGameplayAdmissionDecisionReadGrpcService(
+      CanonicalGameplayBindingInventoryRepository repository,
+      CanonicalGameplayAdmissionDecisionReadWorkloadGuard workloadGuard,
+      String workloadNamespace,
+      CanonicalGameplayOriginalNewCandidateClosureRedisOwner closureOwner) {
     this.repository = Objects.requireNonNull(repository, "Game Session decision owner required");
     this.workloadGuard =
         Objects.requireNonNull(workloadGuard, "Account-only decision-read guard required");
@@ -42,6 +57,115 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       throw new IllegalArgumentException("Canonical Game Session workload namespace required");
     }
     this.workloadNamespace = workloadNamespace;
+    this.closureOwner = closureOwner;
+  }
+
+  @Override
+  public void getOriginalNewNeverAdmittedDecision(
+      GetOriginalNewNeverAdmittedDecisionRequest request,
+      StreamObserver<GetOriginalNewNeverAdmittedDecisionResponse> observer) {
+    Objects.requireNonNull(observer);
+    try {
+      workloadGuard.requireAccountCaller();
+    } catch (StatusRuntimeException denied) {
+      fail(observer, denied.getStatus());
+      return;
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
+    }
+    if (request == null
+        || request.getSerializedSize()
+            > AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    }
+    final AccountGameplayAdmissionNeverAdmittedGrpcCodec.DecisionRequest selector;
+    try {
+      selector = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request);
+      var lease = selector.originalLeaseEvidence();
+      if (!workloadNamespace.equals(lease.carrier().get("targetNamespace"))
+          || !("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service")
+              .equals(lease.carrier().get("callerWorkload"))) {
+        fail(observer, Status.PERMISSION_DENIED);
+        return;
+      }
+    } catch (IllegalArgumentException malformed) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    } catch (RuntimeException unexpectedParserFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    if (closureOwner == null) {
+      fail(observer, Status.UNAVAILABLE);
+      return;
+    }
+    final GetOriginalNewNeverAdmittedDecisionResponse response;
+    try {
+      response =
+          closureOwner.withCurrentClosedCandidate(
+              selector.transitionId(),
+              actual -> {
+                var source = repository.readOriginalNewAbandonmentSource(selector.transitionId());
+                if (!actual.matches(source)
+                    || !selector.abandonmentId().equals(source.abandonmentId())
+                    || !selector
+                        .originalLeaseEvidence()
+                        .canonicalJson()
+                        .equals(source.candidate().leaseEvidence().canonicalJson())) {
+                  throw new CanonicalGameplayBindingInventoryConflictException(
+                      "Negative decision differs from original source");
+                }
+                String closureDigest = actual.digest();
+                try {
+                  var candidate = source.candidate();
+                  var evidence =
+                      new AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence(
+                          candidate.leaseEvidence(),
+                          selector.transitionId(),
+                          source.abandonmentId(),
+                          CanonicalGameplayOriginalNewCandidateClosureRedisOwner.candidateDigest(
+                                  candidate)
+                              .substring(7),
+                          closureDigest.substring(7),
+                          toCandidate(candidate.bindingIdentity()),
+                          toTarget(candidate.targetEvidence()),
+                          candidate.transition().bindingGeneration());
+                  return AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(
+                      selector, evidence);
+                } catch (RuntimeException responseEncodingFailure) {
+                  throw new IllegalStateException(
+                      "Negative decision response encoding failed", responseEncodingFailure);
+                }
+              });
+    } catch (CanonicalGameplayOriginalNewCandidateClosureRedisOwner.UnavailableException
+        | CannotCreateTransactionException
+        | DataAccessResourceFailureException
+        | TransientDataAccessException
+        | RedisConnectionException
+        | RedisCommandTimeoutException unavailable) {
+      fail(observer, Status.UNAVAILABLE);
+      return;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+      return;
+    } catch (CanonicalGameplayBindingInventoryConflictException conflict) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
+    } catch (RuntimeException unexpectedFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    try {
+      observer.onNext(response);
+    } catch (RuntimeException observerFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    observer.onCompleted();
   }
 
   @Override
@@ -159,7 +283,11 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
   }
 
   private static Candidate toCandidate(CanonicalGameplayAdmissionDecision decision) {
-    var candidate = decision.candidate();
+    return toCandidate(decision.candidate());
+  }
+
+  private static Candidate toCandidate(
+      net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity candidate) {
     return new Candidate(
         candidate.accountId(),
         candidate.tenantId(),
@@ -179,7 +307,11 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
   }
 
   private static Target toTarget(CanonicalGameplayAdmissionDecision decision) {
-    var target = decision.targetEvidence();
+    return toTarget(decision.targetEvidence());
+  }
+
+  private static Target toTarget(
+      net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget target) {
     return new Target(
         target.targetNamespace(),
         target.tenantSlug(),

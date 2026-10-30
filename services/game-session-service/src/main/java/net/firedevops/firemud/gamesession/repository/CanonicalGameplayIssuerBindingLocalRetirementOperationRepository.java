@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -55,17 +54,16 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     CanonicalGameplayIssuerBindingLocalReleaseOperation release =
         releaseRepository.readCommittedRelease(transitionId);
     var before = readCurrentIssuerState();
-    requireSourceMatchesRelease(release.abortSource(), release);
+    requireSourceMatchesRelease(release.cleanupSource(), release);
     CanonicalGameplayIssuerBindingLocalRetirementOperation prepared =
         dsl.transactionResult(
             configuration -> {
               DSLContext transaction = org.jooq.impl.DSL.using(configuration);
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              CanonicalGameplayAdmissionAbortSource currentSource =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, transitionId, true);
-              requireSameReleaseSource(release.abortSource(), currentSource, release);
+              CanonicalGameplayIssuerCleanupSource currentSource =
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, transitionId, true);
+              requireSameReleaseSource(release.cleanupSource(), currentSource, release);
               requireExactCommittedReleaseRow(transaction, release);
               protectCurrentReferences(transaction, release);
               BigInteger partitionId = release.releasedMemberValue().reservation().partitionId();
@@ -78,7 +76,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead head =
                   CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
                       transaction,
-                      release.originalOperation().anchor().bootstrapOperationId(),
+                      release.originalSource().anchor().bootstrapOperationId(),
                       partitionId);
               if (head.pendingMutationId() != null) {
                 throw conflict("Another same-partition mutation is unresolved before retirement");
@@ -104,7 +102,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               return readOperation(transaction, saved, release);
             });
     requireSameCurrentIssuerState(
-        before, readCurrentIssuerState(), prepared.release().originalOperation().anchor());
+        before, readCurrentIssuerState(), prepared.release().originalSource().anchor());
     CanonicalGameplayIssuerBindingLocalReleaseOperation after =
         releaseRepository.readCommittedRelease(transitionId);
     requireSameReleaseOperation(release, after);
@@ -139,13 +137,17 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         });
   }
 
-  private static CanonicalGameplayIssuerBindingLocalRetirementOperation
+  static CanonicalGameplayIssuerBindingLocalRetirementOperation
       readCompletedRetirementInTransaction(DSLContext transaction, Record retirement) {
     UUID operationId = uuid(retirement, "retirement_operation_id");
     BigInteger partitionId = nonnegative(retirement, "partition_id");
     UUID reservationId = uuid(retirement, "reservation_id");
     UUID releaseId = uuid(retirement, "release_operation_id");
-    UUID originalId = uuid(retirement, "original_local_operation_id");
+    UUID localId = retirement.get("original_local_operation_id", UUID.class);
+    UUID bootstrapId = retirement.get("original_bootstrap_member_operation_id", UUID.class);
+    if ((localId == null) == (bootstrapId == null))
+      throw conflict("Retirement requires exactly one original source");
+    UUID originalId = localId == null ? bootstrapId : localId;
     UUID transitionId = uuid(retirement, "transition_id");
     byte[] bindingRef = bytes(retirement, "binding_ref");
     byte[] originalBytes = bytes(retirement, "original_member_value_bytes");
@@ -174,12 +176,21 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         transaction.fetchOne("SELECT * FROM " + RELEASE + " WHERE operation_id = ?", releaseId);
     Record original =
         transaction.fetchOne(
-            "SELECT * FROM " + LOCAL_OPERATION + " WHERE operation_id = ?", originalId);
+            "SELECT * FROM "
+                + (localId == null
+                    ? "game_session_canonical_issuer_bootstrap_member_operation"
+                    : LOCAL_OPERATION)
+                + " WHERE "
+                + (localId == null ? "member_operation_id" : "operation_id")
+                + " = ?",
+            originalId);
     if (release == null
         || original == null
         || !ISSUER.equals(text(release, "issuer_id"))
         || !"RELEASED".equals(text(release, "status"))
-        || !uuid(release, "original_local_operation_id").equals(originalId)
+        || !Objects.equals(release.get("original_local_operation_id", UUID.class), localId)
+        || !Objects.equals(
+            release.get("original_bootstrap_member_operation_id", UUID.class), bootstrapId)
         || !uuid(release, "transition_id").equals(transitionId)
         || !uuid(release, "reservation_id").equals(reservationId)
         || !nonnegative(release, "partition_id").equals(partitionId)
@@ -217,11 +228,14 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         || !text(release, "physical_readback_field_set_digest")
             .equals(
                 CanonicalGameplayIssuerMemberV2Codec.sha256(readReleaseReceiptFieldSet(release)))
-        || !uuid(original, "operation_id").equals(originalId)
+        || !uuid(original, localId == null ? "member_operation_id" : "operation_id")
+            .equals(originalId)
         || !uuid(original, "reservation_id").equals(reservationId)
-        || !uuid(original, "transition_id").equals(transitionId)
-        || !Arrays.equals(bytes(original, "binding_ref"), bindingRef)
-        || !positive(original, "binding_generation").equals(originalMember.bindingGeneration())
+        || (localId != null
+            && (!uuid(original, "transition_id").equals(transitionId)
+                || !Arrays.equals(bytes(original, "binding_ref"), bindingRef)
+                || !positive(original, "binding_generation")
+                    .equals(originalMember.bindingGeneration())))
         || !positive(original, "operation_fence")
             .equals(originalMember.memberOperation().operationFence())
         || !positive(original, "local_member_generation")
@@ -232,6 +246,26 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         || !text(original, "member_value_digest")
             .equals(CanonicalGameplayIssuerMemberV2Codec.sha256(originalBytes))) {
       throw conflict("Committed retirement no longer links to its exact immutable release source");
+    }
+    if (bootstrapId != null
+        && (!ISSUER.equals(text(original, "issuer_id"))
+            || !"CANDIDATE_PREPARED".equals(text(original, "binding_lifecycle"))
+            || !"RESERVED".equals(text(original, "reservation_lifecycle"))
+            || !Boolean.FALSE.equals(original.get("expected_binding_present", Boolean.class))
+            || !Boolean.TRUE.equals(original.get("counts_toward_capacity", Boolean.class))
+            || !"PENDING_PHYSICAL_PROOF".equals(text(original, "member_status"))
+            || !Objects.equals(original.get("member_schema_version", Short.class), (short) 2)
+            || !uuid(original, "bootstrap_operation_id")
+                .equals(uuid(retirement, "anchor_issuer_coverage_operation_id"))
+            || !uuid(original, "bootstrap_anchor_operation_id")
+                .equals(uuid(retirement, "anchor_issuer_coverage_operation_id"))
+            || !positive(original, "bootstrap_anchor_operation_fence")
+                .equals(positive(retirement, "anchor_operation_fence"))
+            || !positive(original, "bootstrap_anchor_coverage_fence")
+                .equals(positive(retirement, "anchor_coverage_fence"))
+            || !positive(original, "bootstrap_anchor_inventory_snapshot_revision")
+                .equals(positive(retirement, "anchor_inventory_snapshot_revision")))) {
+      throw conflict("Committed retirement lost its genuine frozen bootstrap member lineage");
     }
     CanonicalIssuerPartitionReservation originalReservation = originalMember.reservation();
     var originalAnchor = originalMember.anchor();
@@ -430,11 +464,10 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               DSLContext transaction = org.jooq.impl.DSL.using(configuration);
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
               CanonicalGameplayIssuerBindingLocalReleaseOperation release = expected.release();
-              CanonicalGameplayAdmissionAbortSource source =
-                  CanonicalGameplayBindingInventoryRepository
-                      .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                          transaction, release.abortSource().transition().transitionId(), true);
-              requireSameReleaseSource(release.abortSource(), source, release);
+              CanonicalGameplayIssuerCleanupSource source =
+                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                      transaction, release.cleanupSource().transition().transitionId(), true);
+              requireSameReleaseSource(release.cleanupSource(), source, release);
               requireExactCommittedReleaseRow(transaction, release);
               protectCurrentReferences(transaction, release);
               Record row =
@@ -479,13 +512,13 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
               return readOperation(transaction, saved, release);
             });
     requireSameCurrentIssuerState(
-        before, readCurrentIssuerState(), completed.release().originalOperation().anchor());
+        before, readCurrentIssuerState(), completed.release().originalSource().anchor());
     return completed;
   }
 
   private static void protectCurrentReferences(
       DSLContext transaction, CanonicalGameplayIssuerBindingLocalReleaseOperation release) {
-    var original = release.originalOperation();
+    var original = release.originalSource();
     byte[] bindingRef = release.releasedMemberValue().owner().bindingRef().bytes();
     UUID reservationId = release.releasedMemberValue().reservation().reservationId();
     UUID operationId = original.operationId();
@@ -538,7 +571,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
             "SELECT * FROM "
                 + ISSUER_OBLIGATION
                 + " WHERE transition_id = ? AND binding_ref = ? FOR UPDATE",
-            release.abortSource().transition().transitionId(),
+            release.cleanupSource().transition().transitionId(),
             bindingRef);
     if (reservation == null
         || !"RELEASED".equals(text(reservation, "lifecycle"))
@@ -547,7 +580,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         || !"TERMINAL_UNRESOLVED".equals(text(candidate, "lifecycle"))
         || !number(candidate, "inventory_revision").equals(release.completionInventoryRevision())
         || !uuid(candidate, "transition_id")
-            .equals(release.abortSource().transition().transitionId())
+            .equals(release.cleanupSource().transition().transitionId())
         || obligation == null
         || !"RELEASED".equals(text(obligation, "status"))
         || !uuid(obligation, "local_release_operation_id").equals(release.operationId())
@@ -566,7 +599,12 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     if (row == null
         || !ISSUER.equals(text(row, "issuer_id"))
         || !"RELEASED".equals(text(row, "status"))
-        || !uuid(row, "original_local_operation_id").equals(release.originalOperationId())
+        || !Objects.equals(
+            row.get("original_local_operation_id", UUID.class),
+            release.originalSource().localOperationId())
+        || !Objects.equals(
+            row.get("original_bootstrap_member_operation_id", UUID.class),
+            release.originalSource().bootstrapMemberOperationId())
         || !positive(row, "source_inventory_revision").equals(release.sourceInventoryRevision())
         || !positive(row, "completion_inventory_revision")
             .equals(release.completionInventoryRevision())
@@ -597,7 +635,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead head =
         CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
             transaction,
-            release.originalOperation().anchor().bootstrapOperationId(),
+            release.originalSource().anchor().bootstrapOperationId(),
             release.releasedMemberValue().reservation().partitionId());
     if ((mutation.status() == CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF
             && (!mutation.mutationId().equals(head.pendingMutationId())
@@ -607,7 +645,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
       throw conflict("Original retirement does not match its current partition-head custody");
     }
     byte[] intended = encodeRetirementIntent(operationId, release);
-    var original = release.originalOperation();
+    var original = release.originalSource();
     var reservation = original.reservation();
     var anchor = original.anchor();
     if (!mutationId.equals(mutation.mutationId())
@@ -616,8 +654,13 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         || !nonnegative(row, "partition_id")
             .equals(release.releasedMemberValue().reservation().partitionId())
         || !uuid(row, "release_operation_id").equals(release.operationId())
-        || !uuid(row, "original_local_operation_id").equals(release.originalOperationId())
-        || !uuid(row, "transition_id").equals(release.abortSource().transition().transitionId())
+        || !Objects.equals(
+            row.get("original_local_operation_id", UUID.class),
+            release.originalSource().localOperationId())
+        || !Objects.equals(
+            row.get("original_bootstrap_member_operation_id", UUID.class),
+            release.originalSource().bootstrapMemberOperationId())
+        || !uuid(row, "transition_id").equals(release.cleanupSource().transition().transitionId())
         || !uuid(row, "reservation_id")
             .equals(release.releasedMemberValue().reservation().reservationId())
         || !Arrays.equals(
@@ -692,7 +735,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
       UUID operationId,
       CanonicalGameplayIssuerBindingLocalReleaseOperation release,
       CanonicalGameplayIssuerPartitionMutation mutation) {
-    var original = release.originalOperation();
+    var original = release.originalSource();
     var released = release.releasedMemberValue();
     var reservation = original.reservation();
     var anchor = original.anchor();
@@ -702,21 +745,22 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         "INSERT INTO "
             + RETIREMENT
             + " (retirement_operation_id, issuer_id, partition_id, release_operation_id, physical_mutation_id,"
-            + " original_local_operation_id, transition_id, reservation_id, binding_ref, original_reservation_fence,"
+            + " original_local_operation_id, original_bootstrap_member_operation_id, transition_id, reservation_id, binding_ref, original_reservation_fence,"
             + " original_issuer_coverage_operation_id, original_issuer_coverage_operation_fence, original_coverage_fence,"
             + " original_inventory_snapshot_revision, original_reservation_inventory_revision,"
             + " anchor_issuer_coverage_operation_id, anchor_operation_fence, anchor_coverage_fence,"
             + " anchor_inventory_snapshot_revision, release_source_inventory_revision, release_completion_inventory_revision,"
             + " original_member_value_bytes, original_member_value_digest, released_member_value_bytes, released_member_value_digest,"
             + " expected_revision, successor_revision, exact_intended_change_bytes, exact_intended_change_digest, status)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_PHYSICAL_PROOF')",
         operationId,
         ISSUER,
         decimal(released.reservation().partitionId()),
         release.operationId(),
         mutation.mutationId(),
-        original.operationId(),
-        original.request().transitionId(),
+        original.localOperationId(),
+        original.bootstrapMemberOperationId(),
+        original.transitionId(),
         reservation.reservationId(),
         released.owner().bindingRef().bytes(),
         reservation.reservationFence(),
@@ -750,7 +794,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
         release.operationId().toString().getBytes(StandardCharsets.US_ASCII),
         release.originalOperationId().toString().getBytes(StandardCharsets.US_ASCII),
         release
-            .abortSource()
+            .cleanupSource()
             .transition()
             .transitionId()
             .toString()
@@ -833,8 +877,8 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
   }
 
   private static void requireSameReleaseSource(
-      CanonicalGameplayAdmissionAbortSource expected,
-      CanonicalGameplayAdmissionAbortSource actual,
+      CanonicalGameplayIssuerCleanupSource expected,
+      CanonicalGameplayIssuerCleanupSource actual,
       CanonicalGameplayIssuerBindingLocalReleaseOperation release) {
     if (!expected.transition().equals(actual.transition())
         || !expected.candidate().equals(actual.candidate())
@@ -875,7 +919,7 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
   }
 
   private static void requireSourceMatchesRelease(
-      CanonicalGameplayAdmissionAbortSource source,
+      CanonicalGameplayIssuerCleanupSource source,
       CanonicalGameplayIssuerBindingLocalReleaseOperation release) {
     requireSameReleaseSource(source, source, release);
   }
