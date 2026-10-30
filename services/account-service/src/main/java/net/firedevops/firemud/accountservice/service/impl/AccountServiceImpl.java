@@ -553,7 +553,8 @@ public class AccountServiceImpl implements AccountService {
           "CONNECT_CONTEXT_INVALID", "Bootstrap caller binding is missing", ex);
     }
     requireAuthenticationEligible(requireAccount(caller.accountId()));
-    return joinPublicProductionForTrustedCaller(caller.accountId(), callerBinding, null, request);
+    return projectJoinOutcome(
+        joinPublicProductionForTrustedCaller(caller.accountId(), callerBinding, null, request));
   }
 
   @Override
@@ -619,11 +620,12 @@ public class AccountServiceImpl implements AccountService {
           "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
     }
     requireAuthenticationEligible(requireAccount(caller.accountId()));
-    return joinPublicProductionForTrustedCaller(
-        caller.accountId(), caller.sessionId(), caller, request);
+    return projectJoinOutcome(
+        joinPublicProductionForTrustedCaller(
+            caller.accountId(), caller.sessionId(), caller, request));
   }
 
-  private JoinPublicProductionResult joinPublicProductionForTrustedCaller(
+  private JoinOutcome joinPublicProductionForTrustedCaller(
       long accountId,
       String callerBinding,
       DirectTextCallerContext directTextCaller,
@@ -731,7 +733,7 @@ public class AccountServiceImpl implements AccountService {
         executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
   }
 
-  private JoinPublicProductionResult executePendingJoinAttempt(
+  private JoinOutcome executePendingJoinAttempt(
       long accountId,
       String callerBinding,
       String requestId,
@@ -858,7 +860,7 @@ public class AccountServiceImpl implements AccountService {
         membership.getId(),
         membership.getMembershipVersion(),
         membership.getMembershipAuthorityGeneration());
-    return new JoinPublicProductionResult(
+    return new JoinOutcome(
         true,
         transitioned ? "JOINED" : "ALREADY_ACTIVE",
         accountId,
@@ -869,19 +871,17 @@ public class AccountServiceImpl implements AccountService {
         false);
   }
 
-  private JoinPublicProductionResult failedJoin(
-      String requestId, VerifiedJoinScope scope, String outcomeCode) {
+  private JoinOutcome failedJoin(String requestId, VerifiedJoinScope scope, String outcomeCode) {
     accountJoinOperationRepository.finish(requestId, "FAILED", outcomeCode, null, null, null);
-    return new JoinPublicProductionResult(
+    return new JoinOutcome(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
   }
 
-  private JoinPublicProductionResult pendingJoinFailure(
-      VerifiedJoinScope scope, String outcomeCode) {
+  private JoinOutcome pendingJoinFailure(VerifiedJoinScope scope, String outcomeCode) {
     return joinRetryFailure(scope, outcomeCode);
   }
 
-  private JoinPublicProductionResult replayTerminalJoin(
+  private JoinOutcome replayTerminalJoin(
       JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
     if (isConnectScopeExpired(scope)) {
       return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
@@ -928,7 +928,7 @@ public class AccountServiceImpl implements AccountService {
     return resultFromJoinOperation(operation, true);
   }
 
-  private JoinPublicProductionResult replayTerminalJoinSafely(
+  private JoinOutcome replayTerminalJoinSafely(
       JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
     try {
       return replayTerminalJoin(operation, callerBinding, scope);
@@ -937,9 +937,46 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
-    return new JoinPublicProductionResult(
+  private JoinOutcome joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
+    return new JoinOutcome(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  }
+
+  /** Project only after the JOIN transaction has returned, preserving any committed receipt. */
+  private JoinPublicProductionResult projectJoinOutcome(JoinOutcome outcome) {
+    return new JoinPublicProductionResult(
+        outcome.success(),
+        outcome.outcomeCode(),
+        responseAccountUuid(outcome.accountId()),
+        outcome.tenantId(),
+        outcome.membershipId(),
+        outcome.membershipVersion(),
+        outcome.membershipAuthorityGeneration(),
+        outcome.replayed());
+  }
+
+  /** Private Account row identities never escape through response projection. */
+  private record JoinOutcome(
+      boolean success,
+      String outcomeCode,
+      long accountId,
+      long tenantId,
+      long membershipId,
+      long membershipVersion,
+      long membershipAuthorityGeneration,
+      boolean replayed) {}
+
+  private String responseAccountUuid(Long accountId) {
+    try {
+      Account account = requireAccount(accountId);
+      if (!Objects.equals(accountId, account.getId())) {
+        throw new IllegalStateException("Account response readback returned a different owner");
+      }
+      return requireAuthenticationAccountUuid(account).toString();
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Account response authority is unavailable", ex);
+    }
   }
 
   private boolean isConnectScopeExpired(VerifiedJoinScope scope) {
@@ -1011,9 +1048,8 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult resultFromJoinOperation(
-      JoinOperation operation, boolean replayed) {
-    return new JoinPublicProductionResult(
+  private JoinOutcome resultFromJoinOperation(JoinOperation operation, boolean replayed) {
+    return new JoinOutcome(
         "COMMITTED".equals(operation.status()),
         operation.outcome(),
         operation.accountId(),
@@ -1129,9 +1165,8 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private record JoinAttemptOutcome(
-      JoinPublicProductionResult result, JoinOperation terminalOperation) {
-    private static JoinAttemptOutcome result(JoinPublicProductionResult result) {
+  private record JoinAttemptOutcome(JoinOutcome result, JoinOperation terminalOperation) {
+    private static JoinAttemptOutcome result(JoinOutcome result) {
       return new JoinAttemptOutcome(result, null);
     }
 
@@ -2246,24 +2281,20 @@ public class AccountServiceImpl implements AccountService {
   private static void requireProfileOwner(Profile profile, Long tenantId, Long accountId) {
     if (profile == null
         || profile.getAccount() == null
-        || !Objects.equals(profile.getAccount().getId(), accountId)
-        || !Objects.equals(profile.getTenantId(), tenantId)) {
-      throw new IllegalStateException("Profile does not match its requested owner");
+        || !Objects.equals(accountId, profile.getAccount().getId())
+        || !Objects.equals(tenantId, profile.getTenantId())) {
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Profile owner is unavailable");
     }
   }
 
   private ProfileDto projectProfile(Profile profile, Long tenantId, Long accountId) {
     requireProfileOwner(profile, tenantId, accountId);
-    Account account = requireAccount(accountId);
-    if (!Objects.equals(account.getId(), accountId)) {
-      throw new IllegalStateException("Profile Account readback returned a different owner");
-    }
-    String accountUuid = requireAuthenticationAccountUuid(account).toString();
+    String accountUuid = responseAccountUuid(accountId);
     ProfileDto dto = profileMapper.toDto(profile, accountUuid);
     if (dto == null
         || !accountUuid.equals(dto.accountId())
         || !Objects.equals(tenantId, dto.tenantId())) {
-      throw new IllegalStateException("Profile projection does not match its persisted owner");
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Profile projection is unavailable");
     }
     return dto;
   }

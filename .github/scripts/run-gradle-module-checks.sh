@@ -14,4 +14,5 @@ bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   --max-workers=2 \
   '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
   ":${MODULE}:check" \
-  -PfullCheck
+  -PfullCheck \
+  --profile

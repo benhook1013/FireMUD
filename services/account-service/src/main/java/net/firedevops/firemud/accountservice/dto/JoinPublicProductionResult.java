@@ -4,7 +4,7 @@ package net.firedevops.firemud.accountservice.dto;
 public record JoinPublicProductionResult(
     boolean success,
     String outcomeCode,
-    long accountId,
+    String accountId,
     long tenantId,
     long membershipId,
     long membershipVersion,

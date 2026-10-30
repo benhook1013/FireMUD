@@ -185,7 +185,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       response
           .setSuccess(result.success())
           .setOutcomeCode(result.outcomeCode())
-          .setAccountId(request.getPlayerContext().getAccountId())
+          .setAccountId(result.accountId())
           .setTenantId(Long.toString(result.tenantId()))
           .setMembershipId(Long.toString(result.membershipId()))
           .setMembershipVersion(result.membershipVersion())
@@ -707,6 +707,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(
           GetProfileResponse.newBuilder()
               .setError(appError("GetProfile", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", ex.getCode(), ex.getMessage()))
               .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {

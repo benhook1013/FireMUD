@@ -203,7 +203,8 @@ class ProfileControllerTest {
                 .content(objectMapper.writeValueAsString(req))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.accountId").value(ACCOUNT_UUID));
   }
 
   @Test
