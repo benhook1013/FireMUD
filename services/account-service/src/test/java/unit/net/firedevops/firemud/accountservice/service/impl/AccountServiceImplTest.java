@@ -335,15 +335,20 @@ class AccountServiceImplTest {
 
   @ParameterizedTest
   @EnumSource(OrdinaryIssuance.class)
-  void ordinaryIssuanceKeepsNumericContractAfterExactOwnerReadback(OrdinaryIssuance mode) {
+  void ordinaryIssuanceKeepsItsProfileContractAfterExactOwnerReadback(OrdinaryIssuance mode) {
     Account account = ordinaryIssuanceAccount();
     var challenge = ordinaryIssuanceChallenge(account);
 
     String token = issueOrdinaryCredential(mode);
 
     var claims = jwtUtil.parseToken(token).getPayload();
-    assertEquals("42", claims.getSubject());
-    assertEquals(42L, ((Number) claims.get("accountId")).longValue());
+    if (mode == OrdinaryIssuance.PLAYER_BOOTSTRAP) {
+      assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+      assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+    } else {
+      assertEquals("42", claims.getSubject());
+      assertEquals(42L, ((Number) claims.get("accountId")).longValue());
+    }
     org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
     if (mode != OrdinaryIssuance.GAMEPLAY_PASSWORD) {
       org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
@@ -409,7 +414,8 @@ class AccountServiceImplTest {
   private String issueOrdinaryCredential(OrdinaryIssuance mode) {
     if (mode == OrdinaryIssuance.PLAYER_BOOTSTRAP) {
       PlayerBootstrapResult result = service.issuePlayerBootstrap("owner@example.com", "123456");
-      assertEquals(42L, result.accountId());
+      assertNotNull(
+          net.firedevops.firemud.accountservice.AccountUuidText.parseOrNull(result.accountId()));
       return result.bootstrapToken();
     }
     AuthenticationResult result =
@@ -2281,7 +2287,7 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult result = service.issuePlayerBootstrap("demo", "password");
 
-    assertEquals(7L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     assertNotNull(result.bootstrapToken());
     assertNotNull(result.issuedAt());
     assertNotNull(result.expiresAt());
@@ -2311,7 +2317,7 @@ class AccountServiceImplTest {
     PlayerBootstrapResult result =
         service.issuePlayerBootstrap("  PLAYER@EXAMPLE.COM ", "password");
 
-    assertEquals(7L, result.accountId());
+    assertEquals(emailAccount.getAccountUuid().toString(), result.accountId());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
         .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
@@ -2335,7 +2341,7 @@ class AccountServiceImplTest {
 
     PlayerBootstrapResult result = service.issuePlayerBootstrap("demo", "123456");
 
-    assertEquals(7L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
     inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(7L);
     inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(7L);
@@ -2344,11 +2350,107 @@ class AccountServiceImplTest {
         .storeAccountSession(7L, result.bootstrapToken(), 300000L);
   }
 
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      invalidBootstrapAccountClaims() {
+    String valid = "10000000-0000-4000-8000-00000000000a";
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("11", "11"),
+        org.junit.jupiter.params.provider.Arguments.of((String) null, valid),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid.toUpperCase(java.util.Locale.ROOT), valid),
+        org.junit.jupiter.params.provider.Arguments.of(" " + valid, valid),
+        org.junit.jupiter.params.provider.Arguments.of(valid, (Object) null),
+        org.junit.jupiter.params.provider.Arguments.of(valid, ""),
+        org.junit.jupiter.params.provider.Arguments.of(valid, 11L),
+        org.junit.jupiter.params.provider.Arguments.of(valid, "11"),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid, "00000000-0000-0000-0000-000000000000"),
+        org.junit.jupiter.params.provider.Arguments.of(
+            "00000000-0000-0000-0000-000000000000", valid),
+        org.junit.jupiter.params.provider.Arguments.of(valid, "not-a-uuid"),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid, valid.toUpperCase(java.util.Locale.ROOT)),
+        org.junit.jupiter.params.provider.Arguments.of(valid, " " + valid),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid, "10000000-0000-4000-8000-000000000002"));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("invalidBootstrapAccountClaims")
+  void bootstrapReaderRejectsNonUuidOrContradictoryIdentityBeforeOwnerOrSessionUse(
+      String subject, Object accountClaim) {
+    Map<String, Object> claims = new java.util.HashMap<>();
+    claims.put("aud", "player-bootstrap");
+    if (accountClaim != null) {
+      claims.put("accountId", accountClaim);
+    }
+    String token = new JwtUtil(JWT_SECRET, 300000L).generateToken(subject, claims);
+
+    AuthenticationException denied =
+        assertThrows(AuthenticationException.class, () -> service.listBootstrapWorlds(token));
+
+    assertEquals("CONNECT_CONTEXT_INVALID", denied.getCode());
+    verifyNoInteractions(accountRepository, sessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "wrong-owner-uuid", "unavailable"})
+  void bootstrapReaderReportsOwnerReadbackFailureBeforeSessionUse(String failure) {
+    UUID uuid = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    if (failure.equals("unavailable")) {
+      when(accountRepository.findByAccountUuid(uuid))
+          .thenThrow(
+              new org.springframework.dao.DataAccessResourceFailureException("private detail"));
+    } else if (failure.equals("wrong-owner-uuid")) {
+      Account owner = new Account();
+      owner.setId(11L);
+      owner.setAccountUuid(UUID.randomUUID());
+      owner.setAccountUuidSourceNumericId(11L);
+      owner.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+      when(accountRepository.findByAccountUuid(uuid)).thenReturn(Optional.of(owner));
+    }
+    String token =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(
+                uuid.toString(), Map.of("aud", "player-bootstrap", "accountId", uuid.toString()));
+
+    AuthenticationException denied =
+        assertThrows(AuthenticationException.class, () -> service.listBootstrapWorlds(token));
+
+    assertEquals("AUTH_UNAVAILABLE", denied.getCode());
+    assertEquals("Account authority is unavailable", denied.getMessage());
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void bootstrapReaderResolvesUuidBeforeReadingPrivateAccountSession() {
+    Account account = new Account();
+    account.setId(11L);
+    retainAuthenticationIdentity(account);
+    String uuid = account.getAccountUuid().toString();
+    String token =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(uuid, Map.of("aud", "player-bootstrap", "accountId", uuid));
+    when(sessionService.isAccountSessionActive(11L, token)).thenReturn(true);
+
+    assertFalse(service.listBootstrapWorlds(token).isEmpty());
+
+    org.mockito.InOrder reads = org.mockito.Mockito.inOrder(accountRepository, sessionService);
+    reads.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    reads.verify(sessionService).isAccountSessionActive(11L, token);
+  }
+
   @Test
   void listBootstrapWorldsRejectsInactiveAccountBootstrapToken() {
+    Account account = new Account();
+    account.setId(11L);
+    retainAuthenticationIdentity(account);
     String bootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken("11", Map.of("aud", "player-bootstrap", "accountId", "11"));
+            .generateToken(
+                account.getAccountUuid().toString(),
+                Map.of(
+                    "aud", "player-bootstrap", "accountId", account.getAccountUuid().toString()));
 
     AuthenticationException ex =
         assertThrows(
@@ -2363,7 +2465,9 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsMalformedBootstrapTokenAccountClaim() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken("11", Map.of("aud", "player-bootstrap", "accountId", "abc"));
+            .generateToken(
+                "10000000-0000-4000-8000-000000000001",
+                Map.of("aud", "player-bootstrap", "accountId", "abc"));
 
     AuthenticationException ex =
         assertThrows(
@@ -2377,7 +2481,13 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsBootstrapTokenAccountSubjectMismatch() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken("12", Map.of("aud", "player-bootstrap", "accountId", "11"));
+            .generateToken(
+                "10000000-0000-4000-8000-000000000001",
+                Map.of(
+                    "aud",
+                    "player-bootstrap",
+                    "accountId",
+                    "10000000-0000-4000-8000-000000000002"));
 
     AuthenticationException ex =
         assertThrows(
@@ -2391,7 +2501,9 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsNonPositiveBootstrapTokenClaims() {
     String malformedBootstrapToken =
         new JwtUtil(JWT_SECRET, 300000L)
-            .generateToken("11", Map.of("aud", "player-bootstrap", "accountId", "0"));
+            .generateToken(
+                "10000000-0000-4000-8000-000000000001",
+                Map.of("aud", "player-bootstrap", "accountId", "0"));
 
     AuthenticationException ex =
         assertThrows(
@@ -2824,12 +2936,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -2878,7 +2990,7 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
@@ -2933,10 +3045,10 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.ofEntries(
                     Map.entry("aud", "bootstrap-connect-scope"),
-                    Map.entry("accountId", "11"),
+                    Map.entry("accountId", account.getAccountUuid().toString()),
                     Map.entry("tenantId", "7"),
                     Map.entry("realmId", realmId),
                     Map.entry("worldSlug", "demo"),
@@ -2986,12 +3098,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "12",
+                "10000000-0000-4000-8000-000000000012",
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -3040,12 +3152,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -3094,12 +3206,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -3356,10 +3468,65 @@ class AccountServiceImplTest {
     DirectTextJoinScope result =
         service.issueDirectTextConnectScope(directTextCaller(), directTextTarget());
 
+    var claims = jwtUtil.parseToken(result.connectScopeId()).getPayload();
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
     assertNotNull(result.connectScopeId());
     assertNotNull(result.connectScopeExpiresAt());
     org.mockito.Mockito.verify(accountConnectScopeRepository)
         .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+  }
+
+  @Test
+  void bothScopeProducersBindPersistedUuidWhileRetainedRowsKeepPrivateAccountKey() {
+    Account account = directTextAccount();
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String browser = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    String direct = service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()).connectScopeId();
+    for (String token : java.util.List.of(browser, direct)) {
+      var claims = jwtUtil.parseToken(token).getPayload();
+      assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+      assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+      AuthenticationException held = assertThrows(AuthenticationException.class,
+          () -> service.issueConnectToken(bootstrap.bootstrapToken(), new ConnectTokenRequest(token, "held-proof")));
+      assertEquals("AUTH_UNAVAILABLE", held.getCode());
+    }
+    var retained = org.mockito.ArgumentCaptor.forClass(VerifiedJoinScope.class);
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.times(2)).insert(retained.capture());
+    for (VerifiedJoinScope row : retained.getAllValues()) {
+      assertEquals(11L, row.accountId());
+      assertEquals(net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(row), row.snapshotDigest());
+    }
+  }
+
+  @Test
+  void scopeReaderOwnerFailureIsUnavailableAndNumericScopesNeverReachOwnerLookup() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    String scope = service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()).connectScopeId();
+    var decoded = new java.util.HashMap<String, Object>(jwtUtil.parseToken(scope).getPayload());
+    decoded.remove("iat");
+    decoded.remove("exp");
+    decoded.put("sub", "11");
+    decoded.put("accountId", "11");
+    String numeric = new JwtUtil(JWT_SECRET, 120000L).generateToken("11", decoded);
+    org.mockito.Mockito.clearInvocations(accountRepository);
+    AuthenticationException invalid = assertThrows(AuthenticationException.class,
+        () -> service.joinPublicProductionFromGameSession(directTextCaller(),
+            new JoinPublicProductionRequest(numeric, directTextCaller().requestId())));
+    assertEquals("CONNECT_SCOPE_INVALID", invalid.getCode());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).findByAccountUuid(org.mockito.ArgumentMatchers.any());
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("private detail"));
+    AuthenticationException unavailable = assertThrows(AuthenticationException.class,
+        () -> service.joinPublicProductionFromGameSession(directTextCaller(),
+            new JoinPublicProductionRequest(scope, directTextCaller().requestId())));
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
   }
 
   @Test
@@ -5778,9 +5945,10 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verifyNoInteractions(accountRepository);
   }
 
-  private static Account directTextAccount() {
+  private Account directTextAccount() {
     Account account = new Account();
     account.setId(11L);
+    retainAuthenticationIdentity(account);
     account.setUsername("demo");
     return account;
   }

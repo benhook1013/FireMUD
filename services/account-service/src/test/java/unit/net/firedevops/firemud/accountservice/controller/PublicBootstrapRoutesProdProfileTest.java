@@ -40,7 +40,10 @@ class PublicBootstrapRoutesProdProfileTest {
     when(accountService.issuePlayerBootstrap("demo@example.com", "swordfish"))
         .thenReturn(
             new PlayerBootstrapResult(
-                1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
+                "10000000-0000-4000-8000-000000000001",
+                "boot123",
+                "2026-03-30T00:00:00Z",
+                "2026-03-30T00:05:00Z"));
 
     mockMvc
         .perform(
@@ -49,7 +52,7 @@ class PublicBootstrapRoutesProdProfileTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.accountId").value("10000000-0000-4000-8000-000000000001"))
         .andExpect(jsonPath("$.data.bootstrapToken").value("boot123"));
   }
 
