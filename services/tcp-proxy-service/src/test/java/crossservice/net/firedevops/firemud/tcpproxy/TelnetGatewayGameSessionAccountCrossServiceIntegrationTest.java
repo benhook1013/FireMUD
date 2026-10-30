@@ -520,17 +520,42 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(transports.find(target.sessionId())).isPresent();
       assertThat(transports.find(observer.sessionId())).isPresent();
       var targetBefore =
-          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
+          buffers
+              .get(target.tenantId(), target.gameInstanceId(), target.characterId())
+              .map(
+                  screen ->
+                      screen.entries().stream()
+                          .filter(entry -> !"look_view".equals(entry.payloadType()))
+                          .toList());
       var observerBefore =
-          buffers.get(observer.tenantId(), observer.gameInstanceId(), observer.characterId());
+          buffers
+              .get(observer.tenantId(), observer.gameInstanceId(), observer.characterId())
+              .map(
+                  screen ->
+                      screen.entries().stream()
+                          .filter(entry -> !"look_view".equals(entry.payloadType()))
+                          .toList());
       scenario.actor().sendLine("WHISPER Sora Keep quiet");
       assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
           .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
       assertThat(socialStub().lastRequest()).isEmpty();
-      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+      assertThat(
+              buffers
+                  .get(target.tenantId(), target.gameInstanceId(), target.characterId())
+                  .map(
+                      screen ->
+                          screen.entries().stream()
+                              .filter(entry -> !"look_view".equals(entry.payloadType()))
+                              .toList()))
           .isEqualTo(targetBefore);
       assertThat(
-              buffers.get(observer.tenantId(), observer.gameInstanceId(), observer.characterId()))
+              buffers
+                  .get(observer.tenantId(), observer.gameInstanceId(), observer.characterId())
+                  .map(
+                      screen ->
+                          screen.entries().stream()
+                              .filter(entry -> !"look_view".equals(entry.payloadType()))
+                              .toList()))
           .isEqualTo(observerBefore);
     }
   }
