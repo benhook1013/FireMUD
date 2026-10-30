@@ -22,6 +22,10 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    AccountUuid:
+      type: string
+      format: uuid
+      pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     AddFriendRequest:
       type: object
       properties:
@@ -29,13 +33,9 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         friendAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
       required:
         - tenantId
         - accountId
@@ -50,13 +50,9 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         friendAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         status:
           type: string
         createdAt:
@@ -66,9 +62,7 @@ components:
       type: object
       properties:
         friendAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         online:
           type: boolean
         gameInstanceId:
@@ -142,9 +136,7 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         visibilityPolicy:
           type: string
           enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
@@ -164,13 +156,9 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         friendAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         status:
           type: string
         createdAt:
@@ -237,13 +225,9 @@ components:
           type: integer
           format: int64
         senderAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         recipientAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         subject:
           type: string
         content:
@@ -264,13 +248,9 @@ components:
           type: integer
           format: int64
         senderAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         recipientAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         subject:
           type: string
         content:
@@ -288,18 +268,14 @@ components:
           type: integer
           format: int64
         senderAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         type:
           type: string
           enum: [SAY, WHISPER, TELL, GUILD, CITY, ACCOUNT]
         channelId:
           type: string
         recipientAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         guildId:
           type: integer
           format: int64
@@ -347,9 +323,7 @@ components:
           type: integer
           format: int64
         senderAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         content:
           type: string
         timestamp:
@@ -362,9 +336,7 @@ components:
           type: integer
           format: int64
         recipientAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         type:
           type: string
         effectId:
@@ -451,9 +423,7 @@ components:
           type: integer
           format: int64
         ownerAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         name:
           type: string
       required:
@@ -472,9 +442,7 @@ components:
         name:
           type: string
         ownerAccountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         createdAt:
           type: string
           format: date-time
@@ -485,9 +453,7 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         channelId:
           type: string
       required:
@@ -512,9 +478,7 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         role:
           type: string
       required:
@@ -532,9 +496,7 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         role:
           type: string
       required:
@@ -555,9 +517,7 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          $ref: '#/components/schemas/AccountUuid'
         role:
           type: string
 paths:
@@ -594,8 +554,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
         - in: query
           name: filter
           required: false
@@ -657,8 +616,7 @@ paths:
           name: friendAccountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
         - in: query
           name: tenantId
           required: true
@@ -669,8 +627,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
       responses:
         '200':
           description: Friend roster entry
@@ -691,8 +648,7 @@ paths:
           name: friendAccountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
         - in: query
           name: tenantId
           required: true
@@ -703,8 +659,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
       responses:
         '200':
           description: Friend link removed
@@ -730,8 +685,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
       responses:
         '200':
           description: Friend roster entry
@@ -763,8 +717,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
       responses:
         '200':
           description: Removed friend roster entry
@@ -792,8 +745,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
       responses:
         '200':
           description: Friend roster summary
@@ -819,8 +771,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
         - in: query
           name: filter
           required: false
@@ -867,8 +818,7 @@ paths:
           name: accountId
           required: true
           schema:
-            type: string
-            format: uuid
+            $ref: '#/components/schemas/AccountUuid'
       responses:
         '200':
           description: Friend presence visibility policy
