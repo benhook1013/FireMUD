@@ -506,6 +506,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             recoveryClient,
             new SimpleMeterRegistry());
     assertThat(owner.retireTarget(missingRoster)).isFalse();
+    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(2))
+        .lockExactCurrentOpenSnapshot(any());
     assertThat(references.read(missingRoster).getRecoveryUuid()).isNotEmpty();
     assertThat(references.read(missingAssignment).getRecoveryUuid()).isNotEmpty();
     assertThat(references.read(missingRoster).getTerminalOutcome()).isEmpty();
@@ -537,6 +539,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .read(any());
     // Recovery may itself exceed the stored retention horizon on a busy runner.
     boolean retiredDuringRecovery = owner.retireTarget(missingRoster);
+    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(4))
+        .lockExactCurrentOpenSnapshot(any());
     assertThat(references.read(missingRoster).getTerminalOutcome()).isEqualTo("DENIED");
     assertThat(references.read(missingRoster).getCanonicalRosterReceipt())
         .isEqualTo(roster.toByteString());
@@ -548,6 +552,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     if (!retiredDuringRecovery) {
       Thread.sleep(550L);
       assertThat(owner.retireTarget(missingRoster)).isTrue();
+      org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(6))
+          .lockExactCurrentOpenSnapshot(any());
     }
     var retirementHorizon =
         java.util.Objects.requireNonNull(
@@ -620,7 +626,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers WHERE target_purged_at IS NOT NULL")
                 .get(0, Long.class))
         .isEqualTo(2L);
-    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(6))
+    org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(retiredDuringRecovery ? 4 : 6))
         .lockExactCurrentOpenSnapshot(any());
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);
     // The actual superseding-pointer and original-fence row-lock race proof remains separate above.
