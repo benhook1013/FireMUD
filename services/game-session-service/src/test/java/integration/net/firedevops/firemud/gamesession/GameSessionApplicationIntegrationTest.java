@@ -70,6 +70,7 @@ import tools.jackson.databind.ObjectMapper;
     })
 @MockitoBean(types = {TickScheduler.class, PlayerCommandHistoryRetentionSweepJob.class})
 class GameSessionApplicationIntegrationTest {
+  private static final String PLATFORM_ADMIN_ACCOUNT_ID = "4f5c31f3-fac5-4cad-b8f2-bb53e5c75f01";
   private static final String OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
       "6bf9e6d0-7f6b-4c85-b75e-d65949694f13";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -403,6 +404,11 @@ class GameSessionApplicationIntegrationTest {
         HttpHeaders.AUTHORIZATION,
         "Bearer "
             + JWT_UTIL.generateToken(
-                "game-session-test", Map.of("globalRoles", List.of("platformAdmin"))));
+                PLATFORM_ADMIN_ACCOUNT_ID,
+                Map.of(
+                    "accountId",
+                    PLATFORM_ADMIN_ACCOUNT_ID,
+                    "globalRoles",
+                    List.of("platformAdmin"))));
   }
 }

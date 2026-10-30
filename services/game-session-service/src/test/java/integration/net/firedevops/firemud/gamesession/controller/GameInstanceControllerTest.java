@@ -101,7 +101,13 @@ class GameInstanceControllerTest {
   void startSessionRejectsScopedTenantAdmin() throws Exception {
     StartSessionRequest request = new StartSessionRequest(1L, 7L, "cp-1", 1L);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            PlatformAdminJwtTestSupport.TEST_ACCOUNT_ID,
+            Map.of(
+                "accountId",
+                PlatformAdminJwtTestSupport.TEST_ACCOUNT_ID,
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
