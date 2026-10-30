@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.controller;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
@@ -11,10 +10,8 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
-import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
-import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -49,7 +46,9 @@ public class AccountController {
   @GetMapping("/{accountId}/login-auth-modes")
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> getLoginAuthModes(
       @PathVariable String accountId) {
-    long parsedAccountId = resolveAccountStorageId(requireAccountUuid(accountId));
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(
+            accountService, AccountRequestReaders.requireAccountUuid(accountId));
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
     return ResponseEntity.ok(
         ApiResponse.success(accountService.getLoginAuthModes(parsedAccountId)));
@@ -60,7 +59,9 @@ public class AccountController {
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> updateLoginAuthModes(
       @PathVariable String accountId,
       @Valid @RequestBody UpdateAccountLoginAuthModesRequest request) {
-    long parsedAccountId = resolveAccountStorageId(requireAccountUuid(accountId));
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(
+            accountService, AccountRequestReaders.requireAccountUuid(accountId));
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
     throw new org.springframework.web.server.ResponseStatusException(
         HttpStatus.NOT_IMPLEMENTED,
@@ -70,7 +71,9 @@ public class AccountController {
   @GetMapping("/{accountId}/export")
   public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
       @PathVariable String accountId) {
-    long parsedAccountId = resolveAccountStorageId(requireAccountUuid(accountId));
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(
+            accountService, AccountRequestReaders.requireAccountUuid(accountId));
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
     AccountDataExportDto data = accountService.exportAccountData(parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(data));
@@ -79,9 +82,10 @@ public class AccountController {
   @GetMapping("/{accountId}/tenant-export")
   public ResponseEntity<ApiResponse<TenantDataExportDto>> exportTenantData(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    UUID accountUuid = requireAccountUuid(accountId);
+    UUID accountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
-    long parsedAccountId = resolveAccountStorageId(accountUuid);
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(accountService, accountUuid);
     SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
     TenantDataExportDto data = accountService.exportTenantData(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(data));
@@ -89,7 +93,9 @@ public class AccountController {
 
   @DeleteMapping("/{accountId}")
   public ResponseEntity<ApiResponse<Void>> deleteAccount(@PathVariable String accountId) {
-    long parsedAccountId = resolveAccountStorageId(requireAccountUuid(accountId));
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(
+            accountService, AccountRequestReaders.requireAccountUuid(accountId));
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
     accountService.deleteAccount(parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(null));
@@ -101,25 +107,5 @@ public class AccountController {
     }
     throw new org.springframework.web.server.ResponseStatusException(
         org.springframework.http.HttpStatus.FORBIDDEN, "Account access required");
-  }
-
-  private long resolveAccountStorageId(UUID accountUuid) {
-    try {
-      Long storageId = accountService.resolveAccountStorageId(accountUuid);
-      if (storageId == null || storageId <= 0L) {
-        throw new IllegalStateException("Account UUID resolved to an invalid storage owner");
-      }
-      return storageId;
-    } catch (IllegalStateException | DataAccessException ex) {
-      throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
-    }
-  }
-
-  private static UUID requireAccountUuid(String accountId) {
-    UUID parsed = AccountUuidText.parseOrNull(accountId);
-    if (parsed == null) {
-      throw new IllegalArgumentException("accountId must be a canonical non-nil Account UUID");
-    }
-    return parsed;
   }
 }
