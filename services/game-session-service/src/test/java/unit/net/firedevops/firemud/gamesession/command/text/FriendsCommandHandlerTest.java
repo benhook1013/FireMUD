@@ -1329,6 +1329,59 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
+  void friendsVisibilityAcceptsHyphenatedCaseInsensitiveFriendsOnlyAlias() {
+    for (String policy : List.of("friends-only", "FrIeNdS-OnLy")) {
+      SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
+      FriendsCommandHandler handler =
+          newHandler(
+              socialGroupsClient,
+              Mockito.mock(EntityManagementClient.class),
+              Mockito.mock(ScriptEventPublisher.class));
+      when(socialGroupsClient.updateFriendPresencePolicy(
+              1L,
+              41L,
+              net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                  .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY))
+          .thenReturn(
+              UpdateFriendPresencePolicyResponse.newBuilder()
+                  .setSuccess(true)
+                  .setCurrentPolicy(
+                      net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                          .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
+                  .build());
+
+      TextCommandInterpretationResult result =
+          handler.handle(
+              new TextCommand(
+                  TextCommandType.FRIENDS,
+                  List.of("VISIBILITY", policy),
+                  "FRIENDS VISIBILITY " + policy),
+              GAMEPLAY_CONTEXT);
+
+      assertThat(result.commandResult().accepted()).isTrue();
+      assertThat(result.outputs()).hasSize(2);
+      assertThat(result.outputs().getFirst().text())
+          .isEqualTo("Friend presence visibility set to FRIENDS_ONLY.");
+      FriendPresencePolicyViewOutput view =
+          (FriendPresencePolicyViewOutput) result.outputs().get(1).payload();
+      assertThat(view.currentPolicy()).isEqualTo("FRIENDS_ONLY");
+      String rendered =
+          new TextPlayerOutputRenderer(
+                  new net.firedevops.firemud.gamesession.config.PresentationProperties())
+              .render(result.outputs().get(1));
+      assertThat(rendered)
+          .contains("Friend presence visibility: FRIENDS_ONLY")
+          .doesNotContain("FRIENDS-ONLY", "friends-only");
+      Mockito.verify(socialGroupsClient)
+          .updateFriendPresencePolicy(
+              1L,
+              41L,
+              net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                  .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY);
+    }
+  }
+
+  @Test
   void friendsVisibilityUpdateFailsClosedWhenCanonicalPolicyUpdateIsUnavailable() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
@@ -1368,8 +1421,7 @@ class FriendsCommandHandlerTest {
 
   @Test
   void friendsVisibilityRejectsUnknownPoliciesUniformlyWithoutCallingSocialService() {
-    for (String policy :
-        List.of("HIDDEN_STAFF", "HIDDEN-STAFF", "HIDDEN", "STAFF_ONLY", "FRIENDS-ONLY")) {
+    for (String policy : List.of("HIDDEN_STAFF", "HIDDEN-STAFF", "HIDDEN", "STAFF_ONLY")) {
       SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
       EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
       FriendsCommandHandler handler =
