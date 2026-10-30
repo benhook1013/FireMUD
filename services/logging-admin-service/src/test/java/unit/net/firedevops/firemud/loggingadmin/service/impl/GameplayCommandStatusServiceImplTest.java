@@ -277,6 +277,10 @@ class GameplayCommandStatusServiceImplTest {
             ResponseStatusException.class,
             () -> service.getGameplayCommandStatus(2L, 7L, "cmd-123"));
     assertEquals(500, failure.getStatusCode().value());
+    org.junit.jupiter.api.Assertions.assertInstanceOf(
+        IllegalArgumentException.class, failure.getCause());
+    assertEquals("control-plane account_id was invalid", failure.getReason());
+    org.junit.jupiter.api.Assertions.assertFalse(failure.getCause().getMessage().contains(account));
   }
 
   private GameplayCommandStatus commandStatus(String tenantId) {

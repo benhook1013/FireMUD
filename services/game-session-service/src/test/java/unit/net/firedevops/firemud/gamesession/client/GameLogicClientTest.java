@@ -44,6 +44,18 @@ import org.mockito.ArgumentCaptor;
 
 class GameLogicClientTest {
   private static final String ACCOUNT_UUID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+  private static final java.util.List<String> INVALID_ACCOUNT_IDS =
+      java.util.Collections.unmodifiableList(
+          java.util.Arrays.asList(
+              null,
+              "",
+              "   ",
+              "42",
+              "acct:opaque/legacy",
+              "00000000-0000-0000-0000-000000000000",
+              ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
+              " " + ACCOUNT_UUID + " ",
+              "not-a-uuid"));
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
           41L,
@@ -416,17 +428,7 @@ class GameLogicClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     setStub(client, stub);
 
-    for (String accountId :
-        new String[] {
-          null,
-          "",
-          "42",
-          "00000000-0000-0000-0000-000000000000",
-          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
-          " " + ACCOUNT_UUID + " ",
-          "   ",
-          "not-a-uuid"
-        }) {
+    for (String accountId : INVALID_ACCOUNT_IDS) {
       assertThatThrownBy(
               () ->
                   client.sendCommunication(
@@ -558,9 +560,11 @@ class GameLogicClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     setStub(client, stub);
 
-    assertInvalidAccountUuidsAreRejectedBeforeRpc(
-        accountId ->
-            client.pickupVisibleRoomItem(sessionContextWithAccountId(accountId), "torch1", 1));
+    for (String accountId : INVALID_ACCOUNT_IDS) {
+      var response =
+          client.pickupVisibleRoomItem(sessionContextWithAccountId(accountId), "torch1", 1);
+      assertThat(response.getError().getCode()).isEqualTo("INVENTORY_UNAVAILABLE");
+    }
     verify(stub, never()).pickupVisibleRoomItem(any(PickupVisibleRoomItemRequest.class));
   }
 
@@ -572,8 +576,10 @@ class GameLogicClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     setStub(client, stub);
 
-    assertInvalidAccountUuidsAreRejectedBeforeRpc(
-        accountId -> client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1));
+    for (String accountId : INVALID_ACCOUNT_IDS) {
+      var response = client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1);
+      assertThat(response.getError().getCode()).isEqualTo("INVENTORY_UNAVAILABLE");
+    }
     verify(stub, never()).dropCarriedItem(any(DropCarriedItemRequest.class));
   }
 
@@ -689,25 +695,6 @@ class GameLogicClientTest {
         SESSION_CONTEXT.realmSlug(),
         SESSION_CONTEXT.pointerVersion(),
         SESSION_CONTEXT.playableStateScope());
-  }
-
-  private static void assertInvalidAccountUuidsAreRejectedBeforeRpc(
-      java.util.function.Consumer<String> invocation) {
-    for (String accountId :
-        new String[] {
-          null,
-          "",
-          "42",
-          "acct:opaque/legacy",
-          "00000000-0000-0000-0000-000000000000",
-          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
-          " " + ACCOUNT_UUID + " ",
-          "not-a-uuid"
-        }) {
-      assertThatThrownBy(() -> invocation.accept(accountId))
-          .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("accountId");
-    }
   }
 
   private static void setStub(GameLogicClient client, Object stub) throws Exception {

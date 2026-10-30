@@ -464,6 +464,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
             });
   }
 
+  private void assertNoAccountPresenceWritten() {
+    assertThat(firstPartyConnectStore.keySet())
+        .noneMatch(
+            key -> key.startsWith("gameplaypresence:") || key.startsWith("accountrecentpresence:"));
+    assertThat(redisSetStore.keySet()).noneMatch(key -> key.startsWith("gameplaypresence:"));
+  }
+
   @Test
   void websocketLoginThenLookUsesAuthenticatedPath() throws Exception {
     List<String> payloads;
@@ -658,6 +665,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayWebSocketDriver firstClient = openAdmittedGameplayDriver("41");
     assertThat(firstClient.responses()).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
+    assertNoAccountPresenceWritten();
     firstClient.abort();
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
@@ -672,6 +680,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       GameplayAsyncAssertions.assertPresenceCountEventually(
           gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
       assertThat(gameplayPresenceService.findConnectedBySessionId(42L)).isEmpty();
+      assertNoAccountPresenceWritten();
     }
     assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
@@ -685,6 +694,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       assertThat(client.responses()).anyMatch(payload -> payload.startsWith("OK PLAY"));
       assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
+      assertNoAccountPresenceWritten();
       client.send("AFK");
       GameplayAsyncAssertions.assertEventually(
           "AFK command enqueue",
@@ -700,6 +710,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                             && Boolean.FALSE.equals(invocation.getArguments()[2]));
           });
       assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
+      assertNoAccountPresenceWritten();
       payloads = client.responses();
     }
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
@@ -1004,6 +1015,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.pointerVersion()).isEqualTo(1L);
             });
     assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
+    assertNoAccountPresenceWritten();
   }
 
   private GameplayWebSocketDriver openGameplayDriver(String sessionId) {
@@ -1187,6 +1199,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       var retained = sessionContextService.findByTenantAndSessionId(22L, 2L).orElseThrow();
       var retainedPresence = gameplayPresenceService.findConnectedBySessionId(2L);
       assertThat(retainedPresence).isEmpty();
+      assertNoAccountPresenceWritten();
       try (GameplayWebSocketDriver reconnecting =
           openUnqualifiedFirstPartyDriver("2", "unqualified-context")) {
         var close = reconnecting.awaitClosed();
@@ -1197,6 +1210,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       assertThat(firstPartyConnectStore)
           .doesNotContainKey("sessionctx:first-party:2:connect-context");
       assertThat(gameplayPresenceService.findConnectedBySessionId(2L)).isEqualTo(retainedPresence);
+      assertNoAccountPresenceWritten();
       int responseBaseline = ordinary.responses().size();
       ordinary.send("LOOK");
       ordinary.awaitTranscriptContainingAllAfter(responseBaseline, "Room: Login Hall (ID: R-1021)");
