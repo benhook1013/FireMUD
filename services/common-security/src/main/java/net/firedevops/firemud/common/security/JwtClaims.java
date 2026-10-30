@@ -41,11 +41,7 @@ public final class JwtClaims {
       throw new IllegalArgumentException("Malformed claim: " + claimName);
     }
     try {
-      UUID accountUuid = UUID.fromString(text);
-      if (!accountUuid.toString().equals(text) || accountUuid.equals(new UUID(0L, 0L))) {
-        throw new IllegalArgumentException("Invalid claim: " + claimName);
-      }
-      return text;
+      return parseCanonicalAccountUuid(text, "Invalid claim: " + claimName);
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("Malformed claim: " + claimName, ex);
     }
@@ -85,14 +81,18 @@ public final class JwtClaims {
       throw new IllegalArgumentException("Malformed claim: " + field);
     }
     try {
-      UUID uuid = UUID.fromString(text);
-      if (!uuid.toString().equals(text) || uuid.equals(new UUID(0L, 0L))) {
-        throw new IllegalArgumentException("Noncanonical Account UUID");
-      }
-      return text;
+      return parseCanonicalAccountUuid(text, "Noncanonical Account UUID");
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("Malformed claim: " + field, ex);
     }
+  }
+
+  private static String parseCanonicalAccountUuid(String text, String invalidMessage) {
+    UUID accountUuid = UUID.fromString(text);
+    if (!accountUuid.toString().equals(text) || accountUuid.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(invalidMessage);
+    }
+    return text;
   }
 
   public static String claimText(Object value) {
