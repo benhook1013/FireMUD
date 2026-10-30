@@ -7660,7 +7660,7 @@ Immutable identity and content digest of one exact roster snapshot.
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical lowercase non-nil Account UUID ownership. |
 | name | [string](#string) |  |  |
 | level | [int32](#int32) |  |  |
 | experience | [int32](#int32) |  |  |
@@ -7745,7 +7745,7 @@ Immutable identity and content digest of one exact roster snapshot.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical lowercase non-nil Account UUID; never an Account private row key. |
 | name | [string](#string) |  |  |
 | game_instance_id | [string](#string) |  |  |
 | playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
@@ -7945,7 +7945,7 @@ Immutable identity and content digest of one exact roster snapshot.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical lowercase non-nil Account UUID; never an Account private row key. |
 | game_instance_id | [string](#string) |  |  |
 | playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 

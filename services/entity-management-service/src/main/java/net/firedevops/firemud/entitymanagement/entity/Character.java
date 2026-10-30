@@ -13,7 +13,35 @@ public class Character {
   @EqualsAndHashCode.Include private Long id;
   private ActorIdentity actorIdentity;
   private Long tenantId;
+
+  /** Retained private source-row evidence; never a public Account selector. */
   private Long accountId;
+
+  private java.util.UUID accountUuid;
+
+  public void setAccountUuid(java.util.UUID value) {
+    if (value != null && value.equals(new java.util.UUID(0L, 0L))) {
+      throw new IllegalArgumentException("Account UUID must not be nil");
+    }
+    if (value != null
+        && actorIdentity != null
+        && actorIdentity.accountUuid() != null
+        && !value.equals(actorIdentity.accountUuid())) {
+      throw new IllegalArgumentException("Account owner conflicts with actor identity");
+    }
+    accountUuid = value;
+  }
+
+  public void setActorIdentity(ActorIdentity value) {
+    if (value != null
+        && accountUuid != null
+        && value.accountUuid() != null
+        && !accountUuid.equals(value.accountUuid())) {
+      throw new IllegalArgumentException("Actor identity conflicts with Account owner");
+    }
+    actorIdentity = value;
+  }
+
   private String playableStateKey;
   private String name;
   private String bodyLayoutKey = "DEFAULT";

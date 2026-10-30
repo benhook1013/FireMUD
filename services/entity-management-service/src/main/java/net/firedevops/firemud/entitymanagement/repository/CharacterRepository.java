@@ -235,12 +235,12 @@ public class CharacterRepository {
   }
 
   public Page<Character> findByTenantIdAndAccountIdAndPlayableStateKey(
-      Long tenantId, Long accountId, String playableStateKey, Pageable pageable) {
+      Long tenantId, UUID accountId, String playableStateKey, Pageable pageable) {
     var condition =
         CHARACTERS
             .TENANT_ID
             .eq(tenantId)
-            .and(CHARACTERS.ACCOUNT_ID.eq(accountId))
+            .and(CHARACTERS.ACCOUNT_UUID.eq(accountId))
             .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
             .and(legacyCharacterRow());
     long total = dsl.fetchCount(CHARACTERS, condition);
@@ -1376,6 +1376,7 @@ public class CharacterRepository {
               .set(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON, "OWNER_PROVENANCE_MISSING")
               .set(CHARACTERS.TENANT_ID, entity.getTenantId())
               .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
+              .set(CHARACTERS.ACCOUNT_UUID, entity.getAccountUuid())
               .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
               .set(CHARACTERS.NAME, entity.getName())
               .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
@@ -1396,6 +1397,7 @@ public class CharacterRepository {
     dsl.update(CHARACTERS)
         .set(CHARACTERS.TENANT_ID, entity.getTenantId())
         .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
+        .set(CHARACTERS.ACCOUNT_UUID, entity.getAccountUuid())
         .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
         .set(CHARACTERS.NAME, entity.getName())
         .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
@@ -1433,6 +1435,7 @@ public class CharacterRepository {
             record.get(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON)));
     character.setTenantId(record.get(CHARACTERS.TENANT_ID));
     character.setAccountId(record.get(CHARACTERS.ACCOUNT_ID));
+    character.setAccountUuid(record.get(CHARACTERS.ACCOUNT_UUID));
     character.setPlayableStateKey(record.get(CHARACTERS.PLAYABLE_STATE_KEY));
     character.setName(record.get(CHARACTERS.NAME));
     character.setBodyLayoutKey(record.get(CHARACTERS.BODY_LAYOUT_KEY));

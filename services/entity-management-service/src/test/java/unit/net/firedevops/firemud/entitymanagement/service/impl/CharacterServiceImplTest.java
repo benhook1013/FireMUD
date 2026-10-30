@@ -40,6 +40,7 @@ class CharacterServiceImplTest {
     character.setId(1L);
     character.setTenantId(1L);
     character.setAccountId(1L);
+    character.setAccountUuid(java.util.UUID.fromString("11111111-1111-4111-8111-111111111111"));
     character.setPlayableStateKey("shared-live");
     character.setName("Test");
     character.setLevel(1);
@@ -83,6 +84,7 @@ class CharacterServiceImplTest {
     character.setId(1L);
     character.setTenantId(1L);
     character.setAccountId(1L);
+    character.setAccountUuid(java.util.UUID.fromString("11111111-1111-4111-8111-111111111111"));
     character.setPlayableStateKey("shared-live");
     character.setName("Test");
 

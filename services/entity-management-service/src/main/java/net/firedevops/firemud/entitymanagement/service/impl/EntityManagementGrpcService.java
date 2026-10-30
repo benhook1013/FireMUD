@@ -552,7 +552,10 @@ public class EntityManagementGrpcService
     try {
       requireListCharactersByAccountCaller();
       long tenantId = requireTenantId(request.getTenantId());
-      long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
+      java.util.UUID accountId =
+          java.util.UUID.fromString(
+              net.firedevops.firemud.common.security.JwtClaims.requireCanonicalAccountUuid(
+                  request.getAccountId(), "accountId"));
       var characters =
           characterService
               .listForGameplayScope(
@@ -706,7 +709,8 @@ public class EntityManagementGrpcService
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
       requireTenantId(request.getTenantId());
-      RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
+      net.firedevops.firemud.common.security.JwtClaims.requireCanonicalAccountUuid(
+          request.getAccountId(), "accountId");
       requirePlayableStateScope(request.getPlayableStateScope());
       CreateCharacterResponse response =
           CreateCharacterResponse.newBuilder()

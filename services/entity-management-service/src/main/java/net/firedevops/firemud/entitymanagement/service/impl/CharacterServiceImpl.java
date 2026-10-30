@@ -51,13 +51,14 @@ public class CharacterServiceImpl implements CharacterService {
   @Timed(value = "character.create")
   public CharacterDto create(
       Long tenantId,
-      Long accountId,
+      java.util.UUID accountId,
       String name,
       String gameInstanceId,
       PlayableStateScope playableStateScope) {
+    requireAccountOwner(accountId);
     Character entity = new Character();
     entity.setTenantId(tenantId);
-    entity.setAccountId(accountId);
+    entity.setAccountUuid(accountId);
     entity.setName(name);
     entity.setPlayableStateKey(
         playableStateKeyResolver.resolve(gameInstanceId, playableStateScope));
@@ -136,10 +137,11 @@ public class CharacterServiceImpl implements CharacterService {
   @Timed(value = "character.listForAccount")
   public Page<CharacterDto> listForGameplayScope(
       Long tenantId,
-      Long accountId,
+      java.util.UUID accountId,
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Pageable pageable) {
+    requireAccountOwner(accountId);
     return characterRepository
         .findByTenantIdAndAccountIdAndPlayableStateKey(
             tenantId,
@@ -163,6 +165,12 @@ public class CharacterServiceImpl implements CharacterService {
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
             name.trim())
         .map(this::toDto);
+  }
+
+  private static void requireAccountOwner(java.util.UUID accountId) {
+    if (accountId == null || accountId.equals(new java.util.UUID(0L, 0L))) {
+      throw new IllegalArgumentException("A non-nil Account UUID is required");
+    }
   }
 
   private CharacterDto toDto(Character character) {
