@@ -30,11 +30,7 @@ public class MailController {
   @PostMapping
   public ResponseEntity<ApiResponse<MailMessageDto>> sendMail(
       @Valid @RequestBody SendMailRequest request) {
-    String callerAccountId = SessionContext.getAccountId();
-    String callerAccountUuid =
-        callerAccountId == null || callerAccountId.isBlank()
-            ? null
-            : JwtClaims.requireCanonicalAccountUuid(callerAccountId, "accountId");
+    String callerAccountUuid = currentAccountUuidOrNull();
     if (!request.senderAccountId().equals(callerAccountUuid)) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Sender must match authenticated account");
@@ -42,5 +38,17 @@ public class MailController {
     socialAccessGuard.requireAccountAccess(request.tenantId(), request.senderAccountId());
     MailMessageDto dto = mailService.sendMail(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  private static String currentAccountUuidOrNull() {
+    String callerAccountId = SessionContext.getAccountId();
+    if (callerAccountId == null || callerAccountId.isBlank()) {
+      return null;
+    }
+    try {
+      return JwtClaims.requireCanonicalAccountUuid(callerAccountId, "accountId");
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 }
