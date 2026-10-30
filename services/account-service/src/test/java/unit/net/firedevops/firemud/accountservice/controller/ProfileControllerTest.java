@@ -48,7 +48,13 @@ class ProfileControllerTest {
   @Test
   void getProfileReturnsDto() throws Exception {
     ProfileDto dto =
-        new ProfileDto(1L, 1L, "d09f80cb-a46a-415e-8d35-c9e8068e49de", "demo", "bio", ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+        new ProfileDto(
+            1L,
+            1L,
+            "d09f80cb-a46a-415e-8d35-c9e8068e49de",
+            "demo",
+            "bio",
+            ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(accountService.getProfile(1L, 2L)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
@@ -67,7 +73,13 @@ class ProfileControllerTest {
     UpdateProfileRequest req =
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     ProfileDto dto =
-        new ProfileDto(1L, 1L, "d09f80cb-a46a-415e-8d35-c9e8068e49de", "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+        new ProfileDto(
+            1L,
+            1L,
+            "d09f80cb-a46a-415e-8d35-c9e8068e49de",
+            "demo",
+            "bio",
+            ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
@@ -161,7 +173,13 @@ class ProfileControllerTest {
     UpdateProfileRequest req =
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     ProfileDto dto =
-        new ProfileDto(1L, 1L, "d09f80cb-a46a-415e-8d35-c9e8068e49de", "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+        new ProfileDto(
+            1L,
+            1L,
+            "d09f80cb-a46a-415e-8d35-c9e8068e49de",
+            "demo",
+            "bio",
+            ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));

@@ -11,6 +11,9 @@ import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.security.HttpAuthProperties;
+import net.firedevops.firemud.common.security.HttpAuthRoleRequirement;
+import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
@@ -18,6 +21,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -39,6 +43,9 @@ import tools.jackson.databind.json.JsonMapper;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = AccountServiceApplication.class,
     properties = {
+      "spring.config.import=classpath:account-main-application.yml",
+      "spring.grpc.server.port=0",
+      "firemud.grpc.workload-namespace=test",
       GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
       GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
       GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
@@ -66,6 +73,8 @@ class AccountApplicationIntegrationTest {
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
+  @Autowired private HttpAuthProperties httpAuthProperties;
+  @Autowired private ObjectProvider<HttpJwtAuthInterceptor> httpJwtAuthInterceptorProvider;
 
   @Autowired
   private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
@@ -510,28 +519,59 @@ class AccountApplicationIntegrationTest {
         .isTrue();
     assertThat(accountService.joinPublicProductionFromGameSession(caller, directJoin).accountId())
         .isEqualTo(account.id());
-    dsl.execute("INSERT INTO profiles(account_id,tenant_id,display_name,bio) VALUES(?,?,?,?)",
-        row, tenant, "owner profile", "initial");
+    dsl.execute(
+        "INSERT INTO profiles(account_id,tenant_id,display_name,bio) VALUES(?,?,?,?)",
+        row,
+        tenant,
+        "owner profile",
+        "initial");
     assertThat(accountService.getProfile(tenant, row).accountId()).isEqualTo(account.id());
-    assertThat(accountService.updateProfile(
-        new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-            tenant, row, "updated profile", "updated",
-            net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy.PRIVATE))
-        .accountId()).isEqualTo(account.id());
+    assertThat(
+            accountService
+                .updateProfile(
+                    new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                        tenant,
+                        row,
+                        "updated profile",
+                        "updated",
+                        net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy
+                            .PRIVATE))
+                .accountId())
+        .isEqualTo(account.id());
     assertThat(accountService.exportAccountData(row).profiles())
         .allSatisfy(profile -> assertThat(profile.accountId()).isEqualTo(account.id()));
     assertThat(accountService.exportTenantData(tenant, row).profile().accountId())
         .isEqualTo(account.id());
+    assertThat(httpAuthProperties.isEnabled()).isTrue();
+    assertThat(httpAuthProperties.getRoleRequirement())
+        .isEqualTo(HttpAuthRoleRequirement.AUTHENTICATED);
+    assertThat(httpJwtAuthInterceptorProvider.getIfAvailable()).isNotNull();
     String ordinary = accountService.authenticate(username, "password123").authToken();
-    HttpResponse<String> profileResponse = HTTP_CLIENT.send(
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + row + "?tenantId=" + tenant))
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary).GET().build(),
-        HttpResponse.BodyHandlers.ofString());
-    assertThat(profileResponse.statusCode()).isEqualTo(200);
+    HttpResponse<String> profileResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create(
+                        "http://localhost:" + port + "/profiles/" + row + "?tenantId=" + tenant))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(profileResponse.statusCode())
+        .withFailMessage(
+            "Profile HTTP status %s, body: %s",
+            profileResponse.statusCode(), profileResponse.body())
+        .isEqualTo(200);
     assertThat(jsonMapper.readTree(profileResponse.body()).path("data").path("accountId").asText())
         .isEqualTo(account.id());
-    assertThat(dsl.fetchOne("SELECT account_id FROM profiles WHERE account_id=? AND tenant_id=?", row, tenant)
-        .get(0, Long.class)).isEqualTo(row);
+    assertThat(
+            java.util.Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT account_id FROM profiles WHERE account_id=? AND tenant_id=?",
+                        row,
+                        tenant),
+                    "Expected retained private profile owner row")
+                .get(0, Long.class))
+        .isEqualTo(row);
     assertThat(scopes.find(browser)).isPresent();
     assertThat(scopes.find(direct)).isPresent();
   }

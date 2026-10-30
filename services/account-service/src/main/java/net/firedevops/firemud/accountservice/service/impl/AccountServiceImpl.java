@@ -875,15 +875,13 @@ public class AccountServiceImpl implements AccountService {
         false);
   }
 
-  private JoinOutcome failedJoin(
-      String requestId, VerifiedJoinScope scope, String outcomeCode) {
+  private JoinOutcome failedJoin(String requestId, VerifiedJoinScope scope, String outcomeCode) {
     accountJoinOperationRepository.finish(requestId, "FAILED", outcomeCode, null, null, null);
     return new JoinOutcome(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
   }
 
-  private JoinOutcome pendingJoinFailure(
-      VerifiedJoinScope scope, String outcomeCode) {
+  private JoinOutcome pendingJoinFailure(VerifiedJoinScope scope, String outcomeCode) {
     return joinRetryFailure(scope, outcomeCode);
   }
 
@@ -1055,8 +1053,7 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinOutcome resultFromJoinOperation(
-      JoinOperation operation, boolean replayed) {
+  private JoinOutcome resultFromJoinOperation(JoinOperation operation, boolean replayed) {
     return new JoinOutcome(
         "COMMITTED".equals(operation.status()),
         operation.outcome(),
@@ -1173,8 +1170,7 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private record JoinAttemptOutcome(
-      JoinOutcome result, JoinOperation terminalOperation) {
+  private record JoinAttemptOutcome(JoinOutcome result, JoinOperation terminalOperation) {
     private static JoinAttemptOutcome result(JoinOutcome result) {
       return new JoinAttemptOutcome(result, null);
     }

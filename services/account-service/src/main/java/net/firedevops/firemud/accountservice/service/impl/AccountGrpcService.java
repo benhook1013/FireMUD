@@ -552,8 +552,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AuthenticationException ex) {
-      responseObserver.onNext(GetProfileResponse.newBuilder()
-          .setError(appError("GetProfile", ex.getCode(), ex.getMessage())).build());
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setError(appError("GetProfile", ex.getCode(), ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetProfileResponse response =

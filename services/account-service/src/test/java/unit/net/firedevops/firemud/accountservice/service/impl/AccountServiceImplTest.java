@@ -670,18 +670,27 @@ class AccountServiceImplTest {
     JoinPublicProductionRequest request =
         new JoinPublicProductionRequest(connectScopeId, requestId);
 
-    org.mockito.Mockito.doAnswer(invocation -> {
-      when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.empty());
-      return null;
-    }).when(transactionManager).commit(org.mockito.ArgumentMatchers.any());
-    AuthenticationException firstProjectionFailure = assertThrows(AuthenticationException.class,
-        () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+                  .thenReturn(Optional.empty());
+              return null;
+            })
+        .when(transactionManager)
+        .commit(org.mockito.ArgumentMatchers.any());
+    AuthenticationException firstProjectionFailure =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
     assertEquals("AUTH_UNAVAILABLE", firstProjectionFailure.getCode());
     assertEquals("COMMITTED", retainedOperation.get().status());
     org.mockito.Mockito.verify(transactionManager, org.mockito.Mockito.never())
         .rollback(org.mockito.ArgumentMatchers.any());
-    org.mockito.Mockito.doNothing().when(transactionManager).commit(org.mockito.ArgumentMatchers.any());
-    when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.of(account));
+    org.mockito.Mockito.doNothing()
+        .when(transactionManager)
+        .commit(org.mockito.ArgumentMatchers.any());
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.of(account));
     JoinPublicProductionResult recovered =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
     assertTrue(recovered.replayed());
@@ -716,7 +725,7 @@ class AccountServiceImplTest {
 
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
-    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(3))
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(4))
         .findByTenantIdForUpdate(7L);
     org.mockito.Mockito.clearInvocations(
         sessionService,
@@ -795,12 +804,15 @@ class AccountServiceImplTest {
     when(accountRepository.findByAccountUuid(account.getAccountUuid()))
         .thenReturn(Optional.of(account), Optional.empty());
     AuthenticationException projectionFailure =
-        assertThrows(AuthenticationException.class,
+        assertThrows(
+            AuthenticationException.class,
             () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
     assertEquals("AUTH_UNAVAILABLE", projectionFailure.getCode());
     assertEquals(committedOperation, retainedOperation.get());
-    when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.of(account));
-    assertEquals(account.getAccountUuid().toString(),
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.of(account));
+    assertEquals(
+        account.getAccountUuid().toString(),
         service.joinPublicProduction(bootstrap.bootstrapToken(), request).accountId());
   }
 
@@ -5321,11 +5333,13 @@ class AccountServiceImplTest {
     when(accountRepository.findById(2L)).thenReturn(Optional.of(owner));
     assertEquals(owner.getAccountUuid().toString(), service.getProfile(1L, 2L).accountId());
     partial.setId(3L);
-    assertEquals("AUTH_UNAVAILABLE",
+    assertEquals(
+        "AUTH_UNAVAILABLE",
         assertThrows(AuthenticationException.class, () -> service.getProfile(1L, 2L)).getCode());
     partial.setId(2L);
     owner.setAccountUuid(null);
-    assertEquals("AUTH_UNAVAILABLE",
+    assertEquals(
+        "AUTH_UNAVAILABLE",
         assertThrows(AuthenticationException.class, () -> service.getProfile(1L, 2L)).getCode());
   }
 
@@ -5416,7 +5430,8 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     Profile tenantOne = profile(account, 1L, "one");
     Profile tenantTwo = profile(account, 2L, "two");
-    when(accountRepository.findByAccountUuid(account.getAccountUuid())).thenReturn(Optional.of(account));
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.of(account));
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
     when(profileRepository.findByAccountId(2L)).thenReturn(java.util.List.of(tenantOne, tenantTwo));
 
@@ -5424,7 +5439,9 @@ class AccountServiceImplTest {
 
     assertEquals("d09f80cb-a46a-415e-8d35-c9e8068e49de", export.account().id());
     assertEquals(2, export.profiles().size());
-    export.profiles().forEach(dto -> assertEquals(account.getAccountUuid().toString(), dto.accountId()));
+    export
+        .profiles()
+        .forEach(dto -> assertEquals(account.getAccountUuid().toString(), dto.accountId()));
   }
 
   @Test
