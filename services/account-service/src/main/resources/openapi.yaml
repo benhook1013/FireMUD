@@ -33,9 +33,7 @@ components:
         Canonical lowercase non-nil persisted Account UUID. Numeric Account storage IDs and
         noncanonical UUID text are rejected.
       schema:
-        type: string
-        format: uuid
-        pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        $ref: '#/components/schemas/AccountUuidSelector'
   responses:
     RetryableAuthenticationUnavailable:
       description: Retryable authority outage; error code is AUTH_UNAVAILABLE or ENTITLEMENT_UNAVAILABLE
@@ -51,6 +49,10 @@ components:
               error:
                 $ref: '#/components/schemas/ErrorDetail'
   schemas:
+    AccountUuidSelector:
+      type: string
+      format: uuid
+      pattern: '^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     CreateAccountRequest:
       type: object
       description: Creates a global account. Tenant membership and profiles are established separately.
@@ -276,9 +278,7 @@ components:
           type: integer
           format: int64
         accountId:
-          type: string
-          format: uuid
-          description: Canonical lowercase non-nil Account UUID matching the path selector.
+          $ref: '#/components/schemas/AccountUuidSelector'
         displayName:
           type: string
         bio:
@@ -734,13 +734,11 @@ paths:
           description: Account UUID owner evidence is unavailable
   /accounts/{accountId}:
     delete:
-      summary: Delete global account after billing preconditions pass
+      summary: Refuse account deletion until retention-safe deletion is available
       operationId: deleteAccount
       parameters:
         - $ref: '#/components/parameters/AccountUuidPathSelector'
       responses:
-        '200':
-          description: Deletion success
         '400':
           description: Invalid account ID
         '403':
@@ -754,14 +752,7 @@ paths:
       summary: Get the caller's tenant profile
       operationId: getProfile
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          description: >-
-            Canonical lowercase non-nil Account UUID; numeric storage keys are not accepted.
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
         - name: tenantId
           in: query
           required: true
@@ -785,14 +776,7 @@ paths:
       summary: Update the caller's tenant profile
       operationId: updateProfile
       parameters:
-        - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          description: >-
-            Canonical lowercase non-nil Account UUID; numeric storage keys are not accepted.
+        - $ref: '#/components/parameters/AccountUuidPathSelector'
       requestBody:
         required: true
         content:

@@ -2241,6 +2241,39 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void updateProfilePreservesUnavailableOwnerProjectionResponse() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    String message = "Account owner projection is unavailable";
+    Mockito.when(accountService.updateProfile(Mockito.any()))
+        .thenThrow(new AuthenticationException("AUTH_UNAVAILABLE", message));
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson("{\"displayName\":\"demo\"}")
+                    .build(),
+                observer));
+
+    assertEquals(1, observer.nextCalls);
+    assertEquals(0, observer.receivedTransportError() ? 1 : 0);
+    assertEquals(1, observer.completedCalls);
+    assertFalse(observer.response().getSuccess());
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(message, observer.response().getError().getMessage());
+  }
+
+  @Test
   void updateProfileRejectsZeroTenantIdBeforeUpdate() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -2305,6 +2338,53 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void exportAccountPreservesUnavailableOwnerProjectionResponse() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    String message = "Account owner projection is unavailable";
+    Mockito.when(accountService.exportAccountData(2L))
+        .thenThrow(new AuthenticationException("AUTH_UNAVAILABLE", message));
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<ExportAccountResponse> observer = new RecordingObserver<>();
+
+    service.exportAccount(
+        ExportAccountRequest.newBuilder().setAccountId(ACCOUNT_UUID).build(), observer);
+
+    assertEquals(1, observer.nextCalls);
+    assertEquals(0, observer.receivedTransportError() ? 1 : 0);
+    assertEquals(1, observer.completedCalls);
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(message, observer.response().getError().getMessage());
+  }
+
+  @Test
+  void exportTenantDataPreservesUnavailableOwnerProjectionResponse() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    String message = "Account owner projection is unavailable";
+    Mockito.when(accountService.exportTenantData(1L, 2L))
+        .thenThrow(new AuthenticationException("AUTH_UNAVAILABLE", message));
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<ExportTenantDataResponse> observer = new RecordingObserver<>();
+
+    service.exportTenantData(
+        ExportTenantDataRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
+        observer);
+
+    assertEquals(1, observer.nextCalls);
+    assertEquals(0, observer.receivedTransportError() ? 1 : 0);
+    assertEquals(1, observer.completedCalls);
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(message, observer.response().getError().getMessage());
   }
 
   @Test
@@ -2556,10 +2636,13 @@ class AccountGrpcServiceTest {
     private T response;
     private boolean receivedTransportError;
     private boolean completed;
+    private int nextCalls;
+    private int completedCalls;
 
     @Override
     public void onNext(T value) {
       response = value;
+      nextCalls++;
     }
 
     @Override
@@ -2570,6 +2653,7 @@ class AccountGrpcServiceTest {
     @Override
     public void onCompleted() {
       completed = true;
+      completedCalls++;
     }
 
     private T response() {

@@ -990,7 +990,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   private static void assertRetainedParentRegionBridgeUpgrade(boolean incompatible)
       throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
-    TestSchema schema = newTestSchema("1050.5");
+    TestSchema schema = newTestSchema("1050.6");
     try {
       var target =
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
@@ -1025,7 +1025,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                   .get(0, String.class))
           .isEqualTo("INSTALLED");
       if (incompatible) {
-        // V1050.5 permits this ordinary checked write. No trigger or constraint is bypassed.
+        // V1050.6 permits this ordinary checked write. No trigger or constraint is bypassed.
         assertThat(
                 schema
                     .dsl()
@@ -1068,10 +1068,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                     .get(0, Integer.class))
             .isZero();
       } else {
-        assertThat(upgradeRegionSchema(schema)).isOne();
+        assertThat(upgradeRegionSchema(schema)).isEqualTo(2);
         var historyAfter = regionMigrationHistoryImage(schema.dsl());
-        assertThat(historyAfter).hasSize(historyBefore.size() + 1);
+        assertThat(historyAfter).hasSize(historyBefore.size() + 2);
         assertThat(historyAfter.subList(0, historyBefore.size())).isEqualTo(historyBefore);
+        var historyVersions =
+            schema
+                .dsl()
+                .fetch("SELECT version FROM flyway_schema_history ORDER BY installed_rank")
+                .getValues("version", String.class);
+        assertThat(historyVersions.subList(historyBefore.size(), historyVersions.size()))
+            .containsExactly("1051", "1051.1");
         assertThat(
                 schema
                     .dsl()

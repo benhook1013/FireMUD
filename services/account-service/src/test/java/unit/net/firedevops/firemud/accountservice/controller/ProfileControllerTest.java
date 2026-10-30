@@ -373,6 +373,38 @@ class ProfileControllerTest {
   }
 
   @Test
+  void absentAndOtherProfileOwnersHaveTheSameNonDisclosingDenial() throws Exception {
+    for (boolean absent : List.of(true, false)) {
+      org.mockito.Mockito.reset(accountService);
+      if (absent) {
+        when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
+            .thenThrow(new IllegalArgumentException("Account not found"));
+      } else {
+        when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(3L);
+      }
+      UpdateProfileRestRequest body =
+          new UpdateProfileRestRequest(
+              1L, ACCOUNT_UUID_TEXT, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+      for (var request :
+          List.of(
+              get("/profiles/" + ACCOUNT_UUID_TEXT).param("tenantId", "1"),
+              put("/profiles/" + ACCOUNT_UUID_TEXT)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(body)))) {
+        mockMvc
+            .perform(
+                request.header(
+                    HttpHeaders.AUTHORIZATION, "Bearer " + ordinaryToken(absent ? 2L : 3L)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
+            .andExpect(jsonPath("$.error.message").value("Account access required"));
+      }
+      verify(accountService, never()).getProfile(any(), any());
+      verify(accountService, never()).updateProfile(any(UpdateProfileRequest.class));
+    }
+  }
+
+  @Test
   void profileOwnerReadbackInconsistencyReturnsRetryableUnavailable() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
         .thenThrow(new IllegalStateException("Account UUID provenance is inconsistent"));

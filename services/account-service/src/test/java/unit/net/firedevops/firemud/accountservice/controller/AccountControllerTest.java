@@ -425,6 +425,33 @@ class AccountControllerTest {
   }
 
   @Test
+  void absentAndOtherAccountSelectorsHaveTheSameNonDisclosingDenial() throws Exception {
+    for (boolean absent : List.of(true, false)) {
+      String callerAccountUuid = absent ? ACCOUNT_UUID_TEXT : OTHER_ACCOUNT_UUID;
+      String token =
+          jwtUtil.generateToken(callerAccountUuid, Map.of("accountId", callerAccountUuid));
+      org.mockito.Mockito.reset(accountService);
+      if (absent) {
+        when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
+            .thenThrow(new IllegalArgumentException("Account not found"));
+      } else {
+        when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(43L);
+      }
+      for (var request : accountSelectorRequests(ACCOUNT_UUID_TEXT)) {
+        mockMvc
+            .perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error.code").value("PERMISSION_DENIED"))
+            .andExpect(jsonPath("$.error.message").value("Account access required"));
+      }
+      verify(accountService, never()).getLoginAuthModes(anyLong());
+      verify(accountService, never()).exportAccountData(anyLong());
+      verify(accountService, never()).exportTenantData(anyLong(), anyLong());
+      verify(accountService, never()).deleteAccount(anyLong());
+    }
+  }
+
+  @Test
   void accountOwnerReadbackInconsistencyAndOutageReturnRetryableUnavailable() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
         .thenThrow(new IllegalStateException("Account UUID provenance is inconsistent"));
