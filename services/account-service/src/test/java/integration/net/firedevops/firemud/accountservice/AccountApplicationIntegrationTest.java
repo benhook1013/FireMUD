@@ -42,7 +42,8 @@ import tools.jackson.databind.json.JsonMapper;
       GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
       GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
       GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
-      GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH
+      GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
+      "firemud.mail.verification-url=https://account.test/verify-email?token=%s"
     })
 class AccountApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
@@ -65,6 +66,10 @@ class AccountApplicationIntegrationTest {
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
+
+  @Autowired
+  private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
   private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
   @MockitoBean private EntityManagementClient entityManagementClient;
@@ -160,8 +165,9 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
-  void ordinaryAuthenticationAndBootstrapPreservePersistedOwnerAndCurrentNumericContract()
-      throws Exception {
+  void
+      bootstrapUsesPersistedUuidAcrossPasswordOtpReadsAndInvalidationWhileOrdinaryLoginStaysNumeric()
+          throws Exception {
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     String username = "auth-uuid-" + suffix;
     String email = username + "@example.com";
@@ -235,11 +241,80 @@ class AccountApplicationIntegrationTest {
         HTTP_CLIENT.send(bootstrapRequest, HttpResponse.BodyHandlers.ofString());
     assertThat(bootstrapResponse.statusCode()).isEqualTo(200);
     var bootstrapData = jsonMapper.readTree(bootstrapResponse.body()).path("data");
-    assertThat(bootstrapData.path("accountId").asLong()).isEqualTo(numericAccountId);
+    assertThat(bootstrapData.path("accountId").asText()).isEqualTo(persistedAccountUuid.toString());
     var bootstrapClaims =
         jwtUtil.parseToken(bootstrapData.path("bootstrapToken").asText()).getPayload();
-    assertThat(bootstrapClaims.getSubject()).isEqualTo(Long.toString(numericAccountId));
-    assertThat(((Number) bootstrapClaims.get("accountId")).longValue()).isEqualTo(numericAccountId);
+    assertThat(bootstrapClaims.getSubject()).isEqualTo(persistedAccountUuid.toString());
+    assertThat(bootstrapClaims.get("accountId", String.class))
+        .isEqualTo(persistedAccountUuid.toString());
+    org.mockito.Mockito.when(gameSessionClient.listGameplayWorlds())
+        .thenReturn(java.util.List.of());
+    String passwordBootstrap = bootstrapData.path("bootstrapToken").asText();
+    assertThat(bootstrapWorlds(passwordBootstrap).statusCode()).isEqualTo(200);
+    invalidateBootstrapSession(numericAccountId, passwordBootstrap);
+    HttpResponse<String> expiredPassword = bootstrapWorlds(passwordBootstrap);
+    assertThat(expiredPassword.statusCode()).isEqualTo(401);
+    assertThat(expiredPassword.body()).contains("CONNECT_CONTEXT_INVALID");
+
+    accountService.requestEmailVerification(email);
+    String verificationToken =
+        java.util.Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT token FROM email_verification_token WHERE account_id=?",
+                    numericAccountId),
+                "Expected persisted email-verification record")
+            .get(0, String.class);
+    accountService.verifyEmail(
+        new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(verificationToken));
+    accountService.requestEmailLoginOtp(email);
+    var messages =
+        org.mockito.ArgumentCaptor.forClass(org.springframework.mail.SimpleMailMessage.class);
+    org.mockito.Mockito.verify(mailSender, org.mockito.Mockito.atLeastOnce())
+        .send(messages.capture());
+    String otpBody =
+        messages.getAllValues().stream()
+            .filter(message -> "Your FireMUD login code".equals(message.getSubject()))
+            .filter(
+                message -> {
+                  String[] recipients = message.getTo();
+                  return recipients != null && java.util.Arrays.asList(recipients).contains(email);
+                })
+            .map(
+                message ->
+                    java.util.Objects.requireNonNull(message.getText(), "Expected OTP email body"))
+            .findFirst()
+            .orElseThrow();
+    var matcher = java.util.regex.Pattern.compile("\\b(\\d{6})\\b").matcher(otpBody);
+    assertThat(matcher.find()).isTrue();
+    String otp = matcher.group(1);
+    HttpRequest otpRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/auth/player-bootstrap"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    jsonMapper.writeValueAsString(
+                        java.util.Map.of("accountIdentifier", email, "secret", otp))))
+            .build();
+    HttpResponse<String> otpResponse =
+        HTTP_CLIENT.send(otpRequest, HttpResponse.BodyHandlers.ofString());
+    assertThat(otpResponse.statusCode()).isEqualTo(200);
+    var otpData = jsonMapper.readTree(otpResponse.body()).path("data");
+    assertThat(otpData.path("accountId").asText()).isEqualTo(persistedAccountUuid.toString());
+    String otpBootstrap = otpData.path("bootstrapToken").asText();
+    var otpClaims = jwtUtil.parseToken(otpBootstrap).getPayload();
+    assertThat(otpClaims.getSubject()).isEqualTo(persistedAccountUuid.toString());
+    assertThat(otpClaims.get("accountId", String.class)).isEqualTo(persistedAccountUuid.toString());
+    assertThat(
+            java.util.Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM account_email_login_challenge WHERE account_id=?",
+                        numericAccountId),
+                    "Expected challenge-count record")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(bootstrapWorlds(otpBootstrap).statusCode()).isEqualTo(200);
+    invalidateBootstrapSession(numericAccountId, otpBootstrap);
+    assertThat(bootstrapWorlds(otpBootstrap).statusCode()).isEqualTo(401);
 
     assertThat(
             dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", numericAccountId)
@@ -256,6 +331,24 @@ class AccountApplicationIntegrationTest {
                     "SELECT account_uuid_provenance FROM accounts WHERE id = ?", numericAccountId)
                 .fetchOne(0, String.class))
         .isEqualTo(provenance);
+  }
+
+  private HttpResponse<String> bootstrapWorlds(String token) throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/auth/bootstrap/worlds"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .GET()
+            .build();
+    return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private void invalidateBootstrapSession(long accountId, String token) throws Exception {
+    String hash =
+        java.util.HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    assertThat(redisTemplate.delete("session:auth:account:" + accountId + ":" + hash)).isTrue();
   }
 
   @Test

@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
+import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
@@ -419,20 +420,21 @@ public class AccountServiceImpl implements AccountService {
         authenticateAccountIdentity(accountIdentifier, secret, true);
     Account account = authentication.account();
     requireAuthenticationAccountOwner(account);
+    String accountUuid = account.getAccountUuid().toString();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
     long expiresAt = issuedAt + tokenProperties.getPlayerBootstrapExpirationMs();
     String bootstrapToken =
         mintToken(
-            String.valueOf(account.getId()),
+            accountUuid,
             tokenProperties.getPlayerBootstrapExpirationMs(),
-            Map.of("aud", "player-bootstrap", "accountId", account.getId(), "jti", jti));
+            Map.of("aud", "player-bootstrap", "accountId", accountUuid, "jti", jti));
     sessionService.storeAccountSession(
         account.getId(), bootstrapToken, tokenProperties.getPlayerBootstrapExpirationMs());
     logger.info("Issued player bootstrap token for account {}", account.getId());
     return new PlayerBootstrapResult(
-        account.getId(),
+        accountUuid,
         bootstrapToken,
         Instant.ofEpochMilli(issuedAt).toString(),
         Instant.ofEpochMilli(expiresAt).toString());
@@ -1297,15 +1299,23 @@ public class AccountServiceImpl implements AccountService {
             "CONNECT_CONTEXT_INVALID",
             "Missing bootstrap token",
             "Invalid bootstrap token");
-    try {
-      long accountId = requireSignedActorAccountId(claims);
-      if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
-        throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
-      }
-      return new BootstrapContext(accountId);
-    } catch (IllegalArgumentException ex) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
+    UUID subject =
+        claims.get("sub") instanceof String text ? AccountUuidText.parseOrNull(text) : null;
+    UUID accountUuid =
+        claims.get("accountId") instanceof String text ? AccountUuidText.parseOrNull(text) : null;
+    if (subject == null || accountUuid == null || !subject.equals(accountUuid)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
     }
+    final Long accountId;
+    try {
+      accountId = resolveAccountStorageId(accountUuid);
+    } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
+    }
+    if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
+    }
+    return new BootstrapContext(accountId);
   }
 
   private RuntimeRealmTarget requireRealmTarget(
@@ -1642,10 +1652,6 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalArgumentException ex) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
-  }
-
-  private static long requireSignedActorAccountId(Claims claims) {
-    return JwtClaims.requireSignedActorAccountId(claims, "signed token account subject mismatch");
   }
 
   private Claims requireSignedTokenClaims(

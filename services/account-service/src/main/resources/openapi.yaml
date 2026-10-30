@@ -121,7 +121,9 @@ components:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical lowercase non-nil persisted Account UUID.
         bootstrapToken:
           type: string
         issuedAt:
