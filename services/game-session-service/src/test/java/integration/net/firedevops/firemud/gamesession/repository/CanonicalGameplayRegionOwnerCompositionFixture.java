@@ -11,7 +11,10 @@ import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +37,7 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
@@ -139,7 +144,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   }
 
   /**
-   * Physical SQL migration fixture at parent 6c97bfe4742654480fc8b1d81867968e358a7634 (V1050.5).
+   * Physical SQL fixture for the current receiving-parent migration frontier V1050.5. Owner SQL and
+   * bindings are frozen from parent 6c97bfe4742654480fc8b1d81867968e358a7634; the schema is
+   * installed from the current receiving migration files, not an archived candidate checksum set.
    * Replays RuntimeStatusRepository.prepareInitialTimeline,
    * beginInitialTimeline/updatePreparationAfterRedis and BindingInventoryRepository's
    * writePreparedBridge/writeRevisionRows/bumpInventoryClock SQL and original bindings.
@@ -209,6 +216,13 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 .setCharacterUuid(worldRequest.getCharacterUuid())
                 .setIntentDigest(worldRequest.getAssignmentIntentDigest())
                 .build());
+    String parentEntityReferenceDigest = historicalParentEntityReferenceDigest(reference);
+    // Compare current compatibility separately; historical storage always uses the frozen value.
+    if (!parentEntityReferenceDigest.equals(
+        CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference))) {
+      throw new IllegalStateException(
+          "Current Entity reference digest differs from the frozen parent");
+    }
     var assignment = resolved.lifecycleAssignment();
     var source =
         new CanonicalGameplayRegionRuntimeStatusRepository.Source(
@@ -351,7 +365,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   reference.workloadNamespace(),
                   UUID.fromString(worldRequest.getAssignmentUuid()),
                   worldRequest.getAssignmentIntentDigest(),
-                  CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference),
+                  parentEntityReferenceDigest,
                   worldDigest,
                   source.canonicalRegionId(),
                   source.lifecycleEpoch(),
@@ -372,6 +386,43 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   new BigDecimal(revision)));
         });
     return transitionId;
+  }
+
+  /**
+   * Frozen from CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest and sha256 at
+   * parent 6c97bfe4742654480fc8b1d81867968e358a7634. Reconstruct the original response explicitly;
+   * neither the current digest helper nor the reference's current evidence byte codec defines
+   * historical row contents.
+   */
+  private static String historicalParentEntityReferenceDigest(
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference) {
+    var response =
+        ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(reference.assignmentUuid().toString())
+            .setCanonicalAccountUuid(reference.canonicalAccountUuid().toString())
+            .setCharacterUuid(reference.characterUuid().toString())
+            .setIntentDigest(reference.intentDigest())
+            .setExpectedTarget(reference.target())
+            .setPublishedOwnerProofDigest(reference.publishedOwnerProofDigest())
+            .setRuntimeEntityId(reference.runtimeEntityId().value())
+            .setProjectionGeneration(reference.projectionGeneration())
+            .setProjectionFence(reference.projectionFence())
+            .setCorePayload(reference.corePayload())
+            .build();
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      for (byte[] part :
+          new byte[][] {
+            reference.workloadNamespace().getBytes(StandardCharsets.UTF_8), response.toByteArray()
+          }) {
+        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(part.length).array());
+        digest.update(part);
+      }
+      return HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 is unavailable", impossible);
+    }
   }
 
   private static void historicalWriteRegionRevisionRows(

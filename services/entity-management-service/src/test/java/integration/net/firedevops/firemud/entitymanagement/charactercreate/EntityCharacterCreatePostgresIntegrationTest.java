@@ -340,14 +340,12 @@ class EntityCharacterCreatePostgresIntegrationTest {
     assertThat(reference.projectionGeneration()).isOne();
     assertThat(reference.projectionFence()).isOne();
     assertThat(reference.creationTerminal()).isEqualTo(terminal);
-    assertThatThrownBy(
-            () ->
-                projections.read(
-                    dsl,
-                    terminal.toBuilder().setTerminalId(UUID.randomUUID().toString()).build(),
-                    proof.action()))
-        .isInstanceOf(io.grpc.StatusRuntimeException.class)
-        .hasMessageContaining("FAILED_PRECONDITION");
+    assertRuntimeSelectorUnavailable(
+        () ->
+            projections.read(
+                dsl,
+                terminal.toBuilder().setTerminalId(UUID.randomUUID().toString()).build(),
+                proof.action()));
     assertThat(reference.terminalDigest())
         .isEqualTo(CommandSource.sha256(terminal.toByteArray()).substring("sha256:".length()));
     var restarted = new EntityCharacterCreateRepository(dsl, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -373,15 +371,11 @@ class EntityCharacterCreatePostgresIntegrationTest {
             proof.action().expectedVersion(),
             proof.action().mutation(),
             proof.action().auditReason());
-    assertThatThrownBy(() -> projections.read(dsl, terminal, changed))
-        .isInstanceOf(io.grpc.StatusRuntimeException.class)
-        .hasMessageContaining("FAILED_PRECONDITION");
+    assertRuntimeSelectorUnavailable(() -> projections.read(dsl, terminal, changed));
     dsl.execute(
         "UPDATE characters SET actor_identity_status = 'QUARANTINED', actor_identity_quarantine_reason = 'REVOKED' WHERE character_uuid = ?",
         UUID.fromString(terminal.getCharacterId()));
-    assertThatThrownBy(() -> projections.read(dsl, terminal, proof.action()))
-        .isInstanceOf(io.grpc.StatusRuntimeException.class)
-        .hasMessageContaining("FAILED_PRECONDITION");
+    assertRuntimeSelectorUnavailable(() -> projections.read(dsl, terminal, proof.action()));
     assertThat(restarted.replay(proof.request()).orElseThrow()).isEqualTo(terminal);
   }
 
@@ -519,8 +513,10 @@ class EntityCharacterCreatePostgresIntegrationTest {
               "UPDATE characters SET actor_identity_status = 'QUARANTINED', actor_identity_quarantine_reason = 'REVOKED' WHERE character_uuid = ?",
               character);
           String quarantined = retainedRow(dsl, "characters", "character_uuid", character);
-          assertRuntimeUnavailable(() -> world.readPlayerCreatedActorPlacementReceipt(selector));
-          assertRuntimeUnavailable(() -> game.readPlayerCreatedActorRuntimeReference(selector));
+          assertRuntimeSelectorUnavailable(
+              () -> world.readPlayerCreatedActorPlacementReceipt(selector));
+          assertRuntimeSelectorUnavailable(
+              () -> game.readPlayerCreatedActorRuntimeReference(selector));
           assertThat(retainedRow(dsl, "characters", "character_uuid", character))
               .isEqualTo(quarantined);
           assertThat(retainedOperationRow(dsl, namespace, operation)).isEqualTo(operationBefore);
@@ -1704,15 +1700,6 @@ class EntityCharacterCreatePostgresIntegrationTest {
                 .build())
         .maxInboundMessageSize(CanonicalPlayerCreatedRuntimeReferenceEvidence.MAX_RESPONSE_BYTES)
         .build();
-  }
-
-  private static void assertRuntimeUnavailable(Runnable call) {
-    assertThatThrownBy(call::run)
-        .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
   }
 
   private static void assertRuntimeSelectorUnavailable(Runnable call) {

@@ -708,3 +708,15 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Consequence: A free-port probe does not reserve an endpoint. Clients also copy endpoint properties in their constructors, so changing those properties afterward cannot wire a newly bound server.
   - Expected pattern: Keep a kernel-assigned listener bound through server use, and publish the actual bound ports before client construction.
   - Outcome: A bounded fixture repair now holds a port-zero World listener during owner assembly, publishes actual World and Account ports before client construction, and registers the World handlers before use. Existing TLS, peer guards and failure-path cleanup remain. R1116 passes the original failing lifecycle case and both v1/v2 World composition cases, plus two ordinary/installed negative receiving cases after the parent carry, with enabled affected checks and documentation. Published full CI recovery remains separate.
+
+- `2026-10-30`: Keep a completion wake on long local proof
+  - Context: Gameplay's full Game Session baseline R1127 completed while the orchestrator handled review adjudication and subsequent-stage planning.
+  - Observation: The orchestrator relied on manual reads of the redirected command instead of retaining a completion wake. The baseline ended at 23:57:21 UTC, but the next priority proof R1128 was not admitted until 00:05:25 UTC, leaving the shared validation slot idle for about eight wall-clock minutes. This was an orchestration delay, not a failed Gradle run.
+  - Expected pattern: Keep one completion wake while doing independent work. Reuse the existing shared observer for the exact local receipt rather than adding another observer or assuming a launched process will wake the orchestrator.
+  - Outcome: R1128 passes all 32 selected cases. The same shared observer now reads only the assigned local metadata until it records an exit result; the next long experiment will receive that watch before launch.
+
+- `2026-10-30`: Cross-check wall and monotonic benchmark intervals
+  - Context: The unchanged-source full Game Session baseline R1127 reran the complete service check without build-cache reuse.
+  - Observation: Its UTC start/end interval is 2689.87 seconds, while the launcher records 2466.09 monotonic seconds, a difference of about 224 seconds. Gradle reports 44 minutes 47 seconds. The sampled UTC intervals show no single jump greater than 38.6 seconds. The cause is unknown; these facts do not establish a clock adjustment, suspension or a speed improvement.
+  - Expected pattern: Retain both clock intervals and task profiles, add clock values to subsequent resource samples, and assess timing comparability before attributing savings. Passing test/check results and uncertain elapsed-time attribution remain separate.
+  - Outcome: All 3411 baseline cases are retained with zero failures and one existing disabled native case. The candidate comparison and hosted-pipeline assessment remain required; no optimization has been published from these timings.

@@ -129,7 +129,7 @@ final class EntityPlayerCreatedRuntimeProjectionRepository {
 
   private static RuntimeException unavailable() {
     return Status.FAILED_PRECONDITION
-        .withDescription("Original PLAYER_CREATED runtime projection is unavailable")
+        .withDescription("Original PLAYER_CREATED runtime evidence is unavailable")
         .asRuntimeException();
   }
 }
