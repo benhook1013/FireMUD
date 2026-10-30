@@ -603,7 +603,10 @@ public class AccountServiceImpl implements AccountService {
     requireAuthenticationAccountOwner(account);
     String scopeId =
         mintAndRetainConnectScope(
-            new BootstrapContext(caller.accountId(), account.getAccountUuid()), current, evaluatedAt, expiresAt);
+            new BootstrapContext(caller.accountId(), account.getAccountUuid()),
+            current,
+            evaluatedAt,
+            expiresAt);
     return new DirectTextJoinScope(scopeId, expiresAt.toString());
   }
 
@@ -1646,14 +1649,16 @@ public class AccountServiceImpl implements AccountService {
         throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
       }
       UUID realmId = requireCanonicalRealmId(claims.get("realmId"));
-      String namespace = JwtClaims.requireText(claims.get("playableStateNamespaceId"), "playableStateNamespaceId");
+      String namespace =
+          JwtClaims.requireText(claims.get("playableStateNamespaceId"), "playableStateNamespaceId");
       String scope = JwtClaims.requireText(claims.get("playableStateScope"), "playableStateScope");
       long catalogRevision = requirePositiveLong(claims.get("catalogRevision"), "catalogRevision");
       final Long accountId;
       try {
         accountId = resolveAccountStorageId(UUID.fromString(routingClaims.accountId()));
       } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
-        throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
+        throw new AuthenticationException(
+            "AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
       }
       return new ConnectScopeContext(
           accountId,

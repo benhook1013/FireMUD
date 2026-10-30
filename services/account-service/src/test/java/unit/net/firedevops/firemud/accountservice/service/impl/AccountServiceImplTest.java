@@ -3486,21 +3486,32 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
-    String browser = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
-    String direct = service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()).connectScopeId();
+    String browser =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    String direct =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
     for (String token : java.util.List.of(browser, direct)) {
       var claims = jwtUtil.parseToken(token).getPayload();
       assertEquals(account.getAccountUuid().toString(), claims.getSubject());
       assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
-      AuthenticationException held = assertThrows(AuthenticationException.class,
-          () -> service.issueConnectToken(bootstrap.bootstrapToken(), new ConnectTokenRequest(token, "held-proof")));
+      AuthenticationException held =
+          assertThrows(
+              AuthenticationException.class,
+              () ->
+                  service.issueConnectToken(
+                      bootstrap.bootstrapToken(), new ConnectTokenRequest(token, "held-proof")));
       assertEquals("AUTH_UNAVAILABLE", held.getCode());
     }
     var retained = org.mockito.ArgumentCaptor.forClass(VerifiedJoinScope.class);
-    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.times(2)).insert(retained.capture());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.times(2))
+        .insert(retained.capture());
     for (VerifiedJoinScope row : retained.getAllValues()) {
       assertEquals(11L, row.accountId());
-      assertEquals(net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(row), row.snapshotDigest());
+      assertEquals(
+          net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(row),
+          row.snapshotDigest());
     }
   }
 
@@ -3508,7 +3519,10 @@ class AccountServiceImplTest {
   void scopeReaderOwnerFailureIsUnavailableAndNumericScopesNeverReachOwnerLookup() {
     Account account = directTextAccount();
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    String scope = service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()).connectScopeId();
+    String scope =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
     var decoded = new java.util.HashMap<String, Object>(jwtUtil.parseToken(scope).getPayload());
     decoded.remove("iat");
     decoded.remove("exp");
@@ -3516,16 +3530,26 @@ class AccountServiceImplTest {
     decoded.put("accountId", "11");
     String numeric = new JwtUtil(JWT_SECRET, 120000L).generateToken("11", decoded);
     org.mockito.Mockito.clearInvocations(accountRepository);
-    AuthenticationException invalid = assertThrows(AuthenticationException.class,
-        () -> service.joinPublicProductionFromGameSession(directTextCaller(),
-            new JoinPublicProductionRequest(numeric, directTextCaller().requestId())));
+    AuthenticationException invalid =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProductionFromGameSession(
+                    directTextCaller(),
+                    new JoinPublicProductionRequest(numeric, directTextCaller().requestId())));
     assertEquals("CONNECT_SCOPE_INVALID", invalid.getCode());
-    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).findByAccountUuid(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByAccountUuid(org.mockito.ArgumentMatchers.any());
     when(accountRepository.findByAccountUuid(account.getAccountUuid()))
-        .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("private detail"));
-    AuthenticationException unavailable = assertThrows(AuthenticationException.class,
-        () -> service.joinPublicProductionFromGameSession(directTextCaller(),
-            new JoinPublicProductionRequest(scope, directTextCaller().requestId())));
+        .thenThrow(
+            new org.springframework.dao.DataAccessResourceFailureException("private detail"));
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProductionFromGameSession(
+                    directTextCaller(),
+                    new JoinPublicProductionRequest(scope, directTextCaller().requestId())));
     assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
   }
 
