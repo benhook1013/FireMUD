@@ -204,7 +204,7 @@ public class GameplayCommandStatusServiceImpl implements GameplayCommandStatusSe
       return JwtClaims.requireCanonicalAccountUuid(value, "account_id");
     } catch (IllegalArgumentException ex) {
       throw new ResponseStatusException(
-          HttpStatus.INTERNAL_SERVER_ERROR, "control-plane account_id was invalid");
+          HttpStatus.INTERNAL_SERVER_ERROR, "control-plane account_id was invalid", ex);
     }
   }
 
