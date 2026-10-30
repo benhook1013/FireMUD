@@ -333,6 +333,11 @@ public class GameLogicClient
 
   public PickupItemFromRoomResponse pickupVisibleRoomItem(
       SessionContext context, String itemReference, int quantity, String effectId) {
+    if (!SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      return PickupItemFromRoomResponse.newBuilder()
+          .setError(error("INVENTORY_UNAVAILABLE", "Account identity unavailable"))
+          .build();
+    }
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String accountId = JwtClaims.requireCanonicalAccountUuid(context.accountId(), "accountId");
@@ -436,6 +441,11 @@ public class GameLogicClient
 
   public DropItemToRoomResponse dropCarriedItem(
       SessionContext context, String itemReference, int quantity, String effectId) {
+    if (!SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      return DropItemToRoomResponse.newBuilder()
+          .setError(error("INVENTORY_UNAVAILABLE", "Account identity unavailable"))
+          .build();
+    }
     String tenantId = Long.toString(context.tenantId());
     String sessionId = Long.toString(context.sessionId());
     String accountId = JwtClaims.requireCanonicalAccountUuid(context.accountId(), "accountId");

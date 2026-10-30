@@ -534,6 +534,47 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void retainedNumericOwnerRemainsNonAdmittingAndUnmodified() {
+    var retained =
+        new net.firedevops.firemud.gamesession.service.GameplayPresence(
+            3L,
+            22L,
+            7L,
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            "123",
+            202L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            80L,
+            null,
+            100L,
+            null);
+    when(valueOperations.get("gameplaypresence:session:3")).thenReturn(retained);
+    assertEquals(java.util.Optional.empty(), service.findConnectedBySessionId(3L));
+    assertThrows(IllegalStateException.class, () -> service.removeBySessionId(3L));
+    assertThrows(IllegalStateException.class, () -> service.setExplicitAfk(3L, true));
+    assertThrows(IllegalStateException.class, () -> service.recordCommandActivity(3L, true));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.registerConnected(
+                new SessionContext(
+                    3L,
+                    22L,
+                    PLAYER_ACCOUNT_ID,
+                    "player@example.com",
+                    202L,
+                    "Ben",
+                    7L,
+                    "R-1",
+                    null)));
+    verifyNoPresenceMutation();
+  }
+
+  @Test
   void removeBySessionIdRejectsUnreadableAndWrongTypePresenceWithoutMutation() {
     String presenceKey = "gameplaypresence:session:3";
     when(valueOperations.get(presenceKey))
