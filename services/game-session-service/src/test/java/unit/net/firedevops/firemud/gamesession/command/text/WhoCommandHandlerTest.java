@@ -55,10 +55,10 @@ class WhoCommandHandlerTest {
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String godJwt =
         jwtUtil.generateToken(
-            "1",
+            net.firedevops.firemud.test.AccountRuntimeStubServer.accountUuidForTestFixture(1L),
             java.util.Map.of(
                 "accountId",
-                "1",
+                net.firedevops.firemud.test.AccountRuntimeStubServer.accountUuidForTestFixture(1L),
                 "globalRoles",
                 java.util.List.of("platformAdmin"),
                 "scopedRoles",
@@ -68,10 +68,10 @@ class WhoCommandHandlerTest {
         GameplayPresenceTestFixtures.whoAster("god@example.com", godJwt));
     String moderatorJwt =
         jwtUtil.generateToken(
-            "4",
+            net.firedevops.firemud.test.AccountRuntimeStubServer.accountUuidForTestFixture(4L),
             java.util.Map.of(
                 "accountId",
-                "4",
+                net.firedevops.firemud.test.AccountRuntimeStubServer.accountUuidForTestFixture(4L),
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("moderator"))));
     gameplayPresenceService.registerConnected(GameplayPresenceTestFixtures.whoDara(moderatorJwt));

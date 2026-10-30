@@ -31,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @WithFiremudJwtTestProperties
 class GameplayCommandControllerTest {
+  private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
   @Autowired private MockMvc mockMvc;
   @Autowired private JwtUtil jwtUtil;
 
@@ -45,8 +46,8 @@ class GameplayCommandControllerTest {
   void getGameplayCommandStatusReturnsCanonicalStatus() throws Exception {
     when(gameplayCommandStatusService.getGameplayCommandStatus(2L, 7L, "cmd-123"))
         .thenReturn(gameplayCommandStatusDto());
-    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -55,15 +56,16 @@ class GameplayCommandControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.commandId").value("cmd-123"))
         .andExpect(jsonPath("$.data.tenantId").value(2))
+        .andExpect(jsonPath("$.data.accountId").value(ACCOUNT_UUID))
         .andExpect(jsonPath("$.data.publication.versionId").value(17))
         .andExpect(jsonPath("$.data.currentRuntimeRoutingBundleStale").value(true));
   }
 
   @Test
   void getGameplayCommandStatusRejectsCrossTenantScopedAdmin() throws Exception {
-    SessionContext.setContext("user", List.of(), Map.of("8", List.of("tenantAdmin")));
+    SessionContext.setContext(ACCOUNT_UUID, List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -74,8 +76,8 @@ class GameplayCommandControllerTest {
 
   @Test
   void getGameplayCommandStatusRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -90,8 +92,8 @@ class GameplayCommandControllerTest {
 
   @Test
   void getGameplayCommandStatusRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
-    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -110,7 +112,7 @@ class GameplayCommandControllerTest {
         2L,
         7L,
         11L,
-        42L,
+        ACCOUNT_UUID,
         99L,
         "LOOK",
         "look",

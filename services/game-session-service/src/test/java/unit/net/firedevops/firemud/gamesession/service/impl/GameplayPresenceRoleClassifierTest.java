@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 
 class GameplayPresenceRoleClassifierTest {
   private static final JwtUtil JWT_UTIL = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
+  private static final String ACCOUNT_UUID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
 
   @Test
   void classifyRoleReturnsPlayerWhenJwtParserThrowsIllegalArgumentException() {
@@ -34,16 +35,17 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            ACCOUNT_UUID,
             java.util.Map.of(
                 "accountId",
-                "202",
+                ACCOUNT_UUID,
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("moderator"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -55,11 +57,13 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202", java.util.Map.of("accountId", "202", "globalRoles", java.util.List.of("god")));
+            ACCOUNT_UUID,
+            java.util.Map.of("accountId", ACCOUNT_UUID, "globalRoles", java.util.List.of("god")));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -71,16 +75,17 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            ACCOUNT_UUID,
             java.util.Map.of(
                 "accountId",
-                "202",
+                ACCOUNT_UUID,
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("tenantAdmin"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -92,10 +97,10 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            ACCOUNT_UUID,
             java.util.Map.of(
                 "accountId",
-                "202",
+                ACCOUNT_UUID,
                 "globalRoles",
                 java.util.List.of("moderator", "god"),
                 "scopedRoles",
@@ -103,7 +108,8 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -114,11 +120,13 @@ class GameplayPresenceRoleClassifierTest {
   void classifyRoleReturnsPlayerWhenScopedRolesClaimIsMalformed() {
     Logger logger = mock(Logger.class);
     String jwt =
-        JWT_UTIL.generateToken("202", java.util.Map.of("accountId", "202", "scopedRoles", "bad"));
+        JWT_UTIL.generateToken(
+            ACCOUNT_UUID, java.util.Map.of("accountId", ACCOUNT_UUID, "scopedRoles", "bad"));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
