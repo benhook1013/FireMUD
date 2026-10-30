@@ -53,9 +53,25 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
   @Test
   void emptyLegacyFrontierConvergesAndTypedRepositoriesRoundTripCanonicalAccountUuids() {
     String schema = schema();
-    migrate(schema, "9");
-    migrate(schema, "10");
+    migrate(schema, "1002");
+    List<String> parentHistory;
     try (var dsl = database(schema)) {
+      assertParentFrontier(dsl);
+      parentHistory = migrationHistory(dsl);
+    }
+    migrate(schema, "1003");
+    try (var dsl = database(schema)) {
+      List<String> currentHistory = migrationHistory(dsl);
+      assertThat(currentHistory).hasSize(parentHistory.size() + 1);
+      assertThat(currentHistory.subList(0, parentHistory.size())).isEqualTo(parentHistory);
+      assertThat(
+              dsl.fetchCount(
+                  DSL.table("flyway_schema_history"),
+                  DSL.field("version")
+                      .eq("1003")
+                      .and(DSL.field("script").eq("V1003__canonical_account_uuid_carriers.sql"))
+                      .and(DSL.field("success").eq(true))))
+          .isOne();
       assertThat(
               dsl.fetch(
                       "SELECT data_type FROM information_schema.columns WHERE table_schema = ? "
@@ -189,8 +205,10 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
       })
   void anyRetainedLegacyAccountReferenceRefusesBeforeDdlAndPreservesAllRowImages(String table) {
     String schema = schema();
-    migrate(schema, "9");
+    migrate(schema, "1002");
     try (var dsl = database(schema)) {
+      assertParentFrontier(dsl);
+      List<String> historyBefore = migrationHistory(dsl);
       switch (table) {
         case "guilds" ->
             dsl.execute(
@@ -215,9 +233,10 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
         default -> throw new AssertionError(table);
       }
       Map<String, List<String>> before = rowImages(dsl);
-      assertThatThrownBy(() -> migrate(schema, "10"))
+      assertThatThrownBy(() -> migrate(schema, "1003"))
           .hasStackTraceContaining("SOCIAL_ACCOUNT_UUID_MIGRATION_BLOCKED");
       assertThat(rowImages(dsl)).isEqualTo(before);
+      assertThat(migrationHistory(dsl)).isEqualTo(historyBefore);
       assertThat(
               dsl.fetch(
                       "SELECT data_type FROM information_schema.columns WHERE table_schema = ? "
@@ -226,9 +245,32 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
                   .getValues(0, String.class))
           .hasSize(10)
           .containsOnly("bigint");
-      assertThat(dsl.fetchCount(DSL.table("flyway_schema_history"), DSL.field("version").eq("10")))
+      assertThat(
+              dsl.fetchCount(DSL.table("flyway_schema_history"), DSL.field("version").eq("1003")))
           .isZero();
     }
+  }
+
+  private static void assertParentFrontier(DSLContext dsl) {
+    assertThat(
+            dsl.fetch(
+                    "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")
+                .getValues(0, String.class))
+        .endsWith("1000", "1001", "1002");
+    assertThat(
+            dsl.fetchCount(
+                DSL.table("flyway_schema_history"),
+                DSL.field("version")
+                    .eq("1002")
+                    .and(DSL.field("script", String.class).endsWith("V1002__saga_step_table.sql"))
+                    .and(DSL.field("success").eq(true))))
+        .isOne();
+  }
+
+  private static List<String> migrationHistory(DSLContext dsl) {
+    return dsl.fetch(
+            "SELECT row_to_json(h)::text FROM flyway_schema_history h ORDER BY installed_rank")
+        .getValues(0, String.class);
   }
 
   private static AccountFriendLink link(String account, String friend) {
@@ -262,6 +304,7 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .locations("classpath:db/migration")
+        .placeholders(Map.of("serviceSchema", schema))
         .target(target)
         .load()
         .migrate();
