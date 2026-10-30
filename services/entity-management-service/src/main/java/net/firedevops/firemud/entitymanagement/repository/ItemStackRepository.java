@@ -270,6 +270,7 @@ public class ItemStackRepository {
             holderCharactersTable.field("id", Long.class),
             holderCharactersTable.field("tenant_id", Long.class),
             holderCharactersTable.field("account_id", Long.class),
+            holderCharactersTable.field("account_uuid", java.util.UUID.class),
             holderCharactersTable.field("playable_state_key", String.class),
             holderCharactersTable.field("name", String.class),
             ITEMS.ID,
@@ -293,6 +294,7 @@ public class ItemStackRepository {
             containerCharactersTable.field("id", Long.class),
             containerCharactersTable.field("tenant_id", Long.class),
             containerCharactersTable.field("account_id", Long.class),
+            containerCharactersTable.field("account_uuid", java.util.UUID.class),
             containerCharactersTable.field("playable_state_key", String.class),
             containerCharactersTable.field("name", String.class))
         .from(ITEM_STACKS)
@@ -320,6 +322,7 @@ public class ItemStackRepository {
             record.get(holderCharactersTable.field("id", Long.class)),
             record.get(holderCharactersTable.field("tenant_id", Long.class)),
             record.get(holderCharactersTable.field("account_id", Long.class)),
+            record.get(holderCharactersTable.field("account_uuid", java.util.UUID.class)),
             record.get(holderCharactersTable.field("playable_state_key", String.class)),
             record.get(holderCharactersTable.field("name", String.class))),
         record.get(ITEM_STACKS.EQUIPMENT_SLOT),
@@ -332,6 +335,7 @@ public class ItemStackRepository {
                 record.get(containerCharactersTable.field("id", Long.class)),
                 record.get(containerCharactersTable.field("tenant_id", Long.class)),
                 record.get(containerCharactersTable.field("account_id", Long.class)),
+                record.get(containerCharactersTable.field("account_uuid", java.util.UUID.class)),
                 record.get(containerCharactersTable.field("playable_state_key", String.class)),
                 record.get(containerCharactersTable.field("name", String.class))),
             record.get(CONTAINER_INSTANCES.EQUIPMENT_SLOT),

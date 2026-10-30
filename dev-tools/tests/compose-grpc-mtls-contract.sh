@@ -499,12 +499,12 @@ for name in app_names:
     assert mounts[0]["source"] == f"{cert_root}/workloads/{name}", (name, mounts[0])
     assert mounts[0].get("read_only") is True, name
     assert service.get("build") is None, f"image-only proof must not build {name}"
-entity_namespace = services["entity-management-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
-assert entity_namespace == "dev", entity_namespace
-wms_namespace = services["world-management-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
-assert wms_namespace == "dev", wms_namespace
-game_design_namespace = services["game-design-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
-assert game_design_namespace == "dev", game_design_namespace
+for name in (
+    "account-service", "game-session-service", "entity-management-service",
+    "world-management-service", "game-design-service",
+):
+    namespace = services[name]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+    assert namespace == "dev", (name, namespace)
 game_session = services["game-session-service"]
 game_session_environment = game_session["environment"]
 assert game_session_environment.get("FIREMUD_SMOKE_RUN_ID") == ""
@@ -547,7 +547,8 @@ assert world_management_leaf_mounts[0].get("read_only") is True
 game_design_receipt_mounts = [mount for mount in game_design.get("volumes", []) if mount.get("target") == source_receipt_dir]
 assert len(game_design_receipt_mounts) == 1, game_design_receipt_mounts
 assert game_design_receipt_mounts[0]["source"] == source_receipt_source, game_design_receipt_mounts[0]
-assert game_design_receipt_mounts[0].get("read_only") is False
+# Compose may omit the default false in rendered JSON; an explicit read-only mount still fails.
+assert game_design_receipt_mounts[0].get("read_only", False) is False
 world_management = services["world-management-service"]
 world_management_environment = world_management["environment"]
 assert world_management_environment.get("FIREMUD_SMOKE_RUN_ID") == ""

@@ -2269,21 +2269,24 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.update_profile")
   public ProfileDto updateProfile(UpdateProfileRequest request) {
     request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
-    requireProfileMembership(request.tenantId(), request.accountId());
+    UUID accountUuid = AccountUuidText.parseOrNull(request.accountId());
+    if (accountUuid == null) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+    }
+    Long accountId = resolveAccountStorageId(accountUuid);
+    requireProfileMembership(request.tenantId(), accountId);
     Profile profile =
         profileRepository
-            .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
+            .findByAccountIdAndTenantId(accountId, request.tenantId())
             .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
-    requireProfileOwner(profile, request.tenantId(), request.accountId());
+    requireProfileOwner(profile, request.tenantId(), accountId);
     profile.setDisplayName(request.displayName());
     profile.setBio(request.bio());
     profile.setPresenceVisibilityPolicy(request.presenceVisibilityPolicy());
     profile = profileRepository.save(profile);
     runAfterCommit(
-        () ->
-            notificationService.sendNotification(
-                request.tenantId(), request.accountId(), "Profile updated"));
-    return projectProfile(profile, request.tenantId(), request.accountId());
+        () -> notificationService.sendNotification(request.tenantId(), accountId, "Profile updated"));
+    return projectProfile(profile, request.tenantId(), accountId);
   }
 
   private static void requireProfileOwner(Profile profile, Long tenantId, Long accountId) {
