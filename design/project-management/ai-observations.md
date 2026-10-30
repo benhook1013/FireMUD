@@ -726,10 +726,14 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Response: preserve the unrecovered refusal and all receipt/supersession/purge assertions, allow either timing outcome after recovery, and assert from PostgreSQL that the committed retirement timestamp satisfies every original row's stored retention bound. R1142 passes all 15 cases in the affected native class; its aggregate failed the new assertion's missing null check. R1143 passes the corrected affected recovery method and enabled test analysis, formatting and documentation checks. The earlier compile-failed R1141 ran no tests. No production policy, timeout or guard changes.
 
 - `2026-10-30`: A parent-unavailable review refusal omitted the parent identity.
+  - Context: #3352 CLI review admission after an ancestor PR merged.
   - Observation: A #3352 CLI request stopped before execution with `parent_unavailable` after an ancestor merged, but compact and full diagnostics named neither the refusing child/base branch nor its comparison. The target's immediate parent remained open, so the orchestrator could not safely infer which boundary to repair.
+  - Expected pattern: Refusal diagnostics identify the refusing child, base branch and comparison. When these facts are absent, preserve the original request and obtain its meaning before changing or bypassing a boundary.
   - Outcome: FireController confirmed that original-source metadata is missing and is adding it after the current capture recovery. The historical refusing comparison remains unknown; no bypass, review credit or allowance reset was inferred.
 
 - `2026-10-30`: A blocked capture retained the shared Hosted reservation.
+  - Context: #3346 Hosted completion capture after a provider heading-format change.
   - Observation: #3346's completed provider result could not be captured after CodeRabbit added dark-mode picture headings. The original attempt retained the shared reservation, leaving #3333 queued without an attempt or a visible queue cause.
+  - Expected pattern: A queued successor without an attempt does not prove provider submission. Identify any retained reservation owner and recover its original capture instead of posting a replacement review.
   - Outcome: FireController identified both the parser change and reservation owner and is recovering the original two findings. Preserve the original attempt and source fence; an ordinary queued operation is not evidence of a submitted provider review.
   - Recovery: FireController deployed the parser fix and retained the same original attempt at 19:18:42 NZDT, with its unchanged head/base and both findings. Gameplay adjudicated those findings without a replacement review or allowance change; the successor's old queued request then stopped before execution because the configuration had advanced.
