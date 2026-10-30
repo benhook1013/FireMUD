@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.GlobalExceptionHandler;
@@ -110,6 +111,45 @@ class ModerationActionControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
         .andExpect(jsonPath("$.error.message").value("sessionId must be positive"));
+
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void applyRejectsInvalidAccountUuidDuringJsonDeserialization() throws Exception {
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
+    Map<String, Object> request =
+        new HashMap<>(
+            Map.of(
+                "tenantId",
+                1L,
+                "accountId",
+                ACCOUNT_ID,
+                "sessionId",
+                9L,
+                "action",
+                "ban",
+                "reason",
+                ""));
+    Object[] invalidAccountIds = {
+      123L, "not-a-uuid", "00000000-0000-0000-0000-000000000000", ACCOUNT_ID.toUpperCase(), null
+    };
+
+    for (Object invalidAccountId : invalidAccountIds) {
+      request.put("accountId", invalidAccountId);
+      mockMvc
+          .perform(
+              post("/moderation/actions")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(request))
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.status").value("ERROR"))
+          .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
+          .andExpect(jsonPath("$.error.message").value("Request body is malformed"));
+    }
 
     verifyNoInteractions(service);
   }

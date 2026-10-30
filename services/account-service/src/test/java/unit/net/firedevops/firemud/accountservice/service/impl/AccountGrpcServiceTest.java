@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -61,10 +62,12 @@ import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExi
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -72,6 +75,8 @@ import org.springframework.dao.DataAccessResourceFailureException;
 class AccountGrpcServiceTest {
   private static final String WORKLOAD_NAMESPACE = "test";
   private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
+  private static final String ACCOUNT_UUID_READBACK_FAILURE =
+      "internal Account UUID source evidence mismatch";
   private static final String OTHER_ACCOUNT_UUID = "a2e1342e-a139-49c6-a460-c8e25f6697ae";
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   private static final String OTHER_REALM_ID = "57c58f36-c5ea-4aa8-8ef7-91a45e407f01";
@@ -144,6 +149,30 @@ class AccountGrpcServiceTest {
   @AfterEach
   void tearDown() {
     SessionContext.clear();
+  }
+
+  private static Stream<RuntimeException> accountUuidReadbackFailures() {
+    return Stream.of(
+        new IllegalStateException(ACCOUNT_UUID_READBACK_FAILURE),
+        new DataAccessResourceFailureException(ACCOUNT_UUID_READBACK_FAILURE));
+  }
+
+  private static AccountService accountServiceWithUnavailableAccountUuidReadback(
+      RuntimeException failure) {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenThrow(failure);
+    return accountService;
+  }
+
+  private static void assertAccountUuidReadbackUnavailable(
+      RecordingObserver<?> observer, ErrorDetail error) {
+    assertEquals(1, observer.nextCalls);
+    assertFalse(observer.receivedTransportError());
+    assertEquals(1, observer.completedCalls);
+    assertEquals("AUTH_UNAVAILABLE", error.getCode());
+    assertEquals("Account authority unavailable; retry later", error.getMessage());
+    assertFalse(error.getMessage().contains(ACCOUNT_UUID_READBACK_FAILURE));
   }
 
   @Test
@@ -2619,6 +2648,103 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("accountId must be a canonical non-nil UUID", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(accountService);
+  }
+
+  @ParameterizedTest
+  @MethodSource("accountUuidReadbackFailures")
+  void exportAccountSanitizesUnavailableAccountUuidReadback(RuntimeException failure) {
+    AccountService accountService = accountServiceWithUnavailableAccountUuidReadback(failure);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<ExportAccountResponse> observer = new RecordingObserver<>();
+
+    service.exportAccount(
+        ExportAccountRequest.newBuilder().setAccountId(ACCOUNT_UUID).build(), observer);
+
+    assertAccountUuidReadbackUnavailable(observer, observer.response().getError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).exportAccountData(Mockito.anyLong());
+  }
+
+  @ParameterizedTest
+  @MethodSource("accountUuidReadbackFailures")
+  void exportTenantDataSanitizesUnavailableAccountUuidReadback(RuntimeException failure) {
+    AccountService accountService = accountServiceWithUnavailableAccountUuidReadback(failure);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<ExportTenantDataResponse> observer = new RecordingObserver<>();
+
+    service.exportTenantData(
+        ExportTenantDataRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
+        observer);
+
+    assertAccountUuidReadbackUnavailable(observer, observer.response().getError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never())
+        .exportTenantData(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @ParameterizedTest
+  @MethodSource("accountUuidReadbackFailures")
+  void deleteAccountSanitizesUnavailableAccountUuidReadback(RuntimeException failure) {
+    AccountService accountService = accountServiceWithUnavailableAccountUuidReadback(failure);
+    SessionContext.setContext(OTHER_ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<DeleteAccountResponse> observer = new RecordingObserver<>();
+
+    service.deleteAccount(
+        DeleteAccountRequest.newBuilder().setAccountId(ACCOUNT_UUID).build(), observer);
+
+    assertFalse(observer.response().getSuccess());
+    assertAccountUuidReadbackUnavailable(observer, observer.response().getError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).deleteAccount(Mockito.anyLong());
+  }
+
+  @ParameterizedTest
+  @MethodSource("accountUuidReadbackFailures")
+  void linkExternalAccountSanitizesUnavailableAccountUuidReadback(RuntimeException failure) {
+    AccountService accountService = accountServiceWithUnavailableAccountUuidReadback(failure);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
+        new RecordingObserver<>();
+
+    service.linkExternalAccount(
+        net.firedevops.firemud.account.v1.LinkExternalAccountRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId(ACCOUNT_UUID)
+            .setProvider("google")
+            .setExternalId("external-1")
+            .build(),
+        observer);
+
+    assertFalse(observer.response().getSuccess());
+    assertAccountUuidReadbackUnavailable(observer, observer.response().getError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).linkExternalAccount(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @MethodSource("accountUuidReadbackFailures")
+  void requestEmailVerificationSanitizesUnavailableAccountUuidReadback(RuntimeException failure) {
+    AccountService accountService = accountServiceWithUnavailableAccountUuidReadback(failure);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
+        new RecordingObserver<>();
+
+    service.requestEmailVerification(
+        net.firedevops.firemud.account.v1.RequestEmailVerificationRequest.newBuilder()
+            .setAccountId(ACCOUNT_UUID)
+            .build(),
+        observer);
+
+    assertFalse(observer.response().getSuccess());
+    assertAccountUuidReadbackUnavailable(observer, observer.response().getError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).requestEmailVerification(Mockito.anyLong());
   }
 
   @Test

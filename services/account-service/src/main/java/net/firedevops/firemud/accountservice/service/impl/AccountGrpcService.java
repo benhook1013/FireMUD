@@ -61,6 +61,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -936,12 +937,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var data =
           accountService.exportAccountData(
-              accountService.resolveAccountStorageId(
-                  requireCanonicalAccountUuid(request.getAccountId())));
+              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
               .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
               .setProfilesJson(JsonMapper.builder().build().writeValueAsString(data.profiles()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      ExportAccountResponse response =
+          ExportAccountResponse.newBuilder()
+              .setError(accountUuidReadbackUnavailableError("ExportAccount"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -977,8 +984,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var data =
           accountService.exportTenantData(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              accountService.resolveAccountStorageId(
-                  requireCanonicalAccountUuid(request.getAccountId())));
+              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       ExportTenantDataResponse response =
           ExportTenantDataResponse.newBuilder()
               .setTenantId(String.valueOf(data.tenantId()))
@@ -987,6 +993,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                   data.profile() != null
                       ? JsonMapper.builder().build().writeValueAsString(data.profile())
                       : "")
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      ExportTenantDataResponse response =
+          ExportTenantDataResponse.newBuilder()
+              .setError(accountUuidReadbackUnavailableError("ExportTenantData"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1021,9 +1034,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       AdminRoleGuard.requireAdminRole();
       accountService.deleteAccount(
-          accountService.resolveAccountStorageId(
-              requireCanonicalAccountUuid(request.getAccountId())));
+          resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      DeleteAccountResponse response =
+          DeleteAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(accountUuidReadbackUnavailableError("DeleteAccount"))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
@@ -1133,13 +1153,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       accountService.linkExternalAccount(
           new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              accountService.resolveAccountStorageId(
-                  requireCanonicalAccountUuid(request.getAccountId())),
+              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())),
               request.getProvider(),
               request.getExternalId()));
       var response =
           net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
               .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      var response =
+          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(accountUuidReadbackUnavailableError("LinkExternalAccount"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1170,11 +1197,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           responseObserver) {
     try {
       accountService.requestEmailVerification(
-          accountService.resolveAccountStorageId(
-              requireCanonicalAccountUuid(request.getAccountId())));
+          resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       var response =
           net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
               .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      var response =
+          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
+              .setSuccess(false)
+              .setError(accountUuidReadbackUnavailableError("RequestEmailVerification"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1236,6 +1270,23 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private net.firedevops.firemud.shared.v1.ErrorDetail sourceEvidenceUnavailableError(
       String operation) {
     return appError(operation, "AUTH_UNAVAILABLE", "Account authority is unavailable");
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail accountUuidReadbackUnavailableError(
+      String operation) {
+    return appError(operation, "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE);
+  }
+
+  private long resolveAccountStorageIdForRpc(UUID accountUuid) {
+    try {
+      return accountService.resolveAccountStorageId(accountUuid);
+    } catch (IllegalStateException | DataAccessException ex) {
+      throw new AccountUuidReadbackUnavailableException();
+    }
+  }
+
+  private static final class AccountUuidReadbackUnavailableException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
