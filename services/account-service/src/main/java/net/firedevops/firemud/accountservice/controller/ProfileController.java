@@ -2,8 +2,10 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
+import net.firedevops.firemud.accountservice.dto.UpdateProfileRestRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -33,8 +35,10 @@ public class ProfileController {
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    UUID accountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(accountService, accountUuid);
     requireProfileOwner(parsedAccountId);
     ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
@@ -42,9 +46,15 @@ public class ProfileController {
 
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
-      @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+      @PathVariable String accountId, @Valid @RequestBody UpdateProfileRestRequest request) {
+    UUID accountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    UUID bodyAccountUuid = AccountRequestReaders.requireAccountUuid(request.accountId());
+    if (!accountUuid.equals(bodyAccountUuid)) {
+      throw new IllegalArgumentException("accountId must match the path selector");
+    }
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
+    long parsedAccountId =
+        AccountRequestReaders.resolveAccountStorageId(accountService, accountUuid);
     requireProfileOwner(parsedAccountId);
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
@@ -63,7 +73,7 @@ public class ProfileController {
 
   private static void requireProfileOwner(long accountId) {
     if (!SessionContext.isCurrentAccount(accountId)) {
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Profile access required");
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account access required");
     }
   }
 }

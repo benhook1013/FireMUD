@@ -11,6 +11,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.Test
+import org.gradle.language.jvm.tasks.ProcessResources
 import javax.inject.Inject
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
@@ -127,6 +128,13 @@ val extractLoggingAdminIntegrationTestClasses =
 tasks.named<Test>("test") {
     val loggingArtifacts = loggingAdminTestArtifacts.artifactFiles
     classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminTestClasses)
+}
+
+// Keep the service policy available under a unique name despite the test application.yml.
+tasks.named<ProcessResources>("processIntegrationTestResources") {
+    from("src/main/resources/application.yml") {
+        rename { "account-main-application.yml" }
+    }
 }
 
 tasks.named<Test>("integrationTest") {

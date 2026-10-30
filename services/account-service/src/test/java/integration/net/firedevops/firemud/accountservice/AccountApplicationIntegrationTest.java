@@ -6,11 +6,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.security.HttpAuthProperties;
+import net.firedevops.firemud.common.security.HttpAuthRoleRequirement;
+import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
@@ -18,6 +22,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -39,6 +44,9 @@ import tools.jackson.databind.json.JsonMapper;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = AccountServiceApplication.class,
     properties = {
+      "spring.config.import=classpath:account-main-application.yml",
+      "spring.grpc.server.port=0",
+      "firemud.grpc.workload-namespace=test",
       GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
       GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
       GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
@@ -66,6 +74,8 @@ class AccountApplicationIntegrationTest {
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
+  @Autowired private HttpAuthProperties httpAuthProperties;
+  @Autowired private ObjectProvider<HttpJwtAuthInterceptor> httpJwtAuthInterceptorProvider;
 
   @Autowired
   private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
@@ -487,6 +497,7 @@ class AccountApplicationIntegrationTest {
             browser, "scope-browser-" + suffix);
     var first = accountService.joinPublicProduction(bootstrap.bootstrapToken(), browserJoin);
     assertThat(first.success()).isTrue();
+    assertThat(first.accountId()).isEqualTo(account.id());
     assertThat(
             accountService.joinPublicProduction(bootstrap.bootstrapToken(), browserJoin).replayed())
         .isTrue();
@@ -507,6 +518,233 @@ class AccountApplicationIntegrationTest {
         .isTrue();
     assertThat(accountService.joinPublicProductionFromGameSession(caller, directJoin).replayed())
         .isTrue();
+    assertThat(accountService.joinPublicProductionFromGameSession(caller, directJoin).accountId())
+        .isEqualTo(account.id());
+    dsl.execute(
+        "INSERT INTO profiles(account_id,tenant_id,display_name,bio) VALUES(?,?,?,?)",
+        row,
+        tenant,
+        "owner profile",
+        "initial");
+    assertThat(accountService.getProfile(tenant, row).accountId()).isEqualTo(account.id());
+    assertThat(
+            accountService
+                .updateProfile(
+                    new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                        tenant,
+                        row,
+                        "updated profile",
+                        "updated",
+                        net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy
+                            .PRIVATE))
+                .accountId())
+        .isEqualTo(account.id());
+    assertThat(accountService.exportAccountData(row).profiles())
+        .allSatisfy(profile -> assertThat(profile.accountId()).isEqualTo(account.id()));
+    assertThat(accountService.exportTenantData(tenant, row).profile().accountId())
+        .isEqualTo(account.id());
+    assertThat(httpAuthProperties.isEnabled()).isTrue();
+    assertThat(httpAuthProperties.getRoleRequirement())
+        .isEqualTo(HttpAuthRoleRequirement.AUTHENTICATED);
+    assertThat(httpJwtAuthInterceptorProvider.getIfAvailable()).isNotNull();
+    String ordinary = accountService.authenticate(username, "password123").authToken();
+    String accountUuid = account.id();
+    HttpResponse<String> profileResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/profiles/"
+                            + accountUuid
+                            + "?tenantId="
+                            + tenant))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(profileResponse.statusCode())
+        .withFailMessage(
+            "Profile HTTP status %s, body: %s",
+            profileResponse.statusCode(), profileResponse.body())
+        .isEqualTo(200);
+    assertThat(jsonMapper.readTree(profileResponse.body()).path("data").path("accountId").asText())
+        .isEqualTo(accountUuid);
+
+    HttpResponse<String> profileUpdateResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .PUT(
+                    HttpRequest.BodyPublishers.ofString(
+                        profileUpdateBody(tenant, accountUuid, "updated over UUID REST")))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(profileUpdateResponse.statusCode())
+        .withFailMessage(
+            "Profile update HTTP status %s, body: %s",
+            profileUpdateResponse.statusCode(), profileUpdateResponse.body())
+        .isEqualTo(200);
+    assertThat(
+            jsonMapper
+                .readTree(profileUpdateResponse.body())
+                .path("data")
+                .path("accountId")
+                .asText())
+        .isEqualTo(accountUuid);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT display_name FROM profiles WHERE account_id=? AND tenant_id=?",
+                row,
+                tenant))
+        .isEqualTo("updated over UUID REST");
+
+    for (String invalidSelector :
+        java.util.List.of(
+            Long.toString(row),
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000000",
+            accountUuid.toUpperCase(java.util.Locale.ROOT))) {
+      HttpResponse<String> invalidPathResponse =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder(
+                      URI.create(
+                          "http://localhost:"
+                              + port
+                              + "/profiles/"
+                              + invalidSelector
+                              + "?tenantId="
+                              + tenant))
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertThat(invalidPathResponse.statusCode()).isEqualTo(400);
+      assertThat(invalidPathResponse.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    }
+
+    for (String invalidSelector :
+        java.util.List.of(
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000000",
+            accountUuid.toUpperCase(java.util.Locale.ROOT))) {
+      HttpResponse<String> invalidBodyResponse =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                  .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .PUT(
+                      HttpRequest.BodyPublishers.ofString(
+                          profileUpdateBody(tenant, invalidSelector, "invalid selector")))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertThat(invalidBodyResponse.statusCode()).isEqualTo(400);
+      assertThat(invalidBodyResponse.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    }
+
+    HttpResponse<String> numericBodyResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .PUT(
+                    HttpRequest.BodyPublishers.ofString(
+                        "{\"tenantId\":"
+                            + tenant
+                            + ",\"accountId\":"
+                            + row
+                            + ",\"displayName\":\"numeric selector\",\"bio\":\"bio\","
+                            + "\"presenceVisibilityPolicy\":\"PRIVATE\"}"))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(numericBodyResponse.statusCode()).isEqualTo(400);
+    assertThat(numericBodyResponse.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+
+    long unjoinedTenant = 999999999999L;
+    HttpResponse<String> missingMembershipResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/profiles/"
+                            + accountUuid
+                            + "?tenantId="
+                            + unjoinedTenant))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(missingMembershipResponse.statusCode()).isEqualTo(400);
+    assertThat(missingMembershipResponse.body()).contains("\"message\":\"Profile not found\"");
+
+    var otherAccount =
+        accountService.createAccount(
+            new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
+                "other-" + suffix, "other-" + suffix + "@example.com", "password123"));
+    HttpResponse<String> mismatchedBodyResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .PUT(
+                    HttpRequest.BodyPublishers.ofString(
+                        profileUpdateBody(tenant, otherAccount.id(), "mismatch")))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(mismatchedBodyResponse.statusCode()).isEqualTo(400);
+    assertThat(mismatchedBodyResponse.body()).contains("accountId must match the path selector");
+
+    HttpResponse<String> otherOwnerResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/profiles/"
+                            + otherAccount.id()
+                            + "?tenantId="
+                            + tenant))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(otherOwnerResponse.statusCode()).isEqualTo(403);
+    assertThat(otherOwnerResponse.body()).contains("\"code\":\"PERMISSION_DENIED\"");
+
+    HttpResponse<String> reservedPolicyResponse =
+        HTTP_CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .PUT(
+                    HttpRequest.BodyPublishers.ofString(
+                        "{\"tenantId\":"
+                            + tenant
+                            + ",\"accountId\":\""
+                            + accountUuid
+                            + "\",\"displayName\":\"reserved\",\"bio\":\"bio\","
+                            + "\"presenceVisibilityPolicy\":\"HIDDEN_STAFF\"}"))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(reservedPolicyResponse.statusCode()).isEqualTo(400);
+    assertThat(reservedPolicyResponse.body())
+        .contains("Profile presence visibility policy HIDDEN_STAFF is reserved");
+    assertThat(
+            java.util.Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT account_id FROM profiles WHERE account_id=? AND tenant_id=?",
+                        row,
+                        tenant),
+                    "Expected retained private profile owner row")
+                .get(0, Long.class))
+        .isEqualTo(row);
     assertThat(scopes.find(browser)).isPresent();
     assertThat(scopes.find(direct)).isPresent();
   }
@@ -518,6 +756,16 @@ class AccountApplicationIntegrationTest {
             .GET()
             .build();
     return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static String profileUpdateBody(long tenantId, String accountId, String displayName) {
+    return "{\"tenantId\":"
+        + tenantId
+        + ",\"accountId\":\""
+        + accountId
+        + "\",\"displayName\":\""
+        + displayName
+        + "\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}";
   }
 
   private void invalidateBootstrapSession(long accountId, String token) throws Exception {
@@ -545,7 +793,219 @@ class AccountApplicationIntegrationTest {
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"accountId must be numeric\"");
+    assertThat(response.body())
+        .contains("\"message\":\"accountId must be a canonical non-nil Account UUID\"");
+  }
+
+  @Test
+  void accountSelectorRoutesUsePersistedUuidAndPreserveCurrentAuthorizationAndDenials()
+      throws Exception {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String username = "account-selector-" + suffix;
+    String email = username + "@example.com";
+    var account =
+        accountService.createAccount(
+            new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
+                username, email, "password123"));
+    var otherAccount =
+        accountService.createAccount(
+            new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
+                "other-selector-" + suffix,
+                "other-selector-" + suffix + "@example.com",
+                "password123"));
+    long accountRow =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT id FROM accounts WHERE account_uuid = ?", UUID.fromString(account.id()))
+                .fetchOne(0, Long.class),
+            "Expected registered Account row");
+    long otherAccountRow =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT id FROM accounts WHERE account_uuid = ?",
+                    UUID.fromString(otherAccount.id()))
+                .fetchOne(0, Long.class),
+            "Expected other registered Account row");
+    long tenantId = 987654321L;
+    dsl.execute(
+        "INSERT INTO profiles(account_id, tenant_id, display_name, bio) VALUES (?, ?, ?, ?)",
+        accountRow,
+        tenantId,
+        "Account selector profile",
+        "retained during denied deletion");
+
+    String ordinary = accountService.authenticate(username, "password123").authToken();
+    String accountUuid = account.id();
+
+    HttpResponse<String> modesResponse =
+        sendAccountRequest("GET", "/accounts/" + accountUuid + "/login-auth-modes", ordinary, null);
+    assertThat(modesResponse.statusCode()).isEqualTo(200);
+    assertThat(
+            jsonMapper.readTree(modesResponse.body()).path("data").path("loginAuthModes").isArray())
+        .isTrue();
+
+    HttpResponse<String> exportResponse =
+        sendAccountRequest("GET", "/accounts/" + accountUuid + "/export", ordinary, null);
+    assertThat(exportResponse.statusCode()).isEqualTo(200);
+    assertThat(
+            jsonMapper
+                .readTree(exportResponse.body())
+                .path("data")
+                .path("account")
+                .path("id")
+                .asText())
+        .isEqualTo(accountUuid);
+    assertThat(
+            jsonMapper
+                .readTree(exportResponse.body())
+                .path("data")
+                .path("profiles")
+                .path(0)
+                .path("accountId")
+                .asText())
+        .isEqualTo(accountUuid);
+
+    HttpResponse<String> tenantExportResponse =
+        sendAccountRequest(
+            "GET",
+            "/accounts/" + accountUuid + "/tenant-export?tenantId=" + tenantId,
+            ordinary,
+            null);
+    assertThat(tenantExportResponse.statusCode()).isEqualTo(200);
+    assertThat(
+            jsonMapper
+                .readTree(tenantExportResponse.body())
+                .path("data")
+                .path("profile")
+                .path("accountId")
+                .asText())
+        .isEqualTo(accountUuid);
+
+    for (java.util.Map.Entry<String, String> request :
+        List.of(
+            java.util.Map.entry("GET", "/accounts/" + otherAccount.id() + "/login-auth-modes"),
+            java.util.Map.entry("PUT", "/accounts/" + otherAccount.id() + "/login-auth-modes"),
+            java.util.Map.entry("GET", "/accounts/" + otherAccount.id() + "/export"),
+            java.util.Map.entry(
+                "GET", "/accounts/" + otherAccount.id() + "/tenant-export?tenantId=" + tenantId),
+            java.util.Map.entry("DELETE", "/accounts/" + otherAccount.id()))) {
+      String body = request.getKey().equals("PUT") ? "{\"loginAuthModes\":[\"PASSWORD\"]}" : null;
+      HttpResponse<String> refused =
+          sendAccountRequest(request.getKey(), request.getValue(), ordinary, body);
+      assertThat(refused.statusCode()).isEqualTo(403);
+      assertThat(refused.body()).contains("\"code\":\"PERMISSION_DENIED\"");
+      String absentPath =
+          request.getValue().replace(otherAccount.id(), UUID.randomUUID().toString());
+      HttpResponse<String> absent =
+          sendAccountRequest(request.getKey(), absentPath, ordinary, body);
+      assertThat(absent.statusCode()).isEqualTo(403);
+      assertThat(absent.body()).isEqualTo(refused.body());
+    }
+
+    String originalLoginModes =
+        dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+            .fetchOne(0, String.class);
+    Long originalUuidSourceNumericId =
+        dsl.resultQuery(
+                "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?", accountRow)
+            .fetchOne(0, Long.class);
+    String originalUuidProvenance =
+        dsl.resultQuery("SELECT account_uuid_provenance FROM accounts WHERE id = ?", accountRow)
+            .fetchOne(0, String.class);
+
+    HttpResponse<String> factorUpdateResponse =
+        sendAccountRequest(
+            "PUT",
+            "/accounts/" + accountUuid + "/login-auth-modes",
+            ordinary,
+            "{\"loginAuthModes\":[\"PASSWORD\"]}");
+    assertThat(factorUpdateResponse.statusCode()).isEqualTo(501);
+    assertThat(factorUpdateResponse.body()).contains("\"code\":\"NOT_IMPLEMENTED\"");
+    assertThat(
+            dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalLoginModes);
+    HttpResponse<String> deleteRefused =
+        sendAccountRequest("DELETE", "/accounts/" + accountUuid, ordinary, null);
+    assertThat(deleteRefused.statusCode()).isEqualTo(409);
+    assertThat(deleteRefused.body()).contains("\"code\":\"ACCOUNT_DELETE_UNAVAILABLE\"");
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(UUID.fromString(accountUuid));
+    assertThat(
+            dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalLoginModes);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM profiles WHERE account_id = ? AND tenant_id = ?",
+                accountRow,
+                tenantId))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT account_uuid_source_numeric_id FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, Long.class))
+        .isEqualTo(originalUuidSourceNumericId);
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid_provenance FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalUuidProvenance);
+    assertThat(
+            dsl.resultQuery("SELECT id FROM accounts WHERE id = ?", otherAccountRow)
+                .fetchOne(0, Long.class))
+        .isEqualTo(otherAccountRow);
+
+    List<String> invalidSelectors =
+        List.of(
+            Long.toString(accountRow),
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000000",
+            accountUuid.toUpperCase(java.util.Locale.ROOT));
+    for (String selector : invalidSelectors) {
+      List<java.util.Map.Entry<String, String>> requests =
+          List.of(
+              java.util.Map.entry("GET", "/accounts/" + selector + "/login-auth-modes"),
+              java.util.Map.entry("PUT", "/accounts/" + selector + "/login-auth-modes"),
+              java.util.Map.entry("GET", "/accounts/" + selector + "/export"),
+              java.util.Map.entry(
+                  "GET", "/accounts/" + selector + "/tenant-export?tenantId=" + tenantId),
+              java.util.Map.entry("DELETE", "/accounts/" + selector));
+      for (java.util.Map.Entry<String, String> request : requests) {
+        String body = request.getKey().equals("PUT") ? "{\"loginAuthModes\":[\"PASSWORD\"]}" : null;
+        HttpResponse<String> rejected =
+            sendAccountRequest(request.getKey(), request.getValue(), ordinary, body);
+        assertThat(rejected.statusCode()).isEqualTo(400);
+        assertThat(rejected.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+      }
+    }
+
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(UUID.fromString(accountUuid));
+    assertThat(
+            dsl.resultQuery("SELECT login_auth_modes FROM accounts WHERE id = ?", accountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(originalLoginModes);
+  }
+
+  private HttpResponse<String> sendAccountRequest(
+      String method, String path, String token, String body) throws Exception {
+    HttpRequest.Builder request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    switch (method) {
+      case "GET" -> request.GET();
+      case "DELETE" -> request.DELETE();
+      case "PUT" ->
+          request
+              .header(HttpHeaders.CONTENT_TYPE, "application/json")
+              .PUT(HttpRequest.BodyPublishers.ofString(body));
+      default -> throw new IllegalArgumentException("Unsupported Account test request method");
+    }
+    return HTTP_CLIENT.send(request.build(), HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -572,14 +1032,15 @@ class AccountApplicationIntegrationTest {
   @Test
   void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
     String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String accountUuid = "d09f80cb-a46a-415e-8d35-c9e8068e49de";
     HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/2"))
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .header(HttpHeaders.CONTENT_TYPE, "application/json")
             .PUT(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":0,"accountId":2,"displayName":"demo","bio":"bio","presenceVisibilityPolicy":"PRIVATE"}
+                    {"tenantId":0,"accountId":"d09f80cb-a46a-415e-8d35-c9e8068e49de","displayName":"demo","bio":"bio","presenceVisibilityPolicy":"PRIVATE"}
                     """))
             .build();
 

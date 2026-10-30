@@ -557,7 +557,8 @@ public class AccountServiceImpl implements AccountService {
           "CONNECT_CONTEXT_INVALID", "Bootstrap caller binding is missing", ex);
     }
     requireAuthenticationEligible(requireAccount(caller.accountId()));
-    return joinPublicProductionForTrustedCaller(caller.accountId(), callerBinding, null, request);
+    return projectJoinOutcome(
+        joinPublicProductionForTrustedCaller(caller.accountId(), callerBinding, null, request));
   }
 
   @Override
@@ -623,11 +624,12 @@ public class AccountServiceImpl implements AccountService {
           "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
     }
     requireAuthenticationEligible(requireAccount(caller.accountId()));
-    return joinPublicProductionForTrustedCaller(
-        caller.accountId(), caller.sessionId(), caller, request);
+    return projectJoinOutcome(
+        joinPublicProductionForTrustedCaller(
+            caller.accountId(), caller.sessionId(), caller, request));
   }
 
-  private JoinPublicProductionResult joinPublicProductionForTrustedCaller(
+  private JoinOutcome joinPublicProductionForTrustedCaller(
       long accountId,
       String callerBinding,
       DirectTextCallerContext directTextCaller,
@@ -735,7 +737,7 @@ public class AccountServiceImpl implements AccountService {
         executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
   }
 
-  private JoinPublicProductionResult executePendingJoinAttempt(
+  private JoinOutcome executePendingJoinAttempt(
       long accountId,
       String callerBinding,
       String requestId,
@@ -862,7 +864,7 @@ public class AccountServiceImpl implements AccountService {
         membership.getId(),
         membership.getMembershipVersion(),
         membership.getMembershipAuthorityGeneration());
-    return new JoinPublicProductionResult(
+    return new JoinOutcome(
         true,
         transitioned ? "JOINED" : "ALREADY_ACTIVE",
         accountId,
@@ -873,19 +875,17 @@ public class AccountServiceImpl implements AccountService {
         false);
   }
 
-  private JoinPublicProductionResult failedJoin(
-      String requestId, VerifiedJoinScope scope, String outcomeCode) {
+  private JoinOutcome failedJoin(String requestId, VerifiedJoinScope scope, String outcomeCode) {
     accountJoinOperationRepository.finish(requestId, "FAILED", outcomeCode, null, null, null);
-    return new JoinPublicProductionResult(
+    return new JoinOutcome(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
   }
 
-  private JoinPublicProductionResult pendingJoinFailure(
-      VerifiedJoinScope scope, String outcomeCode) {
+  private JoinOutcome pendingJoinFailure(VerifiedJoinScope scope, String outcomeCode) {
     return joinRetryFailure(scope, outcomeCode);
   }
 
-  private JoinPublicProductionResult replayTerminalJoin(
+  private JoinOutcome replayTerminalJoin(
       JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
     if (isConnectScopeExpired(scope)) {
       return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
@@ -932,7 +932,7 @@ public class AccountServiceImpl implements AccountService {
     return resultFromJoinOperation(operation, true);
   }
 
-  private JoinPublicProductionResult replayTerminalJoinSafely(
+  private JoinOutcome replayTerminalJoinSafely(
       JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
     try {
       return replayTerminalJoin(operation, callerBinding, scope);
@@ -941,9 +941,55 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
-    return new JoinPublicProductionResult(
+  private JoinOutcome joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
+    return new JoinOutcome(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  }
+
+  /** Project only after the JOIN transaction has returned, preserving any committed receipt. */
+  private JoinPublicProductionResult projectJoinOutcome(JoinOutcome outcome) {
+    return new JoinPublicProductionResult(
+        outcome.success(),
+        outcome.outcomeCode(),
+        responseAccountUuid(outcome.accountId()),
+        outcome.tenantId(),
+        outcome.membershipId(),
+        outcome.membershipVersion(),
+        outcome.membershipAuthorityGeneration(),
+        outcome.replayed());
+  }
+
+  /** Private Account row identities never escape through response projection. */
+  private record JoinOutcome(
+      boolean success,
+      String outcomeCode,
+      long accountId,
+      long tenantId,
+      long membershipId,
+      long membershipVersion,
+      long membershipAuthorityGeneration,
+      boolean replayed) {}
+
+  private String responseAccountUuid(Long accountId) {
+    try {
+      return responseAccountUuid(requireAccount(accountId), accountId);
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Account response authority is unavailable", ex);
+    }
+  }
+
+  private String responseAccountUuid(Account account, Long accountId) {
+    try {
+      if (!Objects.equals(accountId, account.getId())) {
+        throw new IllegalStateException("Account response readback returned a different owner");
+      }
+      requireAuthenticationAccountOwner(account);
+      return account.getAccountUuid().toString();
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Account response authority is unavailable", ex);
+    }
   }
 
   private boolean isConnectScopeExpired(VerifiedJoinScope scope) {
@@ -1015,9 +1061,8 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult resultFromJoinOperation(
-      JoinOperation operation, boolean replayed) {
-    return new JoinPublicProductionResult(
+  private JoinOutcome resultFromJoinOperation(JoinOperation operation, boolean replayed) {
+    return new JoinOutcome(
         "COMMITTED".equals(operation.status()),
         operation.outcome(),
         operation.accountId(),
@@ -1133,9 +1178,8 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private record JoinAttemptOutcome(
-      JoinPublicProductionResult result, JoinOperation terminalOperation) {
-    private static JoinAttemptOutcome result(JoinPublicProductionResult result) {
+  private record JoinAttemptOutcome(JoinOutcome result, JoinOperation terminalOperation) {
+    private static JoinAttemptOutcome result(JoinOutcome result) {
       return new JoinAttemptOutcome(result, null);
     }
 
@@ -2196,7 +2240,7 @@ public class AccountServiceImpl implements AccountService {
         profileRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
             .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
-    return profileMapper.toDto(profile);
+    return projectProfile(profile, tenantId, accountId);
   }
 
   @Override
@@ -2230,6 +2274,7 @@ public class AccountServiceImpl implements AccountService {
         profileRepository
             .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
             .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
+    requireProfileOwner(profile, request.tenantId(), request.accountId());
     profile.setDisplayName(request.displayName());
     profile.setBio(request.bio());
     profile.setPresenceVisibilityPolicy(request.presenceVisibilityPolicy());
@@ -2238,7 +2283,33 @@ public class AccountServiceImpl implements AccountService {
         () ->
             notificationService.sendNotification(
                 request.tenantId(), request.accountId(), "Profile updated"));
-    return profileMapper.toDto(profile);
+    return projectProfile(profile, request.tenantId(), request.accountId());
+  }
+
+  private static void requireProfileOwner(Profile profile, Long tenantId, Long accountId) {
+    if (profile == null
+        || profile.getAccount() == null
+        || !Objects.equals(accountId, profile.getAccount().getId())
+        || !Objects.equals(tenantId, profile.getTenantId())) {
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Profile owner is unavailable");
+    }
+  }
+
+  private ProfileDto projectProfile(Profile profile, Long tenantId, Long accountId) {
+    requireProfileOwner(profile, tenantId, accountId);
+    return projectProfile(profile, tenantId, accountId, responseAccountUuid(accountId));
+  }
+
+  private ProfileDto projectProfile(
+      Profile profile, Long tenantId, Long accountId, String accountUuid) {
+    requireProfileOwner(profile, tenantId, accountId);
+    ProfileDto dto = profileMapper.toDto(profile, accountUuid);
+    if (dto == null
+        || !accountUuid.equals(dto.accountId())
+        || !Objects.equals(tenantId, dto.tenantId())) {
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Profile projection is unavailable");
+    }
+    return dto;
   }
 
   private void requireProfileMembership(Long tenantId, Long accountId) {
@@ -2270,8 +2341,11 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long accountId) {
     Account account = requireAccount(accountId);
+    String accountUuid = responseAccountUuid(account, accountId);
     List<ProfileDto> profiles =
-        profileRepository.findByAccountId(accountId).stream().map(profileMapper::toDto).toList();
+        profileRepository.findByAccountId(accountId).stream()
+            .map(profile -> projectProfile(profile, profile.getTenantId(), accountId, accountUuid))
+            .toList();
     return new AccountDataExportDto(accountMapper.toDto(account), profiles);
   }
 
@@ -2286,10 +2360,11 @@ public class AccountServiceImpl implements AccountService {
         && profile == null) {
       throw new IllegalArgumentException("Tenant data not found");
     }
+    String accountUuid = responseAccountUuid(account, accountId);
     return new TenantDataExportDto(
         tenantId,
         accountMapper.toDto(account),
-        profile != null ? profileMapper.toDto(profile) : null);
+        profile != null ? projectProfile(profile, tenantId, accountId, accountUuid) : null);
   }
 
   @Override
