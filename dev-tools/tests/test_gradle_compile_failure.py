@@ -1,9 +1,11 @@
 """Focused failure-capture contracts; all Gradle commands are inert fixtures."""
 
 import importlib.util
+import io
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,6 +104,102 @@ class CaptureTests(unittest.TestCase):
             CAPTURE.collect(self.root, self.log, self.root / 'linked-output/capture', 1)
         self.assertEqual([], list(external.iterdir()))
 
+    def test_exact_diagnostic_cap_never_claims_complete(self):
+        data = b'FIREMUD_COMPILE_FACTS={"attribution":"post-failure"}\n'
+        data += b'x' * (128 - len(data))
+        runner = self.write('gradlew', f'#!{sys.executable}\nimport os\nos.write(1, {data!r})\n')
+        runner.chmod(0o755)
+        with patch.object(CAPTURE, 'MAX_FILE_BYTES', 128):
+            result = CAPTURE.diagnostic(self.root, ':common-saga:compileJava', self.root / 'facts.json')
+        self.assertEqual('limited', result['status'])
+        self.assertTrue(result['output_limit_reached'])
+        self.assertTrue(result['output_possibly_truncated'])
+
+    def test_streamed_tail_is_bounded_and_output_is_live(self):
+        destination = io.BytesIO()
+        chunks = [b'abc', b'def', b'ghijkl']
+
+        class LiveSource:
+            def read(self, size):
+                if not chunks:
+                    return b''
+                if len(chunks) < 3:
+                    self_test.assertTrue(destination.getvalue())
+                return chunks.pop(0)
+
+        self_test = self
+        with patch.object(CAPTURE, 'MAX_LOG_BYTES', 5):
+            status = CAPTURE.capture_log(LiveSource(), destination, self.log)
+        self.assertEqual(0, status)
+        self.assertEqual(b'abcdefghijkl', destination.getvalue())
+        self.assertEqual(b'hijkl', self.log.read_bytes())
+        self.assertEqual(5, self.log.stat().st_size)
+
+    def test_capture_write_failure_still_forwards_and_drains(self):
+        source = io.BytesIO(b'abcdefghijkl')
+        destination = io.BytesIO()
+        with patch.object(CAPTURE, 'MAX_LOG_BYTES', 5), patch.object(
+                Path, 'open', side_effect=OSError('disk full')), patch('sys.stderr', io.StringIO()):
+            status = CAPTURE.capture_log(source, destination, self.log)
+        self.assertEqual(1, status)
+        self.assertEqual(b'abcdefghijkl', destination.getvalue())
+        self.assertEqual(b'', source.read())
+
+    def test_forwarding_failure_still_drains_and_keeps_bounded_tail(self):
+        class BrokenOutput:
+            def write(self, chunk):
+                raise BrokenPipeError('closed')
+
+        source = io.BytesIO(b'abcdefghijkl')
+        with patch.object(CAPTURE, 'MAX_LOG_BYTES', 5), patch('sys.stderr', io.StringIO()):
+            status = CAPTURE.capture_log(source, BrokenOutput(), self.log)
+        self.assertEqual(1, status)
+        self.assertEqual(b'', source.read())
+        self.assertEqual(b'hijkl', self.log.read_bytes())
+
+    def test_enumeration_budget_is_reported_and_candidates_are_bounded(self):
+        for number in range(100):
+            self.write(f'services/common-saga/build/generated/{number}.java')
+        with patch.object(CAPTURE, 'MAX_VISITED_ENTRIES', 8), patch.object(
+                CAPTURE, 'diagnostic', return_value={'status': 'unavailable'}):
+            CAPTURE.collect(self.root, self.log, self.output, 1)
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        self.assertEqual(8, manifest['enumeration']['visited'])
+        self.assertTrue(manifest['enumeration']['truncated'])
+        self.assertLessEqual(len(manifest['files']), 8)
+
+    def test_implicated_generated_filename_wins_file_budget(self):
+        self.write('services/common-saga/build/generated/Other.java')
+        self.write('services/common-saga/build/generated/Bad.java')
+        with patch.object(CAPTURE, 'MAX_FILES', 1), patch.object(
+                CAPTURE, 'diagnostic', return_value={'status': 'unavailable'}):
+            CAPTURE.collect(self.root, self.log, self.output, 1)
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        self.assertTrue(manifest['files'][0]['path'].endswith('/Bad.java'))
+
+    def test_cancellation_skips_direct_collection_and_cli_diagnostics(self):
+        for status in [130, 143]:
+            with self.subTest(status=status), patch.object(CAPTURE, 'diagnostic') as diagnostic:
+                CAPTURE.collect(self.root, self.log, self.output, status)
+                diagnostic.assert_not_called()
+                self.assertFalse(self.output.exists())
+            result = subprocess.run([sys.executable, str(ROOT / 'dev-tools/validation/collect-gradle-compile-failure.py'),
+                                     '--root', str(self.root), '--log', str(self.root / 'missing.log'),
+                                     '--output', str(self.output), '--check-exit', str(status)],
+                                    capture_output=True, text=True, check=False)
+            self.assertEqual(0, result.returncode)
+            self.assertFalse(self.output.exists())
+
+    def test_cancellation_wrapper_preserves_exit_and_runs_no_diagnostic(self):
+        for status in [130, 143]:
+            with self.subTest(status=status):
+                result = self.fixture_wrapper(status)
+                self.assertEqual(status, result.returncode)
+                self.assertNotIn('preserving check exit', result.stderr)
+        calls = (self.root / 'calls').read_text().splitlines()
+        self.assertEqual(2, len(calls))
+        self.assertTrue(all(':world-management-service:check' in call for call in calls))
+
     def fixture_wrapper(self, exit_code):
         for relative in ['.github/scripts/run-gradle-module-checks.sh',
                          'dev-tools/validation/run-gradle-with-dependency-recovery.sh',
@@ -115,9 +213,8 @@ class CaptureTests(unittest.TestCase):
                              'echo "Compilation failed"\n'
                              f'exit {exit_code}\n')
         gradlew.chmod(0o755)
-        # Collection failure must not turn a failure into success or another exit.
-        self.write('dev-tools/validation/collect-gradle-compile-failure.py',
-                   'raise SystemExit(97)\n')
+        # Force collection failure without breaking the streaming capture mode.
+        (self.root / 'build/reports/compile-failure/world-management-service').mkdir(parents=True, exist_ok=True)
         return subprocess.run(['bash', '.github/scripts/run-gradle-module-checks.sh',
                                'world-management-service'], cwd=self.root,
                               capture_output=True, text=True, check=False)
@@ -126,7 +223,7 @@ class CaptureTests(unittest.TestCase):
         result = self.fixture_wrapper(0)
         self.assertEqual(0, result.returncode)
         self.assertNotIn('evidence collection unavailable', result.stderr)
-        self.assertFalse((self.root / 'build/reports/compile-failure').exists())
+        self.assertFalse((self.root / 'build/reports/compile-failure/world-management-service/manifest.json').exists())
         self.assertEqual(1, len((self.root / 'calls').read_text().splitlines()))
 
     def test_collector_failure_preserves_exit_and_no_extra_retry(self):

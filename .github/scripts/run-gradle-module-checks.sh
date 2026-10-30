@@ -28,10 +28,11 @@ bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
   ":${MODULE}:check" \
   -PfullCheck \
-  --profile --info --console=plain 2>&1 | tee --output-error=warn "$CHECK_LOG"
+  --profile --info --console=plain 2>&1 | \
+  python3 "$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py" --capture-log "$CHECK_LOG"
 check_status=${PIPESTATUS[0]}
 set -e
-if (( check_status != 0 )); then
+if (( check_status > 0 && check_status < 128 )); then
   # Diagnostic errors are visible but cannot replace the original check result.
   python3 "$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py" \
     --root "$ROOT_DIR" --log "$CHECK_LOG" --check-exit "$check_status" \
