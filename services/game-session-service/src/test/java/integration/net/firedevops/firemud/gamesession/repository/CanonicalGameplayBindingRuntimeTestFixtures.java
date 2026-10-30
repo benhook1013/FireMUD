@@ -62,6 +62,7 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
    */
   public static RuntimeTarget seedRunningLaunch(
       DataSource dataSource, UUID canonicalTenantId, String fixedNamespace) {
+    long phaseStartedAt = System.nanoTime();
     if (canonicalTenantId == null || new UUID(0L, 0L).equals(canonicalTenantId)) {
       throw new IllegalArgumentException("Canonical tenant UUID must be non-nil");
     }
@@ -220,6 +221,9 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             ownerAccountUuid,
             GAME_TEMPLATE_ID,
             controlPlaneRequestId);
+    CanonicalGameplayAdmissionAbortCompositionFixture.logElapsedPhase(
+        "launch_source_association_catalog_evidence", phaseStartedAt);
+    phaseStartedAt = System.nanoTime();
     CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
         dsl, transactions, originalTuple, sourceEvidence, publishedSet, binding);
 
@@ -256,6 +260,8 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
           "Created canonical STARTING test row did not receive controlled consumer inputs");
     }
 
+    CanonicalGameplayAdmissionAbortCompositionFixture.logElapsedPhase(
+        "launch_pin_starting_instance_controlled_update", phaseStartedAt);
     return new RuntimeTarget(
         targetNamespace,
         tenantSlug,
