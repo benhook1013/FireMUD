@@ -526,7 +526,7 @@ This local selector transition does not convert ordinary JWT identity, shared au
 
 #### Presence-owner correlation prerequisite
 
-The independently reviewable presence correlation source preserves current Account identity representation while checking Game Session live/recent ownership and Social batch-result correlation. It is separate from ordinary UUID credential and shared-context convergence. Its implementation and proof status belong to [EA-2.3](./player-experience-commands-and-communication.md#communication-social-and-presence); it grants no ordinary issuer, registry, custody or activation authority.
+The independently reviewable friend-presence ownership/privacy source preserves current Account identity representation while checking Game Session live/recent ownership and Social batch-result correlation, removing global-role presence elevation and player-facing disconnect/hidden-policy vocabulary, and projecting retained legacy profile policy as private without changing stored rows. It is separate from ordinary UUID credential and shared-context convergence. Its implementation and proof status belong to [EA-2.3](./player-experience-commands-and-communication.md#communication-social-and-presence); it grants no ordinary issuer, registry, custody or activation authority.
 
 ### Text Protocol and Credential Policy
 
