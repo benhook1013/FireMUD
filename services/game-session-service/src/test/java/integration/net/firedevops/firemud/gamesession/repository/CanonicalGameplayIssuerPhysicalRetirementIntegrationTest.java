@@ -592,7 +592,7 @@ class CanonicalGameplayIssuerPhysicalRetirementIntegrationTest
 
   @Test
   void acknowledgedAccountAbortRestoresCallerJoinCollapseLimit() throws Exception {
-    try (var fixture = newFixture(BigInteger.valueOf(43), BigInteger.ONE, 0)) {
+    try (var fixture = newFixture()) {
       assertNonDefaultSchema(fixture.dsl());
       assertFunctionLocalJoinCollapseLimit(fixture.dsl(), List.of());
 
