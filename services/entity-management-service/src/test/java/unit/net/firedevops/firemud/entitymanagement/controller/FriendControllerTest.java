@@ -160,7 +160,9 @@ class FriendControllerTest {
   }
 
   private String tenantToken(String tenantId) {
+    String accountUuid = "f22f310d-5464-45f0-9dc4-c37353004403";
     return jwtUtil.generateToken(
-        "test-account", Map.of("scopedRoles", Map.of(tenantId, List.of("tenantAdmin"))));
+        accountUuid,
+        Map.of("accountId", accountUuid, "scopedRoles", Map.of(tenantId, List.of("tenantAdmin"))));
   }
 }
