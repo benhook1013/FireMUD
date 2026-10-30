@@ -3,12 +3,34 @@ package net.firedevops.firemud.entitymanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.ManagedChannel;
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.mapper.CharacterMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
+import net.firedevops.firemud.entitymanagement.service.impl.CharacterServiceImpl;
+import net.firedevops.firemud.entitymanagement.service.impl.EntityManagementGrpcService;
+import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -17,6 +39,10 @@ import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mapstruct.factory.Mappers;
+import org.mockito.Mockito;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -26,12 +52,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
+  @TempDir Path tlsDirectory;
+
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void upgradePreservesNumericSourcesAndQueriesOnlyExactOrdinaryUuidWithoutPromotion() {
+  void upgradePreservesNumericSourcesAndQueriesOnlyExactOrdinaryUuidWithoutPromotion()
+      throws Exception {
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -111,6 +140,7 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
             jdbc.queryForList(
                 "SELECT *, xmin::text AS retained_xmin FROM characters WHERE name = 'retained'"))
         .isEqualTo(retained);
+    assertMtlsReceiverOwnerAndTenantIsolation(repository, jdbc, saved, owner);
     List<Map<String, Object>> ordinaryBeforeRefusals =
         jdbc.queryForList(
             "SELECT *, xmin::text AS retained_xmin FROM characters WHERE id = ?", saved.getId());
@@ -174,5 +204,152 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
             jdbc.queryForList(
                 "SELECT *, xmin::text AS retained_xmin FROM characters WHERE name = 'retained'"))
         .isEqualTo(retained);
+  }
+
+  /**
+   * Real TLS/receiver/service/mapper/PostgreSQL composition, using controlled PKI and owner rows.
+   * R1274 separately proves Account-authenticated seeding and packaged Spring runtime wiring; this
+   * harness does not establish production PKI, Account issuance or public admission.
+   */
+  private void assertMtlsReceiverOwnerAndTenantIsolation(
+      CharacterRepository repository, JdbcTemplate jdbc, Character saved, UUID owner)
+      throws Exception {
+    String namespace = "ordinary-owner-proof";
+    var pki =
+        LoopbackMtlsTestPki.create(
+            tlsDirectory,
+            "Ordinary Entity owner proof CA",
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "entity",
+                "spiffe://firemud/ns/" + namespace + "/sa/entity-management-service",
+                true),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "gs", "spiffe://firemud/ns/" + namespace + "/sa/game-session-service", false),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "foreign", "spiffe://firemud/ns/other/sa/game-session-service", false),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "social", "spiffe://firemud/ns/" + namespace + "/sa/social-groups-service", false));
+    var meters = new SimpleMeterRegistry();
+    var stateKeys = new PlayableStateKeyResolver();
+    var characters =
+        new CharacterServiceImpl(
+            repository,
+            Mappers.getMapper(CharacterMapper.class),
+            new ConcurrentMapCacheManager("characterGraph"),
+            meters,
+            stateKeys,
+            new ScopedCharacterResolver(repository, stateKeys));
+    var receiver =
+        new EntityManagementGrpcService(
+            Mockito.mock(net.firedevops.firemud.entitymanagement.service.PingService.class),
+            characters,
+            Mockito.mock(net.firedevops.firemud.entitymanagement.service.ActorStateService.class),
+            Mockito.mock(
+                net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService
+                    .class),
+            Mockito.mock(
+                net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService
+                    .class),
+            Mockito.mock(net.firedevops.firemud.entitymanagement.service.EquipmentService.class),
+            Mockito.mock(net.firedevops.firemud.entitymanagement.service.InventoryService.class),
+            Mockito.mock(net.firedevops.firemud.entitymanagement.service.ContainerService.class),
+            Mockito.mock(net.firedevops.firemud.entitymanagement.service.RoomEntityService.class),
+            Mockito.mock(
+                net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService
+                    .class),
+            Mockito.mock(
+                net.firedevops.firemud.entitymanagement.service.impl
+                    .EntityMutationEffectReplayService.class),
+            Mockito.mock(
+                net.firedevops.firemud.entitymanagement.service.EntityUpgradeValidationService
+                    .class),
+            Mockito.mock(
+                net.firedevops.firemud.entitymanagement.service.EntityTemplateReferenceService
+                    .class),
+            Mockito.mock(
+                net.firedevops.firemud.common.security.GameplaySessionAttestationService.class),
+            meters,
+            Mockito.mock(net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser.class),
+            namespace);
+    List<Map<String, Object>> before =
+        jdbc.queryForList("SELECT *, xmin::text AS retained_xmin FROM characters ORDER BY id");
+    var identity = pki.identity("entity");
+    Server server =
+        NettyServerBuilder.forPort(0)
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(receiver, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+    try {
+      for (String alias : List.of("gs", "foreign", "social")) {
+        var caller = pki.identity(alias);
+        ManagedChannel channel =
+            NettyChannelBuilder.forAddress("localhost", server.getPort())
+                .sslContext(
+                    GrpcSslContexts.forClient()
+                        .trustManager(pki.caCertificate())
+                        .keyManager(caller.privateKey(), caller.certificate(), pki.caCertificate())
+                        .build())
+                .intercept(
+                    new GrpcServerPeerIdentityClientInterceptor(
+                        "spiffe://firemud/ns/" + namespace + "/sa/entity-management-service"))
+                .build();
+        try {
+          var stub =
+              EntityManagementServiceGrpc.newBlockingStub(channel)
+                  .withDeadlineAfter(5, TimeUnit.SECONDS);
+          var exact = stub.listCharactersByAccount(rosterRequest("1", owner.toString()));
+          if (!alias.equals("gs")) {
+            assertThat(exact.hasError()).isTrue();
+            assertThat(exact.getError().getCode()).isEqualTo("PERMISSION_DENIED");
+            assertThat(exact.getCharactersList()).isEmpty();
+            continue;
+          }
+          assertThat(exact.hasError()).isFalse();
+          assertThat(exact.getCharactersCount()).isEqualTo(1);
+          assertThat(exact.getCharacters(0).getId()).isEqualTo(saved.getId().toString());
+          assertThat(exact.getCharacters(0).getAccountId()).isEqualTo(owner.toString());
+          assertThat(exact.getCharacters(0).getTenantId()).isEqualTo("1");
+          for (var request :
+              List.of(
+                  rosterRequest("1", UUID.randomUUID().toString()),
+                  rosterRequest("2", owner.toString()))) {
+            var denied = stub.listCharactersByAccount(request);
+            assertThat(denied.hasError()).isFalse();
+            assertThat(denied.getCharactersList()).isEmpty();
+          }
+          // Retained numeric source evidence is not a public Account selector.
+          var unresolved = stub.listCharactersByAccount(rosterRequest("1", "98765"));
+          assertThat(unresolved.hasError()).isTrue();
+          assertThat(unresolved.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+          assertThat(unresolved.getCharactersList()).isEmpty();
+        } finally {
+          channel.shutdownNow();
+          assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+      }
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT *, xmin::text AS retained_xmin FROM characters ORDER BY id"))
+          .isEqualTo(before);
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      meters.close();
+    }
+  }
+
+  private static ListCharactersByAccountRequest rosterRequest(String tenant, String owner) {
+    return ListCharactersByAccountRequest.newBuilder()
+        .setTenantId(tenant)
+        .setAccountId(owner)
+        .setGameInstanceId("44")
+        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+        .build();
   }
 }
