@@ -4,7 +4,6 @@ import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
 import net.firedevops.firemud.socialgroups.dto.AddGuildMemberRequest;
 import net.firedevops.firemud.socialgroups.dto.AddGuildStorageItemRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateAllianceRequest;
@@ -47,8 +46,6 @@ public class GuildServiceImpl implements GuildService {
   private final GuildMemberRepository guildMemberRepository;
   private final GuildMemberMapper guildMemberMapper;
 
-  private final LoggingAdminClient loggingAdminClient;
-
   @Override
   @Transactional
   @Timed(value = "guild.create")
@@ -62,8 +59,8 @@ public class GuildServiceImpl implements GuildService {
     Guild saved = guildRepository.save(guild);
     runAfterCommit(
         () ->
-            safeReportModeration(
-                request.tenantId(), request.ownerAccountId(), "Guild created: " + request.name()));
+            logLifecycle(
+                request.tenantId(), saved.getId(), request.ownerAccountId(), "CREATE", null));
     return guildMapper.toDto(saved);
   }
 
@@ -107,8 +104,12 @@ public class GuildServiceImpl implements GuildService {
     member.setId(saved.getId());
     runAfterCommit(
         () ->
-            safeReportModeration(
-                request.tenantId(), request.accountId(), "Joined guild " + request.guildId()));
+            logLifecycle(
+                request.tenantId(),
+                request.guildId(),
+                request.accountId(),
+                "ADD_MEMBER",
+                request.role()));
     return guildMemberMapper.toDto(member);
   }
 
@@ -130,10 +131,12 @@ public class GuildServiceImpl implements GuildService {
     guildMemberRepository.save(member);
     runAfterCommit(
         () ->
-            safeReportModeration(
+            logLifecycle(
                 request.tenantId(),
+                request.guildId(),
                 request.accountId(),
-                "Updated guild role to " + request.role()));
+                "UPDATE_MEMBER_ROLE",
+                request.role()));
     return guildMemberMapper.toDto(member);
   }
 
@@ -150,18 +153,22 @@ public class GuildServiceImpl implements GuildService {
       return;
     }
     guildMemberRepository.delete(member);
-    runAfterCommit(() -> safeReportModeration(tenantId, accountId, "Left guild " + guildId));
+    runAfterCommit(
+        () -> logLifecycle(tenantId, guildId, accountId, "REMOVE_MEMBER", member.getRole()));
   }
 
-  private void safeReportModeration(long tenantId, long accountId, String description) {
+  private void logLifecycle(
+      long tenantId, Long guildId, long accountId, String action, String role) {
     try {
-      loggingAdminClient.reportChatViolation(tenantId, accountId, description);
-    } catch (RuntimeException ex) {
-      logger.warn(
-          "Failed to report guild moderation event for tenant {} account {}",
+      logger.info(
+          "Guild lifecycle committed tenant={} guild={} account={} action={} role={}",
           tenantId,
+          guildId,
           accountId,
-          ex);
+          action,
+          role);
+    } catch (RuntimeException ex) {
+      // Operational logging must not turn an already committed mutation into an API failure.
     }
   }
 

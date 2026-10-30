@@ -121,7 +121,9 @@ components:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical lowercase non-nil persisted Account UUID.
         bootstrapToken:
           type: string
         issuedAt:
@@ -133,6 +135,7 @@ components:
       properties:
         connectScopeId:
           type: string
+          description: Opaque signed scope with canonical UUID Account identity; obtain fresh scope through discovery rather than interpreting its payload.
         requestId:
           type: string
       required: [connectScopeId, requestId]
@@ -149,6 +152,7 @@ components:
           type: string
         connectScopeId:
           type: string
+          description: Opaque signed scope with canonical UUID Account identity; obtain fresh scope through discovery rather than interpreting its payload.
         jti:
           type: string
         requestId:
@@ -209,6 +213,7 @@ components:
           type: string
         connectScopeId:
           type: string
+          description: Opaque signed scope with canonical UUID Account identity; obtain fresh scope through discovery rather than interpreting its payload.
     BootstrapCharacterDto:
       type: object
       properties:
