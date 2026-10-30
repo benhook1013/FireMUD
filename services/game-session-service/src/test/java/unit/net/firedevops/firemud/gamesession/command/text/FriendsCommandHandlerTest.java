@@ -1339,7 +1339,7 @@ class FriendsCommandHandlerTest {
               Mockito.mock(ScriptEventPublisher.class));
       when(socialGroupsClient.updateFriendPresencePolicy(
               1L,
-              41L,
+              CALLER_ACCOUNT_ID,
               net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                   .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY))
           .thenReturn(
@@ -1375,7 +1375,7 @@ class FriendsCommandHandlerTest {
       Mockito.verify(socialGroupsClient)
           .updateFriendPresencePolicy(
               1L,
-              41L,
+              CALLER_ACCOUNT_ID,
               net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                   .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY);
     }
