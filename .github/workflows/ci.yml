@@ -1172,6 +1172,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Upload Gradle Task Profile
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: gradle-profile-${{ matrix.module }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: build/reports/profile/
+          if-no-files-found: warn
+          retention-days: 14
+
   # Final gating and PR reporting
   validation-gate:
     name: Validation Gate
