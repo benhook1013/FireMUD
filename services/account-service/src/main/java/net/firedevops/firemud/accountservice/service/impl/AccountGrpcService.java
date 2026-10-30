@@ -179,7 +179,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               caller,
               new JoinPublicProductionRequest(
                   requireText(request.getConnectScopeId(), "connectScopeId"), requestId));
-      if (result.accountId() != caller.accountId() || result.tenantId() != caller.tenantId()) {
+      if (!request.getPlayerContext().getAccountId().equals(result.accountId())
+          || result.tenantId() != caller.tenantId()) {
         throw new IllegalStateException("Account JOIN result does not match the validated caller");
       }
       response

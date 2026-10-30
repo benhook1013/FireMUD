@@ -644,7 +644,12 @@ class AccountApplicationIntegrationTest {
         HTTP_CLIENT.send(
             HttpRequest.newBuilder(
                     URI.create(
-                        "http://localhost:" + port + "/profiles/" + account.id() + "?tenantId=" + tenant))
+                        "http://localhost:"
+                            + port
+                            + "/profiles/"
+                            + account.id()
+                            + "?tenantId="
+                            + tenant))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinary)
                 .GET()
                 .build(),

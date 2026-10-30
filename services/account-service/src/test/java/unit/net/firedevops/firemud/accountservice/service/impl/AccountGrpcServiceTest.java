@@ -295,14 +295,7 @@ class AccountGrpcServiceTest {
                 Mockito.any(JoinPublicProductionRequest.class)))
         .thenReturn(
             new JoinPublicProductionResult(
-                false,
-                "ENTITLEMENT_UNAVAILABLE",
-                ACCOUNT_UUID,
-                20L,
-                0L,
-                0L,
-                0L,
-                true));
+                false, "ENTITLEMENT_UNAVAILABLE", ACCOUNT_UUID, 20L, 0L, 0L, 0L, true));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
@@ -607,7 +600,7 @@ class AccountGrpcServiceTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {true, false})
-  void joinRejectsPrivateResultThatDoesNotMatchValidatedCaller(boolean changedAccount) {
+  void joinRejectsUuidResultThatDoesNotMatchValidatedCaller(boolean changedAccount) {
     AccountService owner = Mockito.mock(AccountService.class);
     Mockito.when(owner.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID))).thenReturn(10L);
     Mockito.when(owner.joinPublicProductionFromGameSession(Mockito.any(), Mockito.any()))
@@ -615,7 +608,7 @@ class AccountGrpcServiceTest {
             new JoinPublicProductionResult(
                 false,
                 "ENTITLEMENT_UNAVAILABLE",
-                changedAccount ? 11L : 10L,
+                changedAccount ? OTHER_ACCOUNT_UUID : ACCOUNT_UUID,
                 changedAccount ? 20L : 21L,
                 0L,
                 0L,
