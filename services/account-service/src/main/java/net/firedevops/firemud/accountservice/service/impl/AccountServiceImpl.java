@@ -972,7 +972,15 @@ public class AccountServiceImpl implements AccountService {
 
   private String responseAccountUuid(Long accountId) {
     try {
-      Account account = requireAccount(accountId);
+      return responseAccountUuid(requireAccount(accountId), accountId);
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Account response authority is unavailable", ex);
+    }
+  }
+
+  private String responseAccountUuid(Account account, Long accountId) {
+    try {
       if (!Objects.equals(accountId, account.getId())) {
         throw new IllegalStateException("Account response readback returned a different owner");
       }
@@ -2289,7 +2297,12 @@ public class AccountServiceImpl implements AccountService {
 
   private ProfileDto projectProfile(Profile profile, Long tenantId, Long accountId) {
     requireProfileOwner(profile, tenantId, accountId);
-    String accountUuid = responseAccountUuid(accountId);
+    return projectProfile(profile, tenantId, accountId, responseAccountUuid(accountId));
+  }
+
+  private ProfileDto projectProfile(
+      Profile profile, Long tenantId, Long accountId, String accountUuid) {
+    requireProfileOwner(profile, tenantId, accountId);
     ProfileDto dto = profileMapper.toDto(profile, accountUuid);
     if (dto == null
         || !accountUuid.equals(dto.accountId())
@@ -2328,9 +2341,10 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long accountId) {
     Account account = requireAccount(accountId);
+    String accountUuid = responseAccountUuid(account, accountId);
     List<ProfileDto> profiles =
         profileRepository.findByAccountId(accountId).stream()
-            .map(profile -> projectProfile(profile, profile.getTenantId(), accountId))
+            .map(profile -> projectProfile(profile, profile.getTenantId(), accountId, accountUuid))
             .toList();
     return new AccountDataExportDto(accountMapper.toDto(account), profiles);
   }
@@ -2346,10 +2360,11 @@ public class AccountServiceImpl implements AccountService {
         && profile == null) {
       throw new IllegalArgumentException("Tenant data not found");
     }
+    String accountUuid = responseAccountUuid(account, accountId);
     return new TenantDataExportDto(
         tenantId,
         accountMapper.toDto(account),
-        profile != null ? projectProfile(profile, tenantId, accountId) : null);
+        profile != null ? projectProfile(profile, tenantId, accountId, accountUuid) : null);
   }
 
   @Override
