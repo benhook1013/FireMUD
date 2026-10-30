@@ -137,7 +137,12 @@ class CanonicalInitialPlayerLocationServiceTest {
             ignored -> {
               throw Status.UNAVAILABLE.asRuntimeException();
             });
-    assertThatThrownBy(() -> service.place(selection)).isInstanceOf(StatusRuntimeException.class);
+    assertThatThrownBy(() -> service.place(selection))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAVAILABLE));
     verifyNoInteractions(association, location, holds, gameSession, preseeded);
   }
 
