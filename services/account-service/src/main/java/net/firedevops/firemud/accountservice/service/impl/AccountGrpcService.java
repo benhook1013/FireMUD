@@ -757,16 +757,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .map(AccountGrpcService::requireCanonicalAccountUuid)
               .distinct()
               .toList();
-      java.util.Map<UUID, Long> storageIdsByAccountUuid = new java.util.LinkedHashMap<>();
+      java.util.Map<UUID, Long> resolvedStorageIdsByAccountUuid =
+          accountService.resolveAccountStorageIds(accountUuids);
+      if (resolvedStorageIdsByAccountUuid == null) {
+        throw new IllegalStateException("Account UUID batch resolution returned no result");
+      }
       java.util.Map<Long, UUID> accountUuidsByStorageId = new java.util.HashMap<>();
-      for (UUID accountUuid : accountUuids) {
-        Long storageId;
-        try {
-          storageId = accountService.resolveAccountStorageId(accountUuid);
-        } catch (IllegalArgumentException | IllegalStateException ex) {
-          // Unknown or unproven local subjects are omitted so Social applies complete PRIVATE
-          // redaction rather than receiving a guessed identity or a private storage key.
-          continue;
+      for (java.util.Map.Entry<UUID, Long> resolution :
+          resolvedStorageIdsByAccountUuid.entrySet()) {
+        UUID accountUuid = resolution.getKey();
+        Long storageId = resolution.getValue();
+        if (accountUuid == null || !accountUuids.contains(accountUuid)) {
+          throw new IllegalStateException("Account UUID batch resolution returned an invalid row");
         }
         if (storageId == null || storageId <= 0L) {
           continue;
@@ -775,7 +777,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         if (previousAccountUuid != null && !previousAccountUuid.equals(accountUuid)) {
           throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
         }
-        storageIdsByAccountUuid.put(accountUuid, storageId);
+      }
+      java.util.Map<UUID, Long> storageIdsByAccountUuid = new java.util.LinkedHashMap<>();
+      for (UUID accountUuid : accountUuids) {
+        Long storageId = resolvedStorageIdsByAccountUuid.get(accountUuid);
+        if (storageId != null && storageId > 0L) {
+          storageIdsByAccountUuid.put(accountUuid, storageId);
+        }
       }
       java.util.List<Long> storageIds = java.util.List.copyOf(storageIdsByAccountUuid.values());
       java.util.Map<Long, ProfilePresenceVisibilityPolicy> policies =

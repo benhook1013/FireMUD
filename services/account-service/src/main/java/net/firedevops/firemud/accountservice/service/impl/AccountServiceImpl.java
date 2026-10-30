@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -514,12 +515,13 @@ public class AccountServiceImpl implements AccountService {
     validateConnectScopeRoute(scopeContext, worldSlug, realmSlug);
     RuntimeRealmTarget realm =
         requireCurrentAdmissibleConnectScopeTarget(bootstrapContext, scopeContext);
+    UUID accountUuid = bootstrapContext.accountUuid();
+    if (accountUuid == null || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+      throw new IllegalStateException("Bootstrap Account UUID is unavailable");
+    }
     return entityManagementClient
         .listCharactersByAccount(
-            realm.tenantId(),
-            bootstrapContext.accountId(),
-            realm.gameInstanceId(),
-            toPlayableStateScope(realm))
+            realm.tenantId(), accountUuid, realm.gameInstanceId(), toPlayableStateScope(realm))
         .stream()
         .sorted(Comparator.comparing(net.firedevops.firemud.entitymanagement.v1.Character::getName))
         .map(
@@ -2134,6 +2136,54 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByAccountUuid(accountUuid)
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    return requireAccountStorageId(account, accountUuid);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Map<UUID, Long> resolveAccountStorageIds(List<UUID> accountUuids) {
+    if (accountUuids == null) {
+      throw new IllegalArgumentException("Account UUIDs are required");
+    }
+    List<UUID> requestedAccountUuids = accountUuids.stream().distinct().toList();
+    if (requestedAccountUuids.isEmpty()) {
+      return Map.of();
+    }
+    if (requestedAccountUuids.stream()
+        .anyMatch(uuid -> uuid == null || NIL_ACCOUNT_UUID.equals(uuid))) {
+      throw new IllegalArgumentException("Canonical non-nil Account UUIDs are required");
+    }
+    Map<UUID, Long> storageIdsByAccountUuid = new LinkedHashMap<>();
+    Map<Long, UUID> accountUuidsByStorageId = new HashMap<>();
+    for (Account account : accountRepository.findByAccountUuids(requestedAccountUuids)) {
+      UUID accountUuid = account == null ? null : account.getAccountUuid();
+      if (accountUuid == null || !requestedAccountUuids.contains(accountUuid)) {
+        throw new IllegalStateException("Account UUID batch read returned an unexpected row");
+      }
+      long storageId;
+      try {
+        storageId = requireAccountStorageId(account, accountUuid);
+      } catch (IllegalArgumentException | IllegalStateException ex) {
+        // The scalar caller omits this subject after the same failed owner readback.
+        continue;
+      }
+      UUID previousAccountUuid = accountUuidsByStorageId.putIfAbsent(storageId, accountUuid);
+      if (previousAccountUuid != null && !previousAccountUuid.equals(accountUuid)) {
+        throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+      }
+      Long previousStorageId = storageIdsByAccountUuid.putIfAbsent(accountUuid, storageId);
+      if (previousStorageId != null && previousStorageId != storageId) {
+        throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+      }
+    }
+    return Map.copyOf(storageIdsByAccountUuid);
+  }
+
+  private long requireAccountStorageId(Account account, UUID accountUuid) {
+    if (account == null) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
     AccountIdentityProvenance provenance = account.getAccountUuidProvenance();
     if (account.getId() == null
         || account.getId() <= 0L

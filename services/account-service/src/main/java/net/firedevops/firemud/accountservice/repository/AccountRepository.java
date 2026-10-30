@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -110,6 +111,32 @@ public class AccountRepository {
         dsl.selectFrom(ACCOUNTS)
             .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
             .fetchOne(this::toEntity));
+  }
+
+  /** Reads the requested UUID rows with one query, omitting rows that fail scalar readback. */
+  public List<Account> findByAccountUuids(List<UUID> accountUuids) {
+    if (accountUuids == null || accountUuids.isEmpty()) {
+      return List.of();
+    }
+    for (UUID accountUuid : accountUuids) {
+      if (accountUuid == null || accountUuid.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("A non-nil Account UUID is required");
+      }
+    }
+    List<AccountsRecord> records =
+        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ACCOUNT_UUID.in(accountUuids)).fetch();
+    List<Account> accounts = new ArrayList<>(records.size());
+    for (AccountsRecord record : records) {
+      try {
+        Account account = toEntity(record);
+        if (account != null) {
+          accounts.add(account);
+        }
+      } catch (IllegalArgumentException | IllegalStateException ex) {
+        // Scalar UUID resolution rejects this row; a batch omits only that subject.
+      }
+    }
+    return List.copyOf(accounts);
   }
 
   /** Locks one exact Account UUID inside a writable owner transaction. */

@@ -33,6 +33,40 @@ class GameplaySessionAttestationServiceTest {
   }
 
   @Test
+  void issueGameplaySessionAttestationRejectsNoncanonicalAccountUuidBeforeSigning() {
+    JwtUtil signer = org.mockito.Mockito.mock(JwtUtil.class);
+    GameplaySessionAttestationService issuingService =
+        new GameplaySessionAttestationService(signer);
+
+    for (String accountId :
+        new String[] {
+          "7",
+          "00000000-0000-0000-0000-000000000000",
+          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
+          " " + ACCOUNT_UUID,
+          "null",
+          null
+        }) {
+      assertThrows(
+          GameplaySessionAttestationException.class,
+          () ->
+              issuingService.issueGameplaySessionAttestation(
+                  "22",
+                  "41",
+                  accountId,
+                  "123",
+                  "1",
+                  "R-1021",
+                  "demo",
+                  "production",
+                  "17",
+                  "SHARED"));
+    }
+
+    org.mockito.Mockito.verifyNoInteractions(signer);
+  }
+
+  @Test
   void requireGameplaySessionMatchRejectsNumericMalformedNoncanonicalAndNilAccountClaims() {
     assertInvalidAccountIdClaim(7, "Malformed claim: accountId");
     assertInvalidAccountIdClaim("7", "Malformed claim: accountId");

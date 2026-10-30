@@ -30,7 +30,7 @@ public class GameplaySessionAttestationService {
     String normalizedRoomInstanceId = requireOptionalCanonicalRuntimeRoomId(roomInstanceId);
     requireText(tenantId, "tenantId");
     requireText(sessionId, "sessionId");
-    requireText(accountId, "accountId");
+    String canonicalAccountId = requireCanonicalAccountUuid(accountId, "accountId");
     requireText(characterId, "characterId");
     requireText(gameInstanceId, "gameInstanceId");
     requireText(worldSlug, "worldSlug");
@@ -42,7 +42,7 @@ public class GameplaySessionAttestationService {
             Map.entry("attestationType", GAMEPLAY_SESSION),
             Map.entry("tenantId", tenantId),
             Map.entry("sessionId", sessionId),
-            Map.entry("accountId", accountId),
+            Map.entry("accountId", canonicalAccountId),
             Map.entry("characterId", characterId),
             Map.entry("gameInstanceId", gameInstanceId),
             Map.entry("roomInstanceId", normalizedRoomInstanceId),

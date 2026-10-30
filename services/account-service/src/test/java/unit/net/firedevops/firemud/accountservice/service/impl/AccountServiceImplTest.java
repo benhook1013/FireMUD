@@ -13,6 +13,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -539,6 +540,63 @@ class AccountServiceImplTest {
     when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
 
     assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
+  @Test
+  void resolvesPresenceAccountUuidsInOneBatchAndOmitsUnknownOrUnprovenRows() {
+    UUID validUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    UUID unknownUuid = UUID.fromString("b45dc804-6626-48e4-a657-4a8dfc4e9203");
+    UUID unprovenUuid = UUID.fromString("b0c47761-2166-4311-8f2b-327f76f9fd8d");
+    Account valid = new Account();
+    valid.setId(42L);
+    valid.setAccountUuid(validUuid);
+    valid.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    valid.setAccountUuidSourceNumericId(42L);
+    Account unproven = new Account();
+    unproven.setId(43L);
+    unproven.setAccountUuid(unprovenUuid);
+    unproven.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_V29_MIGRATION);
+    unproven.setAccountUuidSourceNumericId(44L);
+    when(accountRepository.findByAccountUuids(List.of(validUuid, unknownUuid, unprovenUuid)))
+        .thenReturn(List.of(valid, unproven));
+
+    assertEquals(
+        Map.of(validUuid, 42L),
+        service.resolveAccountStorageIds(List.of(validUuid, unknownUuid, unprovenUuid)));
+    org.mockito.Mockito.verify(accountRepository)
+        .findByAccountUuids(List.of(validUuid, unknownUuid, unprovenUuid));
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByAccountUuid(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void rejectsPresenceAccountUuidBatchWithAliasedPrivateRows() {
+    UUID firstUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    UUID secondUuid = UUID.fromString("b45dc804-6626-48e4-a657-4a8dfc4e9203");
+    Account first = new Account();
+    first.setId(42L);
+    first.setAccountUuid(firstUuid);
+    first.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    first.setAccountUuidSourceNumericId(42L);
+    Account second = new Account();
+    second.setId(42L);
+    second.setAccountUuid(secondUuid);
+    second.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT);
+    second.setAccountUuidSourceNumericId(42L);
+    when(accountRepository.findByAccountUuids(List.of(firstUuid, secondUuid)))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.resolveAccountStorageIds(List.of(firstUuid, secondUuid)));
+  }
+
+  @Test
+  void rejectsNilAccountUuidInBatchBeforeRepositoryRead() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.resolveAccountStorageIds(List.of(new UUID(0L, 0L))));
+    verifyNoInteractions(accountRepository);
   }
 
   @Test
@@ -3899,7 +3957,7 @@ class AccountServiceImplTest {
             .setLevel(12)
             .build();
     when(entityManagementClient.listCharactersByAccount(
-            7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            7L, account.getAccountUuid(), 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(java.util.List.of(character));
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
@@ -3916,6 +3974,9 @@ class AccountServiceImplTest {
     assertEquals("Mara", characters.getFirst().characterName());
     assertEquals("SHARED", characters.getFirst().stateScope());
     assertEquals("ALLOW_NEW", characters.getFirst().characterCreationPolicy());
+    org.mockito.Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            7L, account.getAccountUuid(), 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @ParameterizedTest
@@ -4839,7 +4900,7 @@ class AccountServiceImplTest {
             .setLevel(4)
             .build();
     when(entityManagementClient.listCharactersByAccount(
-            7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+            7L, account.getAccountUuid(), 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(java.util.List.of(character));
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
@@ -5032,7 +5093,7 @@ class AccountServiceImplTest {
             .setLevel(9)
             .build();
     when(entityManagementClient.listCharactersByAccount(
-            7L, 11L, 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+            7L, account.getAccountUuid(), 91L, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(java.util.List.of(character));
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
@@ -5109,7 +5170,7 @@ class AccountServiceImplTest {
             admissionPointer(
                 8L, "demo", "production", "45", 18L, true, true, "SHARED", "ALLOW_NEW"));
     when(entityManagementClient.listCharactersByAccount(
-            7L, 11L, 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            7L, account.getAccountUuid(), 44L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(java.util.List.of());
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");

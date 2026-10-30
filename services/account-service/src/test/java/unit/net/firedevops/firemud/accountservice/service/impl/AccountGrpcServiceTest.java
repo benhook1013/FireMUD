@@ -1414,10 +1414,11 @@ class AccountGrpcServiceTest {
   void listPresenceVisibilityPoliciesResolvesAndReturnsCanonicalUuidKeysForSocialPeer() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-        .thenReturn(2L);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(OTHER_ACCOUNT_UUID)))
-        .thenReturn(3L);
+    Mockito.when(
+            accountService.resolveAccountStorageIds(
+                List.of(UUID.fromString(ACCOUNT_UUID), UUID.fromString(OTHER_ACCOUNT_UUID))))
+        .thenReturn(
+            Map.of(UUID.fromString(ACCOUNT_UUID), 2L, UUID.fromString(OTHER_ACCOUNT_UUID), 3L));
     Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L, 3L)))
         .thenReturn(
             Map.of(
@@ -1454,8 +1455,9 @@ class AccountGrpcServiceTest {
                         && entry.getPolicy().equals("HIDDEN_STAFF")));
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
-    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
-    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(OTHER_ACCOUNT_UUID));
+    Mockito.verify(accountService)
+        .resolveAccountStorageIds(
+            List.of(UUID.fromString(ACCOUNT_UUID), UUID.fromString(OTHER_ACCOUNT_UUID)));
     Mockito.verify(accountService).listPresenceVisibilityPolicies(1L, List.of(2L, 3L));
   }
 
@@ -1550,12 +1552,13 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     String unprovenAccountUuid = "00000000-0000-4000-8000-000000000003";
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-        .thenReturn(2L);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(OTHER_ACCOUNT_UUID)))
-        .thenThrow(new IllegalArgumentException("Account not found"));
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(unprovenAccountUuid)))
-        .thenThrow(new IllegalStateException("Account identity provenance is unavailable"));
+    Mockito.when(
+            accountService.resolveAccountStorageIds(
+                List.of(
+                    UUID.fromString(ACCOUNT_UUID),
+                    UUID.fromString(OTHER_ACCOUNT_UUID),
+                    UUID.fromString(unprovenAccountUuid))))
+        .thenReturn(Map.of(UUID.fromString(ACCOUNT_UUID), 2L));
     Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
         .thenReturn(Map.of(2L, ProfilePresenceVisibilityPolicy.FRIENDS_ONLY));
     AccountGrpcService service =
@@ -1572,6 +1575,12 @@ class AccountGrpcServiceTest {
     assertEquals(1, observer.response().getPoliciesCount());
     assertEquals(ACCOUNT_UUID, observer.response().getPolicies(0).getAccountId());
     assertEquals("FRIENDS_ONLY", observer.response().getPolicies(0).getPolicy());
+    Mockito.verify(accountService)
+        .resolveAccountStorageIds(
+            List.of(
+                UUID.fromString(ACCOUNT_UUID),
+                UUID.fromString(OTHER_ACCOUNT_UUID),
+                UUID.fromString(unprovenAccountUuid)));
     Mockito.verify(accountService).listPresenceVisibilityPolicies(1L, List.of(2L));
   }
 
@@ -1579,10 +1588,11 @@ class AccountGrpcServiceTest {
   void listPresenceVisibilityPoliciesRejectsAliasedResolverRowsWithoutPolicyRead() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-        .thenReturn(2L);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(OTHER_ACCOUNT_UUID)))
-        .thenReturn(2L);
+    Mockito.when(
+            accountService.resolveAccountStorageIds(
+                List.of(UUID.fromString(ACCOUNT_UUID), UUID.fromString(OTHER_ACCOUNT_UUID))))
+        .thenReturn(
+            Map.of(UUID.fromString(ACCOUNT_UUID), 2L, UUID.fromString(OTHER_ACCOUNT_UUID), 2L));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> observer = new RecordingObserver<>();
@@ -1603,8 +1613,8 @@ class AccountGrpcServiceTest {
   void listPresenceVisibilityPoliciesRejectsUnexpectedStorageRowsWithoutPolicyResults() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-        .thenReturn(2L);
+    Mockito.when(accountService.resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID))))
+        .thenReturn(Map.of(UUID.fromString(ACCOUNT_UUID), 2L));
     Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
         .thenReturn(Map.of(3L, ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service =
@@ -1624,8 +1634,8 @@ class AccountGrpcServiceTest {
   void listPresenceVisibilityPoliciesMapsServiceRuntimeFailuresToApplicationErrors() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-        .thenReturn(2L);
+    Mockito.when(accountService.resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID))))
+        .thenReturn(Map.of(UUID.fromString(ACCOUNT_UUID), 2L));
     Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
         .thenThrow(new IllegalArgumentException("Tenant not found"));
     AccountGrpcService service =
@@ -1644,8 +1654,8 @@ class AccountGrpcServiceTest {
     assertFalse(notFoundObserver.receivedTransportError());
 
     Mockito.reset(accountService);
-    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-        .thenReturn(2L);
+    Mockito.when(accountService.resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID))))
+        .thenReturn(Map.of(UUID.fromString(ACCOUNT_UUID), 2L));
     Mockito.when(accountService.listPresenceVisibilityPolicies(1L, List.of(2L)))
         .thenThrow(new IllegalStateException("Policy lookup unavailable"));
     RecordingObserver<ListPresenceVisibilityPoliciesResponse> internalObserver =

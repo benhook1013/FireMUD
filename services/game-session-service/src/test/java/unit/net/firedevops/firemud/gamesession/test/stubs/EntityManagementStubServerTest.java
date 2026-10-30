@@ -44,6 +44,35 @@ class EntityManagementStubServerTest {
   }
 
   @Test
+  void resetCharactersRestoresDefaultSharedCharactersAfterAnEmptyOverride() throws Exception {
+    try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
+      server.setCharacters(List.of());
+      ManagedChannel channel =
+          ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
+      try {
+        EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+            EntityManagementServiceGrpc.newBlockingStub(channel);
+
+        ListCharactersByAccountResponse emptyResponse =
+            listCharacters(
+                stub, "1", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        assertThat(emptyResponse.hasError()).isFalse();
+        assertThat(emptyResponse.getCharactersList()).isEmpty();
+
+        server.resetCharacters();
+
+        ListCharactersByAccountResponse resetResponse =
+            listCharacters(
+                stub, "1", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        assertThat(resetResponse.hasError()).isFalse();
+        assertThat(resetResponse.getCharactersList()).containsExactly(sharedCharacter("Emberline"));
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void listsLoadActorsByTheirPersistedTenantAndAccountOwner() throws Exception {
     Character firstPlayer =
         Character.newBuilder()
