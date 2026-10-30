@@ -7,6 +7,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.grpc.ManagedChannel;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -28,6 +30,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 class AccountClientTest {
 
@@ -160,6 +163,38 @@ class AccountClientTest {
 
     assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L, 2L))).isEmpty();
     assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L, 2L))).isEmpty();
+  }
+
+  @Test
+  void malformedPresencePolicySubjectWarningDoesNotExposeSuppliedSubjectText() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.listPresenceVisibilityPolicies(any()))
+        .thenReturn(
+            ListPresenceVisibilityPoliciesResponse.newBuilder()
+                .addPolicies(policyEntry("private-subject-secret", "FRIENDS_ONLY"))
+                .build());
+    AccountClient client = newClient(stub);
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AccountClient.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+
+    try {
+      assertThat(client.getPresenceVisibilityPolicies(11L, List.of(1L, 2L))).isEmpty();
+
+      assertThat(appender.list).hasSize(1);
+      ILoggingEvent warning = appender.list.get(0);
+      assertThat(warning.getFormattedMessage())
+          .contains("tenantId=11", "batchSize=2")
+          .doesNotContain("private-subject-secret");
+      assertThat(warning.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   @Test

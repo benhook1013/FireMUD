@@ -116,7 +116,7 @@ public class HelpCommandHandler {
                   + "FRIENDS REMOVE <friendAccountId|characterName|#entryNumber> removes an existing account-scoped friend, including canonical #entryNumber removal.\n"
                   + "FRIENDS VISIBILITY shows your current cross-game friend-presence policy, and FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE> updates it.\n"
                   + "Visible entries show current world/realm labels, character name, and activity state when policy allows.\n"
-                  + "Private or hidden-staff friends stay conservative.");
+                  + "Private friends do not expose presence.");
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"

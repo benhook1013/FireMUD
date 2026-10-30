@@ -107,10 +107,18 @@ public final class AccountClient
           long accountId;
           try {
             accountId = Long.parseLong(entry.getAccountId());
-          } catch (IllegalArgumentException ex) {
+          } catch (IllegalArgumentException ignored) {
+            logger.warn(
+                "Rejected malformed account presence visibility policy subject tenantId={} batchSize={}",
+                tenantId,
+                batch.size());
             return Map.of();
           }
           if (accountId <= 0 || !batch.contains(accountId) || !seenAccountIds.add(accountId)) {
+            logger.warn(
+                "Rejected invalid or duplicate account presence visibility policy subject tenantId={} batchSize={}",
+                tenantId,
+                batch.size());
             return Map.of();
           }
           try {
