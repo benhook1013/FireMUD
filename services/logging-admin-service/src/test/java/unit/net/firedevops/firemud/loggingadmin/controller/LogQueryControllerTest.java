@@ -38,6 +38,8 @@ import tools.jackson.databind.ObjectMapper;
 @WithFiremudPrivilegedHttpAuthTestProperties
 class LogQueryControllerTest {
 
+  private static final String ACCOUNT_ID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -53,7 +55,9 @@ class LogQueryControllerTest {
   void queryReturnsEntries() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(1L, "msg");
     when(service.queryLogs(request)).thenReturn(List.of("hello"));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -69,7 +73,9 @@ class LogQueryControllerTest {
   void queryRejectsCrossTenantScopedAdmin() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(1L, "msg");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            ACCOUNT_ID,
+            Map.of("accountId", ACCOUNT_ID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -83,7 +89,9 @@ class LogQueryControllerTest {
   @Test
   void queryRejectsZeroTenantIdBeforeDispatch() throws Exception {
     QueryLogsRequest request = new QueryLogsRequest(0L, "msg");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

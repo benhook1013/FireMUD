@@ -37,6 +37,8 @@ import tools.jackson.databind.ObjectMapper;
 @WithFiremudPrivilegedHttpAuthTestProperties
 class ModerationActionControllerTest {
 
+  private static final String ACCOUNT_ID = "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1";
+
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -52,7 +54,9 @@ class ModerationActionControllerTest {
   void applyRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     ApplyModerationActionRequest req =
         new ApplyModerationActionRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 9L, "ban", "");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -76,7 +80,9 @@ class ModerationActionControllerTest {
     ApplyModerationActionRequest req =
         new ApplyModerationActionRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 9L, "ban", "");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("moderator"))));
+        jwtUtil.generateToken(
+            ACCOUNT_ID,
+            Map.of("accountId", ACCOUNT_ID, "scopedRoles", Map.of("8", List.of("moderator"))));
 
     mockMvc
         .perform(
@@ -91,7 +97,9 @@ class ModerationActionControllerTest {
   void applyRejectsZeroSessionIdBeforeDispatch() throws Exception {
     ApplyModerationActionRequest req =
         new ApplyModerationActionRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 0L, "ban", "");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

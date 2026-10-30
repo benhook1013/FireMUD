@@ -47,7 +47,10 @@ class GameplayCommandControllerTest {
     when(gameplayCommandStatusService.getGameplayCommandStatus(2L, 7L, "cmd-123"))
         .thenReturn(gameplayCommandStatusDto());
     SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -65,7 +68,9 @@ class GameplayCommandControllerTest {
   void getGameplayCommandStatusRejectsCrossTenantScopedAdmin() throws Exception {
     SessionContext.setContext(ACCOUNT_UUID, List.of(), Map.of("8", List.of("tenantAdmin")));
     String token =
-        jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -77,7 +82,10 @@ class GameplayCommandControllerTest {
   @Test
   void getGameplayCommandStatusRejectsZeroTenantIdBeforeDispatch() throws Exception {
     SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -93,7 +101,10 @@ class GameplayCommandControllerTest {
   @Test
   void getGameplayCommandStatusRejectsZeroGameInstanceIdBeforeDispatch() throws Exception {
     SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
-    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            ACCOUNT_UUID,
+            Map.of("accountId", ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

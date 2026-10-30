@@ -439,7 +439,7 @@ class GameLogicClientTest {
                       null,
                       null))
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("accountId");
+          .hasMessageContaining("canonical non-nil Account UUID");
     }
 
     verify(stub, never()).sendCommunication(any(SendCommunicationRequest.class));
@@ -573,8 +573,7 @@ class GameLogicClientTest {
     setStub(client, stub);
 
     assertInvalidAccountUuidsAreRejectedBeforeRpc(
-        accountId ->
-            client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1));
+        accountId -> client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1));
     verify(stub, never()).dropCarriedItem(any(DropCarriedItemRequest.class));
   }
 
@@ -707,7 +706,7 @@ class GameLogicClientTest {
         }) {
       assertThatThrownBy(() -> invocation.accept(accountId))
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("canonical non-nil Account UUID");
+          .hasMessageContaining("accountId");
     }
   }
 
