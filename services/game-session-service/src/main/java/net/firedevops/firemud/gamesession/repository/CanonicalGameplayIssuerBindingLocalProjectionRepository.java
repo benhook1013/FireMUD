@@ -503,10 +503,13 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
             .readInstalledPlanForAnchorInTransaction(
                 transaction, anchor.bootstrapOperationId(), anchor.bootstrapRequestId());
+    var partitionProofs =
+        new CanonicalGameplayIssuerOriginalMemberSourceRepository.InstalledPartitionProofs(
+            transaction, anchor);
     for (Record row : rows) {
       var original =
           CanonicalGameplayIssuerOriginalMemberSourceRepository.readInstalledInTransaction(
-              transaction, anchor, current, row, plan);
+              transaction, anchor, current, row, plan, partitionProofs);
       Record releaseRow =
           transaction.fetchOne(
               "SELECT * FROM game_session_canonical_issuer_binding_local_release_operation WHERE original_bootstrap_member_operation_id = ?",

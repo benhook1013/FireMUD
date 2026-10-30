@@ -106,8 +106,11 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
                       + " retirement WHERE retirement_operation_id = ?",
                   pending.operationId())
               .get(0, String.class);
-      Map<String, List<String>> retainedBefore = retainedRows(fixture.dsl());
+      Map<String, List<String>> retainedBefore = retainedRows(fixture.dsl(), true);
       byte[] physicalBefore = physicalFieldSet(fixture.issuerPartitionKey());
+      // Refuse a shape-valid fabricated RETIRED receipt before the actual Lua retirement.
+      assertRetiredInsertAtCreationIsRefused(
+          fixture, pending.operationId(), pendingRow, retainedBefore, physicalBefore);
 
       assertThatThrownBy(
               () ->
@@ -143,7 +146,7 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
               org.postgresql.util.PSQLException.class,
               failure -> assertThat(failure.getSQLState()).isEqualTo("23514"))
           .hasMessageContaining("Issuer retirement lacks its exact pending physical mutation");
-      assertThat(retainedRows(fixture.dsl())).isEqualTo(retainedBefore);
+      assertThat(retainedRows(fixture.dsl(), true)).isEqualTo(retainedBefore);
       assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(physicalBefore);
       assertNormalTriggerMode(fixture.dsl());
 
@@ -152,7 +155,7 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
       assertThat(evaluate(retirementInvocation(fixture, pending))).isEqualTo(1L);
       byte[] retiredPhysical = physicalFieldSet(fixture.issuerPartitionKey());
       assertThat(retiredPhysical).isNotEqualTo(physicalBefore);
-      Map<String, List<String>> beforeCommitRefusal = retainedRows(fixture.dsl());
+      Map<String, List<String>> beforeCommitRefusal = retainedRows(fixture.dsl(), true);
       assertThatThrownBy(
               () ->
                   fixture
@@ -189,7 +192,7 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
               failure -> assertThat(failure.getSQLState()).isEqualTo("P0001"))
           .hasMessageContaining(
               "Issuer retirement needs its exact committed physical absence proof");
-      assertThat(retainedRows(fixture.dsl())).isEqualTo(beforeCommitRefusal);
+      assertThat(retainedRows(fixture.dsl(), true)).isEqualTo(beforeCommitRefusal);
       assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(retiredPhysical);
       assertNormalTriggerMode(fixture.dsl());
 
@@ -232,6 +235,68 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
                   .get(0, Long.class))
           .isOne();
     }
+  }
+
+  private void assertRetiredInsertAtCreationIsRefused(
+      CanonicalGameplayAdmissionAbortCompositionFixture fixture,
+      UUID retirementOperationId,
+      String pendingRow,
+      Map<String, List<String>> retainedBefore,
+      byte[] physicalBefore) {
+    // Keep the genuine release and pending mutation lineage while forging only terminal proof
+    // fields that satisfy the table CHECK; the INSERT trigger must still reject this new row.
+    String forgedRetiredRow =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT jsonb_set("
+                    + "jsonb_set("
+                    + "jsonb_set("
+                    + "jsonb_set(?::jsonb, '{status}', to_jsonb('RETIRED'::text)),"
+                    + "'{exact_absence_readback_field_set_bytes}',"
+                    + "to_jsonb(convert_to('forged-absence-proof', 'UTF8'))),"
+                    + "'{exact_absence_readback_field_set_digest}',"
+                    + "to_jsonb('sha256:' || repeat('0', 64))),"
+                    + "'{completed_at}', to_jsonb(CURRENT_TIMESTAMP))::text",
+                pendingRow)
+            .get(0, String.class);
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .transaction(
+                        configuration -> {
+                          DSLContext transaction = DSL.using(configuration);
+                          // Replace only the existing pending preimage under disabled triggers;
+                          // restore origin before testing the actual INSERT guard.
+                          transaction.execute("SET LOCAL session_replication_role = replica");
+                          assertThat(
+                                  transaction.execute(
+                                      "DELETE FROM "
+                                          + RETIREMENT
+                                          + " WHERE retirement_operation_id = ?",
+                                      retirementOperationId))
+                              .isOne();
+                          transaction.execute("SET LOCAL session_replication_role = origin");
+                          transaction.execute(
+                              "INSERT INTO "
+                                  + RETIREMENT
+                                  + " SELECT (jsonb_populate_record(NULL::"
+                                  + RETIREMENT
+                                  + ", ?::jsonb)).*",
+                              forgedRetiredRow);
+                        }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> assertThat(failure.getSQLState()).isEqualTo("23514"))
+        .hasMessageContaining(
+            "Issuer retirement INSERT must begin pending without an absence proof");
+    assertThat(retainedRows(fixture.dsl(), true)).isEqualTo(retainedBefore);
+    assertThat(physicalFieldSet(fixture.issuerPartitionKey())).isEqualTo(physicalBefore);
+    assertNormalTriggerMode(fixture.dsl());
   }
 
   private void upgradePopulatedBootstrapRetirementLineage(
@@ -277,6 +342,40 @@ class CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest
     assertThat(definition.substring(0, definition.indexOf("IF TG_OP = 'DELETE'")))
         .containsOnlyOnce(predicate);
     assertThat(definition.substring(definition.indexOf("IF OLD.status")))
+        .containsOnlyOnce(predicate);
+
+    Map<String, List<String>> rowsAt1050_5 = retainedRows(parent, true);
+    List<String> historyAt1050_5 = rowsAt1050_5.remove("flyway_schema_history");
+    assertThat(historyAt1050_5).isNotEmpty();
+    String pendingStateCondition = "NEW.status IS DISTINCT FROM 'PENDING_PHYSICAL_PROOF'";
+    assertThat(definition).doesNotContain(pendingStateCondition);
+    assertThat(
+            CanonicalGameplayAdmissionAbortCompositionFixture
+                .upgradeWithDefaultGameSessionMigrations(
+                    MigrationVersion.fromVersion("1050.6"), dataSource))
+        .isOne();
+
+    Map<String, List<String>> rowsAt1050_6 = retainedRows(parent, true);
+    List<String> historyAt1050_6 = rowsAt1050_6.remove("flyway_schema_history");
+    assertThat(rowsAt1050_6).isEqualTo(rowsAt1050_5);
+    assertThat(historyAt1050_6).containsAll(historyAt1050_5).hasSize(historyAt1050_5.size() + 1);
+    assertThat(physicalFieldSet(partitionKey)).isEqualTo(physicalBefore);
+
+    String upgradedDefinition = retirementGuardDefinition(parent);
+    String insertBranch =
+        upgradedDefinition.substring(
+            upgradedDefinition.indexOf("IF TG_OP = 'INSERT'"),
+            upgradedDefinition.indexOf("IF TG_OP = 'DELETE'"));
+    assertThat(insertBranch).containsOnlyOnce(pendingStateCondition);
+    assertThat(insertBranch.indexOf(pendingStateCondition))
+        .isLessThan(insertBranch.indexOf("IF NOT EXISTS"));
+    assertThat(insertBranch)
+        .contains("NEW.exact_absence_readback_field_set_bytes IS NOT NULL")
+        .contains("NEW.exact_absence_readback_field_set_digest IS NOT NULL")
+        .contains("NEW.completed_at IS NOT NULL");
+    assertThat(upgradedDefinition.substring(0, upgradedDefinition.indexOf("IF TG_OP = 'DELETE'")))
+        .containsOnlyOnce(predicate);
+    assertThat(upgradedDefinition.substring(upgradedDefinition.indexOf("IF OLD.status")))
         .containsOnlyOnce(predicate);
   }
 

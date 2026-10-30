@@ -1,7 +1,10 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerPartitionReservation;
@@ -87,6 +90,17 @@ final class CanonicalGameplayIssuerOriginalMemberSourceRepository {
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current,
       Record row,
       CanonicalGameplayIssuerPartitionBuildPlan plan) {
+    return readInstalledInTransaction(
+        transaction, anchor, current, row, plan, new InstalledPartitionProofs(transaction, anchor));
+  }
+
+  static CanonicalGameplayIssuerOriginalMemberSource.InstalledBootstrap readInstalledInTransaction(
+      DSLContext transaction,
+      CanonicalGameplayIssuerInstalledAnchor anchor,
+      CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState current,
+      Record row,
+      CanonicalGameplayIssuerPartitionBuildPlan plan,
+      InstalledPartitionProofs partitionProofs) {
     var builder = new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
     var ordinal = row.get("work_ordinal", Long.class);
     if (ordinal == null) throw unavailable();
@@ -102,12 +116,9 @@ final class CanonicalGameplayIssuerOriginalMemberSourceRepository {
             != CanonicalIssuerPartitionReservation.Lifecycle.RESERVED
         || !plan.buildOperationId().equals(anchor.buildOperationId())
         || !plan.planDigest().equals(anchor.buildPlanDigest())) throw unavailable();
-    var proof =
-        CanonicalGameplayIssuerBootstrapCoverageRepository.readInstalledAnchorPartitionProof(
-            transaction, anchor, operation.memberValue().reservation().partitionId());
     var fields =
-        CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
-            proof.exactPhysicalFieldSetBytes());
+        partitionProofs.fieldsFor(
+            transaction, anchor, operation.memberValue().reservation().partitionId());
     var capacity =
         CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec.reservationField(
             operation.memberValue().reservation().reservationId());
@@ -116,6 +127,35 @@ final class CanonicalGameplayIssuerOriginalMemberSourceRepository {
     if (!Arrays.equals(fields.get(capacity), operation.exactMemberValueBytes())
         || fields.containsKey(binding)) throw unavailable();
     return new CanonicalGameplayIssuerOriginalMemberSource.InstalledBootstrap(operation, anchor);
+  }
+
+  /** One locked projection read only; no proof or decoded fields survive that read. */
+  static final class InstalledPartitionProofs {
+    private final DSLContext transaction;
+    private final CanonicalGameplayIssuerInstalledAnchor anchor;
+    private final Map<BigInteger, Map<String, byte[]>> fieldsByPartition = new HashMap<>();
+
+    InstalledPartitionProofs(
+        DSLContext transaction, CanonicalGameplayIssuerInstalledAnchor anchor) {
+      this.transaction = Objects.requireNonNull(transaction);
+      this.anchor = Objects.requireNonNull(anchor);
+    }
+
+    private Map<String, byte[]> fieldsFor(
+        DSLContext expectedTransaction,
+        CanonicalGameplayIssuerInstalledAnchor expectedAnchor,
+        BigInteger partitionId) {
+      if (transaction != expectedTransaction || anchor != expectedAnchor) throw unavailable();
+      return fieldsByPartition.computeIfAbsent(
+          partitionId,
+          id -> {
+            var proof =
+                CanonicalGameplayIssuerBootstrapCoverageRepository
+                    .readInstalledAnchorPartitionProof(transaction, anchor, id);
+            return CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+                proof.exactPhysicalFieldSetBytes());
+          });
+    }
   }
 
   private static boolean sameFrozenReservation(

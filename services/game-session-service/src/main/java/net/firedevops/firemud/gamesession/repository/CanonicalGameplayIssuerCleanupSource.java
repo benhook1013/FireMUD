@@ -45,6 +45,10 @@ final class CanonicalGameplayIssuerCleanupSource {
     return negative != null;
   }
 
+  boolean cleanupComplete() {
+    return negative != null && negative.cleanupComplete();
+  }
+
   CanonicalGameplayAdmissionAbortSource positiveSource() {
     if (positive == null)
       throw new IllegalStateException("Negative cleanup is not a positive abort source");

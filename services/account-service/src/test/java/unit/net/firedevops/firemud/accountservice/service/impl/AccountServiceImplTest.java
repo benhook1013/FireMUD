@@ -2116,6 +2116,7 @@ class AccountServiceImplTest {
   void authenticateCountsFailedMixedModeSecretAgainstActiveEmailLoginOtp() {
     Account account = new Account();
     account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -2287,6 +2288,7 @@ class AccountServiceImplTest {
       AccountLifecycleState lifecycleState, String expectedCode) {
     Account account = new Account();
     account.setId(1L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     account.setLifecycleState(lifecycleState);
@@ -2552,6 +2554,8 @@ class AccountServiceImplTest {
   @ValueSource(
       strings = {
         "not-a-uuid",
+        "abc",
+        "0",
         "00000000-0000-0000-0000-000000000000",
         "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901",
         " 4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
@@ -3084,12 +3088,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -3138,7 +3142,7 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
@@ -3193,10 +3197,10 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.ofEntries(
                     Map.entry("aud", "bootstrap-connect-scope"),
-                    Map.entry("accountId", "11"),
+                    Map.entry("accountId", account.getAccountUuid().toString()),
                     Map.entry("tenantId", "7"),
                     Map.entry("realmId", realmId),
                     Map.entry("worldSlug", "demo"),
@@ -3300,12 +3304,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -3354,12 +3358,12 @@ class AccountServiceImplTest {
     String malformedConnectScopeId =
         new JwtUtil(JWT_SECRET, 120000L)
             .generateToken(
-                "11",
+                account.getAccountUuid().toString(),
                 Map.of(
                     "aud",
                     "bootstrap-connect-scope",
                     "accountId",
-                    "11",
+                    account.getAccountUuid().toString(),
                     "tenantId",
                     "7",
                     "worldSlug",
@@ -3618,6 +3622,9 @@ class AccountServiceImplTest {
     DirectTextJoinScope result =
         service.issueDirectTextConnectScope(directTextCaller(), directTextTarget());
 
+    var claims = jwtUtil.parseToken(result.connectScopeId()).getPayload();
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
     assertNotNull(result.connectScopeId());
     assertNotNull(result.connectScopeExpiresAt());
     org.mockito.Mockito.verify(accountConnectScopeRepository)

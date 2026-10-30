@@ -12,6 +12,8 @@ At send, participation, and history boundaries, `chat_mute` blocks sending while
 
 ## Implementation Status
 
+Guild creation, member addition, role changes and removal emit best-effort operational lifecycle logs after commit, with tenant, guild, Account, action and applicable role context. Rollback emits no committed lifecycle event, and logging failure does not turn a committed mutation into an API failure. This logging supplies no durable audit, report persistence or delivery guarantee. Focused local proof status belongs to the [communication implementation tracker](../../../project-management/implementation-tracking/player-experience-commands-and-communication.md#communication-social-and-presence).
+
 The current chat path and policy read remain partial: migrations do not yet implement complete `chat_restriction` and `chat_restriction_revision` owner-local state, and focused proof does not cover owner command/idempotency, expiry and reordering, essential notices, owner-read failure behavior, or bounded appeal outcomes. The target owner-local contract above is not current implementation proof.
 
 The current chat effect-replay race is not reliable under PostgreSQL concurrency: `SendMessage` catches a duplicate-effect `DataIntegrityViolationException` inside its outer transaction and then queries the existing row in that same transaction. The losing transaction can already be aborted/rollback-only, so duplicate delivery may fail rather than replaying the stored message. A conflict-safe insert or isolated marker/insert transaction and real PostgreSQL concurrent duplicate-delivery proof are required before chat replay can claim the target result.

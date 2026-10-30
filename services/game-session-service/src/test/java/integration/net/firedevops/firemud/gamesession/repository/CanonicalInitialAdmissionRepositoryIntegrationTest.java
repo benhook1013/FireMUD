@@ -535,7 +535,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             })
         .when(recoveryClient)
         .read(any());
-    assertThat(owner.retireTarget(missingRoster)).isFalse();
+    // Recovery may itself exceed the stored retention horizon on a busy runner.
+    boolean retiredDuringRecovery = owner.retireTarget(missingRoster);
+    assertThat(references.read(missingRoster).getTerminalOutcome()).isEqualTo("DENIED");
     assertThat(references.read(missingRoster).getCanonicalRosterReceipt())
         .isEqualTo(roster.toByteString());
     assertThat(references.read(missingAssignment).getSelectedCharacterUuid())
@@ -543,8 +545,20 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     assertThat(references.read(missingAssignment).getCanonicalSelectedAssignmentReceipt())
         .isEmpty();
     assertThat(references.read(missingAssignment).getTerminalOutcome()).isEqualTo("DENIED");
-    Thread.sleep(550L);
-    assertThat(owner.retireTarget(missingRoster)).isTrue();
+    if (!retiredDuringRecovery) {
+      Thread.sleep(550L);
+      assertThat(owner.retireTarget(missingRoster)).isTrue();
+    }
+    var retirementHorizon =
+        java.util.Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT bool_and(s.terminal_at IS NOT NULL AND f.retired_at >= "
+                    + "s.terminal_at + f.minimum_retention_millis * interval '1 millisecond') "
+                    + "FROM game_session_canonical_roster_target_fences f "
+                    + "JOIN game_session_canonical_roster_selection s USING (target_fence_uuid) "
+                    + "WHERE f.target_fence_uuid = ?",
+                UUID.fromString(references.read(missingRoster).getTargetFenceUuid())));
+    assertThat(retirementHorizon.get(0, Boolean.class)).isTrue();
     assertThat(
             net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
                 .requireRetirement(references.read(missingRoster)))

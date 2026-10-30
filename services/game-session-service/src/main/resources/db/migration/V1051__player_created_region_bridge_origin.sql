@@ -195,6 +195,21 @@ $$;
 REVOKE ALL ON FUNCTION gs_region_bridge_original_preparation_matches(
     game_session_canonical_binding_region_bridge_obligation) FROM PUBLIC;
 
+-- The ALTER TABLE locks above exclude bridge/preparation writers until this migration commits.
+-- Deferred row triggers below cannot validate untouched retained rows. Refuse an incompatible
+-- predecessor inventory transactionally, preserving its original evidence for reconciliation.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM game_session_canonical_binding_region_bridge_obligation bridge
+        WHERE bridge.bridge_operation_id IS NOT NULL
+          AND gs_region_bridge_original_preparation_matches(bridge) IS NOT TRUE) THEN
+        RAISE EXCEPTION 'Retained region bridge requires its exact original installed preparation'
+            USING ERRCODE = '23514', CONSTRAINT = 'gs_region_bridge_original_preparation_upgrade';
+    END IF;
+END;
+$$;
+
 CREATE FUNCTION gs_guard_original_region_actor_origin() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 DECLARE

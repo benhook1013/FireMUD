@@ -126,7 +126,7 @@ components:
         accountId:
           type: string
           format: uuid
-          description: Canonical non-nil Account UUID; never the private numeric database primary key.
+          description: Canonical lowercase non-nil persisted Account UUID; never the private numeric database primary key.
         bootstrapToken:
           type: string
         issuedAt:

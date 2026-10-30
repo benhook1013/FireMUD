@@ -9,8 +9,12 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +36,8 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceResponse;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionAbortSource;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
@@ -53,6 +60,7 @@ import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocation
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 
 /**
  * Test-only wrapper for the package-private Game Session region owners. It starts from an actual
@@ -133,6 +141,344 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             entityReferenceClient,
             null)
         .first();
+  }
+
+  /**
+   * Physical SQL fixture for the current receiving-parent migration frontier V1050.5. Owner SQL and
+   * bindings are frozen from parent 6c97bfe4742654480fc8b1d81867968e358a7634; the schema is
+   * installed from the current receiving migration files, not an archived candidate checksum set.
+   * Replays RuntimeStatusRepository.prepareInitialTimeline,
+   * beginInitialTimeline/updatePreparationAfterRedis and BindingInventoryRepository's
+   * writePreparedBridge/writeRevisionRows/bumpInventoryClock SQL and original bindings.
+   *
+   * <p>The transition/launch and authenticated controlled Entity/World reads use existing owners.
+   * Redis absence, initialization and the lease grant are controlled outcomes here: this fixture
+   * proves historical PostgreSQL retention/refusal, not Redis ACK or end-to-end source
+   * qualification. A materialized REQUIRED bridge is the parent's pre-Redis-ACK state; no ACK is
+   * invented.
+   */
+  static UUID installHistoricalMaterializedRequiredBridge(
+      DSLContext dsl,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
+    requireExactCurrentTarget(worldRequest, currentTarget);
+    var resolved = worldRegionResolver.resolve(worldRequest);
+    UUID transitionId = UUID.randomUUID();
+    var identity =
+        new CanonicalGameplayBindingIdentity(
+            UUID.fromString(worldRequest.getCanonicalAccountUuid()),
+            currentTarget.canonicalTenantId(),
+            currentTarget.playableStateNamespaceId(),
+            UUID.fromString(worldRequest.getCharacterUuid()),
+            currentTarget.playableStateScope(),
+            currentTarget.canonicalGameInstanceId(),
+            currentTarget.gameInstanceId(),
+            UUID.randomUUID().toString(),
+            resolved.operationalRegionId(),
+            BigInteger.ONE,
+            GameSessionAccountDelegationProfile.ISSUER,
+            BigInteger.ONE,
+            BigInteger.ONE,
+            BigInteger.ONE,
+            BigInteger.valueOf(64));
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    establishActualLegacyDisposition(dsl);
+    var prepared =
+        inventory.prepare(
+            new CanonicalGameplayBindingTransitionRequest(
+                transitionId,
+                UUID.randomUUID(),
+                identity,
+                new CanonicalIssuerReservationFenceEvidence(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    BigInteger.ONE,
+                    BigInteger.ONE,
+                    BigInteger.ONE),
+                null,
+                null));
+    var lease = controlledNewBindingLease(identity, currentTarget, prepared.bindingGeneration());
+    inventory.markProvisional(
+        inventory.readProvisionalCasEvidence(transitionId),
+        new CanonicalGameplayAdmissionDecision(
+            transitionId, lease, identity, prepared.bindingGeneration(), null, currentTarget));
+    var evidence = inventory.readProvisionalCasEvidence(transitionId);
+    var reference =
+        entityReferenceClient.read(
+            ReadPreseededActorRuntimeReferenceRequest.newBuilder()
+                .setSchemaVersion(1)
+                .setAssignmentUuid(worldRequest.getAssignmentUuid())
+                .setCanonicalAccountUuid(worldRequest.getCanonicalAccountUuid())
+                .setExpectedTarget(worldRequest.getExpectedTarget())
+                .setCharacterUuid(worldRequest.getCharacterUuid())
+                .setIntentDigest(worldRequest.getAssignmentIntentDigest())
+                .build());
+    String parentEntityReferenceDigest = historicalParentEntityReferenceDigest(reference);
+    // Compare current compatibility separately; historical storage always uses the frozen value.
+    if (!parentEntityReferenceDigest.equals(
+        CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference))) {
+      throw new IllegalStateException(
+          "Current Entity reference digest differs from the frozen parent");
+    }
+    var assignment = resolved.lifecycleAssignment();
+    var source =
+        new CanonicalGameplayRegionRuntimeStatusRepository.Source(
+            identity.tenantId(),
+            identity.gameInstanceId(),
+            resolved.canonicalRegionInstanceId(),
+            resolved.operationalRegionId(),
+            assignment.lifecycleEpoch(),
+            assignment.lifecycleRowVersion(),
+            assignment.request(),
+            assignment.captureId(),
+            assignment.graphSha256(),
+            assignment.preparationInputDigest());
+    var incarnation =
+        controlledStableIncarnation(
+            CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+    String tag =
+        CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+            identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+    String worldDigest =
+        CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(worldRequest, resolved);
+    String absenceDigest = "a".repeat(64); // Controlled absence outcome, never an owner capability.
+    String preparationDigest =
+        CanonicalGameplayRegionBindingBridgeProofs.timelinePreparationDigest(
+            evidence, worldRequest, resolved, source, worldDigest, incarnation, absenceDigest);
+    UUID initializationId = UUID.randomUUID();
+    Instant now = Instant.now();
+    dsl.execute(
+        """
+        INSERT INTO game_session_region_timeline_preparation
+        (initialization_operation_id, transition_id, account_id, tenant_id,
+         playable_state_namespace_id, character_id, playable_state_scope,
+         game_instance_id, runtime_game_instance_id, binding_ref, session_id,
+         binding_generation, canonical_region_id, region_id, tenant_region_tag,
+         lifecycle_epoch, lifecycle_row_version, capture_id, lifecycle_request_bytes,
+         graph_sha256, preparation_input_digest, assignment_uuid, assignment_intent_digest,
+         world_source_digest, preparation_digest, stable_incarnation_scope_bytes,
+         stable_incarnation_source_bytes, stable_incarnation_qualification_bytes,
+         stable_incarnation_digest, timeline_preimage_state, timeline_absence_proof_digest,
+         region_epoch, last_committed_tick_id, phase, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                'ABSENT', ?, 1, -1, 'PREPARED', ?, ?)
+        """,
+        initializationId,
+        transitionId,
+        identity.accountId(),
+        identity.tenantId(),
+        identity.playableStateNamespaceId(),
+        identity.characterId(),
+        identity.playableStateScope(),
+        identity.gameInstanceId(),
+        identity.runtimeGameInstanceId(),
+        evidence.candidate().bindingRef().bytes(),
+        identity.sessionId(),
+        new BigDecimal(evidence.candidate().bindingGeneration()),
+        source.canonicalRegionId(),
+        source.regionId(),
+        tag,
+        source.lifecycleEpoch(),
+        source.lifecycleRowVersion(),
+        source.captureId(),
+        source.lifecycleRequest().canonicalBytes(),
+        source.graphSha256(),
+        source.preparationInputDigest(),
+        UUID.fromString(worldRequest.getAssignmentUuid()),
+        worldRequest.getAssignmentIntentDigest(),
+        worldDigest,
+        preparationDigest,
+        incarnation.scopeBytes(),
+        incarnation.stableCanonicalBytes(),
+        incarnation.timelineInitializationQualification().canonicalBytes(),
+        incarnation.digest(),
+        absenceDigest,
+        java.sql.Timestamp.from(now),
+        java.sql.Timestamp.from(now));
+    historicalRequireOne(
+        dsl.execute(
+            "UPDATE game_session_region_timeline_preparation SET phase = 'INITIALIZING', updated_at = ?"
+                + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+            java.sql.Timestamp.from(now),
+            initializationId));
+    String grantCorrelation = "b".repeat(64); // Controlled successful initialization/grant.
+    String metaDigest =
+        CanonicalGameplayRegionBindingBridgeProofs.initialMetaDigest(
+            tag, initializationId, preparationDigest);
+    historicalRequireOne(
+        dsl.execute(
+            "UPDATE game_session_region_timeline_preparation SET phase = ?, lease_token_correlation = ?,"
+                + " executor_fence = ?, redis_meta_digest = ?, updated_at = ? WHERE initialization_operation_id = ?",
+            "REDIS_INITIALIZED",
+            grantCorrelation,
+            null,
+            metaDigest,
+            java.sql.Timestamp.from(now),
+            initializationId));
+    var status =
+        new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
+            .installOwner(
+                source,
+                1L,
+                null,
+                grantCorrelation,
+                "game-session-service",
+                "historical-sql-fixture",
+                now);
+    historicalRequireOne(
+        dsl.execute(
+            "UPDATE game_session_region_timeline_preparation SET phase = ?, lease_token_correlation = ?,"
+                + " executor_fence = ?, redis_meta_digest = ?, updated_at = ? WHERE initialization_operation_id = ?",
+            "INSTALLED",
+            grantCorrelation,
+            status.executorFence().longValueExact(),
+            metaDigest,
+            java.sql.Timestamp.from(now),
+            initializationId));
+    dsl.transaction(
+        configuration -> {
+          var transaction = DSL.using(configuration);
+          BigInteger revision =
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          BigInteger next = revision.add(BigInteger.ONE);
+          BigInteger prior = evidence.transition().inventoryRevision();
+          historicalWriteRegionRevisionRows(transaction, evidence, prior, next);
+          historicalRequireOne(
+              transaction.execute(
+                  """
+          UPDATE game_session_canonical_binding_region_bridge_obligation
+          SET bridge_operation_id = ?, bridge_preimage_state = 'ABSENT', runtime_entity_id = ?,
+              entity_projection_generation = ?, entity_projection_fence = ?, entity_workload_namespace = ?,
+              assignment_uuid = ?, assignment_intent_digest = ?, entity_reference_digest = ?,
+              world_source_digest = ?, canonical_region_id = ?, world_lifecycle_epoch = ?,
+              world_lifecycle_row_version = ?, world_capture_id = ?, world_graph_sha256 = ?,
+              world_preparation_input_digest = ?, executor_fence = ?, lease_token_correlation = ?, inventory_revision = ?
+          WHERE transition_id = ? AND bridge_operation_id IS NULL AND inventory_revision = ?
+          """,
+                  UUID.randomUUID(),
+                  reference.runtimeEntityId().value(),
+                  reference.projectionGeneration(),
+                  reference.projectionFence(),
+                  reference.workloadNamespace(),
+                  UUID.fromString(worldRequest.getAssignmentUuid()),
+                  worldRequest.getAssignmentIntentDigest(),
+                  parentEntityReferenceDigest,
+                  worldDigest,
+                  source.canonicalRegionId(),
+                  source.lifecycleEpoch(),
+                  source.lifecycleRowVersion(),
+                  source.captureId(),
+                  source.graphSha256(),
+                  source.preparationInputDigest(),
+                  new BigDecimal(status.executorFence()),
+                  grantCorrelation,
+                  new BigDecimal(next),
+                  transitionId,
+                  new BigDecimal(prior)));
+          historicalRequireOne(
+              transaction.execute(
+                  "UPDATE game_session_canonical_binding_inventory_clock SET inventory_revision = ?"
+                      + " WHERE singleton_id = 1 AND inventory_revision = ?",
+                  new BigDecimal(next),
+                  new BigDecimal(revision)));
+        });
+    return transitionId;
+  }
+
+  /**
+   * Frozen from CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest and sha256 at
+   * parent 6c97bfe4742654480fc8b1d81867968e358a7634. Reconstruct the original response explicitly;
+   * neither the current digest helper nor the reference's current evidence byte codec defines
+   * historical row contents.
+   */
+  private static String historicalParentEntityReferenceDigest(
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference) {
+    var response =
+        ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+            .setSchemaVersion(1)
+            .setAssignmentUuid(reference.assignmentUuid().toString())
+            .setCanonicalAccountUuid(reference.canonicalAccountUuid().toString())
+            .setCharacterUuid(reference.characterUuid().toString())
+            .setIntentDigest(reference.intentDigest())
+            .setExpectedTarget(reference.target())
+            .setPublishedOwnerProofDigest(reference.publishedOwnerProofDigest())
+            .setRuntimeEntityId(reference.runtimeEntityId().value())
+            .setProjectionGeneration(reference.projectionGeneration())
+            .setProjectionFence(reference.projectionFence())
+            .setCorePayload(reference.corePayload())
+            .build();
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      for (byte[] part :
+          new byte[][] {
+            reference.workloadNamespace().getBytes(StandardCharsets.UTF_8), response.toByteArray()
+          }) {
+        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(part.length).array());
+        digest.update(part);
+      }
+      return HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 is unavailable", impossible);
+    }
+  }
+
+  private static void historicalWriteRegionRevisionRows(
+      DSLContext transaction,
+      net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence
+          evidence,
+      BigInteger prior,
+      BigInteger next) {
+    UUID transitionId = evidence.transition().transitionId();
+    historicalRequireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_binding_transition SET inventory_revision = ? WHERE transition_id = ?"
+                + " AND status = 'PROVISIONAL' AND inventory_revision = ?"
+                + " AND candidate_binding_ref = ? AND candidate_binding_generation = ?",
+            new BigDecimal(next),
+            transitionId,
+            new BigDecimal(prior),
+            evidence.candidate().bindingRef().bytes(),
+            new BigDecimal(evidence.candidate().bindingGeneration())));
+    historicalRequireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_gameplay_binding_inventory SET inventory_revision = ?"
+                + " WHERE binding_ref = ? AND transition_id = ? AND lifecycle = 'PROVISIONAL'"
+                + " AND binding_generation = ? AND inventory_revision = ?",
+            new BigDecimal(next),
+            evidence.candidate().bindingRef().bytes(),
+            transitionId,
+            new BigDecimal(evidence.candidate().bindingGeneration()),
+            new BigDecimal(prior)));
+    historicalRequireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_binding_account_index_obligation SET inventory_revision = ?"
+                + " WHERE transition_id = ? AND inventory_revision = ?",
+            new BigDecimal(next),
+            transitionId,
+            new BigDecimal(prior)));
+    historicalRequireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_binding_issuer_index_obligation SET inventory_revision = ?"
+                + " WHERE transition_id = ? AND inventory_revision = ?",
+            new BigDecimal(next),
+            transitionId,
+            new BigDecimal(prior)));
+    historicalRequireOne(
+        transaction.execute(
+            "UPDATE game_session_canonical_issuer_partition_reservation SET inventory_revision = ?"
+                + " WHERE reservation_id = ? AND transition_id = ? AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+            new BigDecimal(next),
+            evidence.candidateReservation().reservationId(),
+            transitionId,
+            new BigDecimal(prior)));
+  }
+
+  private static void historicalRequireOne(int count) {
+    if (count != 1)
+      throw new IllegalStateException("Historical region owner SQL lost its exact row");
   }
 
   enum BridgeSqlPhase {
