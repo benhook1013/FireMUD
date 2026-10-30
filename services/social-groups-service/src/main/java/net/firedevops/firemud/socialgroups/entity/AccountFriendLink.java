@@ -8,8 +8,8 @@ import lombok.Data;
 public class AccountFriendLink {
   private Long id;
   private Long tenantId;
-  private Long accountId;
-  private Long friendAccountId;
+  private String accountId;
+  private String friendAccountId;
   private String status;
   private Instant createdAt;
 }

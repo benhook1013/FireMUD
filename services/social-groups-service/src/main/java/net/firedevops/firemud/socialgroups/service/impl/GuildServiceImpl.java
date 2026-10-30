@@ -143,7 +143,7 @@ public class GuildServiceImpl implements GuildService {
   @Override
   @Transactional
   @Timed(value = "guild.removeMember")
-  public void removeMember(long tenantId, long guildId, long accountId) {
+  public void removeMember(long tenantId, long guildId, String accountId) {
     logger.info("Removing member {} from guild {}", accountId, guildId);
     GuildMember member =
         guildMemberRepository
@@ -158,7 +158,7 @@ public class GuildServiceImpl implements GuildService {
   }
 
   private void logLifecycle(
-      long tenantId, Long guildId, long accountId, String action, String role) {
+      long tenantId, Long guildId, String accountId, String action, String role) {
     try {
       logger.info(
           "Guild lifecycle committed tenant={} guild={} account={} action={} role={}",

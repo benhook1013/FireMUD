@@ -7,6 +7,6 @@ public class GuildMember {
   private Long id;
   private Long tenantId;
   private Long guildId;
-  private Long accountId;
+  private String accountId;
   private String role;
 }

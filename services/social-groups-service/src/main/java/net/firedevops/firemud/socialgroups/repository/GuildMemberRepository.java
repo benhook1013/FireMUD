@@ -22,14 +22,16 @@ public class GuildMemberRepository {
   }
 
   public Optional<GuildMember> findFirstByTenantIdAndGuildIdAndAccountId(
-      Long tenantId, Long guildId, Long accountId) {
+      Long tenantId, Long guildId, String accountId) {
     return dsl.selectFrom(GUILD_MEMBERS)
         .where(
             GUILD_MEMBERS
                 .TENANT_ID
                 .eq(tenantId)
                 .and(GUILD_MEMBERS.GUILD_ID.eq(guildId))
-                .and(GUILD_MEMBERS.ACCOUNT_ID.eq(accountId)))
+                .and(
+                    GUILD_MEMBERS.ACCOUNT_ID.eq(
+                        JooqSocialGroupsRepositorySupport.toAccountUuid(accountId))))
         .limit(1)
         .fetchOptional(this::toEntity);
   }
@@ -46,7 +48,9 @@ public class GuildMemberRepository {
         dsl.update(GUILD_MEMBERS)
             .set(GUILD_MEMBERS.TENANT_ID, entity.getTenantId())
             .set(GUILD_MEMBERS.GUILD_ID, entity.getGuildId())
-            .set(GUILD_MEMBERS.ACCOUNT_ID, entity.getAccountId())
+            .set(
+                GUILD_MEMBERS.ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getAccountId()))
             .set(GUILD_MEMBERS.ROLE, entity.getRole())
             .where(GUILD_MEMBERS.ID.eq(entity.getId()))
             .execute();
@@ -72,7 +76,7 @@ public class GuildMemberRepository {
   private void populate(GuildMembersRecord record, GuildMember entity) {
     record.setTenantId(entity.getTenantId());
     record.setGuildId(entity.getGuildId());
-    record.setAccountId(entity.getAccountId());
+    record.setAccountId(JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getAccountId()));
     record.setRole(entity.getRole());
   }
 
@@ -81,7 +85,8 @@ public class GuildMemberRepository {
     entity.setId(record.get(GUILD_MEMBERS.ID));
     entity.setTenantId(record.get(GUILD_MEMBERS.TENANT_ID));
     entity.setGuildId(record.get(GUILD_MEMBERS.GUILD_ID));
-    entity.setAccountId(record.get(GUILD_MEMBERS.ACCOUNT_ID));
+    entity.setAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(record.get(GUILD_MEMBERS.ACCOUNT_ID)));
     entity.setRole(record.get(GUILD_MEMBERS.ROLE));
     return entity;
   }

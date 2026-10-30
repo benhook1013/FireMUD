@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -40,10 +41,12 @@ class ChatControllerTest {
 
   @Test
   void sendMessageRejectsZeroTenantIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     String body =
         """
-        {"tenantId":0,"senderAccountId":2,"type":"SAY","content":"hello"}
+        {"tenantId":0,"senderAccountId":"10000000-0000-4000-8000-000000000002","type":"SAY","content":"hello"}
         """;
 
     mockMvc

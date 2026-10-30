@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verify;
@@ -9,7 +10,10 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresencePolicyViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
@@ -17,6 +21,7 @@ import net.firedevops.firemud.socialgroups.dto.FriendRosterEntryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterViewDto;
+import net.firedevops.firemud.socialgroups.dto.GuildDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
@@ -103,7 +108,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasGuildOwnerAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -112,7 +117,7 @@ class SocialGroupsGrpcServiceTest {
     service.createGuild(
         net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
             .setTenantId("1")
-            .setOwnerAccountId("2")
+            .setOwnerAccountId(accountUuid(2L))
             .setName("test")
             .build(),
         new StreamObserver<>() {
@@ -141,7 +146,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasGuildOwnerAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -150,7 +155,7 @@ class SocialGroupsGrpcServiceTest {
     service.createGuild(
         net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
             .setTenantId("1")
-            .setOwnerAccountId("2")
+            .setOwnerAccountId(accountUuid(2L))
             .setName("test")
             .build(),
         new StreamObserver<>() {
@@ -171,6 +176,91 @@ class SocialGroupsGrpcServiceTest {
   }
 
   @Test
+  void createGuildAllowsOrdinaryUuidCallerToCreateForExactSelf() {
+    SessionContext.setContext(accountUuid(2L), List.of(), Map.of());
+    try {
+      PingService ping = Mockito.mock(PingService.class);
+      ChatService chat = Mockito.mock(ChatService.class);
+      GuildService guild = Mockito.mock(GuildService.class);
+      FriendService friend = Mockito.mock(FriendService.class);
+      MailService mail = Mockito.mock(MailService.class);
+      whenGuildCreated(guild);
+      SocialGroupsGrpcService service =
+          new SocialGroupsGrpcService(
+              ping, chat, guild, friend, mail, new SocialAccessGuard(), new SimpleMeterRegistry());
+
+      AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
+      service.createGuild(
+          net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
+              .setTenantId("1")
+              .setOwnerAccountId(accountUuid(2L))
+              .setName("test")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(CreateGuildResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {}
+
+            @Override
+            public void onCompleted() {}
+          });
+
+      assertNotNull(ref.get());
+      assertEquals("5", ref.get().getGuildId());
+      verify(guild).createGuild(new CreateGuildRequest(1L, accountUuid(2L), "test"));
+    } finally {
+      SessionContext.clear();
+    }
+  }
+
+  @Test
+  void createGuildRejectsOtherOwnerWithoutTenantPrivilegeBeforeDispatch() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasGuildOwnerAccess(1L, accountUuid(3L))).thenReturn(false);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
+    service.createGuild(
+        net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
+            .setTenantId("1")
+            .setOwnerAccountId(accountUuid(3L))
+            .setName("test")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateGuildResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(guild);
+  }
+
+  private static void whenGuildCreated(GuildService guild) {
+    Mockito.when(guild.createGuild(Mockito.any()))
+        .thenReturn(new GuildDto(5L, 1L, "test", accountUuid(2L), Instant.now()));
+  }
+
+  @Test
   void sendMessageMapsWhisperProtoToDomainEnum() {
     PingService ping = Mockito.mock(PingService.class);
     ChatService chat = Mockito.mock(ChatService.class);
@@ -178,7 +268,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -187,9 +277,9 @@ class SocialGroupsGrpcServiceTest {
     service.sendMessage(
         net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
             .setTenantId("1")
-            .setSenderId("2")
+            .setSenderId(accountUuid(2L))
             .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_WHISPER)
-            .setRecipientId("7")
+            .setRecipientId(accountUuid(7L))
             .setContent("quiet")
             .build(),
         new StreamObserver<>() {
@@ -207,7 +297,16 @@ class SocialGroupsGrpcServiceTest {
 
     verify(chat)
         .sendMessage(
-            new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, "", 7L, null, null, "quiet", null));
+            new SendMessageRequestDto(
+                1L,
+                accountUuid(2L),
+                ChatType.WHISPER,
+                "",
+                accountUuid(7L),
+                null,
+                null,
+                "quiet",
+                null));
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getSuccess());
   }
@@ -220,7 +319,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -228,7 +327,7 @@ class SocialGroupsGrpcServiceTest {
     service.sendMessage(
         net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
             .setTenantId("1")
-            .setSenderId("2")
+            .setSenderId(accountUuid(2L))
             .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY)
             .setContent("hello")
             .setEffectId("fx-comm-2")
@@ -247,7 +346,7 @@ class SocialGroupsGrpcServiceTest {
     verify(chat)
         .sendMessage(
             new SendMessageRequestDto(
-                1L, 2L, ChatType.SAY, "", null, null, null, "hello", "fx-comm-2"));
+                1L, accountUuid(2L), ChatType.SAY, "", null, null, null, "hello", "fx-comm-2"));
   }
 
   @Test
@@ -258,7 +357,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -267,7 +366,7 @@ class SocialGroupsGrpcServiceTest {
     service.sendMessage(
         net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
             .setTenantId("1")
-            .setSenderId("2")
+            .setSenderId(accountUuid(2L))
             .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_TELL)
             .setRecipientId("0")
             .setContent("hello")
@@ -288,7 +387,49 @@ class SocialGroupsGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("recipientId must be positive", ref.get().getError().getMessage());
+    assertEquals("Malformed claim: recipientId", ref.get().getError().getMessage());
+    verifyNoInteractions(chat);
+  }
+
+  @Test
+  void sendMessageRejectsPaddedOptionalRecipientUuidBeforeDispatch() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<SendMessageResponse> ref = new AtomicReference<>();
+    service.sendMessage(
+        net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderId(accountUuid(2L))
+            .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_TELL)
+            .setRecipientId(" " + accountUuid(7L))
+            .setContent("hello")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMessageResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("Malformed claim: recipientId", ref.get().getError().getMessage());
     verifyNoInteractions(chat);
   }
 
@@ -300,7 +441,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -309,7 +450,7 @@ class SocialGroupsGrpcServiceTest {
     service.sendMessage(
         net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
             .setTenantId("1")
-            .setSenderId("2")
+            .setSenderId(accountUuid(2L))
             .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY)
             .setRecipientId(" ")
             .setGuildId("   ")
@@ -331,7 +472,8 @@ class SocialGroupsGrpcServiceTest {
 
     verify(chat)
         .sendMessage(
-            new SendMessageRequestDto(1L, 2L, ChatType.SAY, "", null, null, null, "hello", null));
+            new SendMessageRequestDto(
+                1L, accountUuid(2L), ChatType.SAY, "", null, null, null, "hello", null));
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getSuccess());
   }
@@ -344,8 +486,8 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.listFriendPresence(1L, 2L, FriendRosterFilter.FRIENDS_ONLY))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.listFriendPresence(1L, accountUuid(2L), FriendRosterFilter.FRIENDS_ONLY))
         .thenReturn(
             new net.firedevops.firemud.socialgroups.dto.FriendPresenceViewDto(
                 FriendRosterFilter.FRIENDS_ONLY,
@@ -353,7 +495,7 @@ class SocialGroupsGrpcServiceTest {
                 1,
                 List.of(
                     new FriendPresenceDto(
-                        3L,
+                        accountUuid(3L),
                         true,
                         9L,
                         "demo",
@@ -372,7 +514,7 @@ class SocialGroupsGrpcServiceTest {
     service.listFriendPresence(
         net.firedevops.firemud.socialgroups.v1.ListFriendPresenceRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .setFilter(
                 net.firedevops.firemud.socialgroups.v1.FriendRosterFilter
                     .FRIEND_ROSTER_FILTER_FRIENDS_ONLY)
@@ -392,7 +534,7 @@ class SocialGroupsGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals(1, ref.get().getPresencesCount());
-    assertEquals("3", ref.get().getPresences(0).getFriendAccountId());
+    assertEquals(accountUuid(3L), ref.get().getPresences(0).getFriendAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
     assertEquals(
         net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_FRIENDS_ONLY,
@@ -416,20 +558,20 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.getFriend(1L, 2L, 3L))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.getFriend(1L, accountUuid(2L), accountUuid(3L)))
         .thenReturn(
             java.util.Optional.of(
                 new FriendRosterEntryDto(
                     1,
                     7L,
                     1L,
-                    2L,
-                    3L,
+                    accountUuid(2L),
+                    accountUuid(3L),
                     "active",
                     Instant.parse("2026-04-10T01:02:03Z"),
                     new FriendPresenceDto(
-                        3L,
+                        accountUuid(3L),
                         true,
                         9L,
                         "SHARED",
@@ -451,8 +593,8 @@ class SocialGroupsGrpcServiceTest {
     service.getFriend(
         net.firedevops.firemud.socialgroups.v1.GetFriendRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
-            .setFriendAccountId("3")
+            .setAccountId(accountUuid(2L))
+            .setFriendAccountId(accountUuid(3L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -468,7 +610,7 @@ class SocialGroupsGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("3", ref.get().getFriend().getFriendAccountId());
+    assertEquals(accountUuid(3L), ref.get().getFriend().getFriendAccountId());
     assertEquals("7", ref.get().getFriend().getFriendLinkId());
     assertEquals("Ben", ref.get().getFriend().getPresence().getCharacterName());
   }
@@ -481,7 +623,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -490,8 +632,8 @@ class SocialGroupsGrpcServiceTest {
     service.removeFriend(
         net.firedevops.firemud.socialgroups.v1.RemoveFriendRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
-            .setFriendAccountId("3")
+            .setAccountId(accountUuid(2L))
+            .setFriendAccountId(accountUuid(3L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -506,7 +648,7 @@ class SocialGroupsGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    verify(friend).removeFriend(1L, 2L, 3L);
+    verify(friend).removeFriend(1L, accountUuid(2L), accountUuid(3L));
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getSuccess());
   }
@@ -522,7 +664,7 @@ class SocialGroupsGrpcServiceTest {
             new IllegalArgumentException("Cannot add or remove your own account as a friend"));
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -532,8 +674,8 @@ class SocialGroupsGrpcServiceTest {
     service.addFriend(
         net.firedevops.firemud.socialgroups.v1.AddFriendRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
-            .setFriendAccountId("2")
+            .setAccountId(accountUuid(2L))
+            .setFriendAccountId(accountUuid(2L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -563,10 +705,10 @@ class SocialGroupsGrpcServiceTest {
     Mockito.doThrow(
             new IllegalArgumentException("Cannot add or remove your own account as a friend"))
         .when(friend)
-        .removeFriend(1L, 2L, 2L);
+        .removeFriend(1L, accountUuid(2L), accountUuid(2L));
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -575,8 +717,8 @@ class SocialGroupsGrpcServiceTest {
     service.removeFriend(
         net.firedevops.firemud.socialgroups.v1.RemoveFriendRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
-            .setFriendAccountId("2")
+            .setAccountId(accountUuid(2L))
+            .setFriendAccountId(accountUuid(2L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -605,8 +747,8 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.listFriends(1L, 2L, FriendRosterFilter.FRIENDS_ONLY))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.listFriends(1L, accountUuid(2L), FriendRosterFilter.FRIENDS_ONLY))
         .thenReturn(
             new FriendRosterViewDto(
                 FriendRosterFilter.FRIENDS_ONLY,
@@ -617,12 +759,12 @@ class SocialGroupsGrpcServiceTest {
                         1,
                         7L,
                         1L,
-                        2L,
-                        3L,
+                        accountUuid(2L),
+                        accountUuid(3L),
                         "active",
                         Instant.parse("2026-04-10T01:02:03Z"),
                         new FriendPresenceDto(
-                            3L,
+                            accountUuid(3L),
                             true,
                             9L,
                             "SHARED",
@@ -643,7 +785,7 @@ class SocialGroupsGrpcServiceTest {
     service.listFriends(
         net.firedevops.firemud.socialgroups.v1.ListFriendsRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .setFilter(
                 net.firedevops.firemud.socialgroups.v1.FriendRosterFilter
                     .FRIEND_ROSTER_FILTER_FRIENDS_ONLY)
@@ -670,7 +812,7 @@ class SocialGroupsGrpcServiceTest {
     assertEquals(1, ref.get().getMatchCount());
     assertEquals(1, ref.get().getFriends(0).getOrdinal());
     assertEquals("7", ref.get().getFriends(0).getFriendLinkId());
-    assertEquals("3", ref.get().getFriends(0).getFriendAccountId());
+    assertEquals(accountUuid(3L), ref.get().getFriends(0).getFriendAccountId());
     assertEquals("active", ref.get().getFriends(0).getStatus());
     assertEquals(
         Instant.parse("2026-04-10T01:02:03Z").toEpochMilli(),
@@ -687,8 +829,8 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.getFriendRosterSummary(1L, 2L))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.getFriendRosterSummary(1L, accountUuid(2L)))
         .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 2, 1, 1));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
@@ -698,7 +840,7 @@ class SocialGroupsGrpcServiceTest {
     service.getFriendRosterSummary(
         net.firedevops.firemud.socialgroups.v1.GetFriendRosterSummaryRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -735,20 +877,32 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.getFriendByOrdinal(1L, 2L, 1))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.getFriendByOrdinal(1L, accountUuid(2L), 1))
         .thenReturn(
             java.util.Optional.of(
                 new FriendRosterEntryDto(
                     1,
                     7L,
                     1L,
-                    2L,
-                    3L,
+                    accountUuid(2L),
+                    accountUuid(3L),
                     "active",
                     Instant.parse("2026-04-10T01:02:03Z"),
                     new FriendPresenceDto(
-                        3L, true, null, null, null, null, null, null, null, null, "Ben", null, null,
+                        accountUuid(3L),
+                        true,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "Ben",
+                        null,
+                        null,
                         null))));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
@@ -758,7 +912,7 @@ class SocialGroupsGrpcServiceTest {
     service.getFriendByOrdinal(
         net.firedevops.firemud.socialgroups.v1.GetFriendByOrdinalRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .setOrdinal(1)
             .build(),
         new StreamObserver<>() {
@@ -776,7 +930,7 @@ class SocialGroupsGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals(1, ref.get().getFriend().getOrdinal());
-    assertEquals("3", ref.get().getFriend().getFriendAccountId());
+    assertEquals(accountUuid(3L), ref.get().getFriend().getFriendAccountId());
   }
 
   @Test
@@ -787,20 +941,32 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.removeFriendByOrdinal(1L, 2L, 1))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.removeFriendByOrdinal(1L, accountUuid(2L), 1))
         .thenReturn(
             java.util.Optional.of(
                 new FriendRosterEntryDto(
                     1,
                     7L,
                     1L,
-                    2L,
-                    3L,
+                    accountUuid(2L),
+                    accountUuid(3L),
                     "active",
                     Instant.parse("2026-04-10T01:02:03Z"),
                     new FriendPresenceDto(
-                        3L, false, null, null, null, null, null, null, null, null, null, null, null,
+                        accountUuid(3L),
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
                         null))));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
@@ -810,7 +976,7 @@ class SocialGroupsGrpcServiceTest {
     service.removeFriendByOrdinal(
         net.firedevops.firemud.socialgroups.v1.RemoveFriendByOrdinalRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .setOrdinal(1)
             .build(),
         new StreamObserver<>() {
@@ -828,7 +994,7 @@ class SocialGroupsGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getSuccess());
-    assertEquals("3", ref.get().getRemovedFriend().getFriendAccountId());
+    assertEquals(accountUuid(3L), ref.get().getRemovedFriend().getFriendAccountId());
   }
 
   @Test
@@ -839,8 +1005,8 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
-    Mockito.when(friend.getFriendPresencePolicy(1L, 2L))
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.getFriendPresencePolicy(1L, accountUuid(2L)))
         .thenReturn(new FriendPresencePolicyViewDto(FriendPresenceVisibilityPolicyValue.PRIVATE));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
@@ -850,7 +1016,7 @@ class SocialGroupsGrpcServiceTest {
     service.getFriendPresencePolicy(
         net.firedevops.firemud.socialgroups.v1.GetFriendPresencePolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -888,7 +1054,7 @@ class SocialGroupsGrpcServiceTest {
     service.getFriendPresencePolicy(
         net.firedevops.firemud.socialgroups.v1.GetFriendPresencePolicyRequest.newBuilder()
             .setTenantId("abc")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .build(),
         new StreamObserver<>() {
           @Override
@@ -917,9 +1083,10 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     Mockito.when(
-            friend.updateFriendPresencePolicy(1L, 2L, FriendPresenceVisibilityPolicyValue.PUBLIC))
+            friend.updateFriendPresencePolicy(
+                1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.PUBLIC))
         .thenReturn(new FriendPresencePolicyViewDto(FriendPresenceVisibilityPolicyValue.PUBLIC));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
@@ -929,7 +1096,7 @@ class SocialGroupsGrpcServiceTest {
     service.updateFriendPresencePolicy(
         net.firedevops.firemud.socialgroups.v1.UpdateFriendPresencePolicyRequest.newBuilder()
             .setTenantId("1")
-            .setAccountId("2")
+            .setAccountId(accountUuid(2L))
             .setVisibilityPolicy(
                 net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                     .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
@@ -963,7 +1130,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -972,7 +1139,7 @@ class SocialGroupsGrpcServiceTest {
     service.sendMail(
         net.firedevops.firemud.socialgroups.v1.SendMailRequest.newBuilder()
             .setTenantId("1")
-            .setSenderAccountId("2")
+            .setSenderAccountId(accountUuid(2L))
             .setRecipientAccountId("0")
             .setSubject("hi")
             .setContent("body")
@@ -993,7 +1160,7 @@ class SocialGroupsGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("recipientAccountId must be positive", ref.get().getError().getMessage());
+    assertEquals("Malformed claim: recipientAccountId", ref.get().getError().getMessage());
     verifyNoInteractions(mail);
   }
 
@@ -1005,7 +1172,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(false);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(false);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -1014,8 +1181,8 @@ class SocialGroupsGrpcServiceTest {
     service.sendMail(
         net.firedevops.firemud.socialgroups.v1.SendMailRequest.newBuilder()
             .setTenantId("1")
-            .setSenderAccountId("2")
-            .setRecipientAccountId("3")
+            .setSenderAccountId(accountUuid(2L))
+            .setRecipientAccountId(accountUuid(3L))
             .setSubject("hi")
             .setContent("body")
             .build(),
@@ -1037,5 +1204,78 @@ class SocialGroupsGrpcServiceTest {
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     assertEquals("Account access required", ref.get().getError().getMessage());
     verifyNoInteractions(mail);
+  }
+
+  @Test
+  void canonicalFriendViewerMustMatchActualCallerEvenWithTenantRoles() {
+    FriendService friend = Mockito.mock(FriendService.class);
+    var service =
+        new SocialGroupsGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ChatService.class),
+            Mockito.mock(GuildService.class),
+            friend,
+            Mockito.mock(MailService.class),
+            new SocialAccessGuard(),
+            new SimpleMeterRegistry());
+    net.firedevops.firemud.common.security.SessionContext.setContext(
+        accountUuid(1L), List.of("platformAdmin"), java.util.Map.of("7", List.of("tenantAdmin")));
+    try {
+      AtomicReference<ListFriendsResponse> result = new AtomicReference<>();
+      service.listFriends(
+          net.firedevops.firemud.socialgroups.v1.ListFriendsRequest.newBuilder()
+              .setTenantId("7")
+              .setAccountId(accountUuid(2L))
+              .build(),
+          new StreamObserver<>() {
+            public void onNext(ListFriendsResponse value) {
+              result.set(value);
+            }
+
+            public void onError(Throwable error) {
+              throw new AssertionError(error);
+            }
+
+            public void onCompleted() {}
+          });
+      assertEquals("PERMISSION_DENIED", result.get().getError().getCode());
+      verifyNoInteractions(friend);
+    } finally {
+      net.firedevops.firemud.common.security.SessionContext.clear();
+    }
+  }
+
+  @Test
+  void numericFriendViewerFailsBeforeAuthorizationOrServiceDispatch() {
+    FriendService friend = Mockito.mock(FriendService.class);
+    SocialAccessGuard guard = Mockito.mock(SocialAccessGuard.class);
+    var service =
+        new SocialGroupsGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ChatService.class),
+            Mockito.mock(GuildService.class),
+            friend,
+            Mockito.mock(MailService.class),
+            guard,
+            new SimpleMeterRegistry());
+    AtomicReference<ListFriendsResponse> result = new AtomicReference<>();
+    service.listFriends(
+        net.firedevops.firemud.socialgroups.v1.ListFriendsRequest.newBuilder()
+            .setTenantId("7")
+            .setAccountId("2")
+            .build(),
+        new StreamObserver<>() {
+          public void onNext(ListFriendsResponse value) {
+            result.set(value);
+          }
+
+          public void onError(Throwable error) {
+            throw new AssertionError(error);
+          }
+
+          public void onCompleted() {}
+        });
+    assertEquals("INVALID_ARGUMENT", result.get().getError().getCode());
+    verifyNoInteractions(friend, guard);
   }
 }

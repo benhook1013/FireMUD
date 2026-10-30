@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
@@ -103,8 +104,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               senderScope.accountId(),
               mapChatType(request),
               request.getChannelId(),
-              RequestIdValidation.parseOptionalPositiveLong(
-                  request.getRecipientId(), "recipientId"),
+              optionalAccountUuid(request.getRecipientId(), "recipientId"),
               RequestIdValidation.parseOptionalPositiveLong(request.getGuildId(), "guildId"),
               RequestIdValidation.parseOptionalPositiveLong(request.getCityId(), "cityId"),
               request.getContent(),
@@ -120,6 +120,13 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .setError(invalidArgument("SendMessage", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      responseObserver.onNext(
+          SendMessageResponse.newBuilder()
+              .setSuccess(false)
+              .setError(permissionDenied("SendMessage", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       SendMessageResponse response =
@@ -153,7 +160,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       StreamObserver<CreateGuildResponse> responseObserver) {
     try {
       AccountScope ownerScope =
-          requireAccountScope(request.getTenantId(), request.getOwnerAccountId(), "ownerAccountId");
+          requireGuildOwnerScope(
+              request.getTenantId(), request.getOwnerAccountId(), "ownerAccountId");
       CreateGuildRequest dto =
           new CreateGuildRequest(ownerScope.tenantId(), ownerScope.accountId(), request.getName());
       var guild = guildService.createGuild(dto);
@@ -167,6 +175,12 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .setError(invalidArgument("CreateGuild", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      responseObserver.onNext(
+          CreateGuildResponse.newBuilder()
+              .setError(permissionDenied("CreateGuild", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       CreateGuildResponse response =
@@ -188,7 +202,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new AddFriendRequest(
               accountScope.tenantId(),
               accountScope.accountId(),
-              RequestIdValidation.requirePositiveLong(
+              JwtClaims.requireCanonicalAccountUuid(
                   request.getFriendAccountId(), "friendAccountId"));
       friendService.addFriend(dto);
       AddFriendResponse response = AddFriendResponse.newBuilder().setSuccess(true).build();
@@ -201,6 +215,13 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .setError(invalidArgument("AddFriend", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      responseObserver.onNext(
+          AddFriendResponse.newBuilder()
+              .setSuccess(false)
+              .setError(permissionDenied("AddFriend", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       AddFriendResponse response =
@@ -223,7 +244,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       friendService.removeFriend(
           accountScope.tenantId(),
           accountScope.accountId(),
-          RequestIdValidation.requirePositiveLong(request.getFriendAccountId(), "friendAccountId"));
+          JwtClaims.requireCanonicalAccountUuid(request.getFriendAccountId(), "friendAccountId"));
       responseObserver.onNext(RemoveFriendResponse.newBuilder().setSuccess(true).build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -260,8 +281,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     try {
       AccountScope accountScope =
           requireAccountScope(request.getTenantId(), request.getAccountId(), "accountId");
-      long friendAccountId =
-          RequestIdValidation.requirePositiveLong(request.getFriendAccountId(), "friendAccountId");
+      String friendAccountId =
+          JwtClaims.requireCanonicalAccountUuid(request.getFriendAccountId(), "friendAccountId");
       FriendRosterEntryDto friend =
           friendService
               .getFriend(accountScope.tenantId(), accountScope.accountId(), friendAccountId)
@@ -622,7 +643,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   private FriendPresenceEntry mapPresence(FriendPresenceDto presence) {
     FriendPresenceEntry.Builder entry =
         FriendPresenceEntry.newBuilder()
-            .setFriendAccountId(Long.toString(presence.friendAccountId()))
+            .setFriendAccountId(presence.friendAccountId())
             .setOnline(presence.online());
     if (presence.gameInstanceId() != null) {
       entry.setGameInstanceId(Long.toString(presence.gameInstanceId()));
@@ -667,7 +688,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     FriendRosterEntry.Builder entry =
         FriendRosterEntry.newBuilder()
             .setOrdinal(friend.ordinal())
-            .setFriendAccountId(Long.toString(friend.friendAccountId()))
+            .setFriendAccountId(friend.friendAccountId())
             .setPresence(mapPresence(friend.presence()));
     if (friend.friendLinkId() != null) {
       entry.setFriendLinkId(Long.toString(friend.friendLinkId()));
@@ -676,7 +697,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       entry.setTenantId(Long.toString(friend.tenantId()));
     }
     if (friend.accountId() != null) {
-      entry.setAccountId(Long.toString(friend.accountId()));
+      entry.setAccountId(friend.accountId());
     }
     if (friend.status() != null && !friend.status().isBlank()) {
       entry.setStatus(friend.status());
@@ -765,7 +786,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new SendMailRequest(
               senderScope.tenantId(),
               senderScope.accountId(),
-              RequestIdValidation.requirePositiveLong(
+              JwtClaims.requireCanonicalAccountUuid(
                   request.getRecipientAccountId(), "recipientAccountId"),
               request.getSubject(),
               request.getContent());
@@ -823,7 +844,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     return GrpcAppErrors.internal(meterRegistry, logger, operation, ex);
   }
 
-  private void requireAccountAccess(long tenantId, long accountId) {
+  private void requireAccountAccess(long tenantId, String accountId) {
     if (socialAccessGuard.hasAccountAccess(tenantId, accountId)) {
       return;
     }
@@ -833,12 +854,28 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   private AccountScope requireAccountScope(
       String tenantIdText, String accountIdText, String accountFieldName) {
     long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
-    long accountId = RequestIdValidation.requirePositiveLong(accountIdText, accountFieldName);
+    String accountId = JwtClaims.requireCanonicalAccountUuid(accountIdText, accountFieldName);
     requireAccountAccess(tenantId, accountId);
     return new AccountScope(tenantId, accountId);
   }
 
-  private record AccountScope(long tenantId, long accountId) {}
+  private AccountScope requireGuildOwnerScope(
+      String tenantIdText, String accountIdText, String accountFieldName) {
+    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+    String accountId = JwtClaims.requireCanonicalAccountUuid(accountIdText, accountFieldName);
+    if (!socialAccessGuard.hasGuildOwnerAccess(tenantId, accountId)) {
+      throw new AuthorizationException("Guild owner access required");
+    }
+    return new AccountScope(tenantId, accountId);
+  }
+
+  private String optionalAccountUuid(String value, String fieldName) {
+    return value == null || value.isBlank()
+        ? null
+        : JwtClaims.requireCanonicalAccountUuid(value, fieldName);
+  }
+
+  private record AccountScope(long tenantId, String accountId) {}
 
   private FriendPresenceActivityState mapActivityState(
       net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState activityState) {
