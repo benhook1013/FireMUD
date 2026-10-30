@@ -14,6 +14,34 @@ class JwtClaimsTest {
   private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
 
   @Test
+  void requireCanonicalAccountUuidPreservesExactCanonicalText() {
+    String accountId = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
+    assertEquals(accountId, JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"));
+  }
+
+  @Test
+  void requireCanonicalAccountUuidRejectsNoncanonicalAndNonTextCarriers() {
+    for (Object accountId :
+        List.of(
+            "11",
+            "not-a-uuid",
+            "4CAE05E8-7A6B-4B14-9D44-665E3EEC450B",
+            "00000000-0000-0000-0000-000000000000",
+            " 4cae05e8-7a6b-4b14-9d44-665e3eec450b",
+            "4cae05e8-7a6b-4b14-9d44-665e3eec450b ",
+            "",
+            11L,
+            java.util.UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b"))) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"));
+    }
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JwtClaims.requireCanonicalAccountUuid(null, "accountId"));
+  }
+
+  @Test
   void requireLongParsesNumericTextAndRejectsInvalidValues() {
     assertEquals(7L, JwtClaims.requireLong("7", "tenantId", false));
     assertEquals(7L, JwtClaims.requireLong(7L, "tenantId", false));
