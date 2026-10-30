@@ -38,6 +38,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class AccountClient
     extends AbstractBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
   private static final Logger logger = LoggerFactory.getLogger(AccountClient.class);
+  private static final JsonMapper PROFILE_MAPPER = JsonMapper.builder().build();
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final int PRESENCE_VISIBILITY_POLICY_BATCH_SIZE = 100;
   private static final String PRESENCE_VISIBILITY_POLICY_READ_OPERATION =
@@ -211,7 +212,7 @@ public final class AccountClient
       if (response.hasError() || response.getProfileJson().isBlank()) {
         return Optional.empty();
       }
-      JsonNode profileNode = JsonMapper.builder().build().readTree(response.getProfileJson());
+      JsonNode profileNode = PROFILE_MAPPER.readTree(response.getProfileJson());
       if (!profileNode.isObject()
           || !profileNode.path("accountId").isTextual()
           || !accountId.equals(
