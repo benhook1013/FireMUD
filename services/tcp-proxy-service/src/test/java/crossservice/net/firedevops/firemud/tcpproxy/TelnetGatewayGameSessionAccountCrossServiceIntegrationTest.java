@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -16,13 +17,11 @@ import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
-import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
-import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
@@ -264,124 +263,54 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetItemAndEquipmentLoopMatchesWebSocketCommandSurface() throws Exception {
+  void telnetNumericItemMutationsAreRefusedWhileEquipmentRemainsAvailable() throws Exception {
     ensureTestServicesStarted();
-
-    String roomInventoryBeforePickup;
-    String pickupResponse;
-    String containerViewResponse;
-    String putResponse;
-    String takeResponse;
-    String dropResponse;
-    String roomInventoryAfterDrop;
-    String emptyEquipmentResponse;
-    String wearResponse;
-    String equipmentResponse;
-    String removeResponse;
-    String incompatibleResponse;
     try (GameplayTelnetDriver client = openReadyTelnetClient()) {
-
       client.sendLine("INV HERE");
-      roomInventoryBeforePickup = client.readBlockContaining("Room Inventory:");
+      String groundBefore = client.readBlockContaining("Room Inventory:");
+      client.sendLine("INV");
+      String carriedBefore = client.readBlockContaining("Inventory:");
+      assertThat(groundBefore).contains("Torch", "Backpack");
+      assertThat(carriedBefore).contains("Leather Cap", "Iron Boots").doesNotContain("Torch");
+
       client.sendLine("GET Torch");
-      pickupResponse =
-          client.readTranscriptContainingAll(
-              "You pick up Torch.",
-              "Inventory:",
-              "- Torch [torch#1] (A small torch)",
-              "Room Inventory:",
-              "- Backpack [backpack#1] (A weathered backpack)");
-      client.sendLine("CONTAINER Backpack");
-      containerViewResponse = client.readBlockContaining("Container: Backpack [backpack#1]");
-      client.sendLine("PUT Torch INTO Backpack");
-      putResponse = client.readBlockContaining("You put Torch into Backpack.");
-      client.sendLine("TAKE Torch FROM Backpack");
-      takeResponse = client.readBlockContaining("You take Torch from Backpack.");
-      client.sendLine("DROP Torch");
-      dropResponse =
-          client.readTranscriptContainingAll(
-              "You drop Torch.",
-              "Inventory:",
-              "- Leather Cap [cap#1] (A small cap)",
-              "- Iron Boots [boots#1] (Heavy iron boots)",
-              "Room Inventory:",
-              "- Torch [torch#1] (A small torch)");
+      assertThat(client.readLineContaining("ERROR INVENTORY_UNAVAILABLE"))
+          .contains("ERROR INVENTORY_UNAVAILABLE");
+      client.sendLine("DROP Leather Cap");
+      assertThat(client.readLineContaining("ERROR INVENTORY_UNAVAILABLE"))
+          .contains("ERROR INVENTORY_UNAVAILABLE");
       client.sendLine("INV HERE");
-      roomInventoryAfterDrop = client.readBlockContaining("Room Inventory:");
+      assertThat(client.readBlockContaining("Room Inventory:"))
+          .contains(
+              "- Torch [torch#1] (A small torch)",
+              "- Backpack [backpack#1] (A weathered backpack)");
+      client.sendLine("INV");
+      assertThat(client.readBlockContaining("Inventory:"))
+          .contains(
+              "- Leather Cap [cap#1] (A small cap)", "- Iron Boots [boots#1] (Heavy iron boots)")
+          .doesNotContain("Torch");
+      assertNoItemMutationRequests();
+      client.sendLine("CONTAINER Backpack");
+      assertThat(client.readBlockContaining("Container: Backpack [backpack#1]"))
+          .contains("- Ration [ration#1] (A dry trail ration)")
+          .doesNotContain("Torch");
 
       client.sendLine("EQUIPMENT");
-      emptyEquipmentResponse = client.readBlockContaining("You have nothing equipped.");
+      assertThat(client.readBlockContaining("You have nothing equipped."))
+          .contains("You have nothing equipped.");
       client.sendLine("WEAR Leather Cap");
-      wearResponse = client.readLineContaining("You wear Leather Cap.");
+      assertThat(client.readLineContaining("You wear Leather Cap."))
+          .contains("You wear Leather Cap.");
       client.sendLine("EQUIPMENT");
-      equipmentResponse = client.readBlockContaining("Equipment:");
+      assertThat(client.readBlockContaining("Equipment:"))
+          .contains("- HEAD: Leather Cap [cap#1] (A small cap)");
       client.sendLine("REMOVE HEAD");
-      removeResponse = client.readLineContaining("You remove Leather Cap.");
+      assertThat(client.readLineContaining("You remove Leather Cap."))
+          .contains("You remove Leather Cap.");
       client.sendLine("WEAR Iron Boots");
-      incompatibleResponse = client.readLineContaining("ERROR SLOT_INCOMPATIBLE");
+      assertThat(client.readLineContaining("ERROR SLOT_INCOMPATIBLE"))
+          .contains("ERROR SLOT_INCOMPATIBLE", "Iron Boots cannot be worn by this body layout.");
     }
-
-    assertThat(roomInventoryBeforePickup)
-        .contains("- Torch [torch#1] (A small torch)")
-        .contains("- Backpack [backpack#1] (A weathered backpack)");
-    assertThat(pickupResponse)
-        .contains("You pick up Torch.")
-        .contains("Inventory:")
-        .contains("- Torch [torch#1] (A small torch)")
-        .contains("Room Inventory:")
-        .contains("- Backpack [backpack#1] (A weathered backpack)");
-    assertThat(containerViewResponse)
-        .contains("Container: Backpack [backpack#1]")
-        .contains("- Ration [ration#1] (A dry trail ration)");
-    assertThat(putResponse)
-        .contains("You put Torch into Backpack.")
-        .contains("- Torch [torch#1] (A small torch)");
-    assertThat(takeResponse)
-        .contains("You take Torch from Backpack.")
-        .contains("- Ration [ration#1] (A dry trail ration)");
-    assertThat(dropResponse)
-        .contains("You drop Torch.")
-        .contains("Inventory:")
-        .contains("- Leather Cap [cap#1] (A small cap)")
-        .contains("- Iron Boots [boots#1] (Heavy iron boots)")
-        .contains("Room Inventory:")
-        .contains("- Torch [torch#1] (A small torch)");
-    assertThat(roomInventoryAfterDrop).contains("- Torch [torch#1] (A small torch)");
-    assertThat(emptyEquipmentResponse).contains("You have nothing equipped.");
-    assertThat(wearResponse).contains("You wear Leather Cap.");
-    assertThat(equipmentResponse).contains("- HEAD: Leather Cap [cap#1] (A small cap)");
-    assertThat(removeResponse).contains("You remove Leather Cap.");
-    assertThat(incompatibleResponse)
-        .contains("ERROR SLOT_INCOMPATIBLE")
-        .contains("Iron Boots cannot be worn by this body layout.");
-    GameplayEntityAssertions.assertPickup(
-        entityStub().lastPickupRequest(),
-        String.valueOf(TENANT_ID),
-        ChatTestFixtures.PLAYER_EMBERLINE,
-        null,
-        LookTestFixtures.ROOM_ID,
-        "torch");
-    GameplayEntityAssertions.assertDrop(
-        entityStub().lastDropRequest(),
-        String.valueOf(TENANT_ID),
-        ChatTestFixtures.PLAYER_EMBERLINE,
-        null,
-        LookTestFixtures.ROOM_ID,
-        "torch");
-    GameplayEntityAssertions.assertPut(
-        entityStub().lastPutRequest(),
-        String.valueOf(TENANT_ID),
-        ChatTestFixtures.PLAYER_EMBERLINE,
-        "container-backpack-1",
-        "torch",
-        "torch-ground-1");
-    GameplayEntityAssertions.assertTake(
-        entityStub().lastTakeRequest(),
-        String.valueOf(TENANT_ID),
-        ChatTestFixtures.PLAYER_EMBERLINE,
-        "container-backpack-1",
-        "torch",
-        "");
     GameplayEntityAssertions.assertRemove(
         entityStub().lastRemoveRequest(),
         String.valueOf(TENANT_ID),
@@ -396,80 +325,60 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetItemLoopStillSucceedsAfterWebSocketLogoutOnSharedRuntime() throws Exception {
+  void numericItemRefusalsPreserveSharedInventoryAcrossWebSocketLogout() throws Exception {
     ensureTestServicesStarted();
-
-    try (GameplayWebSocketDriver webSocketClient = openReadyGatewayWebSocketClient("gateway-1")) {
-      webSocketClient.send("INV HERE");
+    try (GameplayWebSocketDriver client = openReadyGatewayWebSocketClient("gateway-1")) {
+      int before = client.responseCount();
+      client.send("INV HERE");
       assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response ->
-                      response.contains("Room Inventory:")
-                          && response.contains("Torch")
-                          && response.contains("Backpack"),
-                  "room inventory before pickup"))
-          .contains("Room Inventory:");
-      webSocketClient.send("GET Torch");
+              client.awaitTranscriptContainingAllAfter(
+                  before, "Room Inventory:", "Torch", "Backpack"))
+          .contains("Torch", "Backpack");
+      before = client.responseCount();
+      client.send("GET Torch");
+      assertThat(client.awaitTranscriptContainingAllAfter(before, "ERROR INVENTORY_UNAVAILABLE"))
+          .contains("ERROR INVENTORY_UNAVAILABLE");
+      before = client.responseCount();
+      client.send("DROP Leather Cap");
+      assertThat(client.awaitTranscriptContainingAllAfter(before, "ERROR INVENTORY_UNAVAILABLE"))
+          .contains("ERROR INVENTORY_UNAVAILABLE");
+      before = client.responseCount();
+      client.send("INV HERE");
       assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response -> response.contains("You pick up Torch."), "pickup response"))
-          .contains("You pick up Torch.");
-      webSocketClient.send("CONTAINER Backpack");
+              client.awaitTranscriptContainingAllAfter(
+                  before, "Room Inventory:", "Torch", "Backpack"))
+          .contains("Torch", "Backpack");
+      before = client.responseCount();
+      client.send("INV");
       assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response ->
-                      response.contains("Container: Backpack [backpack#1]")
-                          && response.contains("Ration"),
-                  "container view"))
-          .contains("Container: Backpack [backpack#1]");
-      webSocketClient.send("PUT Torch INTO Backpack");
-      assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response -> response.contains("You put Torch into Backpack."), "put response"))
-          .contains("You put Torch into Backpack.");
-      assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response ->
-                      response.contains("Container: Backpack [backpack#1]")
-                          && response.contains("Torch"),
-                  "container view after put"))
-          .contains("Container: Backpack [backpack#1]");
-      webSocketClient.send("TAKE Torch FROM Backpack");
-      assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response -> response.contains("You take Torch from Backpack."), "take response"))
-          .contains("You take Torch from Backpack.");
-      assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response ->
-                      response.contains("Container: Backpack [backpack#1]")
-                          && response.contains("Ration"),
-                  "container view after take"))
-          .contains("Container: Backpack [backpack#1]");
-      webSocketClient.send("DROP Torch");
-      assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response -> response.contains("You drop Torch."), "drop response"))
-          .contains("You drop Torch.");
-      webSocketClient.send("LOGOUT");
-      assertThat(
-              webSocketClient.awaitResponseMatching(
-                  response -> response.contains("OK LOGOUT") && response.contains("Logged out."),
-                  "logout response"))
+              client.awaitTranscriptContainingAllAfter(
+                  before, "Inventory:", "Leather Cap", "Iron Boots"))
+          .doesNotContain("Torch");
+      assertNoItemMutationRequests();
+      before = client.responseCount();
+      client.send("LOGOUT");
+      assertThat(client.awaitTranscriptContainingAllAfter(before, "OK LOGOUT", "Logged out."))
           .contains("OK LOGOUT");
     }
-
-    try (GameplayTelnetDriver telnetClient = openReadyTelnetClient()) {
-      telnetClient.sendLine("GET Torch");
-      assertThat(telnetClient.readBlockContaining("You pick up Torch."))
-          .contains("You pick up Torch.");
-      telnetClient.sendLine("PUT Torch INTO Backpack");
-      assertThat(telnetClient.readBlockContaining("You put Torch into Backpack."))
-          .contains("You put Torch into Backpack.");
-      telnetClient.sendLine("TAKE Torch FROM Backpack");
-      assertThat(telnetClient.readBlockContaining("You take Torch from Backpack."))
-          .contains("You take Torch from Backpack.");
+    try (GameplayTelnetDriver client = openReadyTelnetClient()) {
+      client.sendLine("GET Torch");
+      assertThat(client.readLineContaining("ERROR INVENTORY_UNAVAILABLE"))
+          .contains("ERROR INVENTORY_UNAVAILABLE");
+      client.sendLine("DROP Leather Cap");
+      assertThat(client.readLineContaining("ERROR INVENTORY_UNAVAILABLE"))
+          .contains("ERROR INVENTORY_UNAVAILABLE");
+      client.sendLine("INV HERE");
+      assertThat(client.readBlockContaining("Room Inventory:")).contains("Torch", "Backpack");
+      client.sendLine("INV");
+      assertThat(client.readBlockContaining("Inventory:"))
+          .contains("Leather Cap", "Iron Boots")
+          .doesNotContain("Torch");
+      client.sendLine("CONTAINER Backpack");
+      assertThat(client.readBlockContaining("Container: Backpack [backpack#1]"))
+          .contains("Ration")
+          .doesNotContain("Torch");
     }
+    assertNoItemMutationRequests();
   }
 
   @Test
@@ -566,149 +475,127 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetCommunicationMatchesCanonicalTranscriptsWithoutSession() throws Exception {
+  void telnetNumericWhisperAndTellAreRefusedWithoutSocialOrTargetWrites() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
     seedLiveTargetSession();
-
-    String telnetWhisperResponse;
-    String telnetTellResponse;
+    SessionContext target =
+        gameSession()
+            .bean(SessionContextService.class)
+            .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
+            .orElseThrow();
+    ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
+    var targetBefore =
+        buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
     try (GameplayTelnetDriver client = openReadyTelnetClient()) {
-
-      client.sendLine("WHISPER Sora Keep quiet");
-      telnetWhisperResponse = client.readLineContaining(ChatTestFixtures.canonicalWhisperText());
-      GameplayEntityAssertions.assertMessage(
-          socialStub().lastRequest(),
-          ChatType.CHAT_TYPE_WHISPER,
-          ChatTestFixtures.PLAYER_SORA,
-          null,
-          false);
-
-      client.sendLine("TELL Sora Meet me at the forge");
-      telnetTellResponse = client.readLineContaining(ChatTestFixtures.canonicalTellText());
+      for (String command : List.of("WHISPER Sora Keep quiet", "TELL Sora Meet me at the forge")) {
+        client.sendLine(command);
+        assertThat(client.readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
+            .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
+        assertThat(socialStub().lastRequest()).isEmpty();
+        assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+            .isEqualTo(targetBefore);
+      }
     }
-
-    assertThat(telnetWhisperResponse).contains(ChatTestFixtures.canonicalWhisperText());
-    assertThat(telnetTellResponse).contains(ChatTestFixtures.canonicalTellText());
-    GameplayEntityAssertions.assertMessage(
-        socialStub().lastRequest(),
-        ChatType.CHAT_TYPE_TELL,
-        ChatTestFixtures.PLAYER_SORA,
-        null,
-        false);
   }
 
   @Test
-  void telnetWhisperDeliversTargetAndObserverViews() throws Exception {
+  void telnetNumericWhisperDoesNotWriteTargetOrObserverViews() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
-
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
         GameplayTelnetScenarios.openReadyTrio(
             this::openTelnetClient,
             characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
             characterAdmission("sora@example.com", "Sora"),
             characterAdmission("nyx@example.com", "Nyx"))) {
-      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
-      ActiveTransportSessionRegistry sessionRegistry =
+      SessionContextService contexts = gameSession().bean(SessionContextService.class);
+      ActiveTransportSessionRegistry transports =
           gameSession().bean(ActiveTransportSessionRegistry.class);
-      ScreenBufferService screenBufferService = gameSession().bean(ScreenBufferService.class);
-      SessionContext targetContext =
-          sessionContextService
-              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
-              .orElseThrow();
-      SessionContext observerContext =
-          sessionContextService
-              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Nyx")
-              .orElseThrow();
-      assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
-      assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
-
+      ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
+      SessionContext target =
+          contexts.findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora").orElseThrow();
+      SessionContext observer =
+          contexts.findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Nyx").orElseThrow();
+      assertThat(transports.find(target.sessionId())).isPresent();
+      assertThat(transports.find(observer.sessionId())).isPresent();
+      var targetBefore =
+          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
+      var observerBefore =
+          buffers.get(observer.tenantId(), observer.gameInstanceId(), observer.characterId());
       scenario.actor().sendLine("WHISPER Sora Keep quiet");
-      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
-          screenBufferService,
-          targetContext,
-          COMMAND_WAIT,
-          ChatTestFixtures.canonicalWhisperTargetText());
-      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
-          screenBufferService,
-          observerContext,
-          COMMAND_WAIT,
-          ChatTestFixtures.canonicalWhisperObserverMetadataText());
-      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
-          .contains(ChatTestFixtures.canonicalWhisperText());
+      assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
+          .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
+      assertThat(socialStub().lastRequest()).isEmpty();
+      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+          .isEqualTo(targetBefore);
       assertThat(
-              scenario.target().readLineContaining(ChatTestFixtures.canonicalWhisperTargetText()))
-          .contains(ChatTestFixtures.canonicalWhisperTargetText());
-      assertThat(scenario.observer().readLineContaining("Emberline whispers something to Sora."))
-          .contains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
+              buffers.get(observer.tenantId(), observer.gameInstanceId(), observer.characterId()))
+          .isEqualTo(observerBefore);
     }
   }
 
   @Test
-  void telnetSayDeliversRoomListenerView() throws Exception {
+  void telnetNumericSayDoesNotWriteRoomListenerView() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
-
     try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
             characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
             characterAdmission("sora@example.com", "Sora"))) {
-      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
-      ActiveTransportSessionRegistry sessionRegistry =
-          gameSession().bean(ActiveTransportSessionRegistry.class);
-      ScreenBufferService screenBufferService = gameSession().bean(ScreenBufferService.class);
-      SessionContext targetContext =
-          sessionContextService
+      SessionContext target =
+          gameSession()
+              .bean(SessionContextService.class)
               .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
               .orElseThrow();
-      assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
-
+      assertThat(gameSession().bean(ActiveTransportSessionRegistry.class).find(target.sessionId()))
+          .isPresent();
+      ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
+      var targetBefore =
+          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
       scenario.actor().sendLine("SAY hello travelers");
-      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
-          screenBufferService,
-          targetContext,
-          COMMAND_WAIT,
-          ChatTestFixtures.canonicalSayListenerText());
-      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalSayText()))
-          .contains(ChatTestFixtures.canonicalSayText());
-      assertThat(scenario.target().readLineContaining(ChatTestFixtures.canonicalSayListenerText()))
-          .contains(ChatTestFixtures.canonicalSayListenerText());
+      assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
+          .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
+      assertThat(socialStub().lastRequest()).isEmpty();
+      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+          .isEqualTo(targetBefore);
     }
   }
 
   @Test
-  void telnetTellDeliversTargetView() throws Exception {
+  void telnetNumericTellDoesNotWriteTargetView() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
-
     try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
             characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
             characterAdmission("sora@example.com", "Sora"))) {
-      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
-      ActiveTransportSessionRegistry sessionRegistry =
-          gameSession().bean(ActiveTransportSessionRegistry.class);
-      ScreenBufferService screenBufferService = gameSession().bean(ScreenBufferService.class);
-      SessionContext targetContext =
-          sessionContextService
+      SessionContext target =
+          gameSession()
+              .bean(SessionContextService.class)
               .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
               .orElseThrow();
-      assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
-
+      assertThat(gameSession().bean(ActiveTransportSessionRegistry.class).find(target.sessionId()))
+          .isPresent();
+      ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
+      var targetBefore =
+          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
       scenario.actor().sendLine("TELL Sora Meet me at the forge");
-      GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
-          screenBufferService,
-          targetContext,
-          COMMAND_WAIT,
-          ChatTestFixtures.canonicalTellTargetText());
-      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalTellText()))
-          .contains(ChatTestFixtures.canonicalTellText());
-      assertThat(scenario.target().readLineContaining(ChatTestFixtures.canonicalTellTargetText()))
-          .contains(ChatTestFixtures.canonicalTellTargetText());
+      assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
+          .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
+      assertThat(socialStub().lastRequest()).isEmpty();
+      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
+          .isEqualTo(targetBefore);
     }
+  }
+
+  private static void assertNoItemMutationRequests() {
+    assertThat(entityStub().lastPickupRequest()).isEmpty();
+    assertThat(entityStub().lastDropRequest()).isEmpty();
+    assertThat(entityStub().lastPutRequest()).isEmpty();
+    assertThat(entityStub().lastTakeRequest()).isEmpty();
   }
 
   private static synchronized void ensureTestServicesStarted() {

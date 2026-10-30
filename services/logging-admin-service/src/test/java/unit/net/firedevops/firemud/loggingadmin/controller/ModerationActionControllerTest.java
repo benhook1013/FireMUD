@@ -37,6 +37,8 @@ import tools.jackson.databind.ObjectMapper;
 @WithFiremudPrivilegedHttpAuthTestProperties
 class ModerationActionControllerTest {
 
+  private static final String CALLER_ACCOUNT_UUID = "f22f310d-5464-45f0-9dc4-c37353004403";
+
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -51,7 +53,10 @@ class ModerationActionControllerTest {
   @Test
   void applyRejectsAuthorizedCallerWhileMutationGateIsUnavailable() throws Exception {
     ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            CALLER_ACCOUNT_UUID,
+            Map.of("accountId", CALLER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -74,7 +79,13 @@ class ModerationActionControllerTest {
   void applyRejectsCrossTenantScopedAdmin() throws Exception {
     ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("moderator"))));
+        jwtUtil.generateToken(
+            CALLER_ACCOUNT_UUID,
+            Map.of(
+                "accountId",
+                CALLER_ACCOUNT_UUID,
+                "scopedRoles",
+                Map.of("8", List.of("moderator"))));
 
     mockMvc
         .perform(
@@ -88,7 +99,10 @@ class ModerationActionControllerTest {
   @Test
   void applyRejectsZeroSessionIdBeforeDispatch() throws Exception {
     ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 0L, "ban", "");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            CALLER_ACCOUNT_UUID,
+            Map.of("accountId", CALLER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

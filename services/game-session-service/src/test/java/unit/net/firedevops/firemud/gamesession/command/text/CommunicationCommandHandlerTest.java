@@ -149,7 +149,10 @@ class CommunicationCommandHandlerTest {
       assertThat(result.commandResult().errorCode()).isEqualTo("COMMUNICATION_NOT_DELIVERED");
       assertThat(result.commandResult().errorMessage())
           .isEqualTo("Sender Account identity unavailable");
-      assertThat(result.outputs()).isEmpty();
+      assertThat(result.outputs())
+          .containsExactly(
+              PlayerOutput.error(
+                  "COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable"));
     }
 
     Mockito.verifyNoInteractions(

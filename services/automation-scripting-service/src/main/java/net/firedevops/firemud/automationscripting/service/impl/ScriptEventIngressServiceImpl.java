@@ -37,7 +37,6 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
-import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -1619,11 +1618,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String dryRunPrincipalKey() {
-    String accountId = SessionContext.getAccountId();
-    String accountUuid =
-        accountId == null || accountId.isBlank()
-            ? null
-            : JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+    String accountUuid = SessionContext.currentAccountUuidOrNull();
     if (accountUuid != null) {
       return "account:" + accountUuid;
     }

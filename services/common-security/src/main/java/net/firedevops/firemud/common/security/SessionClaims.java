@@ -29,11 +29,20 @@ public record SessionClaims(
 
   public static SessionClaims fromJwt(Jws<Claims> jwt) {
     Claims payload = jwt.getPayload();
+    boolean internalService = Boolean.TRUE.equals(payload.get("internalService", Boolean.class));
+    String accountId = "";
+    if (!internalService || payload.containsKey("accountId")) {
+      accountId = JwtClaims.requireCanonicalAccountUuid(payload.get("accountId"), "accountId");
+      String subject = JwtClaims.requireCanonicalAccountUuid(payload.get("sub"), "sub");
+      if (!accountId.equals(subject)) {
+        throw new IllegalArgumentException("Account subject does not match accountId");
+      }
+    }
     return new SessionClaims(
-        JwtClaims.claimText(payload.get("accountId")),
+        accountId,
         extractGlobalRoles(payload.get("globalRoles")),
         extractScopedRoles(payload.get("scopedRoles")),
-        Boolean.TRUE.equals(payload.get("internalService", Boolean.class)),
+        internalService,
         JwtClaims.claimText(payload.get("serviceName")),
         JwtClaims.claimText(payload.get("serviceInstanceId")));
   }

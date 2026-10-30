@@ -2,7 +2,6 @@ package net.firedevops.firemud.socialgroups.controller;
 
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
@@ -30,12 +29,7 @@ public class MailController {
   @PostMapping
   public ResponseEntity<ApiResponse<MailMessageDto>> sendMail(
       @Valid @RequestBody SendMailRequest request) {
-    String callerAccountId = SessionContext.getAccountId();
-    String callerAccountUuid =
-        callerAccountId == null || callerAccountId.isBlank()
-            ? null
-            : JwtClaims.requireCanonicalAccountUuid(callerAccountId, "accountId");
-    if (!request.senderAccountId().equals(callerAccountUuid)) {
+    if (!request.senderAccountId().equals(SessionContext.currentAccountUuidOrNull())) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Sender must match authenticated account");
     }
