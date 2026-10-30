@@ -558,9 +558,21 @@ class GameLogicClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     setStub(client, stub);
 
-    assertInvalidAccountUuidsAreRejectedBeforeRpc(
-        accountId ->
-            client.pickupVisibleRoomItem(sessionContextWithAccountId(accountId), "torch1", 1));
+    for (String accountId :
+        new String[] {
+          null,
+          "",
+          "42",
+          "acct:opaque/legacy",
+          "00000000-0000-0000-0000-000000000000",
+          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
+          " " + ACCOUNT_UUID + " ",
+          "not-a-uuid"
+        }) {
+      var response =
+          client.pickupVisibleRoomItem(sessionContextWithAccountId(accountId), "torch1", 1);
+      assertThat(response.getError().getCode()).isEqualTo("INVENTORY_UNAVAILABLE");
+    }
     verify(stub, never()).pickupVisibleRoomItem(any(PickupVisibleRoomItemRequest.class));
   }
 
@@ -572,8 +584,20 @@ class GameLogicClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     setStub(client, stub);
 
-    assertInvalidAccountUuidsAreRejectedBeforeRpc(
-        accountId -> client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1));
+    for (String accountId :
+        new String[] {
+          null,
+          "",
+          "42",
+          "acct:opaque/legacy",
+          "00000000-0000-0000-0000-000000000000",
+          ACCOUNT_UUID.toUpperCase(java.util.Locale.ROOT),
+          " " + ACCOUNT_UUID + " ",
+          "not-a-uuid"
+        }) {
+      var response = client.dropCarriedItem(sessionContextWithAccountId(accountId), "torch1", 1);
+      assertThat(response.getError().getCode()).isEqualTo("INVENTORY_UNAVAILABLE");
+    }
     verify(stub, never()).dropCarriedItem(any(DropCarriedItemRequest.class));
   }
 

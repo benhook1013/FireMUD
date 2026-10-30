@@ -71,10 +71,11 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   @Override
   public void registerConnected(SessionContext context) {
-    if (context == null
-        || !SessionContext.isCanonicalAccountIdentity(context.accountId())
-        || context.tenantId() <= 0
-        || context.gameInstanceId() <= 0) {
+    if (context != null && !SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      logger.debug("Gameplay presence write refused: noncanonical_account");
+      return;
+    }
+    if (context == null || context.tenantId() <= 0 || context.gameInstanceId() <= 0) {
       return;
     }
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();

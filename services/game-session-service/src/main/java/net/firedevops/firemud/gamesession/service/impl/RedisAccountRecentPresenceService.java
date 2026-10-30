@@ -67,9 +67,11 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordConnected(SessionContext context) {
-    if (context == null
-        || context.tenantId() <= 0
-        || !SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+    if (context != null && !SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      logger.debug("Recent presence write refused: noncanonical_account");
+      return;
+    }
+    if (context == null || context.tenantId() <= 0) {
       return;
     }
     GameplayPresence presence =
