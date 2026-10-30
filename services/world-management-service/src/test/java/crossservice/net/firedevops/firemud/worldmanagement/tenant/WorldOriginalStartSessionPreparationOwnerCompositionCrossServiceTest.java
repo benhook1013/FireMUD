@@ -3711,7 +3711,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(region.getPlacementResult().toByteArray())
                 .containsExactly(placed.toByteArray());
             assertThat(createdPlacementSnapshot(world.dsl(), placementId)).isEqualTo(beforeRetry);
-            assertThat(reads.get()).isGreaterThanOrEqualTo(4);
+            assertThat(reads.get()).isEqualTo(4);
           }
         } finally {
           shutdown(worldServer);

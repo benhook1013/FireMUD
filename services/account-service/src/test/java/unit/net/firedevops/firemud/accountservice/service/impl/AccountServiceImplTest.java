@@ -5442,6 +5442,35 @@ class AccountServiceImplTest {
     export
         .profiles()
         .forEach(dto -> assertEquals(account.getAccountUuid().toString(), dto.accountId()));
+    assertEquals(
+        java.util.List.of(1L, 2L),
+        export.profiles().stream()
+            .map(net.firedevops.firemud.accountservice.dto.ProfileDto::tenantId)
+            .toList());
+    assertEquals(
+        java.util.List.of("one", "two"),
+        export.profiles().stream()
+            .map(net.firedevops.firemud.accountservice.dto.ProfileDto::displayName)
+            .toList());
+    org.mockito.Mockito.verify(accountRepository).findById(2L);
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+
+    Account foreignOwner = new Account();
+    foreignOwner.setId(3L);
+    when(profileRepository.findByAccountId(2L))
+        .thenReturn(java.util.List.of(tenantOne, tenantTwo, profile(foreignOwner, 3L, "foreign")));
+    assertEquals(
+        "AUTH_UNAVAILABLE",
+        assertThrows(AuthenticationException.class, () -> service.exportAccountData(2L)).getCode());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(2)).findById(2L);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(2))
+        .findByAccountUuid(account.getAccountUuid());
+
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.empty());
+    assertEquals(
+        "AUTH_UNAVAILABLE",
+        assertThrows(AuthenticationException.class, () -> service.exportAccountData(2L)).getCode());
   }
 
   @Test
@@ -5467,6 +5496,8 @@ class AccountServiceImplTest {
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.of(account));
     when(profileRepository.findByAccountIdAndTenantId(2L, 7L)).thenReturn(Optional.empty());
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 7L)).thenReturn(true);
 
@@ -5475,6 +5506,8 @@ class AccountServiceImplTest {
     assertEquals("d09f80cb-a46a-415e-8d35-c9e8068e49de", export.account().id());
     assertEquals(7L, export.tenantId());
     assertNull(export.profile());
+    org.mockito.Mockito.verify(accountRepository).findById(2L);
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
   }
 
   @Test
