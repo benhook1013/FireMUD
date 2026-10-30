@@ -201,6 +201,50 @@ class AccountClientTest {
         .build();
   }
 
+  @Test
+  void uuidProfileResponseRemainsReadableWithNumericRequestSelectors() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.getProfile(any()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.GetProfileResponse.newBuilder()
+                .setProfileJson(
+                    "{\"accountId\":\"d09f80cb-a46a-415e-8d35-c9e8068e49de\",\"displayName\":\"demo\",\"bio\":\"retained bio\",\"presenceVisibilityPolicy\":\"FRIENDS_ONLY\"}")
+                .build());
+    when(stub.updateProfile(any()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.UpdateProfileResponse.newBuilder()
+                .setSuccess(true)
+                .build());
+    AccountClient client = newClient(stub);
+    assertThat(client.getPresenceVisibilityPolicy(1L, 2L))
+        .contains(FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY);
+    assertThat(
+            client.updatePresenceVisibilityPolicy(
+                1L, 2L, FriendPresenceVisibilityPolicyValue.PRIVATE))
+        .isTrue();
+    ArgumentCaptor<net.firedevops.firemud.account.v1.GetProfileRequest> reads =
+        ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.GetProfileRequest.class);
+    verify(stub, times(2)).getProfile(reads.capture());
+    assertThat(reads.getAllValues())
+        .allSatisfy(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo("1");
+              assertThat(request.getAccountId()).isEqualTo("2");
+            });
+    ArgumentCaptor<net.firedevops.firemud.account.v1.UpdateProfileRequest> update =
+        ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.UpdateProfileRequest.class);
+    verify(stub).updateProfile(update.capture());
+    assertThat(update.getValue().getAccountId()).isEqualTo("2");
+    var json =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(update.getValue().getProfileJson());
+    assertThat(json.path("displayName").asText()).isEqualTo("demo");
+    assertThat(json.path("bio").asText()).isEqualTo("retained bio");
+    assertThat(json.path("presenceVisibilityPolicy").asText()).isEqualTo("PRIVATE");
+  }
+
   private static AccountClient newClient(AccountServiceGrpc.AccountServiceBlockingStub stub)
       throws Exception {
     return newClient(stub, new SimpleMeterRegistry());

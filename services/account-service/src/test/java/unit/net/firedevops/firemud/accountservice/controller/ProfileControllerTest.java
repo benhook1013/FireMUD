@@ -385,6 +385,30 @@ class ProfileControllerTest {
   }
 
   @Test
+  void profileSelectorsMapTransactionBeginOutageToRetryableUnavailable() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
+        .thenThrow(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "Database connection unavailable"));
+    var body =
+        new UpdateProfileRestRequest(
+            1L, ACCOUNT_UUID_TEXT, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    for (var request :
+        List.of(
+            get("/profiles/" + ACCOUNT_UUID_TEXT).param("tenantId", "1"),
+            put("/profiles/" + ACCOUNT_UUID_TEXT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)))) {
+      mockMvc
+          .perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + ordinaryToken(2L)))
+          .andExpect(status().isServiceUnavailable())
+          .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"));
+    }
+    verify(accountService, never()).getProfile(any(), any());
+    verify(accountService, never()).updateProfile(any(UpdateProfileRequest.class));
+  }
+
+  @Test
   void profileOwnerReadbackOutageReturnsRetryableUnavailable() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
         .thenThrow(new DataAccessResourceFailureException("Account owner read failed"));
