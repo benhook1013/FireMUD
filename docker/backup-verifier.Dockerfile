@@ -2,7 +2,7 @@
 
 FROM velero/velero:v1.18.4@sha256:c89fb5b6d1fd6afd368e0f483e6f5555fd62851a1eada8ac5c72482e674ca17b AS velero-cli
 
-FROM docker.io/amazon/aws-cli:2.39.2@sha256:ed0f6b551cd77b6f34e240488739e4cb90b7534409d404a0c9a2be05c4690ca1
+FROM docker.io/amazon/aws-cli:2.39.3@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f
 
 USER root
 
