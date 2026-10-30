@@ -117,8 +117,21 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
 
   /** Reads and integrity-checks retained evidence without implying that it is currently usable. */
   CanonicalGameplayIssuerBindingLocalAcknowledgement readHistorical(UUID operationId) {
+    return readHistorical(dsl, operationId);
+  }
+
+  /**
+   * Reads and integrity-checks one immutable historical receipt without a current issuer source.
+   * This verifies the retained receipt and its original operation/anchor rows only; it makes no
+   * claim about current issuer state, epoch, storage incarnation, or admission authority. This
+   * SQL-only query may join the final source owner's jOOQ transaction; it performs no external
+   * source read and publishes no durable acknowledgement.
+   */
+  static CanonicalGameplayIssuerBindingLocalAcknowledgement readHistorical(
+      DSLContext dsl, UUID operationId) {
+    Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(operationId, "operationId");
-    requireNoAmbientTransaction();
+    requireNoAmbientSpringTransaction();
     Record row =
         dsl.fetchOne("SELECT * FROM " + ACKNOWLEDGEMENT + " WHERE operation_id = ?", operationId);
     if (row == null) return null;
@@ -258,7 +271,7 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
     }
   }
 
-  private static CanonicalGameplayIssuerBindingLocalAcknowledgement readAcknowledgement(
+  static CanonicalGameplayIssuerBindingLocalAcknowledgement readAcknowledgement(
       DSLContext query, Record row) {
     byte[] exactBytes = bytes(row, "acknowledgement_bytes");
     CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledgement;
@@ -749,11 +762,15 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
     return "sha256:" + java.util.HexFormat.of().formatHex(digestBytes);
   }
 
-  private void requireNoAmbientTransaction() {
+  private static void requireNoAmbientSpringTransaction() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw unavailable("Issuer acknowledgement owner cannot join an ambient SQL transaction");
     }
+  }
+
+  private void requireNoAmbientTransaction() {
+    requireNoAmbientSpringTransaction();
     try {
       dsl.connectionResult(
           connection -> {

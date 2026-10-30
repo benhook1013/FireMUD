@@ -154,6 +154,30 @@ final class CanonicalGameplayRegionBindingBridgeOwner {
                 readback));
   }
 
+  /**
+   * Revalidates an original NEW binding through this private region owner and a fresh Entity read.
+   */
+  CanonicalGameplayRegionLeaseOwner.OriginalNewFinalBindingCurrentProof
+      revalidateOriginalNewFinalBinding(
+          CanonicalGameplayRegionLeaseOwner.Installation installation,
+          CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+              finalAdmissionSource) {
+    Objects.requireNonNull(installation, "installation");
+    Objects.requireNonNull(finalAdmissionSource, "finalAdmissionSource");
+    ReadPreseededActorRuntimeReferenceRequest request = entityRequest(installation.worldRequest);
+    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference before =
+        entityReferenceClient.read(request);
+    CanonicalGameplayRegionLeaseOwner.OriginalNewFinalBindingCurrentProof proof =
+        regionLeaseOwner.revalidateOriginalNewFinalBinding(
+            installation, finalAdmissionSource, before);
+    CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference after =
+        entityReferenceClient.read(request);
+    if (!sameReference(before, after) || !proof.matchesCurrentEntityReference(after)) {
+      throw unavailable();
+    }
+    return proof;
+  }
+
   private static ReadPreseededActorRuntimeReferenceRequest entityRequest(
       net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request) {
     return ReadPreseededActorRuntimeReferenceRequest.newBuilder()

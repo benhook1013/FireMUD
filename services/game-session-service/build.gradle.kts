@@ -177,6 +177,9 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingRuntimeTestFixtures*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayAdmissionAbortCompositionFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerCompositionFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledInitialObservationFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionTestFixture*.class")
     }
     from("src/main/resources") {
         include("redis/lua/game-session-issuer-bootstrap-partition-build.lua")
@@ -187,6 +190,18 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/game-session-issuer-binding-local-release.json")
         include("redis/lua/game-session-issuer-binding-local-retirement.lua")
         include("redis/scripts/game-session-issuer-binding-local-retirement.json")
+    }
+    from("src/main/resources") {
+        include("redis/lua/game-session-account-admission-barrier-initial-open.lua")
+        include("redis/scripts/game-session-account-admission-barrier-initial-open.json")
+        include("redis/lua/game-session-issuer-admission-barrier-open.lua")
+        include("redis/scripts/game-session-issuer-admission-barrier-open.json")
+        include("redis/lua/game-session-issuer-admission-barrier-close.lua")
+        include("redis/scripts/game-session-issuer-admission-barrier-close.json")
+        include("redis/lua/game-session-original-new-candidate-install.lua")
+        include("redis/scripts/game-session-original-new-candidate-install.json")
+        include("redis/lua/game-session-original-new-final-admission.lua")
+        include("redis/scripts/game-session-original-new-final-admission.json")
     }
     from("src/main/resources") {
         include("redis/lua/game-session-region-lease-acquire.lua")

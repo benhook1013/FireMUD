@@ -66,6 +66,50 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private CanonicalGameplayRegionOwnerCompositionFixture() {}
 
   /**
+   * Attaches actual region ownership to an already installed original candidate. Upstream World and
+   * Entity clients remain caller-owned; this path creates no alternate transition or ACK.
+   */
+  static ExistingBinding installExistingOriginalCandidate(
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
+    var runtimeIdentity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "final-owner-composition",
+            "localhost",
+            Instant.now(),
+            "test",
+            "test",
+            "controlled-test-image");
+    var owner =
+        CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
+            dsl,
+            coordinationRedis,
+            RedisScriptCatalog.fromContributions(
+                List.of(
+                    new CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                    new CanonicalGameplayRegionBindingBridgeRedisScriptContribution())),
+            new ControlledStableIncarnationSource(),
+            worldRegionResolver,
+            entityReferenceClient,
+            runtimeIdentity,
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    var installation = owner.installForTransition(transitionId, worldRequest);
+    var acknowledgement = owner.bridge(installation);
+    return new ExistingBinding(owner, installation, acknowledgement);
+  }
+
+  record ExistingBinding(
+      CanonicalGameplayRegionBindingBridgeOwner owner,
+      CanonicalGameplayRegionLeaseOwner.Installation installation,
+      CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement acknowledgement) {}
+
+  /**
    * Creates one real first-NEW provisional candidate from the exact placement selector, installs
    * the first region timeline and SQL fence, then retries the same binding bridge as a lost reply.
    */

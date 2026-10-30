@@ -22,6 +22,12 @@ final class CanonicalGameplayIssuerCohortSql {
           + " - CASE WHEN to_jsonb(t)->'original_new_candidate_bytes' = 'null'::jsonb"
           + " THEN ARRAY['original_new_candidate_bytes', 'original_new_candidate_digest',"
           + " 'original_new_candidate_state', 'original_new_candidate_readback_digest']"
+          + " ELSE ARRAY[]::text[] END"
+          // V1049's all-or-none CHECK makes an untouched final receipt absence-equivalent.
+          // Every material receipt field remains part of the exact captured transition source.
+          + " - CASE WHEN to_jsonb(t)->'original_new_final_session_sha256' = 'null'::jsonb"
+          + " THEN ARRAY['original_new_final_session_sha256', 'original_new_admission_at_ms',"
+          + " 'original_new_continuity_expires_at_ms', 'original_new_session_duration_ms']"
           + " ELSE ARRAY[]::text[] END)::text AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"

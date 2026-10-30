@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
@@ -414,6 +415,200 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Objects.requireNonNull(claim, "candidate installation claim");
     Objects.requireNonNull(readback, "owner-produced physical readback");
     return markProvisional(claim.evidence(), claim.originalDecision(), claim.candidate(), readback);
+  }
+
+  /**
+   * Mints a durable source from the retained original candidate readback, including after final SQL
+   * commit. The candidate is historical evidence only; this method never asserts that Redis still
+   * contains the candidate preimage.
+   */
+  OriginalNewFinalAdmissionSource readOriginalNewFinalAdmissionSource(
+      CanonicalGameplayAdmissionDecision originalDecision) {
+    Objects.requireNonNull(originalDecision, "original Account decision");
+    requireNoAmbientTransaction();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger revision = lockInventoryRevision(transaction);
+          requireNoActiveAccountControl(
+              lockExistingAccountCoverageControl(
+                  transaction, originalDecision.candidate().accountId()));
+          String runtimeStatus =
+              lockLeaseBoundRuntimeBeforeTransition(
+                  transaction,
+                  originalDecision.bindingDecisionId(),
+                  originalDecision.candidate().bindingRef().bytes(),
+                  originalDecision.targetEvidence());
+          // This capability feeds final CAS/recovery, including COMMITTED retries. Historical
+          // receipt retention alone cannot mint current admission source for a stopped runtime.
+          if (!"RUNNING".equals(runtimeStatus)) {
+            throw conflict(
+                "Original NEW final admission source requires its current RUNNING runtime");
+          }
+
+          Record row =
+              transaction.fetchOne(
+                  "SELECT * FROM " + TRANSITION + " WHERE transition_id = ? FOR UPDATE",
+                  originalDecision.bindingDecisionId());
+          if (row == null) throw conflict("Original NEW transition is missing");
+          String status = row.get("status", String.class);
+          boolean committed = "COMMITTED".equals(status);
+          if (!committed && !"PROVISIONAL".equals(status)) {
+            throw conflict("Only a provisional or committed original NEW can be a final source");
+          }
+          Record inventoryRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
+                  originalDecision.candidate().bindingRef().bytes());
+          UUID reservationId = row.get("issuer_reservation_id", UUID.class);
+          Record reservationRow =
+              reservationId == null
+                  ? null
+                  : transaction.fetchOne(
+                      "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ? FOR UPDATE",
+                      reservationId);
+          if (inventoryRow == null || reservationRow == null) {
+            throw conflict("Original NEW candidate or reservation is missing");
+          }
+          var entry = toInventoryEntry(inventoryRow);
+          var reservation = toReservation(reservationRow);
+          var transition = toTransitionSnapshot(row, inventoryRow, reservationRow);
+          var storedDecision = toAdmissionDecision(row, transition, entry);
+          if (transition.inventoryRevision().compareTo(revision) > 0
+              || transition.expectedPriorBindingRef() != null
+              || transition.expectedPriorBindingGeneration() != null
+              || !transition.transitionId().equals(originalDecision.bindingDecisionId())
+              || !entry.identity().equals(originalDecision.candidate())
+              || !entry.bindingGeneration().equals(transition.bindingGeneration())
+              || !entry.transitionId().equals(transition.transitionId())
+              || !entry.accountIndexFence().equals(transition.candidateAccountIndexFence())
+              || !entry.issuerReservationId().equals(transition.issuerReservationId())
+              || !reservation.owner().equals(entry.identity())
+              || !reservation.transitionId().equals(transition.transitionId())
+              || !reservation.inventoryRevision().equals(transition.inventoryRevision())
+              || !entry.inventoryRevision().equals(transition.inventoryRevision())
+              || entry.lifecycle()
+                  != (committed
+                      ? CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE
+                      : CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL)
+              || reservation.lifecycle()
+                  != (committed
+                      ? CanonicalIssuerPartitionReservation.Lifecycle.BOUND
+                      : CanonicalIssuerPartitionReservation.Lifecycle.RESERVED)
+              || entry.accountIndexState()
+                  != CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED
+              || entry.issuerIndexState()
+                  != (committed
+                      ? CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED
+                      : CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED)) {
+            throw conflict(
+                "Current SQL identity, reservation, or lifecycle differs from original NEW");
+          }
+          requireSameAdmissionDecision(originalDecision, storedDecision);
+
+          byte[] candidateBytes = row.get("original_new_candidate_bytes", byte[].class);
+          byte[] canonicalBytes = null;
+          try {
+            String candidateDigest = row.get("original_new_candidate_digest", String.class);
+            String readbackDigest = row.get("original_new_candidate_readback_digest", String.class);
+            if (!"READBACK_CONFIRMED".equals(row.get("original_new_candidate_state", String.class))
+                || candidateBytes == null
+                || candidateBytes.length == 0
+                || candidateBytes.length
+                    > CanonicalGameplayOriginalNewCandidateCodec.MAX_CANDIDATE_BYTES
+                || candidateDigest == null
+                || !candidateDigest.equals(
+                    CanonicalGameplayIssuerMemberV2Codec.sha256(candidateBytes))
+                || readbackDigest == null
+                || !readbackDigest.matches("sha256:[0-9a-f]{64}")
+                || !Arrays.equals(
+                    row.get("candidate_binding_ref", byte[].class),
+                    originalDecision.candidate().bindingRef().bytes())
+                || !Objects.equals(
+                    row.get("issuer_reservation_id", UUID.class), reservation.reservationId())) {
+              throw conflict("Original NEW has no exact retained candidate readback marker");
+            }
+            CanonicalGameplayOriginalNewCandidate candidate;
+            try {
+              candidate = CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
+            } catch (RuntimeException malformed) {
+              throw conflict("Retained original NEW candidate bytes are not canonical");
+            }
+            if (!candidate.matchesOriginalDecision(storedDecision)
+                || !candidate.bindingIdentity().equals(entry.identity())
+                || !candidate
+                    .reservation()
+                    .equals(
+                        CanonicalGameplayOriginalNewCandidateCodec.reservationSource(reservation))
+                || !candidate.transition().transitionId().equals(transition.transitionId())
+                || !candidate
+                    .transition()
+                    .bindingGeneration()
+                    .equals(transition.bindingGeneration())
+                || !candidate
+                    .transition()
+                    .issuerReservationId()
+                    .equals(transition.issuerReservationId())
+                || !candidate.transition().reservationFence().equals(transition.reservationFence())
+                || !candidate
+                    .transition()
+                    .candidateAccountIndexFence()
+                    .equals(transition.candidateAccountIndexFence())) {
+              throw conflict(
+                  "Retained candidate differs from its original lease, decision, or reservation");
+            }
+            if (!committed) {
+              CanonicalGameplayBindingProvisionalCasEvidence evidence =
+                  loadProvisionalCasEvidence(transaction, transition.transitionId(), true);
+              CanonicalGameplayOriginalNewCandidate current =
+                  CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                      evidence, originalDecision);
+              if (evidence.transition().status()
+                      != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+                  || !current.equals(candidate)
+                  || !candidate.matchesProvisionalSources(evidence)) {
+                throw conflict("Provisional candidate no longer matches its exact source");
+              }
+            }
+
+            var obligations =
+                loadAccountIndexObligations(transaction, transition.transitionId(), true);
+            if (obligations.size() != 1) {
+              throw conflict("Original NEW account obligation is not exact");
+            }
+            requireCompletedMemberRepairAcknowledgement(
+                transaction, transition, entry, obligations.getFirst());
+            CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement =
+                requireOriginalNewFinalIssuerAcknowledgement(
+                    transaction, candidate, transition, committed);
+            CanonicalGameplayBindingRegionBridgeObligation regionAcknowledgement =
+                requireOriginalNewFinalRegionAcknowledgement(
+                    transaction, candidate, transition, entry);
+
+            Optional<OriginalNewFinalAdmissionReceipt> receipt;
+            if (committed) {
+              receipt = Optional.of(readOriginalNewFinalAdmissionReceipt(row, storedDecision));
+            } else {
+              requireNoOriginalNewFinalAdmissionReceipt(row);
+              receipt = Optional.empty();
+            }
+            canonicalBytes = candidate.canonicalBytes();
+            if (!Arrays.equals(candidateBytes, canonicalBytes)) {
+              throw conflict("Retained original NEW candidate changed during source decoding");
+            }
+            return new OriginalNewFinalAdmissionSource(
+                candidate,
+                candidateDigest,
+                readbackDigest,
+                CanonicalGameplayBindingTransitionSnapshot.Status.valueOf(status),
+                receipt,
+                regionAcknowledgement,
+                issuerAcknowledgement);
+          } finally {
+            if (candidateBytes != null) Arrays.fill(candidateBytes, (byte) 0);
+            if (canonicalBytes != null) Arrays.fill(canonicalBytes, (byte) 0);
+          }
+        });
   }
 
   void requireSameProvisionalSource(
@@ -1948,6 +2143,407 @@ public final class CanonicalGameplayBindingInventoryRepository {
         });
   }
 
+  /**
+   * Accepts only the final owner's separately obtained physical six-key readback. Remote current
+   * sources and admission barriers are checked by the coordinator outside this SQL transaction;
+   * this transaction records their exact original NEW operation, not cross-store atomicity.
+   */
+  CanonicalGameplayBindingTransitionSnapshot commitOriginalNewFinalAdmission(
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(actual, "actual");
+    var source = actual.source();
+    var candidate = source.candidate();
+    if (!candidate.equals(actual.session().originalCandidate())
+        || source.candidateInstallationProvenance()
+            != OriginalNewCandidateInstallationProvenance.HISTORICAL_READBACK_CONFIRMED
+        || !source
+            .candidateDigest()
+            .equals(CanonicalGameplayIssuerMemberV2Codec.sha256(candidate.canonicalBytes()))
+        || !Arrays.equals(actual.exactCanonicalBytes(), actual.session().canonicalBytes())
+        || !CanonicalGameplayIssuerMemberV2Codec.sha256(actual.exactCanonicalBytes())
+            .substring(7)
+            .equals(actual.finalSessionSha256())
+        || actual.admissionAtMillis() != actual.session().admissionAtMillis()
+        || actual.continuityExpiresAtMillis() != actual.session().continuityExpiresAtMillis()
+        || actual.canonicalSessionDurationMillis()
+            != actual.session().canonicalSessionDurationMillis()
+        || actual.admissionAtMillis() <= 0
+        || actual.canonicalSessionDurationMillis() <= 0
+        || actual.canonicalSessionDurationMillis() > 300_000
+        || actual.admissionAtMillis() > Long.MAX_VALUE - actual.canonicalSessionDurationMillis()
+        || actual.continuityExpiresAtMillis()
+            != actual.admissionAtMillis() + actual.canonicalSessionDurationMillis()) {
+      throw conflict("Final controller readback differs from its authenticated original NEW");
+    }
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          BigInteger revision = lockInventoryRevision(transaction);
+          requireNoActiveAccountControl(
+              lockExistingAccountCoverageControl(
+                  transaction, candidate.bindingIdentity().accountId()));
+          String runtimeStatus =
+              lockLeaseBoundRuntimeBeforeTransition(
+                  transaction,
+                  candidate.transition().transitionId(),
+                  candidate.bindingIdentity().bindingRef().bytes(),
+                  candidate.targetEvidence());
+          if (!"RUNNING".equals(runtimeStatus)) {
+            throw conflict(
+                "Original NEW final admission commit requires its current RUNNING runtime");
+          }
+          Record row =
+              transaction.fetchOne(
+                  "SELECT * FROM " + TRANSITION + " WHERE transition_id = ? FOR UPDATE",
+                  candidate.transition().transitionId());
+          if (row == null) throw conflict("Original NEW transition is missing");
+          boolean committed = "COMMITTED".equals(row.get("status", String.class));
+          if (!committed && !"PROVISIONAL".equals(row.get("status", String.class))) {
+            throw conflict("Only an exact provisional or committed original NEW can finalize");
+          }
+          Record inventoryRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
+                  candidate.bindingIdentity().bindingRef().bytes());
+          Record reservationRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ? FOR UPDATE",
+                  candidate.reservation().reservationId());
+          if (inventoryRow == null || reservationRow == null) {
+            throw conflict("Original NEW candidate or reservation is missing");
+          }
+          var entry = toInventoryEntry(inventoryRow);
+          var reservation = toReservation(reservationRow);
+          var transition = toTransitionSnapshot(row, inventoryRow, reservationRow);
+          var decision = toAdmissionDecision(row, transition, entry);
+          if (transition.expectedPriorBindingRef() != null
+              || transition.expectedPriorBindingGeneration() != null
+              || !candidate.matchesOriginalDecision(decision)
+              || !Arrays.equals(
+                  row.get("candidate_binding_ref", byte[].class),
+                  candidate.transition().bindingRef().bytes())
+              || !transition.bindingGeneration().equals(candidate.transition().bindingGeneration())
+              || !Objects.equals(
+                  row.get("issuer_reservation_id", UUID.class),
+                  candidate.transition().issuerReservationId())
+              || !transition.reservationFence().equals(candidate.transition().reservationFence())
+              || !transition
+                  .candidateAccountIndexFence()
+                  .equals(candidate.transition().candidateAccountIndexFence())
+              || transition.inventoryRevision().compareTo(revision) > 0
+              || !candidate.bindingIdentity().equals(entry.identity())
+              || !candidate.transition().bindingGeneration().equals(entry.bindingGeneration())
+              || !candidate.transition().transitionId().equals(entry.transitionId())
+              || !candidate
+                  .transition()
+                  .candidateAccountIndexFence()
+                  .equals(entry.accountIndexFence())
+              || !candidate.transition().issuerReservationId().equals(entry.issuerReservationId())
+              || !candidate
+                  .reservation()
+                  .equals(CanonicalGameplayOriginalNewCandidateCodec.reservationSource(reservation))
+              || !reservation.owner().equals(entry.identity())
+              || !entry.inventoryRevision().equals(transition.inventoryRevision())
+              || !reservation.inventoryRevision().equals(transition.inventoryRevision())
+              || entry.lifecycle()
+                  != (committed
+                      ? CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE
+                      : CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL)
+              || reservation.lifecycle()
+                  != (committed
+                      ? CanonicalIssuerPartitionReservation.Lifecycle.BOUND
+                      : CanonicalIssuerPartitionReservation.Lifecycle.RESERVED)
+              || entry.accountIndexState()
+                  != CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED
+              || entry.issuerIndexState()
+                  != (committed
+                      ? CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED
+                      : CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED)
+              || !"READBACK_CONFIRMED".equals(row.get("original_new_candidate_state", String.class))
+              || !Arrays.equals(
+                  candidate.canonicalBytes(), row.get("original_new_candidate_bytes", byte[].class))
+              || !CanonicalGameplayIssuerMemberV2Codec.sha256(candidate.canonicalBytes())
+                  .equals(row.get("original_new_candidate_digest", String.class))
+              || !source
+                  .candidateDigest()
+                  .equals(row.get("original_new_candidate_digest", String.class))
+              || !source
+                  .originalCandidateReadbackDigest()
+                  .equals(row.get("original_new_candidate_readback_digest", String.class))
+              || (source.transitionStatus()
+                      == CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED
+                  && !committed)
+              || BigInteger.valueOf(actual.admissionAtMillis())
+                      .compareTo(decision.leaseExpiresAtEpochMillis())
+                  >= 0) {
+            throw conflict("Final controller source differs from the retained original NEW");
+          }
+          if (!committed) {
+            var evidence = loadProvisionalCasEvidence(transaction, transition.transitionId(), true);
+            if (!candidate.matchesProvisionalSources(evidence)) {
+              throw conflict("Final readback lost its exact provisional source");
+            }
+          }
+          var obligations =
+              loadAccountIndexObligations(transaction, transition.transitionId(), true);
+          if (obligations.size() != 1)
+            throw conflict("Original NEW account obligation is not exact");
+          requireCompletedMemberRepairAcknowledgement(
+              transaction, transition, entry, obligations.getFirst());
+          CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement =
+              requireOriginalNewFinalIssuerAcknowledgement(
+                  transaction, candidate, transition, committed);
+          if (!Arrays.equals(
+              source.issuerAcknowledgement().exactBytes(), issuerAcknowledgement.exactBytes())) {
+            throw conflict(
+                "Final issuer acknowledgement differs from the retained original source");
+          }
+          requireOriginalNewFinalRegionAcknowledgement(transaction, candidate, transition, entry);
+          if (committed) {
+            requireOriginalNewFinalReceipt(row, actual, decision);
+            return transition;
+          }
+          requireNoOriginalNewFinalAdmissionReceipt(row);
+          BigInteger next = revision.add(BigInteger.ONE);
+          BigDecimal prior = decimal(transition.inventoryRevision());
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + TRANSITION
+                      + " SET status = 'COMMITTED', inventory_revision = ?,"
+                      + " original_new_final_session_sha256 = ?, original_new_admission_at_ms = ?,"
+                      + " original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ?"
+                      + " WHERE transition_id = ? AND status = 'PROVISIONAL' AND inventory_revision = ?",
+                  decimal(next),
+                  actual.finalSessionSha256(),
+                  actual.admissionAtMillis(),
+                  actual.continuityExpiresAtMillis(),
+                  actual.canonicalSessionDurationMillis(),
+                  transition.transitionId(),
+                  prior),
+              "Original NEW final transition CAS changed");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + INVENTORY
+                      + " SET lifecycle = 'ACTIVE', issuer_index_state = 'ACKNOWLEDGED', inventory_revision = ?"
+                      + " WHERE binding_ref = ? AND transition_id = ? AND lifecycle = 'PROVISIONAL'"
+                      + " AND account_index_state = 'ACKNOWLEDGED' AND issuer_index_state = 'REPAIR_REQUIRED'"
+                      + " AND inventory_revision = ?",
+                  decimal(next),
+                  entry.bindingRef().bytes(),
+                  transition.transitionId(),
+                  prior),
+              "Original NEW final inventory CAS changed");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + ACCOUNT_OBLIGATION
+                      + " SET inventory_revision = ?"
+                      + " WHERE transition_id = ? AND obligation_ordinal = 0 AND status = 'ACKNOWLEDGED'"
+                      + " AND inventory_revision = ?",
+                  decimal(next),
+                  transition.transitionId(),
+                  prior),
+              "Original NEW account receipt changed");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + ISSUER_OBLIGATION
+                      + " SET status = 'ACKNOWLEDGED', inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'REQUIRED' AND inventory_revision = ?",
+                  decimal(next),
+                  transition.transitionId(),
+                  prior),
+              "Original NEW issuer receipt changed");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + REGION_OBLIGATION
+                      + " SET inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'ACKNOWLEDGED' AND inventory_revision = ?",
+                  decimal(next),
+                  transition.transitionId(),
+                  prior),
+              "Original NEW region receipt changed");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + RESERVATION
+                      + " SET lifecycle = 'BOUND', inventory_revision = ?"
+                      + " WHERE reservation_id = ? AND transition_id = ? AND lifecycle = 'RESERVED'"
+                      + " AND inventory_revision = ?",
+                  decimal(next),
+                  reservation.reservationId(),
+                  transition.transitionId(),
+                  prior),
+              "Original NEW reservation CAS changed");
+          bumpInventoryClock(transaction, revision, next);
+          return toTransitionSnapshot(
+              Objects.requireNonNull(
+                  findTransition(transaction, transition.transitionId()),
+                  "Committed original NEW transition must remain present"),
+              transaction.fetchSingle(
+                  "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ?",
+                  entry.bindingRef().bytes()),
+              transaction.fetchSingle(
+                  "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
+                  reservation.reservationId()));
+        });
+  }
+
+  private static void requireOriginalNewFinalReceipt(
+      Record row,
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual,
+      CanonicalGameplayAdmissionDecision decision) {
+    OriginalNewFinalAdmissionReceipt receipt = readOriginalNewFinalAdmissionReceipt(row, decision);
+    if (!receipt.finalSessionSha256().equals(actual.finalSessionSha256())
+        || receipt.admissionAtMillis() != actual.admissionAtMillis()
+        || receipt.continuityExpiresAtMillis() != actual.continuityExpiresAtMillis()
+        || receipt.sessionDurationMillis() != actual.canonicalSessionDurationMillis()) {
+      throw conflict("Committed original NEW has no identical immutable final readback receipt");
+    }
+  }
+
+  private static OriginalNewFinalAdmissionReceipt readOriginalNewFinalAdmissionReceipt(
+      Record row, CanonicalGameplayAdmissionDecision decision) {
+    return readOriginalNewFinalAdmissionReceipt(row, decision.leaseExpiresAtEpochMillis());
+  }
+
+  private static OriginalNewFinalAdmissionReceipt readOriginalNewFinalAdmissionReceipt(
+      Record row, BigInteger leaseExpiresAtEpochMillis) {
+    String digest = row.get("original_new_final_session_sha256", String.class);
+    Long admissionAt = row.get("original_new_admission_at_ms", Long.class);
+    Long continuityExpiresAt = row.get("original_new_continuity_expires_at_ms", Long.class);
+    Long duration = row.get("original_new_session_duration_ms", Long.class);
+    if (digest == null
+        || admissionAt == null
+        || continuityExpiresAt == null
+        || duration == null
+        || BigInteger.valueOf(admissionAt).compareTo(leaseExpiresAtEpochMillis) >= 0) {
+      throw conflict("Committed original NEW has no valid immutable final receipt");
+    }
+    try {
+      return new OriginalNewFinalAdmissionReceipt(
+          digest, admissionAt, continuityExpiresAt, duration);
+    } catch (IllegalArgumentException invalid) {
+      throw conflict("Committed original NEW final receipt is malformed");
+    }
+  }
+
+  private static void requireNoOriginalNewFinalAdmissionReceipt(Record row) {
+    if (row.get("original_new_final_session_sha256", String.class) != null
+        || row.get("original_new_admission_at_ms", Long.class) != null
+        || row.get("original_new_continuity_expires_at_ms", Long.class) != null
+        || row.get("original_new_session_duration_ms", Long.class) != null) {
+      throw conflict("Provisional NEW already contains a final receipt");
+    }
+  }
+
+  private static CanonicalGameplayBindingRegionBridgeObligation
+      requireOriginalNewFinalRegionAcknowledgement(
+          DSLContext transaction,
+          CanonicalGameplayOriginalNewCandidate candidate,
+          CanonicalGameplayBindingTransitionSnapshot transition,
+          CanonicalGameplayBindingInventoryEntry entry) {
+    Record regionRow =
+        transaction.fetchOne(
+            "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
+            transition.transitionId());
+    if (regionRow == null) throw conflict("Original NEW region acknowledgement is missing");
+    var region = toRegionObligation(regionRow);
+    var identity = candidate.bindingIdentity();
+    if (region.status() != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
+        || !region.transitionId().equals(transition.transitionId())
+        || !region.bindingRef().equals(identity.bindingRef())
+        || !region.bindingGeneration().equals(entry.bindingGeneration())
+        || !region.accountId().equals(identity.accountId())
+        || !region.tenantId().equals(identity.tenantId())
+        || !region.gameInstanceId().equals(identity.gameInstanceId())
+        || region.runtimeGameInstanceId() != identity.runtimeGameInstanceId()
+        || !region.sessionId().equals(identity.sessionId())
+        || !region.regionId().equals(identity.regionId())
+        || !region.regionEpoch().equals(identity.regionEpoch())
+        || !region.inventoryRevision().equals(transition.inventoryRevision())) {
+      throw conflict("Original NEW region acknowledgement differs from its controller");
+    }
+    return region;
+  }
+
+  private static CanonicalGameplayIssuerBindingLocalAcknowledgement
+      requireOriginalNewFinalIssuerAcknowledgement(
+          DSLContext transaction,
+          CanonicalGameplayOriginalNewCandidate candidate,
+          CanonicalGameplayBindingTransitionSnapshot transition,
+          boolean committed) {
+    Record obligation =
+        transaction.fetchOne(
+            "SELECT * FROM " + ISSUER_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
+            transition.transitionId());
+    if (obligation == null
+        || !Arrays.equals(
+            candidate.bindingIdentity().bindingRef().bytes(),
+            obligation.get("binding_ref", byte[].class))
+        || !candidate
+            .transition()
+            .bindingGeneration()
+            .equals(readBigInteger(obligation, "binding_generation"))
+        || !candidate
+            .reservation()
+            .reservationId()
+            .equals(obligation.get("reservation_id", UUID.class))
+        || !(committed ? "ACKNOWLEDGED" : "REQUIRED").equals(obligation.get("status", String.class))
+        || !transition
+            .inventoryRevision()
+            .equals(readBigInteger(obligation, "inventory_revision"))) {
+      throw conflict("Original NEW issuer obligation changed");
+    }
+    Record receipt =
+        transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_issuer_binding_local_acknowledgement"
+                + " WHERE transition_id = ? FOR SHARE",
+            transition.transitionId());
+    if (receipt == null) throw conflict("Original NEW has no native issuer acknowledgement");
+    CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledgement =
+        CanonicalGameplayIssuerBindingLocalAcknowledgementRepository.readAcknowledgement(
+            transaction, receipt);
+    var evidence = acknowledgement.evidence();
+    var reservation = candidate.reservation();
+    // The decoder above checks the issuer-local request against its actual local operation.
+    // Account's independent admission request is not that issuer-local request identity.
+    if (!evidence.transitionId().equals(transition.transitionId())
+        || !evidence
+            .candidateAccountIndexFence()
+            .equals(candidate.transition().candidateAccountIndexFence())
+        || !evidence.issuerId().equals(candidate.bindingIdentity().issuerId())
+        || !Arrays.equals(evidence.bindingRef(), candidate.bindingIdentity().bindingRef().bytes())
+        || !evidence.bindingGeneration().equals(candidate.transition().bindingGeneration())
+        || !evidence.reservation().reservationId().equals(reservation.reservationId())
+        || !evidence.reservation().transitionId().equals(reservation.transitionId())
+        || !evidence.reservation().reservationFence().equals(reservation.reservationFence())
+        || !evidence.reservation().partitionId().equals(reservation.partitionId())
+        || !"RESERVED".equals(evidence.reservation().lifecycle())
+        || !evidence
+            .reservation()
+            .issuerCoverageOperationId()
+            .equals(reservation.issuerCoverageOperationId())
+        || !evidence
+            .reservation()
+            .issuerCoverageOperationFence()
+            .equals(reservation.issuerCoverageOperationFence())
+        || !evidence.reservation().coverageFence().equals(reservation.coverageFence())
+        || !evidence
+            .reservation()
+            .inventorySnapshotRevision()
+            .equals(reservation.inventorySnapshotRevision())
+        || evidence.reservation().inventoryRevision().compareTo(transition.inventoryRevision())
+            > 0) {
+      throw conflict("Native issuer acknowledgement differs from the original NEW source");
+    }
+    return acknowledgement;
+  }
+
   private static int updateLegacyProvisionalTransition(
       DSLContext transaction,
       CanonicalGameplayBindingProvisionalCasEvidence current,
@@ -1990,14 +2586,15 @@ public final class CanonicalGameplayBindingInventoryRepository {
     }
   }
 
-  private static void lockLeaseBoundRuntimeBeforeTransition(
+  private static String lockLeaseBoundRuntimeBeforeTransition(
       DSLContext transaction,
       UUID transitionId,
       byte[] candidateBindingRef,
       CanonicalPlayableTarget expectedTarget) {
     // Keep the runtime-before-transition lock order: resolve without row locks, then acquire only
     // the exact candidate runtime row before CAS evidence locks the transition. The V34 trigger
-    // rechecks the complete launch tuple when the transition is updated.
+    // rechecks the complete launch tuple when the transition is updated. Return the locked row's
+    // status so current admission sources can require RUNNING without gating historical cleanup.
     Record targetLink =
         transaction.fetchOne(
             "SELECT transition.status, transition.admission_lease_id,"
@@ -2028,14 +2625,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
       if (expectedTarget != null) {
         throw conflict("Lease-bound decision has no exact candidate launch identity");
       }
-      return;
+      return null;
     }
 
     if (expectedTarget == null) {
       String status = targetLink.get("status", String.class);
       if (targetLink.get("admission_lease_id", UUID.class) == null
           || (!"PROVISIONAL".equals(status) && !"AMBIGUOUS".equals(status))) {
-        return;
+        return null;
       }
     }
 
@@ -2076,7 +2673,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
     Record runtime =
         transaction.fetchOne(
-            "SELECT id FROM game_instances"
+            "SELECT id, status FROM game_instances"
                 + " WHERE tenant_id = ? AND id = ? AND game_instance_uuid = ? FOR UPDATE",
             gameSessionTenantId,
             gameInstanceId,
@@ -2084,6 +2681,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if (runtime == null) {
       throw conflict("Lease-bound decision has no exact current Game Instance row");
     }
+    return runtime.get("status", String.class);
   }
 
   private static int updateLeaseBoundProvisionalTransition(
@@ -2965,8 +3563,30 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayBindingProvisionalCasEvidence evidence,
       CanonicalGameplayBindingAccountIndexObligation obligation) {
     requireOrdinaryNewMemberRepairTransition(evidence);
-    Record operationRow =
-        findMemberRepairOperation(transaction, evidence.transition().transitionId(), false);
+    requireCompletedMemberRepairAcknowledgement(
+        transaction, evidence.transition(), evidence.candidate(), obligation);
+  }
+
+  private static void requireCompletedMemberRepairAcknowledgement(
+      DSLContext transaction,
+      CanonicalGameplayBindingTransitionSnapshot transition,
+      CanonicalGameplayBindingInventoryEntry candidate,
+      CanonicalGameplayBindingAccountIndexObligation obligation) {
+    if (!obligation.transitionId().equals(transition.transitionId())
+        || obligation.ordinal() != 0
+        || !obligation.bindingRef().equals(candidate.bindingRef())
+        || !obligation.accountId().equals(candidate.identity().accountId())
+        || !obligation.tenantId().equals(candidate.identity().tenantId())
+        || !obligation.bindingGeneration().equals(candidate.bindingGeneration())
+        || !obligation.accountIndexFence().equals(candidate.accountIndexFence())
+        || obligation.expectedPriorGeneration() != null
+        || obligation.action()
+            != CanonicalGameplayBindingAccountIndexObligation.Action.ADD_OR_RETAIN
+        || obligation.executionPhase()
+            != CanonicalGameplayBindingAccountIndexObligation.ExecutionPhase.BEFORE_FINAL_CAS) {
+      throw conflict("Completed member receipt differs from the original NEW candidate");
+    }
+    Record operationRow = findMemberRepairOperation(transaction, transition.transitionId(), false);
     if (operationRow == null) {
       throw conflict(
           "Acknowledged account-index obligation has no durable member-repair operation");
@@ -2975,7 +3595,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     if (!"ACKNOWLEDGED".equals(operationRow.get("status", String.class))) {
       throw conflict("Account-index obligation was acknowledged before its operation completed");
     }
-    requireMemberRepairObligationCurrent(operation, evidence.candidate(), obligation, true);
+    requireMemberRepairObligationCurrent(operation, candidate, obligation, true);
     toMemberAcknowledgement(operationRow);
     Record control =
         transaction.fetchOne(
@@ -2987,7 +3607,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     CanonicalGameplayAccountCoverageEvidence currentControl =
         accountCoverageEvidenceFromControl(control, operation.accountId());
     if (!(currentControl instanceof CanonicalGameplayAccountCoverageEvidence.NoActiveFlow)
-        || !evidence.transition().accountCoverageEvidence().equals(currentControl)
+        || !transition.accountCoverageEvidence().equals(currentControl)
         || !readBigInteger(control, "last_operation_fence")
             .equals(operation.accountControlEpoch())) {
       throw conflict("Acknowledged member repair has stale account-control state or fence epoch");
@@ -4996,6 +5616,113 @@ public final class CanonicalGameplayBindingInventoryRepository {
     NEVER_DISPATCHED,
     DISPATCH_POSSIBLE,
     READBACK_CONFIRMED
+  }
+
+  enum OriginalNewCandidateInstallationProvenance {
+    HISTORICAL_READBACK_CONFIRMED
+  }
+
+  /**
+   * Durable SQL source for final admission. Its candidate installation is explicitly historical;
+   * this capability contains no claim that the non-admitting preimage remains in Redis.
+   */
+  static final class OriginalNewFinalAdmissionSource {
+    private final CanonicalGameplayOriginalNewCandidate candidate;
+    private final String candidateDigest;
+    private final String originalCandidateReadbackDigest;
+    private final CanonicalGameplayBindingTransitionSnapshot.Status transitionStatus;
+    private final Optional<OriginalNewFinalAdmissionReceipt> finalReceipt;
+    private final CanonicalGameplayBindingRegionBridgeObligation regionAcknowledgement;
+    private final CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement;
+
+    private OriginalNewFinalAdmissionSource(
+        CanonicalGameplayOriginalNewCandidate candidate,
+        String candidateDigest,
+        String originalCandidateReadbackDigest,
+        CanonicalGameplayBindingTransitionSnapshot.Status transitionStatus,
+        Optional<OriginalNewFinalAdmissionReceipt> finalReceipt,
+        CanonicalGameplayBindingRegionBridgeObligation regionAcknowledgement,
+        CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement) {
+      this.candidate = Objects.requireNonNull(candidate, "candidate");
+      this.candidateDigest = Objects.requireNonNull(candidateDigest, "candidateDigest");
+      this.originalCandidateReadbackDigest =
+          Objects.requireNonNull(
+              originalCandidateReadbackDigest, "originalCandidateReadbackDigest");
+      this.transitionStatus = Objects.requireNonNull(transitionStatus, "transitionStatus");
+      this.finalReceipt = Objects.requireNonNull(finalReceipt, "finalReceipt");
+      this.regionAcknowledgement =
+          Objects.requireNonNull(regionAcknowledgement, "regionAcknowledgement");
+      this.issuerAcknowledgement =
+          Objects.requireNonNull(issuerAcknowledgement, "issuerAcknowledgement");
+      if (!candidateDigest.matches("sha256:[0-9a-f]{64}")
+          || !originalCandidateReadbackDigest.matches("sha256:[0-9a-f]{64}")
+          || regionAcknowledgement.status()
+              != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
+          || (transitionStatus != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+              && transitionStatus != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED)
+          || finalReceipt.isPresent()
+              != (transitionStatus
+                  == CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED)) {
+        throw new IllegalArgumentException("Original NEW final source is not exact");
+      }
+    }
+
+    CanonicalGameplayOriginalNewCandidate candidate() {
+      return candidate;
+    }
+
+    String candidateDigest() {
+      return candidateDigest;
+    }
+
+    String originalCandidateReadbackDigest() {
+      return originalCandidateReadbackDigest;
+    }
+
+    OriginalNewCandidateInstallationProvenance candidateInstallationProvenance() {
+      return OriginalNewCandidateInstallationProvenance.HISTORICAL_READBACK_CONFIRMED;
+    }
+
+    CanonicalGameplayBindingTransitionSnapshot.Status transitionStatus() {
+      return transitionStatus;
+    }
+
+    Optional<OriginalNewFinalAdmissionReceipt> finalReceipt() {
+      return finalReceipt;
+    }
+
+    CanonicalGameplayBindingRegionBridgeObligation regionAcknowledgement() {
+      return regionAcknowledgement;
+    }
+
+    CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement() {
+      return issuerAcknowledgement;
+    }
+
+    @Override
+    public String toString() {
+      return "OriginalNewFinalAdmissionSource[historicalCandidateReadback, transitionStatus="
+          + transitionStatus
+          + ", redacted]";
+    }
+  }
+
+  record OriginalNewFinalAdmissionReceipt(
+      String finalSessionSha256,
+      long admissionAtMillis,
+      long continuityExpiresAtMillis,
+      long sessionDurationMillis) {
+    OriginalNewFinalAdmissionReceipt {
+      Objects.requireNonNull(finalSessionSha256, "finalSessionSha256");
+      if (!finalSessionSha256.matches("[0-9a-f]{64}")
+          || admissionAtMillis <= 0
+          || sessionDurationMillis <= 0
+          || sessionDurationMillis > 300_000
+          || admissionAtMillis > Long.MAX_VALUE - sessionDurationMillis
+          || continuityExpiresAtMillis != admissionAtMillis + sessionDurationMillis) {
+        throw new IllegalArgumentException("Original NEW final receipt is malformed");
+      }
+    }
   }
 
   /** SQL-issued, one-use permission returned only by the transaction that first claims dispatch. */

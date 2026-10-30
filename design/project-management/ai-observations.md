@@ -196,10 +196,16 @@ Entry format:
   - Expected pattern: expose the controlling grant decision, timestamp, actor, original reason and baseline beside its additional-result count through an existing read-only controller command, so a worker can distinguish lifetime history from the current allowance without guessing. This is a tooling suggestion; existing counting and authorization rules stay unchanged.
   - Reconsideration trigger: when an existing read-only controller command exposes the controlling grant decision, timestamp, rationale and baseline beside the remaining allowance, verify it against separate lifetime and current allowances and revisit the manual queue readback.
 
+## Closed validation allowance
+
 - `2026-10-17`: A validation allowance of NONE includes whitespace checks.
   - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
+  - Recurrence (`2026-10-27`): two documentation helpers assigned validation `NONE` nevertheless ran scoped `git diff --check` and disclosed it; no substantive gate or semantic proof was claimed. Main retained the named consolidated checks.
+  - Recurrence (`2026-10-29`): a tracker helper embedded the whitespace check in a status command and disclosed it. Its separate unsupported R948 artifact-absence claim was corrected from the retained results and remains recorded in the artifact-naming observation below.
+
+## Further dated observations
 
 - `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
   - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
@@ -469,6 +475,18 @@ Entry format:
   - Consequence and correction: fresh-schema tests passed while the proposed migration order was unsuitable for an existing parent deployment. Move only these new, unapplied migrations to V1012/V1013, preserve all parent migration names/checksums, and prove populated upgrade plus the canonical frontier check against the published parent. No out-of-order execution or host change is authorized.
   - Outcome: R768 passes the actual-parent frontier guard, jOOQ generation and all 26 selected PostgreSQL/Redis cases with the V1012→V1013 upgrade; integration static/format and documentation checks pass, and all five observed containers are independently absent. Replacement hosted CI is still required.
 
+- `2026-10-27`: Qualify compact SpotBugs launch inputs with actual task execution
+  - Context: local final-admission qualification R783 could not launch Game Session SpotBugs Main because the Java command exceeded the operating system argument-size limit. R785 confirmed auxiliary-classpath file mode was active but still could not launch this task.
+  - Observation: sourcepath now retains non-generated source roots instead of expanding them to individual paths. The exact oversized argv item was not independently measured, so the original failure does not establish a general operating-system limit.
+  - Expected pattern: keep the task unqualified until focused proof confirms actual launch and completion, preserving the existing class-analysis inputs and exclusions.
+  - Outcome: R789 and R813 launch and complete Game Session main/integration SpotBugs; R806 also completes affected Account static analysis. Auxiliary classpath file mode plus compact source roots is an observed correction in this scope.
+
+- `2026-10-27`: Prioritize owned review transitions and actual CI proof
+  - Context: the shared observer was scanning other CI and local results while an active CLI operation awaited its owner.
+  - Observation: successive compact reads omitted that operation. The review completed at 03:09:28 UTC but reached its owner about seven minutes later; the observer confirmed scheduling, rather than stale controller state, caused the delay. It also initially credited current-head metadata-edit workflow wrappers as physical successes.
+  - Expected pattern: prioritize retained provider operations and exact local failure/completion tails before changed/current CI inventory, retaining one observer and the existing CI read spacing. Verify executed module/gate jobs in original content-event runs; overall wrapper success and a skipped runtime wrapper provide no physical CI credit.
+  - Outcome: Main withdrew the unsupported success claim and retained pending status. The observer corrected its application of the existing owned-wait requirement; no additional observer or polling tool was introduced.
+
 - `2026-10-27`: Completed Hosted publication remained in native provider wait
   - Context: #3310 Hosted5 completed on the exact requested head at 16:32:58 NZDT, but the original FireController operation still reported `active / provider_wait / trigger_recovered` after the completed publication was visible.
   - Observation: the status did not expose the completed review or a capture failure. A bounded provider inspection found review 5661910348 and its six actionable comments; FireController's owner confirmed that the retained capture already contained the publication and began checking parser/attribution. The source completion mismatch delayed consuming the findings.
@@ -516,6 +534,11 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Expected pattern: Distinguish tool capability and additional-round authority from authority to bypass a configured limit.
   - Outcome: The running attempt is retained to completion with its findings; further override requests are stopped and existing policy and grants remain unchanged.
 
+- `2026-10-29`: Inspect artifact naming before declaring proof missing
+  - Context: a bounded tracker helper searched for R948 validation artifacts.
+  - Observation: its search missed uppercase `R948` logs and produced an unsupported absence statement, which Main corrected after reading the retained results.
+  - Expected pattern: inspect actual artifact naming and retained results before asserting missing evidence. The separate validation-allowance recurrence is retained with the [original closed-allowlist observation](#closed-validation-allowance).
+
 - `2026-10-29`: Malformed source-refresh IDs missing the `review_refresh_` prefix returned unrelated startup-binding advice. The original full receipt IDs recovered the existing observations without another fetch. FireController owner reports client-only fix `18cf3b4d` now identifies `refresh_id`, its required prefix/format and retained-receipt recovery; an existing MCP process keeps its prior binary until normal reconnection. Preserve exact full handles in delegation messages rather than abbreviating tool arguments.
 
 - `2026-10-29`: Shared static Testcontainers blocked the retirement suite
@@ -558,3 +581,8 @@ Gameplay #3310 Hosted7 finished at 03:51:18 NZDT but its native evidence was rec
   - Observation: Publication in an unmerged PR was assumed to freeze those artifacts, although neither was in the immutable receiving parent and no authorized retained/live application was known. That unsupported assumption delayed the complete upgrade repair.
   - Outcome: The owning migration contract and Overseer confirmed normal in-PR candidate correction, preserving all receiving-parent checksums and original evidence. R1010 subsequently passes populated actual-parent V1040.4 upgrade and changed-session owner proof; publication alone is not retained applied-state evidence.
   - Expected pattern: Establish actual receiving-parent and applied-state obligations before choosing forward-only migration repair. A later migration cannot repair an earlier migration that fails before it executes; concrete retained applied-state evidence must be resolved rather than rewritten.
+
+- 2026-10-30 — Recovery tests must allow a stored retention horizon to pass during real work.
+  - Observation: #3332 current-head CI ran 622 Game Session integration cases with one failure: the recovery-composition test expected retirement to remain false immediately after recovery, although its stored minimum retention was only 500 ms. The test completed in 8.808 seconds on that runner; the exact internal delay is not recorded. Production permits retirement once every recovered terminal row has crossed its stored horizon.
+  - Consequence: a valid retirement could fail the test; a later sleep cannot establish that the earlier recovery call completed inside 500 ms.
+  - Response: preserve the unrecovered refusal and all receipt/supersession/purge assertions, allow either timing outcome after recovery, and assert from PostgreSQL that the committed retirement timestamp satisfies every original row's stored retention bound. R1142 passes all 15 cases in the affected native class; its aggregate failed the new assertion's missing null check. R1143 passes the corrected affected recovery method and enabled test analysis, formatting and documentation checks. The earlier compile-failed R1141 ran no tests. No production policy, timeout or guard changes.

@@ -694,7 +694,9 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     BigInteger currentRevision = positive(transitionRow, "inventory_revision");
     String issuerStatus = text(issuerObligation, "status");
     UUID releaseOperationId = issuerObligation.get("local_release_operation_id", UUID.class);
-    if (!"REQUIRED".equals(issuerStatus) && !"RELEASED".equals(issuerStatus)) {
+    if (!"REQUIRED".equals(issuerStatus)
+        && !"ACKNOWLEDGED".equals(issuerStatus)
+        && !"RELEASED".equals(issuerStatus)) {
       throw unavailable("The current local issuer obligation has an unsupported terminal state");
     }
     if (!uuid(reservationRow, "reservation_id").equals(original.reservationId())
@@ -767,6 +769,15 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         && releaseOperationId == null) {
       bindingPresent = true;
       counted = true;
+    } else if ("COMMITTED".equals(transitionStatus)
+        && "ACTIVE".equals(candidateLifecycle)
+        && "BOUND".equals(reservationLifecycle)
+        && "ACKNOWLEDGED".equals(issuerStatus)
+        && releaseOperationId == null) {
+      requireOriginalNewNativeAcknowledgement(
+          transaction, operationRow, member, transitionRow, currentRevision);
+      bindingPresent = true;
+      counted = true;
     } else if ("ABORTED".equals(transitionStatus)
         && "TERMINAL_UNRESOLVED".equals(candidateLifecycle)
         && "RELEASE_PENDING".equals(reservationLifecycle)
@@ -826,6 +837,55 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
         projectedOperationId,
         projectedBytes,
         projectedMember);
+  }
+
+  /**
+   * The final SQL phase may consume only the immutable native ACK for this exact original local
+   * member operation. Its retained canonical receipt remains anchored to the pre-final RESERVED
+   * member; it is not rebuilt from the later BOUND lifecycle or another issuer-local operation.
+   */
+  private static void requireOriginalNewNativeAcknowledgement(
+      DSLContext transaction,
+      Record operationRow,
+      CanonicalGameplayIssuerMemberV2Value member,
+      Record transitionRow,
+      BigInteger committedRevision) {
+    UUID operationId = uuid(operationRow, "operation_id");
+    Record acknowledgementRow =
+        transaction.fetchOne(
+            "SELECT * FROM game_session_canonical_issuer_binding_local_acknowledgement"
+                + " WHERE operation_id = ?",
+            operationId);
+    if (acknowledgementRow == null) {
+      throw unavailable("Committed issuer phase lacks its native local acknowledgement");
+    }
+    CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledgement =
+        CanonicalGameplayIssuerBindingLocalAcknowledgementRepository.readAcknowledgement(
+            transaction, acknowledgementRow);
+    var evidence = acknowledgement.evidence();
+    if (!acknowledgement.operationId().equals(operationId)
+        || !evidence.operationId().equals(operationId)
+        || !evidence.transitionId().equals(member.reservation().transitionId())
+        || !evidence.issuerId().equals(member.owner().issuerId())
+        || !Arrays.equals(evidence.bindingRef(), member.owner().bindingRef().bytes())
+        || !evidence.bindingGeneration().equals(member.bindingGeneration())
+        || !evidence
+            .candidateAccountIndexFence()
+            .equals(uuid(transitionRow, "candidate_account_index_fence"))
+        || !Arrays.equals(evidence.memberValueBytes(), bytes(operationRow, "member_value_bytes"))
+        || !evidence.memberValueDigest().equals(text(operationRow, "member_value_digest"))
+        || !evidence.reservation().reservationId().equals(member.reservation().reservationId())
+        || !evidence.reservation().transitionId().equals(member.reservation().transitionId())
+        || !evidence
+            .reservation()
+            .reservationFence()
+            .equals(member.reservation().reservationFence())
+        || !evidence.reservation().partitionId().equals(member.reservation().partitionId())
+        || !"RESERVED".equals(evidence.reservation().lifecycle())
+        || evidence.reservation().inventoryRevision().compareTo(committedRevision) >= 0
+        || !acknowledgement.digest().equals(text(acknowledgementRow, "acknowledgement_digest"))) {
+      throw unavailable("Committed issuer phase differs from its native local acknowledgement");
+    }
   }
 
   private static void requireOwnerColumns(

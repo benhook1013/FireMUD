@@ -4,6 +4,7 @@ import java.math.BigInteger;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -309,6 +310,253 @@ final class CanonicalGameplayRegionLeaseOwner {
     return new BridgeContext(evidence, currentSource, current, resolved.resolvedRegion);
   }
 
+  /**
+   * Revalidates a retained original-NEW bridge using only this owner's live private grant. The SQL
+   * source is historical candidate proof; it supplies no lease or Redis authority.
+   */
+  OriginalNewFinalBindingCurrentProof revalidateOriginalNewFinalBinding(
+      Installation installation,
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+          finalAdmissionSource,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(installation, "installation");
+    Objects.requireNonNull(finalAdmissionSource, "finalAdmissionSource");
+    Objects.requireNonNull(reference, "runtimeReference");
+    if (!installation.owner.equals(this)) throw unavailable();
+
+    CanonicalGameplayOriginalNewCandidate candidate = finalAdmissionSource.candidate();
+    CanonicalGameplayBindingRegionBridgeObligation acknowledgement =
+        finalAdmissionSource.regionAcknowledgement();
+    requireOriginalNewFinalSourceMatchesInstallation(
+        installation, finalAdmissionSource, candidate, acknowledgement);
+
+    ResolvedBridgeSource resolved =
+        resolveExactBridgeSource(installation.worldRequest, installation.evidence);
+    CanonicalGameplayRegionRuntimeStatusRepository.Source currentSource = resolved.source;
+    requireSameSource(installation.source, currentSource);
+    CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation =
+        readCurrentIncarnation(currentSource);
+    requireSameIncarnation(installation.incarnation, incarnation);
+    CanonicalGameplayRegionRuntimeStatus currentStatus =
+        statusRepository
+            .find(currentSource)
+            .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+    long expectedRegionEpoch = exactExpectedRegionEpoch(candidate.bindingIdentity().regionEpoch());
+    requireReusableRegionGrant(
+        installation, currentSource, incarnation, currentStatus, expectedRegionEpoch);
+    redisOwner.renew(installation.grant, leaseTtl);
+    redisOwner.requireCurrent(installation.grant);
+
+    String worldSourceDigest =
+        CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(
+            installation.worldRequest, resolved.resolvedRegion);
+    requireFinalAcknowledgementWorldCurrent(
+        acknowledgement, currentSource, currentStatus, worldSourceDigest);
+    String entityReferenceDigest =
+        requireFinalAcknowledgementEntityCurrent(
+            installation, candidate, acknowledgement, reference);
+
+    CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation currentPreparation =
+        statusRepository
+            .findTimelinePreparation(installation.preparation.source())
+            .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+    if (!statusRepository.matchesCurrentInstalledTimelineInitialization(
+        installation.preparation, currentPreparation, currentSource, incarnation, currentStatus)) {
+      throw unavailable();
+    }
+    redisOwner.requireCurrent(installation.grant);
+    redisOwner.verifyInitializedTimeline(installation.grant, currentPreparation);
+
+    CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback =
+        redisOwner.readBackSessionBinding(
+            installation.grant,
+            currentStatus,
+            reference.runtimeEntityId(),
+            candidate.bindingIdentity().sessionId(),
+            candidate.transition().bindingGeneration());
+    requireFinalAcknowledgementReadback(
+        acknowledgement, reference, candidate, currentStatus, readback);
+
+    ResolvedBridgeSource afterReadback =
+        resolveExactBridgeSource(installation.worldRequest, installation.evidence);
+    requireSameSource(currentSource, afterReadback.source);
+    String afterReadbackWorldDigest =
+        CanonicalGameplayRegionBindingBridgeProofs.worldSourceDigest(
+            installation.worldRequest, afterReadback.resolvedRegion);
+    if (!worldSourceDigest.equals(afterReadbackWorldDigest)) throw unavailable();
+    CanonicalGameplayRegionIncarnationSource.StableEvidence afterReadbackIncarnation =
+        readCurrentIncarnation(currentSource);
+    requireSameIncarnation(incarnation, afterReadbackIncarnation);
+    CanonicalGameplayRegionRuntimeStatus afterReadbackStatus =
+        statusRepository
+            .find(currentSource)
+            .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+    if (!currentStatus.equals(afterReadbackStatus) || afterReadbackStatus.paused()) {
+      throw unavailable();
+    }
+    redisOwner.requireCurrent(installation.grant);
+    redisOwner.verifyInitializedTimeline(installation.grant, currentPreparation);
+
+    return new OriginalNewFinalBindingCurrentProof(
+        candidate,
+        finalAdmissionSource.candidateDigest(),
+        acknowledgement,
+        currentSource,
+        currentStatus,
+        afterReadbackIncarnation,
+        worldSourceDigest,
+        entityReferenceDigest,
+        readback);
+  }
+
+  private static void requireOriginalNewFinalSourceMatchesInstallation(
+      Installation installation,
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayBindingRegionBridgeObligation acknowledgement) {
+    var identity = candidate.bindingIdentity();
+    if (source.candidateInstallationProvenance()
+            != CanonicalGameplayBindingInventoryRepository
+                .OriginalNewCandidateInstallationProvenance.HISTORICAL_READBACK_CONFIRMED
+        || !candidate.bindingDecisionId().equals(installation.transitionId)
+        || !candidate.transition().transitionId().equals(installation.transitionId)
+        || !candidate.matchesProvisionalSources(installation.evidence)
+        || !identity.equals(installation.evidence.candidate().identity())
+        || !candidate.targetEvidence().canonicalTenantId().equals(identity.tenantId())
+        || !candidate.targetEvidence().canonicalGameInstanceId().equals(identity.gameInstanceId())
+        || !candidate
+            .targetEvidence()
+            .playableStateNamespaceId()
+            .equals(identity.playableStateNamespaceId())
+        || !candidate.targetEvidence().playableStateScope().equals(identity.playableStateScope())
+        || !acknowledgement.transitionId().equals(installation.transitionId)
+        || !acknowledgement.bindingRef().equals(candidate.transition().bindingRef())
+        || !acknowledgement.bindingGeneration().equals(candidate.transition().bindingGeneration())
+        || !acknowledgement.accountId().equals(identity.accountId())
+        || !acknowledgement.tenantId().equals(identity.tenantId())
+        || !acknowledgement.gameInstanceId().equals(identity.gameInstanceId())
+        || acknowledgement.runtimeGameInstanceId() != identity.runtimeGameInstanceId()
+        || !acknowledgement.sessionId().equals(identity.sessionId())
+        || !acknowledgement.regionId().equals(identity.regionId())
+        || !acknowledgement.regionEpoch().equals(identity.regionEpoch())
+        || !matchesWorldRequestTarget(candidate, installation.worldRequest)) {
+      throw unavailable();
+    }
+  }
+
+  private static boolean matchesWorldRequestTarget(
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalInitialPlayerLocationRequest request) {
+    var source = candidate.targetEvidence();
+    var target = request.getExpectedTarget();
+    String scope =
+        switch (target.getPlayableStateScope()) {
+          case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+          case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+          default -> "";
+        };
+    return source.canonicalTenantId().toString().equals(target.getCanonicalTenantUuid())
+        && source.realmId().toString().equals(target.getRealmUuid())
+        && source.worldSlug().equals(target.getWorldSlug())
+        && source.realmSlug().equals(target.getRealmSlug())
+        && source.canonicalGameInstanceId().toString().equals(target.getGameInstanceId())
+        && source.catalogRevision() == target.getCatalogRevision()
+        && source.canonicalVersionId().toString().equals(target.getCanonicalVersionUuid())
+        && source
+            .playableStateNamespaceId()
+            .toString()
+            .equals(target.getPlayableStateNamespaceUuid())
+        && source.playableStateScope().equals(scope)
+        && source.activeWorldEpoch() == request.getActiveLifecycleEpoch()
+        && source.initialAdmissionRequestId().equals(request.getInitialAdmissionRequestId())
+        && source.initialAdmissionRequestDigest().equals(request.getInitialAdmissionRequestDigest())
+        && source.pointerVersion() == request.getCommittedPointerVersion()
+        && source.holdId().toString().equals(request.getInitialAdmissionHoldUuid())
+        && source.holdFence().toString().equals(request.getInitialAdmissionHoldFence())
+        && source.auditEventId() == request.getAuditEventId()
+        && source.ownerProofDigest().equals(request.getTerminalProofDigest());
+  }
+
+  private static void requireFinalAcknowledgementWorldCurrent(
+      CanonicalGameplayBindingRegionBridgeObligation acknowledgement,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus status,
+      String worldSourceDigest) {
+    if (acknowledgement.status()
+            != CanonicalGameplayBindingRegionBridgeObligation.Status.ACKNOWLEDGED
+        || !acknowledgement.tenantId().equals(source.tenantId())
+        || !acknowledgement.gameInstanceId().equals(source.gameInstanceId())
+        || !acknowledgement.regionId().equals(source.regionId())
+        || !acknowledgement.canonicalRegionId().equals(source.canonicalRegionId())
+        || acknowledgement.worldLifecycleEpoch() != source.lifecycleEpoch()
+        || acknowledgement.worldLifecycleRowVersion() != source.lifecycleRowVersion()
+        || !acknowledgement.worldCaptureId().equals(source.captureId())
+        || !acknowledgement.worldGraphSha256().equals(source.graphSha256())
+        || !acknowledgement.worldPreparationInputDigest().equals(source.preparationInputDigest())
+        || !acknowledgement.worldSourceDigest().equals(worldSourceDigest)
+        || !acknowledgement.regionEpoch().equals(BigInteger.valueOf(status.regionEpoch()))
+        || !acknowledgement.executorFence().equals(status.executorFence())
+        || !acknowledgement.leaseTokenCorrelation().equals(status.leaseTokenCorrelation())) {
+      throw unavailable();
+    }
+  }
+
+  private static String requireFinalAcknowledgementEntityCurrent(
+      Installation installation,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayBindingRegionBridgeObligation acknowledgement,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference) {
+    var identity = candidate.bindingIdentity();
+    if (!reference.runtimeEntityId().tenantId().equals(identity.tenantId())
+        || !reference
+            .runtimeEntityId()
+            .gameInstanceId()
+            .equals(identity.gameInstanceId().toString())
+        || reference.runtimeEntityId().value() != acknowledgement.runtimeEntityId()
+        || !reference.assignmentUuid().equals(acknowledgement.assignmentId())
+        || !reference
+            .assignmentUuid()
+            .toString()
+            .equals(installation.worldRequest.getAssignmentUuid())
+        || !acknowledgement
+            .assignmentIntentDigest()
+            .equals(installation.worldRequest.getAssignmentIntentDigest())
+        || !reference.canonicalAccountUuid().equals(identity.accountId())
+        || !reference.characterUuid().equals(identity.characterId())
+        || !reference.intentDigest().equals(installation.worldRequest.getAssignmentIntentDigest())
+        || !reference.target().equals(installation.worldRequest.getExpectedTarget())
+        || !reference.playableStateNamespaceId().equals(identity.playableStateNamespaceId())
+        || reference.projectionGeneration() != acknowledgement.entityProjectionGeneration()
+        || reference.projectionFence() != acknowledgement.entityProjectionFence()
+        || !reference.workloadNamespace().equals(acknowledgement.entityWorkloadNamespace())) {
+      throw unavailable();
+    }
+    String digest = CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference);
+    if (!acknowledgement.entityReferenceDigest().equals(digest)) throw unavailable();
+    return digest;
+  }
+
+  private static void requireFinalAcknowledgementReadback(
+      CanonicalGameplayBindingRegionBridgeObligation acknowledgement,
+      CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayRegionRuntimeStatus status,
+      CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback) {
+    if (!readback.runtimeEntityId().equals(reference.runtimeEntityId())
+        || !readback.sessionId().equals(candidate.bindingIdentity().sessionId())
+        || !readback.bindingGeneration().equals(candidate.transition().bindingGeneration())
+        || readback.regionEpoch() != status.regionEpoch()
+        || !readback.executorFence().equals(status.executorFence())
+        || !readback.leaseTokenCorrelation().equals(status.leaseTokenCorrelation())
+        || !acknowledgement.executorFence().equals(readback.executorFence())
+        || !acknowledgement.leaseTokenCorrelation().equals(readback.leaseTokenCorrelation())
+        || !acknowledgement.regionEpoch().equals(BigInteger.valueOf(readback.regionEpoch()))
+        || !acknowledgement.redisReadbackDigest().equals(readback.digest())) {
+      throw unavailable();
+    }
+  }
+
   CanonicalGameplayBindingRegionBridgeObligation prepareBridge(
       Installation installation,
       RegionBridgePreimage preimage,
@@ -570,6 +818,63 @@ final class CanonicalGameplayRegionLeaseOwner {
   record RegionBridgePreimage(
       BridgeContext context,
       CanonicalGameplayRegionLeaseRedisOwner.BindingPreimage redisPreimage) {}
+
+  /**
+   * Read-only proof that this private owner, World source, Entity reference, and Redis binding
+   * still match the retained original-NEW acknowledgement. It grants no admission authority.
+   */
+  static final class OriginalNewFinalBindingCurrentProof {
+    private final CanonicalGameplayOriginalNewCandidate candidate;
+    private final String candidateDigest;
+    private final CanonicalGameplayBindingRegionBridgeObligation acknowledgement;
+    private final CanonicalGameplayRegionRuntimeStatusRepository.Source source;
+    private final CanonicalGameplayRegionRuntimeStatus status;
+    private final CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation;
+    private final String worldSourceDigest;
+    private final String entityReferenceDigest;
+    private final CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback;
+
+    private OriginalNewFinalBindingCurrentProof(
+        CanonicalGameplayOriginalNewCandidate candidate,
+        String candidateDigest,
+        CanonicalGameplayBindingRegionBridgeObligation acknowledgement,
+        CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+        CanonicalGameplayRegionRuntimeStatus status,
+        CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation,
+        String worldSourceDigest,
+        String entityReferenceDigest,
+        CanonicalGameplayRegionLeaseRedisOwner.BindingReadback readback) {
+      this.candidate = candidate;
+      this.candidateDigest = candidateDigest;
+      this.acknowledgement = acknowledgement;
+      this.source = source;
+      this.status = status;
+      this.incarnation = incarnation;
+      this.worldSourceDigest = worldSourceDigest;
+      this.entityReferenceDigest = entityReferenceDigest;
+      this.readback = readback;
+    }
+
+    boolean matchesCurrentEntityReference(
+        CanonicalPreseededActorRuntimeReferenceClient.RuntimeActorReference reference) {
+      return reference != null
+          && entityReferenceDigest.equals(
+              CanonicalGameplayRegionBindingBridgeProofs.entityReferenceDigest(reference));
+    }
+
+    boolean sameRetainedBindingEvidenceAs(OriginalNewFinalBindingCurrentProof other) {
+      return other != null
+          && candidateDigest.equals(other.candidateDigest)
+          && candidate.equals(other.candidate)
+          && acknowledgement.equals(other.acknowledgement)
+          && source.equals(other.source)
+          && status.equals(other.status)
+          && Arrays.equals(incarnation.canonicalBytes(), other.incarnation.canonicalBytes())
+          && worldSourceDigest.equals(other.worldSourceDigest)
+          && entityReferenceDigest.equals(other.entityReferenceDigest)
+          && readback.digest().equals(other.readback.digest());
+    }
+  }
 
   private record ResolvedBridgeSource(
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,

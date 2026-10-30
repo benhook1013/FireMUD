@@ -304,8 +304,7 @@ final class CanonicalGameplayIssuerAdmissionBarrierRedisOwner {
     }
   }
 
-  private static Map<String, byte[]> physicalFields(
-      CanonicalGameplayIssuerAdmissionBarrierValue value) {
+  static Map<String, byte[]> physicalFields(CanonicalGameplayIssuerAdmissionBarrierValue value) {
     var initializer = value.initializer();
     Map<String, byte[]> fields = new HashMap<>();
     fields.put("schema", ascii(CanonicalGameplayIssuerAdmissionBarrierValue.SCHEMA));
