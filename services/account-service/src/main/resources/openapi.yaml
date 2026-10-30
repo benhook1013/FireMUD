@@ -239,7 +239,8 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
+          format: int64
         accountId:
           type: string
           format: uuid
@@ -247,18 +248,30 @@ components:
           type: string
         bio:
           type: string
-    UpdateProfileRequest:
+        presenceVisibilityPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+    UpdateProfileRestRequest:
       type: object
+      description: >-
+        REST selector is a canonical lowercase non-nil Account UUID and must match the path accountId.
       properties:
         tenantId:
-          type: string
+          type: integer
+          format: int64
         accountId:
           type: string
+          format: uuid
+          description: Canonical lowercase non-nil Account UUID matching the path selector.
         displayName:
           type: string
         bio:
           type: string
-      required: [tenantId, accountId]
+        presenceVisibilityPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
+          description: HIDDEN_STAFF is reserved and rejected for Account-holder profile updates.
+      required: [tenantId, accountId, presenceVisibilityPolicy]
     PasswordResetRequest:
       type: object
       properties:
@@ -722,19 +735,23 @@ paths:
           description: Invalid account ID
   /profiles/{accountId}:
     get:
-      summary: Get profile
+      summary: Get the caller's tenant profile
       operationId: getProfile
       parameters:
         - name: accountId
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
+          description: >-
+            Canonical lowercase non-nil Account UUID; numeric storage keys are not accepted.
         - name: tenantId
           in: query
           required: true
           schema:
-            type: string
+            type: integer
+            format: int64
       responses:
         '200':
           description: Profile data
@@ -743,22 +760,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProfileDto'
         '400':
-          description: Account not found
+          description: Invalid Account UUID selector or tenant ID
+        '403':
+          description: The authenticated Account does not own the selected profile
+        '503':
+          description: Account UUID owner evidence is unavailable or inconsistent
     put:
-      summary: Update profile
+      summary: Update the caller's tenant profile
       operationId: updateProfile
       parameters:
         - name: accountId
           in: path
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
+          description: >-
+            Canonical lowercase non-nil Account UUID; numeric storage keys are not accepted.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateProfileRequest'
+              $ref: '#/components/schemas/UpdateProfileRestRequest'
       responses:
         '200':
           description: Updated profile
@@ -767,7 +791,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProfileDto'
         '400':
-          description: Invalid profile data
+          description: >-
+            Invalid Account UUID selector, tenant ID, or profile data; the body Account UUID must match
+            the path.
+        '403':
+          description: The authenticated Account does not own the selected profile
+        '503':
+          description: Account UUID owner evidence is unavailable or inconsistent
   /.well-known/jwks.json:
     get:
       summary: JWKS public keys
