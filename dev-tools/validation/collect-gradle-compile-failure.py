@@ -6,10 +6,11 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import signal
 import subprocess
 import sys
-import tempfile
+import time
 from collections import deque
 from pathlib import Path
 
@@ -18,6 +19,8 @@ MAX_BYTES = 16 * 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_LOG_BYTES = 16 * 1024 * 1024
 MAX_VISITED_ENTRIES = 4096
+DIAGNOSTIC_TIMEOUT_SECONDS = 60
+TASK_PATH = re.compile(r'^(:[a-z0-9]+(?:-[a-z0-9]+)*):compile[A-Za-z0-9]*Java$')
 TASK = re.compile(r"^> Task (:([a-z0-9]+(?:-[a-z0-9]+)*):compile[A-Za-z0-9]*Java) FAILED$", re.MULTILINE)
 
 
@@ -100,31 +103,101 @@ def walk_files(root, start, suffix, budget):
 
 def diagnostic(root, task, output):
     """Only retain our structured marker; Gradle stdout can include unrelated data."""
-    with tempfile.TemporaryFile() as stream:
-        process = subprocess.Popen(
-            ['prlimit', f'--fsize={MAX_FILE_BYTES}:{MAX_FILE_BYTES}', '--',
-             str(root / 'gradlew'), '--offline', '--no-daemon', '--no-configuration-cache',
-             '--console=plain', '--max-workers=2',
-             '-Dorg.gradle.java.installations.auto-download=false',
-             '-I', str(root / 'dev-tools/validation/compile-failure-facts.init.gradle'),
-             '-PfiremudFailedCompile=' + task, 'firemudCompileFailureFacts'],
-            cwd=root, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True,
-        )
-        try:
-            process.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+    task_match = TASK_PATH.fullmatch(task)
+    if task_match is None:
+        raise ValueError('Diagnostic compile task path is invalid')
+    facts_task = task_match.group(1) + ':firemudCompileFailureFacts'
+    process = subprocess.Popen(
+        [str(root / 'gradlew'), '--offline', '--no-daemon', '--no-configuration-cache',
+         '--console=plain', '--max-workers=2',
+         '-Dorg.gradle.java.installations.auto-download=false',
+         '-I', str(root / 'dev-tools/validation/compile-failure-facts.init.gradle'),
+         '-PfiremudFailedCompile=' + task, facts_task],
+        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        start_new_session=True, bufsize=0,
+    )
+    captured = bytearray()
+    limited = False
+    timed_out = False
+    settled = False
+    deadline = time.monotonic() + DIAGNOSTIC_TIMEOUT_SECONDS
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            if not selector.select(remaining):
+                continue
+            remaining_bytes = MAX_FILE_BYTES - len(captured)
+            chunk = os.read(process.stdout.fileno(), min(64 * 1024, remaining_bytes))
+            if not chunk:
+                selector.unregister(process.stdout)
+                break
+            captured.extend(chunk)
+            # An exactly full output is conservatively limited too, because
+            # additional output could have been truncated at the boundary.
+            if len(captured) >= MAX_FILE_BYTES:
+                limited = True
+                break
+
+        if timed_out or limited:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             process.wait()
-            return {'status': 'timeout', 'facts': None}
-        stream.seek(0)
-        data = stream.read(MAX_FILE_BYTES + 1)
-    limited = len(data) >= MAX_FILE_BYTES
-    for line in data[:MAX_FILE_BYTES].decode('utf-8', errors='replace').splitlines():
-        if line.startswith('FIREMUD_COMPILE_FACTS='):
-            facts = json.loads(line.split('=', 1)[1])
-            output.write_text(json.dumps(facts, indent=2) + '\n')
+            settled = True
+        else:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+            else:
+                try:
+                    process.wait(timeout=remaining)
+                    settled = True
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+            if timed_out:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+                settled = True
+    finally:
+        selector.close()
+        process.stdout.close()
+        if not settled:
+            # Even an unexpected capture error may not leave this diagnostic's
+            # child processes behind. start_new_session scopes this group.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+    if timed_out:
+        return {'status': 'timeout', 'facts': None}
+    data = bytes(captured)
+    marker = b'FIREMUD_COMPILE_FACTS='
+    start = 0
+    while (start := data.find(marker, start)) >= 0:
+        if start == 0 or data[start - 1] == ord('\n'):
+            end = data.find(b'\n', start)
+            if end < 0:
+                end = len(data)
+            facts = json.loads(data[start + len(marker):end].decode('utf-8', errors='replace'))
+            serialized = (json.dumps(facts, separators=(',', ':'), ensure_ascii=False) + '\n').encode('utf-8')
+            if len(serialized) > MAX_FILE_BYTES:
+                return {'status': 'limited', 'exit': process.returncode,
+                        'output_limit_reached': True, 'output_possibly_truncated': True,
+                        'facts_output_limit_reached': True}
+            output.write_bytes(serialized)
             return {'status': 'limited' if limited else ('complete' if process.returncode == 0 else 'failed'),
                     'exit': process.returncode, 'output_limit_reached': limited, 'output_possibly_truncated': limited}
+        start += len(marker)
     return {'status': 'unavailable', 'exit': process.returncode,
             'output_limit_reached': limited, 'output_possibly_truncated': limited}
 
@@ -132,7 +205,14 @@ def diagnostic(root, task, output):
 def collect(root, log, output, check_exit):
     if not 0 < check_exit < 128:
         return
-    root = root.resolve()
+    # Compute the relation before resolving so a symlink used as the workspace
+    # root remains a valid lexical prefix for the caller's output path.
+    lexical_root = Path(os.path.abspath(root))
+    lexical_output = Path(os.path.abspath(output))
+    relative_output = lexical_output.relative_to(lexical_root)
+    root = lexical_root.resolve()
+    output = root / relative_output
+    output.relative_to(root)
     with log.open('rb') as stream:
         size = stream.seek(0, 2)
         stream.seek(max(0, size - MAX_LOG_BYTES))
@@ -140,7 +220,6 @@ def collect(root, log, output, check_exit):
     tasks = list(dict.fromkeys(TASK.findall(text)))
     if not tasks:
         return
-    relative_output = output.relative_to(root)
     cursor = root
     for part in relative_output.parts:
         cursor /= part
