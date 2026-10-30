@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODULE_RUNNER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
 RECOVERY_RUNNER="$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"
 COMPOSE_JARS="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
+COMPILE_FAILURE_COLLECTOR="$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py"
+COMPILE_FAILURE_INIT="$ROOT_DIR/dev-tools/validation/compile-failure-facts.init.gradle"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
 
@@ -21,6 +23,8 @@ new_case() {
   mkdir -p "$CASE_DIR/bin" "$CASE_DIR/.github/scripts" "$CASE_DIR/dev-tools/validation"
   cp "$MODULE_RUNNER" "$CASE_DIR/.github/scripts/run-gradle-module-checks.sh"
   cp "$RECOVERY_RUNNER" "$CASE_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"
+  cp "$COMPILE_FAILURE_COLLECTOR" "$CASE_DIR/dev-tools/validation/collect-gradle-compile-failure.py"
+  cp "$COMPILE_FAILURE_INIT" "$CASE_DIR/dev-tools/validation/compile-failure-facts.init.gradle"
   cp "$COMPOSE_JARS" "$CASE_DIR/dev-tools/build-compose-service-jars.sh"
   cat > "$CASE_DIR/dev-tools/validation/run-locked-gradle.sh" <<'LOCKED'
 #!/usr/bin/env bash
@@ -35,6 +39,7 @@ printf '%s\n' "$*" >> "${FAKE_SLEEP_LOG:?}"
 SLEEP
   chmod +x "$CASE_DIR/bin/sleep"
   : > "$CASE_DIR/calls"
+  : > "$CASE_DIR/diagnostic-calls"
   : > "$CASE_DIR/locked-calls"
   : > "$CASE_DIR/sleeps"
 }
@@ -44,6 +49,11 @@ write_wrapper() {
   cat > "$CASE_DIR/gradlew" <<EOF_WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ " \$* " =~ [[:space:]]:[a-z0-9]+(-[a-z0-9]+)*:firemudCompileFailureFacts[[:space:]] ]]; then
+  printf '%s\n' "\$*" >> "\$FAKE_DIAGNOSTIC_CALL_LOG"
+  echo 'FIREMUD_COMPILE_FACTS={"attribution":"fixture-only"}'
+  exit 0
+fi
 printf '%s\\n' "\$*" >> "\$FAKE_CALL_LOG"
 call_count=\$(wc -l < "\$FAKE_CALL_LOG")
 $body
@@ -60,6 +70,7 @@ run_case() {
     cd "$CASE_DIR"
     export CASE_DIR
     export FAKE_CALL_LOG="$CASE_DIR/calls"
+    export FAKE_DIAGNOSTIC_CALL_LOG="$CASE_DIR/diagnostic-calls"
     export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
     export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
     export PATH="$CASE_DIR/bin:$PATH"
@@ -80,6 +91,7 @@ run_compose_case() {
     cd "$CASE_DIR"
     export CASE_DIR
     export FAKE_CALL_LOG="$CASE_DIR/calls"
+    export FAKE_DIAGNOSTIC_CALL_LOG="$CASE_DIR/diagnostic-calls"
     export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
     export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
     export PATH="$CASE_DIR/bin:$PATH"
@@ -97,6 +109,13 @@ assert_call_count() {
   local actual
   actual="$(wc -l < "$CASE_DIR/calls")"
   [[ "$actual" -eq "$expected" ]] || fail "$CASE_DIR expected $expected Gradle call(s), got $actual"
+}
+
+assert_diagnostic_count() {
+  local expected="$1"
+  local actual
+  actual="$(wc -l < "$CASE_DIR/diagnostic-calls")"
+  [[ "$actual" -eq "$expected" ]] || fail "$CASE_DIR expected $expected diagnostic facts invocation(s), got $actual"
 }
 
 assert_call() {
@@ -123,7 +142,7 @@ new_case normal-success
 write_wrapper 'echo "> Task :buildSrc:compileKotlin FROM-CACHE"; echo "normal-complete"; exit 0'
 run_case common-web-support 0
 assert_call_count 1
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile"
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
 [[ ! -s "$CASE_DIR/sleeps" ]] || fail "normal success slept"
 
 # Match the retained Netty failure shape: cached buildSrc compilation is not a
@@ -178,8 +197,8 @@ fi
 echo "refresh-complete"; exit 0'
 run_case load-testing 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :load-testing:check -PfullCheck --profile"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :load-testing:check -PfullCheck --profile"
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :load-testing:check -PfullCheck --profile --info --console=plain"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :load-testing:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "connection reset did not use one short delay"
 assert_output_contains "Connection reset"
 assert_output_contains "refresh-complete"
@@ -273,7 +292,7 @@ fi
 echo "refreshed-pinned-artifact-resolved"; exit 0'
 run_case account-service 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "cached absence added a transient-error delay"
 assert_output_contains "Could not find spring-boot-starter-jdbc-4.1.1.jar (org.springframework.boot:spring-boot-starter-jdbc:4.1.1)."
 assert_output_contains "refreshed-pinned-artifact-resolved"
@@ -337,8 +356,8 @@ write_jooq_captured_cause
 write_jooq_wrapper ''
 run_case account-service 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile"
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "captured jOOQ artifact miss added a transient-error delay"
 assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
 assert_output_contains "refreshed-captured-jooq-resolution"
@@ -372,7 +391,7 @@ write_jooq_protoc_timeout_cause
 write_jooq_wrapper ''
 run_case automation-scripting-service 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :automation-scripting-service:check -PfullCheck --profile"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :automation-scripting-service:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "protoc connect timeout did not use one short delay"
 assert_output_contains "Connect timed out"
 assert_output_contains "refreshed-captured-jooq-resolution"
@@ -641,8 +660,8 @@ write_buildsrc_429_cause
 write_buildsrc_wrapper
 run_case logging-admin-service 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile"
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "buildSrc HTTP 429 did not use one short delay"
 assert_output_contains "buildsrc-refresh-result"
 
@@ -794,6 +813,9 @@ LOG
 exit 1'
 run_case common-web-support 1
 assert_no_retry
+assert_diagnostic_count 1
+[[ "$(cat "$CASE_DIR/diagnostic-calls")" == *":common-web-support:firemudCompileFailureFacts" ]] || \
+  fail "compiler facts task was not invoked in the failed module project"
 
 # A genuine test failure remains a failure even when a dependency-shaped
 # message appears later in the retained output.
