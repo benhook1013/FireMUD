@@ -894,6 +894,12 @@ class AccountApplicationIntegrationTest {
           sendAccountRequest(request.getKey(), request.getValue(), ordinary, body);
       assertThat(refused.statusCode()).isEqualTo(403);
       assertThat(refused.body()).contains("\"code\":\"PERMISSION_DENIED\"");
+      String absentPath =
+          request.getValue().replace(otherAccount.id(), UUID.randomUUID().toString());
+      HttpResponse<String> absent =
+          sendAccountRequest(request.getKey(), absentPath, ordinary, body);
+      assertThat(absent.statusCode()).isEqualTo(403);
+      assertThat(absent.body()).isEqualTo(refused.body());
     }
 
     String originalLoginModes =

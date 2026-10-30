@@ -73,7 +73,7 @@ public class ProfileController {
 
   private static void requireProfileOwner(long accountId) {
     if (!SessionContext.isCurrentAccount(accountId)) {
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Profile access required");
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account access required");
     }
   }
 }

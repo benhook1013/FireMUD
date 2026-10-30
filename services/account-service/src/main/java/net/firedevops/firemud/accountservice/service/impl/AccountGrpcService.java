@@ -656,6 +656,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("UpdateProfile", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       UpdateProfileResponse response =
           UpdateProfileResponse.newBuilder()
@@ -686,6 +694,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
               .setError(appError("ExportAccount", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      ExportAccountResponse response =
+          ExportAccountResponse.newBuilder()
+              .setError(appError("ExportAccount", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -723,6 +738,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       ExportTenantDataResponse response =
           ExportTenantDataResponse.newBuilder()
               .setError(appError("ExportTenantData", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      ExportTenantDataResponse response =
+          ExportTenantDataResponse.newBuilder()
+              .setError(appError("ExportTenantData", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

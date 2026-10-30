@@ -41,6 +41,9 @@ final class AccountRequestReaders {
         throw new IllegalStateException("Account UUID resolved to an invalid storage owner");
       }
       return storageId;
+    } catch (IllegalArgumentException ex) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.FORBIDDEN, "Account access required");
     } catch (IllegalStateException | DataAccessException ex) {
       throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
     }
