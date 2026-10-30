@@ -217,6 +217,7 @@ def collect(root, log, output, check_exit):
         size = stream.seek(0, 2)
         stream.seek(max(0, size - MAX_LOG_BYTES))
         text = stream.read(MAX_LOG_BYTES).decode('utf-8', errors='replace')
+    implicated_java = set(re.findall(r'(?<![\w$])[\w$]+\.java(?![\w$])', text))
     tasks = list(dict.fromkeys(TASK.findall(text)))
     if not tasks:
         return
@@ -269,17 +270,20 @@ def collect(root, log, output, check_exit):
                  'gradle/gradle-daemon-jvm.properties', 'config/protobuf/buf.gen.yaml']:
         copy(root / name)
     enumeration = {'visited': 0, 'truncated': False, 'unavailable_directories': 0}
-    generated_inputs = []
     for task, module in tasks[:4]:
         project = root / ('dev-tools/load-testing' if module == 'load-testing' else 'services/' + module)
         copy(project / 'build.gradle.kts')
+    schema_inputs = list(walk_files(root, root / 'protos', '.proto', enumeration))
+    generated_inputs = []
+    for task, module in tasks[:4]:
+        project = root / ('dev-tools/load-testing' if module == 'load-testing' else 'services/' + module)
         generated_inputs.extend(walk_files(root, project / 'build/generated', '.java', enumeration))
     # Preserve implicated generated sources first, then schemas, then other Java.
-    generated_inputs.sort(key=lambda p: (p.name not in text, str(p)))
+    generated_inputs.sort(key=lambda p: (p.name not in implicated_java, str(p)))
     for path in generated_inputs:
-        if path.name in text:
+        if path.name in implicated_java:
             copy(path)
-    for path in walk_files(root, root / 'protos', '.proto', enumeration):
+    for path in schema_inputs:
         copy(path)
     for path in generated_inputs:
         copy(path)

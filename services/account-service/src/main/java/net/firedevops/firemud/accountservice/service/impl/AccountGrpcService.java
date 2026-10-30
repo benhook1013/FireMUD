@@ -210,39 +210,34 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   private void requireGameSessionPeer() {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null
-        || workloadNamespace == null
-        || workloadNamespace.isBlank()
-        || !peer.uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service")) {
-      throw new AdminAuthorizationException("Verified Game Session workload identity is required");
-    }
+    requireWorkloadPeer(
+        "Verified Game Session workload identity is required", "game-session-service");
   }
 
   private void requireRuntimeEntitlementsPeer() {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    String namespace = workloadNamespace;
-    if (peer == null
-        || namespace == null
-        || namespace.isBlank()
-        || !(peer.uri().equals("spiffe://firemud/ns/" + namespace + "/sa/game-session-service")
-            || peer.uri()
-                .equals("spiffe://firemud/ns/" + namespace + "/sa/world-management-service"))) {
-      throw new AdminAuthorizationException(
-          "Verified Game Session or World Management workload identity is required");
-    }
+    requireWorkloadPeer(
+        "Verified Game Session or World Management workload identity is required",
+        "game-session-service",
+        "world-management-service");
   }
 
   private void requireSocialGroupsPeer() {
+    requireWorkloadPeer(
+        "Verified Social Groups workload identity is required", "social-groups-service");
+  }
+
+  private void requireWorkloadPeer(String denialMessage, String... allowedServices) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null
-        || workloadNamespace == null
-        || workloadNamespace.isBlank()
-        || !peer.uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/social-groups-service")) {
-      throw new AdminAuthorizationException("Verified Social Groups workload identity is required");
+    if (peer != null && workloadNamespace != null && !workloadNamespace.isBlank()) {
+      for (String allowedService : allowedServices) {
+        String expectedPeerUri =
+            "spiffe://firemud/ns/" + workloadNamespace + "/sa/" + allowedService;
+        if (peer.uri().equals(expectedPeerUri)) {
+          return;
+        }
+      }
     }
+    throw new AdminAuthorizationException(denialMessage);
   }
 
   private void requireCallerAccountSubject(UUID accountUuid) {
