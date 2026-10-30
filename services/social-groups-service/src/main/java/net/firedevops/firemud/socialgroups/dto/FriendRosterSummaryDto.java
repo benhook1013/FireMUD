@@ -8,7 +8,6 @@ public record FriendRosterSummaryDto(
     int publicCount,
     int friendsOnlyCount,
     int privateCount,
-    int hiddenStaffCount,
     int unspecifiedVisibilityCount,
     int sharedCount,
     int isolatedCount,

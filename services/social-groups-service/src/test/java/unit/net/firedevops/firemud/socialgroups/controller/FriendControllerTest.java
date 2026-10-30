@@ -327,7 +327,8 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.data.presences[0].friendAccountId").value(accountUuid(3L)))
         .andExpect(jsonPath("$.data.presences[0].online").value(true))
         .andExpect(jsonPath("$.data.presences[0].worldSlug").value("demo"))
-        .andExpect(jsonPath("$.data.presences[0].realmSlug").value("production"));
+        .andExpect(jsonPath("$.data.presences[0].realmSlug").value("production"))
+        .andExpect(jsonPath("$.data.presences[0].recentDisposition").doesNotExist());
   }
 
   @Test
@@ -393,16 +394,7 @@ class FriendControllerTest {
   }
 
   @Test
-  void updateFriendPresencePolicyRejectsReservedHiddenStaff() throws Exception {
-    UpdateFriendPresencePolicyRequest request =
-        new UpdateFriendPresencePolicyRequest(
-            1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF);
-    when(friendService.updateFriendPresencePolicy(
-            1L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF))
-        .thenThrow(
-            new IllegalArgumentException(
-                "Friend presence visibility policy HIDDEN_STAFF is reserved"));
-
+  void updateFriendPresencePolicyRejectsLegacyValueOutsidePublicVocabulary() throws Exception {
     String token =
         jwtUtil.generateToken(
             accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
@@ -411,12 +403,11 @@ class FriendControllerTest {
             put("/friends/visibility")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(
-            jsonPath("$.error.message")
-                .value("Friend presence visibility policy HIDDEN_STAFF is reserved"));
+                .content(
+                    "{\"tenantId\":1,\"accountId\":\""
+                        + accountUuid(2L)
+                        + "\",\"visibilityPolicy\":\"HIDDEN_STAFF\"}"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -498,7 +489,7 @@ class FriendControllerTest {
   @Test
   void getFriendRosterSummaryReturnsCanonicalCounts() throws Exception {
     when(friendService.getFriendRosterSummary(1L, accountUuid(2L)))
-        .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 0, 2, 1, 1));
+        .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 2, 1, 1));
 
     String token =
         jwtUtil.generateToken(
@@ -518,7 +509,7 @@ class FriendControllerTest {
         .andExpect(jsonPath("$.data.publicCount").value(1))
         .andExpect(jsonPath("$.data.friendsOnlyCount").value(2))
         .andExpect(jsonPath("$.data.privateCount").value(1))
-        .andExpect(jsonPath("$.data.hiddenStaffCount").value(0))
+        .andExpect(jsonPath("$.data.hiddenStaffCount").doesNotExist())
         .andExpect(jsonPath("$.data.unspecifiedVisibilityCount").value(0))
         .andExpect(jsonPath("$.data.sharedCount").value(2))
         .andExpect(jsonPath("$.data.isolatedCount").value(1))
@@ -541,7 +532,6 @@ class FriendControllerTest {
                     new FriendPresenceDto(
                         accountUuid(3L),
                         false,
-                        null,
                         null,
                         null,
                         null,

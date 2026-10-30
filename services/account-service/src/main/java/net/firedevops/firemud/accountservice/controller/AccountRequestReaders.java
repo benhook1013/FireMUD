@@ -6,6 +6,7 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.springframework.dao.DataAccessException;
+import org.springframework.transaction.TransactionException;
 
 final class AccountRequestReaders {
   private AccountRequestReaders() {}
@@ -44,7 +45,7 @@ final class AccountRequestReaders {
     } catch (IllegalArgumentException ex) {
       throw new org.springframework.web.server.ResponseStatusException(
           org.springframework.http.HttpStatus.FORBIDDEN, "Account access required");
-    } catch (IllegalStateException | DataAccessException ex) {
+    } catch (IllegalStateException | DataAccessException | TransactionException ex) {
       throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
     }
   }

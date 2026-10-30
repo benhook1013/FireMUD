@@ -17,7 +17,6 @@ import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresencePolicyViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
-import net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterEntryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
@@ -48,6 +47,26 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class SocialGroupsGrpcServiceTest {
+  @Test
+  void playerProtoRetiresRecentDispositionAndHiddenStaffVocabulary() {
+    assertEquals(
+        null,
+        net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry.getDescriptor()
+            .findFieldByName("recent_disposition"));
+    assertEquals(
+        null,
+        net.firedevops.firemud.socialgroups.v1.FriendRosterSummary.getDescriptor()
+            .findFieldByName("hidden_staff_count"));
+    assertEquals(
+        null,
+        net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy.getDescriptor()
+            .findValueByName("FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF"));
+    assertEquals(
+        null,
+        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.getDescriptor()
+            .findValueByName("FRIEND_ROSTER_FILTER_HIDDEN_STAFF"));
+  }
+
   @Test
   void pingReturnsPong() {
     PingService ping = Mockito.mock(PingService.class);
@@ -486,8 +505,7 @@ class SocialGroupsGrpcServiceTest {
                         99L,
                         "Ben",
                         null,
-                        Instant.parse("2026-04-11T06:15:30Z"),
-                        FriendRecentPresenceDisposition.LOGOUT))));
+                        Instant.parse("2026-04-11T06:15:30Z")))));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -530,10 +548,6 @@ class SocialGroupsGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
         ref.get().getPresences(0).getLastSeenAtMs());
-    assertEquals(
-        net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
-            .FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT,
-        ref.get().getPresences(0).getRecentDisposition());
   }
 
   @Test
@@ -569,8 +583,7 @@ class SocialGroupsGrpcServiceTest {
                         99L,
                         "Ben",
                         null,
-                        Instant.parse("2026-04-11T06:15:30Z"),
-                        FriendRecentPresenceDisposition.LOGOUT))));
+                        Instant.parse("2026-04-11T06:15:30Z")))));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -763,8 +776,7 @@ class SocialGroupsGrpcServiceTest {
                             99L,
                             "Ben",
                             null,
-                            Instant.parse("2026-04-11T06:15:30Z"),
-                            FriendRecentPresenceDisposition.LOGOUT)))));
+                            Instant.parse("2026-04-11T06:15:30Z"))))));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -807,10 +819,6 @@ class SocialGroupsGrpcServiceTest {
         ref.get().getFriends(0).getCreatedAtMs());
     assertEquals(true, ref.get().getFriends(0).getPresence().getOnline());
     assertEquals("demo", ref.get().getFriends(0).getPresence().getWorldSlug());
-    assertEquals(
-        net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
-            .FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT,
-        ref.get().getFriends(0).getPresence().getRecentDisposition());
   }
 
   @Test
@@ -823,7 +831,7 @@ class SocialGroupsGrpcServiceTest {
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
     Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
     Mockito.when(friend.getFriendRosterSummary(1L, accountUuid(2L)))
-        .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 0, 2, 1, 1));
+        .thenReturn(new FriendRosterSummaryDto(4, 1, 3, 2, 1, 2, 1, 0, 2, 1, 1));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -855,7 +863,6 @@ class SocialGroupsGrpcServiceTest {
     assertEquals(1, ref.get().getSummary().getPublicCount());
     assertEquals(2, ref.get().getSummary().getFriendsOnlyCount());
     assertEquals(1, ref.get().getSummary().getPrivateCount());
-    assertEquals(0, ref.get().getSummary().getHiddenStaffCount());
     assertEquals(0, ref.get().getSummary().getUnspecifiedVisibilityCount());
     assertEquals(2, ref.get().getSummary().getSharedCount());
     assertEquals(1, ref.get().getSummary().getIsolatedCount());
@@ -894,7 +901,6 @@ class SocialGroupsGrpcServiceTest {
                         null,
                         null,
                         "Ben",
-                        null,
                         null,
                         null,
                         null))));
@@ -950,7 +956,6 @@ class SocialGroupsGrpcServiceTest {
                     new FriendPresenceDto(
                         accountUuid(3L),
                         false,
-                        null,
                         null,
                         null,
                         null,

@@ -203,7 +203,10 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
       return null;
     }
     GameplayPresence effectivePresence =
-        SessionContext.hasGameplayRegionBindingOrFalse(context) ? presence : null;
+        SessionContext.hasGameplayRegionBindingOrFalse(context)
+                && matchesProjectedContext(context, presence)
+            ? presence
+            : null;
     GameplayAdmissionPointerSnapshots.RoutingBundle effectivePresenceRoutingBundle =
         effectivePresence == null
             ? null
@@ -232,6 +235,14 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
         routingBundle == null ? null : routingBundle.worldSlug(),
         routingBundle == null ? null : routingBundle.realmSlug(),
         routingBundle == null ? null : routingBundle.pointerVersion());
+  }
+
+  private boolean matchesProjectedContext(SessionContext context, GameplayPresence presence) {
+    return context.sessionId() > 0
+        && presence != null
+        && presence.sessionId() == context.sessionId()
+        && presence.tenantId() == context.tenantId()
+        && context.accountId().equals(presence.accountId());
   }
 
   private String blankToNull(String value) {

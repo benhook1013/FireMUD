@@ -452,6 +452,25 @@ class AccountControllerTest {
   }
 
   @Test
+  void allAccountSelectorsMapTransactionBeginOutageToRetryableUnavailable() throws Exception {
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
+        .thenThrow(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "Database connection unavailable"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
+    for (var request : accountSelectorRequests(ACCOUNT_UUID_TEXT)) {
+      mockMvc
+          .perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+          .andExpect(status().isServiceUnavailable())
+          .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"));
+    }
+    verify(accountService, never()).getLoginAuthModes(anyLong());
+    verify(accountService, never()).exportAccountData(anyLong());
+    verify(accountService, never()).exportTenantData(anyLong(), anyLong());
+    verify(accountService, never()).deleteAccount(anyLong());
+  }
+
+  @Test
   void accountOwnerReadbackInconsistencyAndOutageReturnRetryableUnavailable() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
         .thenThrow(new IllegalStateException("Account UUID provenance is inconsistent"));

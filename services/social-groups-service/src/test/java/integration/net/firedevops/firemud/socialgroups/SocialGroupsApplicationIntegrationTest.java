@@ -316,6 +316,51 @@ class SocialGroupsApplicationIntegrationTest {
   }
 
   @Test
+  void authenticatedFriendPresenceRejectsDuplicateOwnerSubjectsWithoutPartialRoster()
+      throws Exception {
+    String token = privilegedAccountToken(accountUuid(2L));
+    for (long friendAccountId : List.of(3L, 4L)) {
+      HttpResponse<String> addResponse =
+          send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                  .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .POST(
+                      HttpRequest.BodyPublishers.ofString(
+                          "{\"tenantId\":1,\"accountId\":\"%s\",\"friendAccountId\":\"%s\"}"
+                              .formatted(accountUuid(2L), accountUuid(friendAccountId))))
+                  .build());
+      assertThat(addResponse.statusCode()).isEqualTo(200);
+      acceptFriendLink(1L, accountUuid(2L), accountUuid(friendAccountId));
+    }
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L), accountUuid(4L))))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder().setAccountId(accountUuid(3L)).setOnline(true))
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId(accountUuid(3L))
+                        .setOnline(false))
+                .build());
+
+    HttpResponse<String> response =
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=1&accountId="
+                    + accountUuid(2L)));
+
+    assertThat(response.statusCode()).isGreaterThanOrEqualTo(500);
+    assertThat(response.body()).doesNotContain("\"friendAccountId\":\"" + accountUuid(3L) + "\"");
+    assertThat(response.body()).doesNotContain("\"friendAccountId\":\"" + accountUuid(4L) + "\"");
+  }
+
+  @Test
   void friendRosterEndpointFallsBackToOfflineWhenPresenceIsUnavailable() throws Exception {
     String token = privilegedAccountToken(accountUuid(2L));
     send(
@@ -537,7 +582,7 @@ class SocialGroupsApplicationIntegrationTest {
     assertThat(response.body()).contains("\"publicCount\":0");
     assertThat(response.body()).contains("\"friendsOnlyCount\":2");
     assertThat(response.body()).contains("\"privateCount\":0");
-    assertThat(response.body()).contains("\"hiddenStaffCount\":0");
+    assertThat(response.body()).doesNotContain("hiddenStaffCount");
     assertThat(response.body()).contains("\"unspecifiedVisibilityCount\":0");
   }
 

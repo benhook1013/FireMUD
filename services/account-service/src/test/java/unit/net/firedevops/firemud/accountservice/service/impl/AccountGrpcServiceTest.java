@@ -1128,6 +1128,13 @@ class AccountGrpcServiceTest {
             .get("displayName")
             .asText());
     assertEquals(
+        ACCOUNT_UUID,
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(ref.get().getProfileJson())
+            .path("accountId")
+            .asText());
+    assertEquals(
         "PRIVATE",
         tools.jackson.databind.json.JsonMapper.builder()
             .build()

@@ -112,6 +112,32 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void registerConnectedKeepsGlobalStaffInThePlayerRole() {
+    String token =
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_ID,
+            Map.of(
+                "accountId",
+                OTHER_ACCOUNT_ID,
+                "globalRoles",
+                List.of("platformAdmin", "support", "billingAdmin", "god")));
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, OTHER_ACCOUNT_ID, "staff@example.com", 202L, "Ben", 7L, "R-1", token);
+    service.registerConnected(context);
+    verify(valueOperations)
+        .set(
+            org.mockito.Mockito.eq("gameplaypresence:session:1"),
+            argThat(
+                value ->
+                    value
+                            instanceof
+                            net.firedevops.firemud.gamesession.service.GameplayPresence presence
+                        && presence.role() == GameplayPresenceRole.PLAYER),
+            org.mockito.Mockito.eq(TTL));
+  }
+
+  @Test
   void listConnectedByGameInstanceSortsGodsFirstAndPrunesMissingSessions() {
     String godJwt =
         jwtUtil.generateToken(
@@ -122,7 +148,7 @@ class RedisGameplayPresenceServiceTest {
                 "globalRoles",
                 List.of("platformAdmin"),
                 "scopedRoles",
-                Map.of()));
+                Map.of("22", List.of("god"))));
     SessionContext godContext =
         new SessionContext(
             1L, 22L, GOD_ACCOUNT_ID, "god@example.com", 101L, "Aster", 7L, "R-1", godJwt);
@@ -568,5 +594,54 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
     verify(setOperations, never()).add(anyString(), any());
     verify(setOperations, never()).remove(anyString(), any());
+  }
+
+  @Test
+  void listConnectedByAccountIdsSkipsMismatchedSessionIdAndReturnsCorrelatedPresence() {
+    when(setOperations.members(
+            "gameplaypresence:22:account:00000000-0000-4000-8000-000000000102:sessions"))
+        .thenReturn(new LinkedHashSet<>(List.of("3", "4")));
+    when(valueOperations.get("gameplaypresence:session:3"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.GameplayPresence(
+                9L,
+                22L,
+                7L,
+                "SHARED",
+                "demo",
+                "production",
+                17L,
+                "00000000-0000-4000-8000-000000000102",
+                202L,
+                "Ben",
+                GameplayPresenceRole.PLAYER,
+                80L,
+                null,
+                100L,
+                null));
+    var matchingPresence =
+        new net.firedevops.firemud.gamesession.service.GameplayPresence(
+            4L,
+            22L,
+            7L,
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            "00000000-0000-4000-8000-000000000102",
+            202L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            90L,
+            null,
+            110L,
+            120L);
+    when(valueOperations.get("gameplaypresence:session:4")).thenReturn(matchingPresence);
+
+    var result =
+        service.listConnectedByAccountIds(22L, List.of("00000000-0000-4000-8000-000000000102"));
+
+    assertEquals(Map.of("00000000-0000-4000-8000-000000000102", List.of(matchingPresence)), result);
+    verifyNoPresenceMutation();
   }
 }

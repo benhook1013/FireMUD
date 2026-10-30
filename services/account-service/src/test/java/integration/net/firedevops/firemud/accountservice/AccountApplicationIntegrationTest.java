@@ -614,12 +614,35 @@ class AccountApplicationIntegrationTest {
     assertThat(accountService.joinPublicProductionFromGameSession(caller, directJoin).accountId())
         .isEqualTo(account.id());
     dsl.execute(
-        "INSERT INTO profiles(account_id,tenant_id,display_name,bio) VALUES(?,?,?,?)",
+        "INSERT INTO profiles(account_id,tenant_id,display_name,bio,presence_visibility_policy) "
+            + "VALUES(?,?,?,?, 'HIDDEN_STAFF')",
         row,
         tenant,
         "owner profile",
         "initial");
-    assertThat(accountService.getProfile(tenant, row).accountId()).isEqualTo(account.id());
+    var retainedProfile = accountService.getProfile(tenant, row);
+    assertThat(retainedProfile.accountId()).isEqualTo(account.id());
+    assertThat(retainedProfile.presenceVisibilityPolicy())
+        .isEqualTo(
+            net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy.PRIVATE);
+    assertThat(jsonMapper.valueToTree(retainedProfile).path("presenceVisibilityPolicy").asText())
+        .isEqualTo("PRIVATE");
+    var retainedExport = accountService.exportAccountData(row);
+    assertThat(
+            jsonMapper
+                .valueToTree(retainedExport)
+                .path("profiles")
+                .get(0)
+                .path("presenceVisibilityPolicy")
+                .asText())
+        .isEqualTo("PRIVATE");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT presence_visibility_policy FROM profiles WHERE account_id=? "
+                    + "AND tenant_id=?",
+                row,
+                tenant))
+        .isEqualTo("HIDDEN_STAFF");
     assertThat(
             accountService
                 .updateProfile(
@@ -828,7 +851,7 @@ class AccountApplicationIntegrationTest {
             HttpResponse.BodyHandlers.ofString());
     assertThat(reservedPolicyResponse.statusCode()).isEqualTo(400);
     assertThat(reservedPolicyResponse.body())
-        .contains("Profile presence visibility policy HIDDEN_STAFF is reserved");
+        .contains("Profile presence visibility policy is not selectable");
     assertThat(
             java.util.Objects.requireNonNull(
                     dsl.fetchOne(

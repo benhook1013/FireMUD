@@ -4,10 +4,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -103,14 +105,19 @@ public final class AccountClient
               logger, PRESENCE_VISIBILITY_POLICY_READ_OPERATION, response.getError());
           return Map.of();
         }
-        java.util.Set<String> seen = new java.util.HashSet<>();
+        Set<String> seen = new HashSet<>();
         for (var entry : response.getPoliciesList()) {
           String subject = JwtClaims.requireCanonicalAccountUuid(entry.getAccountId(), "accountId");
           if (!batch.contains(subject) || !seen.add(subject)) {
             return Map.of();
           }
           try {
-            policies.put(subject, FriendPresenceVisibilityPolicyValue.valueOf(entry.getPolicy()));
+            String policy = entry.getPolicy();
+            policies.put(
+                subject,
+                "HIDDEN_STAFF".equals(policy)
+                    ? FriendPresenceVisibilityPolicyValue.PRIVATE
+                    : FriendPresenceVisibilityPolicyValue.valueOf(policy));
           } catch (IllegalArgumentException ignored) {
             // Unknown or malformed policy is subject-local private-by-failure.
           }

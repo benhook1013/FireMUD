@@ -1083,7 +1083,6 @@ class TextPlayerOutputRendererTest {
                         1L,
                         "ACTIVE",
                         null,
-                        "FRIEND",
                         "SHARED"))),
             "en-NZ",
             new PresentationProperties(

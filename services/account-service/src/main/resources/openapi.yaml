@@ -268,7 +268,7 @@ components:
           type: string
         presenceVisibilityPolicy:
           type: string
-          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
     UpdateProfileRestRequest:
       type: object
       description: >-
@@ -286,7 +286,6 @@ components:
         presenceVisibilityPolicy:
           type: string
           enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
-          description: HIDDEN_STAFF is reserved and rejected for Account-holder profile updates.
       required: [tenantId, accountId, presenceVisibilityPolicy]
     PasswordResetRequest:
       type: object

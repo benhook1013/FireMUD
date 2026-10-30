@@ -32,7 +32,6 @@ import net.firedevops.firemud.socialgroups.v1.CreateGuildResponse;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy;
-import net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterSummary;
 import net.firedevops.firemud.socialgroups.v1.GetFriendByOrdinalRequest;
@@ -682,9 +681,6 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     if (presence.lastSeenAt() != null) {
       entry.setLastSeenAtMs(presence.lastSeenAt().toEpochMilli());
     }
-    if (presence.recentDisposition() != null) {
-      entry.setRecentDisposition(mapRecentDisposition(presence.recentDisposition()));
-    }
     return entry.build();
   }
 
@@ -721,7 +717,6 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         .setPublicCount(summary.publicCount())
         .setFriendsOnlyCount(summary.friendsOnlyCount())
         .setPrivateCount(summary.privateCount())
-        .setHiddenStaffCount(summary.hiddenStaffCount())
         .setUnspecifiedVisibilityCount(summary.unspecifiedVisibilityCount())
         .setSharedCount(summary.sharedCount())
         .setIsolatedCount(summary.isolatedCount())
@@ -738,7 +733,6 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       case FRIEND_ROSTER_FILTER_PUBLIC -> FriendRosterFilter.PUBLIC;
       case FRIEND_ROSTER_FILTER_FRIENDS_ONLY -> FriendRosterFilter.FRIENDS_ONLY;
       case FRIEND_ROSTER_FILTER_PRIVATE -> FriendRosterFilter.PRIVATE;
-      case FRIEND_ROSTER_FILTER_HIDDEN_STAFF -> FriendRosterFilter.HIDDEN_STAFF;
       case FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY -> FriendRosterFilter.UNSPECIFIED_VISIBILITY;
       case FRIEND_ROSTER_FILTER_SHARED -> FriendRosterFilter.SHARED;
       case FRIEND_ROSTER_FILTER_ISOLATED -> FriendRosterFilter.ISOLATED;
@@ -764,9 +758,6 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .FRIEND_ROSTER_FILTER_FRIENDS_ONLY;
       case PRIVATE ->
           net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE;
-      case HIDDEN_STAFF ->
-          net.firedevops.firemud.socialgroups.v1.FriendRosterFilter
-              .FRIEND_ROSTER_FILTER_HIDDEN_STAFF;
       case UNSPECIFIED_VISIBILITY ->
           net.firedevops.firemud.socialgroups.v1.FriendRosterFilter
               .FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY;
@@ -895,29 +886,12 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     };
   }
 
-  private FriendRecentPresenceDisposition mapRecentDisposition(
-      net.firedevops.firemud.socialgroups.dto.FriendRecentPresenceDisposition disposition) {
-    return switch (disposition) {
-      case TRANSPORT_LOSS ->
-          net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
-              .FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS;
-      case LOGOUT ->
-          net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
-              .FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT;
-      case TAKEOVER ->
-          net.firedevops.firemud.socialgroups.v1.FriendRecentPresenceDisposition
-              .FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER;
-    };
-  }
-
   private FriendPresenceVisibilityPolicy mapVisibilityPolicy(String visibilityPolicy) {
     return switch (visibilityPolicy) {
       case "PUBLIC" -> FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC;
       case "FRIENDS_ONLY" ->
           FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY;
       case "PRIVATE" -> FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE;
-      case "HIDDEN_STAFF" ->
-          FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
       default -> FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED;
     };
   }
@@ -929,8 +903,6 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       case FRIENDS_ONLY ->
           FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY;
       case PRIVATE -> FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE;
-      case HIDDEN_STAFF ->
-          FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
     };
   }
 
@@ -941,8 +913,6 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       case FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY ->
           FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY;
       case FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE -> FriendPresenceVisibilityPolicyValue.PRIVATE;
-      case FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
-          FriendPresenceVisibilityPolicyValue.HIDDEN_STAFF;
       case FRIEND_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED, UNRECOGNIZED ->
           throw new IllegalArgumentException("Friend presence visibility policy is required");
     };

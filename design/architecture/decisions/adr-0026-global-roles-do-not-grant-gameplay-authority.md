@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The accepted separation of global control-plane roles from gameplay authority is target state. Current global-role presence classification still has drift, and the regression test proving a normally joined global-role account remains an ordinary player is missing. No runtime completion is claimed by this ADR.
+Implementation and focused proof status are recorded in [Player Experience, Commands, and Communication](../../project-management/implementation-tracking/player-experience-commands-and-communication.md#communication-social-and-presence). Presence classification is one boundary; complete admission, actor binding, command authority and capability enforcement require their own proof and are not established by a presence test.
 
 ## Decision Record
 

@@ -126,10 +126,6 @@ public class FriendServiceImpl implements FriendService {
     if (visibilityPolicy == null) {
       throw new IllegalArgumentException("Friend presence visibility policy is required");
     }
-    if (!visibilityPolicy.selectableByAccountHolder()) {
-      throw new IllegalArgumentException(
-          "Friend presence visibility policy HIDDEN_STAFF is reserved");
-    }
   }
 
   private FriendLinkDto toDto(AccountFriendLink link) {
@@ -151,7 +147,7 @@ public class FriendServiceImpl implements FriendService {
 
   private FriendRosterSnapshot loadFriendRoster(
       long tenantId, String accountId, FriendRosterFilter filter) {
-    FriendRosterFilter effectiveFilter = normalizeRosterFilter(filter);
+    FriendRosterFilter effectiveFilter = filter;
     List<AccountFriendLink> links =
         accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
             tenantId, accountId, "active");
@@ -228,7 +224,6 @@ public class FriendServiceImpl implements FriendService {
         publicCount,
         friendsOnlyCount,
         privateCount,
-        0,
         unspecifiedVisibilityCount,
         sharedCount,
         isolatedCount,
@@ -310,10 +305,6 @@ public class FriendServiceImpl implements FriendService {
     };
   }
 
-  private FriendRosterFilter normalizeRosterFilter(FriendRosterFilter filter) {
-    return filter == FriendRosterFilter.HIDDEN_STAFF ? FriendRosterFilter.PRIVATE : filter;
-  }
-
   private Map<String, FriendPresenceDto> loadFriendPresenceByAccountId(
       long tenantId,
       String accountId,
@@ -335,7 +326,7 @@ public class FriendServiceImpl implements FriendService {
     for (AccountPresenceEntry entry : response.getPresencesList()) {
       String friendAccountId = requirePresenceAccountUuid(entry.getAccountId());
       if (!friendAccountIds.contains(friendAccountId) || byAccountId.containsKey(friendAccountId)) {
-        throw new IllegalStateException("Unrequested account presence subject");
+        throw new IllegalStateException("Unrequested or duplicate account presence subject");
       }
       byAccountId.put(
           friendAccountId,
@@ -374,15 +365,13 @@ public class FriendServiceImpl implements FriendService {
         visibleCharacterName(entry, visibilityPolicy),
         visibilityPolicy.name(),
         visibleActivityState(entry, visibilityPolicy),
-        visibleLastSeenAt(entry, visibilityPolicy),
-        null);
+        visibleLastSeenAt(entry, visibilityPolicy));
   }
 
   private FriendPresenceDto defaultPresence(String friendAccountId) {
     return new FriendPresenceDto(
         friendAccountId,
         false,
-        null,
         null,
         null,
         null,
@@ -409,7 +398,7 @@ public class FriendServiceImpl implements FriendService {
   private boolean visibleOnline(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> false;
+      case PRIVATE -> false;
       default -> entry.getOnline();
     };
   }
@@ -417,7 +406,7 @@ public class FriendServiceImpl implements FriendService {
   private Long visibleGameInstanceId(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> parseOptionalPositivePresenceId(entry.getGameInstanceId(), "gameInstanceId");
     };
   }
@@ -425,7 +414,7 @@ public class FriendServiceImpl implements FriendService {
   private Long visibleCharacterId(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> parseOptionalPositivePresenceId(entry.getCharacterId(), "characterId");
     };
   }
@@ -433,7 +422,7 @@ public class FriendServiceImpl implements FriendService {
   private String visibleWorldSlug(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getWorldSlug().isBlank() ? null : entry.getWorldSlug();
     };
   }
@@ -441,7 +430,7 @@ public class FriendServiceImpl implements FriendService {
   private String visiblePlayableStateScope(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default ->
           switch (entry.getPlayableStateScope()) {
             case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
@@ -454,7 +443,7 @@ public class FriendServiceImpl implements FriendService {
   private String visibleWorldDisplayName(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getWorldDisplayName().isBlank() ? null : entry.getWorldDisplayName();
     };
   }
@@ -462,7 +451,7 @@ public class FriendServiceImpl implements FriendService {
   private String visibleRealmSlug(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getRealmSlug().isBlank() ? null : entry.getRealmSlug();
     };
   }
@@ -470,7 +459,7 @@ public class FriendServiceImpl implements FriendService {
   private String visibleRealmDisplayName(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getRealmDisplayName().isBlank() ? null : entry.getRealmDisplayName();
     };
   }
@@ -478,7 +467,7 @@ public class FriendServiceImpl implements FriendService {
   private Long visiblePointerVersion(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getPointerVersion() > 0 ? entry.getPointerVersion() : null;
     };
   }
@@ -486,7 +475,7 @@ public class FriendServiceImpl implements FriendService {
   private String visibleCharacterName(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getCharacterName().isBlank() ? null : entry.getCharacterName();
     };
   }
@@ -494,7 +483,7 @@ public class FriendServiceImpl implements FriendService {
   private FriendPresenceActivityState visibleActivityState(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> mapActivityState(entry.getActivityState());
     };
   }
@@ -502,7 +491,7 @@ public class FriendServiceImpl implements FriendService {
   private Instant visibleLastSeenAt(
       AccountPresenceEntry entry, FriendPresenceVisibilityPolicyValue visibilityPolicy) {
     return switch (visibilityPolicy) {
-      case PRIVATE, HIDDEN_STAFF -> null;
+      case PRIVATE -> null;
       default -> entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null;
     };
   }
@@ -520,11 +509,7 @@ public class FriendServiceImpl implements FriendService {
     if (visibilityPolicy == null) {
       return FriendPresenceVisibilityPolicyValue.PRIVATE;
     }
-    return switch (visibilityPolicy) {
-      case PUBLIC, FRIENDS_ONLY, PRIVATE -> visibilityPolicy;
-      case HIDDEN_STAFF -> FriendPresenceVisibilityPolicyValue.PRIVATE;
-      default -> FriendPresenceVisibilityPolicyValue.PRIVATE;
-    };
+    return visibilityPolicy;
   }
 
   private String requirePresenceAccountUuid(String value) {

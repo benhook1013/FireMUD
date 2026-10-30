@@ -53,7 +53,7 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
-  void classifyRoleReturnsGodForGlobalGodRole() {
+  void classifyRoleIgnoresGlobalGodRole() {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
@@ -67,7 +67,7 @@ class GameplayPresenceRoleClassifierTest {
             JWT_UTIL,
             logger);
 
-    assertEquals(GameplayPresenceRole.GOD, role);
+    assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
@@ -93,7 +93,7 @@ class GameplayPresenceRoleClassifierTest {
   }
 
   @Test
-  void classifyRoleUsesTheHighestAvailableGameplayRole() {
+  void classifyRoleDoesNotLetGlobalRolesOverrideTheTenantGrant() {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
@@ -113,7 +113,50 @@ class GameplayPresenceRoleClassifierTest {
             JWT_UTIL,
             logger);
 
-    assertEquals(GameplayPresenceRole.GOD, role);
+    assertEquals(GameplayPresenceRole.ADMIN, role);
+  }
+
+  @Test
+  void classifyRoleIgnoresGlobalOperationsAndOtherTenants() {
+    for (String globalRole :
+        java.util.List.of("platformAdmin", "support", "billingAdmin", "moderator", "tenantAdmin")) {
+      String jwt =
+          JWT_UTIL.generateToken(
+              ACCOUNT_UUID,
+              java.util.Map.of(
+                  "accountId",
+                  ACCOUNT_UUID,
+                  "globalRoles",
+                  java.util.List.of(globalRole),
+                  "scopedRoles",
+                  java.util.Map.of("23", java.util.List.of("god"))));
+      assertEquals(
+          GameplayPresenceRole.PLAYER,
+          GameplayPresenceRoleClassifier.classifyRole(
+              new SessionContext(
+                  1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+              JWT_UTIL,
+              mock(Logger.class)));
+    }
+  }
+
+  @Test
+  void classifyRoleUsesTheHighestExplicitCurrentTenantGrant() {
+    String jwt =
+        JWT_UTIL.generateToken(
+            ACCOUNT_UUID,
+            java.util.Map.of(
+                "accountId",
+                ACCOUNT_UUID,
+                "scopedRoles",
+                java.util.Map.of("22", java.util.List.of("moderator", "tenantAdmin", "GOD"))));
+    assertEquals(
+        GameplayPresenceRole.GOD,
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(
+                1L, 22L, ACCOUNT_UUID, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            JWT_UTIL,
+            mock(Logger.class)));
   }
 
   @Test
