@@ -57,4 +57,28 @@ class SocialAccessGuardTest {
     assertFalse(guard.hasAccountAccess(1L, "42"));
     assertFalse(guard.hasAccountAccess(0L, accountUuid(42L)));
   }
+
+  @Test
+  void hasGuildOwnerAccessAcceptsMatchingOrdinaryAccountUuidWithoutTenantRole() {
+    SessionContext.setContext(accountUuid(42L), List.of(), Map.of());
+
+    assertTrue(guard.hasGuildOwnerAccess(1L, accountUuid(42L)));
+  }
+
+  @Test
+  void hasGuildOwnerAccessRetainsTenantPrivilegeForAnotherCanonicalOwner() {
+    SessionContext.setContext(accountUuid(42L), List.of(), Map.of("1", List.of("tenantAdmin")));
+
+    assertTrue(guard.hasGuildOwnerAccess(1L, accountUuid(43L)));
+    assertFalse(guard.hasGuildOwnerAccess(2L, accountUuid(43L)));
+  }
+
+  @Test
+  void hasGuildOwnerAccessRejectsOtherOwnerWithoutTenantPrivilege() {
+    SessionContext.setContext(accountUuid(42L), List.of(), Map.of());
+
+    assertFalse(guard.hasGuildOwnerAccess(1L, accountUuid(43L)));
+    assertFalse(guard.hasGuildOwnerAccess(0L, accountUuid(42L)));
+    assertFalse(guard.hasGuildOwnerAccess(1L, "42"));
+  }
 }

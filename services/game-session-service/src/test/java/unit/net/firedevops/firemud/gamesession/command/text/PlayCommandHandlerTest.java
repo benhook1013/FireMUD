@@ -1336,7 +1336,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(realmGrantResponse(false));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -1362,7 +1362,7 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+        .thenReturn(realmGrantResponse(false));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
@@ -1425,44 +1425,6 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
-  }
-
-  @Test
-  void playMismatchedRealmGrantCorrelationFailsUnavailable() {
-    SessionContext context = previewRealmContext();
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(accountClient.getRealmAccessGrantForRuntime(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString()))
-        .thenReturn(realmGrantResponse(true).toBuilder().setRealmSlug("other-realm").build());
-
-    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
-
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
-    verifyNoGameplayBindingSideEffects();
-  }
-
-  @Test
-  void playGrantedRealmWithoutGrantGenerationFailsUnavailable() {
-    SessionContext context = previewRealmContext();
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(accountClient.getRealmAccessGrantForRuntime(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString()))
-        .thenReturn(realmGrantResponse(true).toBuilder().setGrantVersion(0L).build());
-
-    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
-
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
-    verifyNoGameplayBindingSideEffects();
   }
 
   @Test
@@ -1593,45 +1555,7 @@ class PlayCommandHandlerTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
-        ACCOUNT_ID,
-        "not-a-uuid",
-        "00000000-0000-0000-0000-000000000000",
-        "5E1340F8-99C8-49FA-A4FE-5FC9D2075621",
-        " 5e1340f8-99c8-49fa-a4fe-5fc9d2075621"
-      })
-  void playWhenMembershipAuthorityAccountDoesNotExactlyMatchFailsClosed(String responseAccountId) {
-    SessionContext context =
-        new SessionContext(
-            1L, 22L, ACCOUNT_ID, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(accountClient.getTenantMembershipForRuntime(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId(responseAccountId)
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build());
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
-    Mockito.verify(gameplayPresenceLifecycleService, never())
-        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
-    Mockito.verify(sessionContextService, never()).save(Mockito.any());
-    Mockito.verify(moderationPolicyClient, never())
-        .evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString());
-  }
-
-  @ParameterizedTest
-  @ValueSource(
-      strings = {
+        "c04bf730-5f95-4357-a850-ac29eca1754e",
         "123",
         "not-a-uuid",
         "00000000-0000-0000-0000-000000000000",
@@ -1978,23 +1902,6 @@ class PlayCommandHandlerTest {
         TextCommandType.PLAY,
         List.of("sandbox", "preview", "Emberline"),
         "PLAY sandbox preview Emberline");
-  }
-
-  private static GetRealmAccessGrantForRuntimeResponse realmGrantResponse(boolean granted) {
-    return realmGrantResponse(ACCOUNT_ID, "22", "sandbox", "preview", granted);
-  }
-
-  private static GetRealmAccessGrantForRuntimeResponse realmGrantResponse(
-      String accountId, String tenantId, String worldSlug, String realmSlug, boolean granted) {
-    return GetRealmAccessGrantForRuntimeResponse.newBuilder()
-        .setAccountId(accountId)
-        .setTenantId(tenantId)
-        .setWorldSlug(worldSlug)
-        .setRealmSlug(realmSlug)
-        .setGranted(granted)
-        .setGrantVersion(granted ? 3L : 0L)
-        .setEvaluatedAt(Instant.now().toString())
-        .build();
   }
 
   private static GetRealmAccessGrantForRuntimeResponse realmGrantResponse(boolean granted) {

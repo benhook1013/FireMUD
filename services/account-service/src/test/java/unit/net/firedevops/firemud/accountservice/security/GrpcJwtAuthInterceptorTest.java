@@ -36,7 +36,10 @@ class GrpcJwtAuthInterceptorTest {
 
   @Test
   void allowsValidToken() {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String accountUuid = "f22f310d-5464-45f0-9dc4-c37353004403";
+    String token =
+        jwtUtil.generateToken(
+            accountUuid, Map.of("accountId", accountUuid, "globalRoles", List.of("platformAdmin")));
     TestServerCall call = new TestServerCall();
     Metadata headers = new Metadata();
     headers.put(

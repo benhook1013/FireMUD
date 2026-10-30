@@ -161,7 +161,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       StreamObserver<CreateGuildResponse> responseObserver) {
     try {
       AccountScope ownerScope =
-          requireAccountScope(request.getTenantId(), request.getOwnerAccountId(), "ownerAccountId");
+          requireGuildOwnerScope(
+              request.getTenantId(), request.getOwnerAccountId(), "ownerAccountId");
       CreateGuildRequest dto =
           new CreateGuildRequest(ownerScope.tenantId(), ownerScope.accountId(), request.getName());
       var guild = guildService.createGuild(dto);
@@ -867,8 +868,18 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     return new AccountScope(tenantId, accountId);
   }
 
+  private AccountScope requireGuildOwnerScope(
+      String tenantIdText, String accountIdText, String accountFieldName) {
+    long tenantId = RequestIdValidation.requirePositiveLong(tenantIdText, "tenantId");
+    String accountId = JwtClaims.requireCanonicalAccountUuid(accountIdText, accountFieldName);
+    if (!socialAccessGuard.hasGuildOwnerAccess(tenantId, accountId)) {
+      throw new AuthorizationException("Guild owner access required");
+    }
+    return new AccountScope(tenantId, accountId);
+  }
+
   private String optionalAccountUuid(String value, String fieldName) {
-    return value == null || value.isEmpty()
+    return value == null || value.isBlank()
         ? null
         : JwtClaims.requireCanonicalAccountUuid(value, fieldName);
   }

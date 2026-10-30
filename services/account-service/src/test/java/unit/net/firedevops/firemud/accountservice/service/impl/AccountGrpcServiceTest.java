@@ -687,6 +687,55 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void authenticatePreservesAccountOwnerUnavailableAsApplicationError() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
+        .thenThrow(
+            new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable"));
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.authenticate(
+        AuthenticateRequest.newBuilder()
+            .setEmail("demo@example.com")
+            .setPassword("password")
+            .build(),
+        observer);
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals("Account authority is unavailable", observer.response().getError().getMessage());
+    assertTrue(observer.response().getAuthToken().isEmpty());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void verifyEmailLoginOtpPreservesAccountOwnerUnavailableAsApplicationError() {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
+        .thenThrow(
+            new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable"));
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accountService);
+    RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
+
+    service.verifyEmailLoginOtp(
+        VerifyEmailLoginOtpRequest.newBuilder()
+            .setEmail("demo@example.com")
+            .setCode("123456")
+            .build(),
+        observer);
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertTrue(observer.response().getAuthToken().isEmpty());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
   void requestEmailLoginOtpDispatchesNeutralChallengeRequest() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);

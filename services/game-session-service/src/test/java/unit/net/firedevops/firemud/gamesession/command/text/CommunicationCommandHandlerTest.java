@@ -28,6 +28,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class CommunicationCommandHandlerTest {
+  private static final String CALLER_ACCOUNT_UUID = "11111111-1111-4111-8111-111111111111";
+  private static final String TARGET_ACCOUNT_UUID = "22222222-2222-4222-8222-222222222222";
+
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
@@ -44,7 +47,7 @@ class CommunicationCommandHandlerTest {
       new SessionContext(
           1L,
           22L,
-          "123",
+          CALLER_ACCOUNT_UUID,
           "emberline@example.com",
           911L,
           "Emberline",
@@ -126,6 +129,38 @@ class CommunicationCommandHandlerTest {
   }
 
   @Test
+  void communicationRejectsMissingOrMalformedAccountIdentityBeforeLookingUpOrPublishing() {
+    for (String accountId :
+        new String[] {
+          null,
+          "123",
+          "11111111-1111-4111-8111-11111111111A",
+          "00000000-0000-0000-0000-000000000000"
+        }) {
+      CommunicationCommandHandlingResult result =
+          handler.handle(
+              sessionContextWithAccountId(accountId),
+              new TextCommand(
+                  TextCommandType.TELL,
+                  List.of("Sora", "Meet me later"),
+                  "TELL Sora Meet me later"));
+
+      assertThat(result.commandResult().accepted()).isFalse();
+      assertThat(result.commandResult().errorCode()).isEqualTo("COMMUNICATION_NOT_DELIVERED");
+      assertThat(result.commandResult().errorMessage())
+          .isEqualTo("Sender Account identity unavailable");
+      assertThat(result.outputs()).isEmpty();
+    }
+
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        gameLogicClient,
+        sessionAuthenticationService,
+        recipientDeliveryService,
+        scriptEventPublisher);
+  }
+
+  @Test
   void whisperRequiresTargetAndMessage() {
     CommunicationCommandHandlingResult result =
         handler.handle(
@@ -145,7 +180,7 @@ class CommunicationCommandHandlerTest {
                 Character.newBuilder()
                     .setId("300")
                     .setTenantId("22")
-                    .setAccountId("700")
+                    .setAccountId(TARGET_ACCOUNT_UUID)
                     .setName("Sora")
                     .build()));
     when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
@@ -165,7 +200,17 @@ class CommunicationCommandHandlerTest {
   void tellFailsClosedWhenTargetGameplayBindingNormalizesAway() {
     SessionContext normalizedTarget =
         new SessionContext(
-            77L, 22L, "700", "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            77L,
+            22L,
+            TARGET_ACCOUNT_UUID,
+            "sora@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(entityManagementClient.findCharacterByName(
             sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
         .thenReturn(
@@ -173,7 +218,7 @@ class CommunicationCommandHandlerTest {
                 Character.newBuilder()
                     .setId("300")
                     .setTenantId("22")
-                    .setAccountId("700")
+                    .setAccountId(TARGET_ACCOUNT_UUID)
                     .setName("Sora")
                     .build()));
     when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
@@ -209,7 +254,7 @@ class CommunicationCommandHandlerTest {
                 Character.newBuilder()
                     .setId("300")
                     .setTenantId("22")
-                    .setAccountId("700")
+                    .setAccountId(TARGET_ACCOUNT_UUID)
                     .setName("Sora")
                     .build()));
     when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
@@ -348,5 +393,24 @@ class CommunicationCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private SessionContext sessionContextWithAccountId(String accountId) {
+    return new SessionContext(
+        sessionContext.sessionId(),
+        sessionContext.tenantId(),
+        accountId,
+        sessionContext.loginName(),
+        sessionContext.characterId(),
+        sessionContext.characterName(),
+        sessionContext.gameInstanceId(),
+        sessionContext.roomInstanceId(),
+        sessionContext.jwt(),
+        sessionContext.localeTag(),
+        sessionContext.bootstrapGameInstanceId(),
+        sessionContext.worldSlug(),
+        sessionContext.realmSlug(),
+        sessionContext.pointerVersion(),
+        sessionContext.playableStateScope());
   }
 }

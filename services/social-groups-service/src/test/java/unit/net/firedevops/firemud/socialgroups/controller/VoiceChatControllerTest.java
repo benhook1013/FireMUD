@@ -78,7 +78,7 @@ class VoiceChatControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("Malformed claim: accountId"));
+        .andExpect(jsonPath("$.error.message").value("Request body is malformed"));
 
     verifyNoInteractions(service, socialAccessGuard);
   }

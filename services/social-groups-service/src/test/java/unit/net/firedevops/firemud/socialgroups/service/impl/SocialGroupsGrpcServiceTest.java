@@ -10,7 +10,10 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresencePolicyViewDto;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
@@ -19,6 +22,7 @@ import net.firedevops.firemud.socialgroups.dto.FriendRosterEntryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterSummaryDto;
 import net.firedevops.firemud.socialgroups.dto.FriendRosterViewDto;
+import net.firedevops.firemud.socialgroups.dto.GuildDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
@@ -85,7 +89,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(accessGuard.hasGuildOwnerAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -123,7 +127,7 @@ class SocialGroupsGrpcServiceTest {
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
-    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(accessGuard.hasGuildOwnerAccess(1L, accountUuid(2L))).thenReturn(true);
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -150,6 +154,91 @@ class SocialGroupsGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void createGuildAllowsOrdinaryUuidCallerToCreateForExactSelf() {
+    SessionContext.setContext(accountUuid(2L), List.of(), Map.of());
+    try {
+      PingService ping = Mockito.mock(PingService.class);
+      ChatService chat = Mockito.mock(ChatService.class);
+      GuildService guild = Mockito.mock(GuildService.class);
+      FriendService friend = Mockito.mock(FriendService.class);
+      MailService mail = Mockito.mock(MailService.class);
+      whenGuildCreated(guild);
+      SocialGroupsGrpcService service =
+          new SocialGroupsGrpcService(
+              ping, chat, guild, friend, mail, new SocialAccessGuard(), new SimpleMeterRegistry());
+
+      AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
+      service.createGuild(
+          net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
+              .setTenantId("1")
+              .setOwnerAccountId(accountUuid(2L))
+              .setName("test")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(CreateGuildResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {}
+
+            @Override
+            public void onCompleted() {}
+          });
+
+      assertNotNull(ref.get());
+      assertEquals("5", ref.get().getGuildId());
+      verify(guild).createGuild(new CreateGuildRequest(1L, accountUuid(2L), "test"));
+    } finally {
+      SessionContext.clear();
+    }
+  }
+
+  @Test
+  void createGuildRejectsOtherOwnerWithoutTenantPrivilegeBeforeDispatch() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasGuildOwnerAccess(1L, accountUuid(3L))).thenReturn(false);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
+    service.createGuild(
+        net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
+            .setTenantId("1")
+            .setOwnerAccountId(accountUuid(3L))
+            .setName("test")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateGuildResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    verifyNoInteractions(guild);
+  }
+
+  private static void whenGuildCreated(GuildService guild) {
+    Mockito.when(guild.createGuild(Mockito.any()))
+        .thenReturn(new GuildDto(5L, 1L, "test", accountUuid(2L), Instant.now()));
   }
 
   @Test
@@ -279,7 +368,49 @@ class SocialGroupsGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("recipientId must be positive", ref.get().getError().getMessage());
+    assertEquals("Malformed claim: recipientId", ref.get().getError().getMessage());
+    verifyNoInteractions(chat);
+  }
+
+  @Test
+  void sendMessageRejectsPaddedOptionalRecipientUuidBeforeDispatch() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<SendMessageResponse> ref = new AtomicReference<>();
+    service.sendMessage(
+        net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderId(accountUuid(2L))
+            .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_TELL)
+            .setRecipientId(" " + accountUuid(7L))
+            .setContent("hello")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMessageResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("Malformed claim: recipientId", ref.get().getError().getMessage());
     verifyNoInteractions(chat);
   }
 

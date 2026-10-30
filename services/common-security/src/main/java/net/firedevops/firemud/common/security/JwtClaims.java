@@ -52,7 +52,7 @@ public final class JwtClaims {
   }
 
   public static String requireSignedGameplayAccountUuid(Claims claims, String mismatchMessage) {
-    String subjectAccountUuid = requireCanonicalAccountUuid(claims.getSubject(), "sub");
+    String subjectAccountUuid = requireCanonicalAccountUuid(claims.get("sub"), "sub");
     String claimedAccountUuid = requireCanonicalAccountUuid(claims.get("accountId"), "accountId");
     if (!subjectAccountUuid.equals(claimedAccountUuid)) {
       throw new IllegalArgumentException(mismatchMessage);

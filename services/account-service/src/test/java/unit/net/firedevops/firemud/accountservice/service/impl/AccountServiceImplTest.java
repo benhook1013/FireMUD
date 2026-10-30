@@ -144,6 +144,7 @@ class AccountServiceImplTest {
       passwordResetTokenRepository;
 
   private AccountServiceImpl service;
+  private JwtUtil jwtUtil;
 
   @BeforeEach
   void setup() {
@@ -164,7 +165,7 @@ class AccountServiceImplTest {
     when(subscriptionRepository.findByTenantId(8L))
         .thenReturn(java.util.List.of(explicitActiveEntitlementForSecondTenant));
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
-    JwtUtil jwtUtil = new ReloadableJwtUtil(JWT_SECRET, 3600000L);
+    jwtUtil = org.mockito.Mockito.spy(new ReloadableJwtUtil(JWT_SECRET, 3600000L));
     jwtAuthProperties.setJwtSecret(JWT_SECRET);
     tokenProperties.setPlayerBootstrapExpirationMs(300000L);
     tokenProperties.setConnectScopeExpirationMs(120000L);
@@ -251,6 +252,178 @@ class AccountServiceImplTest {
             jwtUtil,
             sessionService,
             transactionManager);
+  }
+
+  private enum OrdinaryIssuance {
+    CONTROL_UI,
+    GAMEPLAY_PASSWORD,
+    EMAIL_OTP,
+    PLAYER_BOOTSTRAP
+  }
+
+  private enum IdentityFailure {
+    MISSING_UUID,
+    NIL_UUID,
+    MISSING_PROVENANCE,
+    MISSING_SOURCE_ROW,
+    WRONG_SOURCE_ROW,
+    MISSING_LOOKUP,
+    DIFFERENT_LOOKUP_OWNER,
+    DIFFERENT_LOOKUP_UUID,
+    READBACK_UNAVAILABLE
+  }
+
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      ordinaryIssuanceIdentityFailures() {
+    return java.util.Arrays.stream(OrdinaryIssuance.values())
+        .flatMap(
+            mode ->
+                java.util.Arrays.stream(IdentityFailure.values())
+                    .map(failure -> org.junit.jupiter.params.provider.Arguments.of(mode, failure)));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("ordinaryIssuanceIdentityFailures")
+  void ordinaryIssuanceRejectsUnverifiedOwnerBeforeSigningOrConsumingChallenge(
+      OrdinaryIssuance mode, IdentityFailure failure) {
+    Account account = ordinaryIssuanceAccount();
+    var challenge = ordinaryIssuanceChallenge(account);
+    switch (failure) {
+      case MISSING_UUID -> account.setAccountUuid(null);
+      case NIL_UUID -> account.setAccountUuid(new UUID(0L, 0L));
+      case MISSING_PROVENANCE -> account.setAccountUuidProvenance(null);
+      case MISSING_SOURCE_ROW -> account.setAccountUuidSourceNumericId(null);
+      case WRONG_SOURCE_ROW -> account.setAccountUuidSourceNumericId(43L);
+      case MISSING_LOOKUP ->
+          when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+              .thenReturn(Optional.empty());
+      case DIFFERENT_LOOKUP_OWNER, DIFFERENT_LOOKUP_UUID -> {
+        Account different = new Account();
+        different.setId(failure == IdentityFailure.DIFFERENT_LOOKUP_OWNER ? 43L : 42L);
+        different.setAccountUuid(
+            failure == IdentityFailure.DIFFERENT_LOOKUP_UUID
+                ? UUID.randomUUID()
+                : account.getAccountUuid());
+        different.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+        different.setAccountUuidSourceNumericId(different.getId());
+        when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+            .thenReturn(Optional.of(different));
+      }
+      case READBACK_UNAVAILABLE ->
+          when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+              .thenThrow(
+                  new org.springframework.dao.DataAccessResourceFailureException(
+                      "private storage detail"));
+    }
+
+    AuthenticationException denied =
+        assertThrows(AuthenticationException.class, () -> issueOrdinaryCredential(mode));
+
+    assertEquals("AUTH_UNAVAILABLE", denied.getCode());
+    assertEquals("Account authority is unavailable", denied.getMessage());
+    org.mockito.Mockito.verify(jwtUtil, org.mockito.Mockito.never())
+        .generateToken(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyMap());
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .delete(challenge);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(sessionService);
+  }
+
+  @ParameterizedTest
+  @EnumSource(OrdinaryIssuance.class)
+  void ordinaryIssuanceKeepsItsProfileContractAfterExactOwnerReadback(OrdinaryIssuance mode) {
+    Account account = ordinaryIssuanceAccount();
+    var challenge = ordinaryIssuanceChallenge(account);
+
+    String token = issueOrdinaryCredential(mode);
+
+    var claims = jwtUtil.parseToken(token).getPayload();
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    if (mode != OrdinaryIssuance.GAMEPLAY_PASSWORD) {
+      org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
+    }
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(
+            org.mockito.ArgumentMatchers.eq(42L),
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @ParameterizedTest
+  @EnumSource(OrdinaryIssuance.class)
+  void invalidCredentialsDoNotConsultUuidOwnerReadback(OrdinaryIssuance mode) {
+    Account account = ordinaryIssuanceAccount();
+    ordinaryIssuanceChallenge(account);
+    account.setAccountUuid(null);
+
+    AuthenticationException denied =
+        assertThrows(
+            AuthenticationException.class,
+            () -> {
+              switch (mode) {
+                case CONTROL_UI -> service.authenticate("owner@example.com", "wrong");
+                case GAMEPLAY_PASSWORD ->
+                    service.authenticateForGameplay("owner@example.com", "wrong");
+                case EMAIL_OTP -> service.verifyEmailLoginOtp("owner@example.com", "wrong");
+                case PLAYER_BOOTSTRAP -> service.issuePlayerBootstrap("owner@example.com", "wrong");
+              }
+            });
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, denied.getCode());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByAccountUuid(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(sessionService);
+  }
+
+  private Account ordinaryIssuanceAccount() {
+    Account account = new Account();
+    account.setId(42L);
+    account.setUsername("owner");
+    account.setEmail("owner@example.com");
+    account.setEmailVerified(true);
+    account.setLoginAuthModes("PASSWORD,EMAIL_OTP");
+    account.setPasswordHash(hash("password"));
+    setPersistedAuthenticationIdentity(account);
+    when(accountRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(account));
+    return account;
+  }
+
+  private net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge
+      ordinaryIssuanceChallenge(Account account) {
+    var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(3L);
+    challenge.setAccountId(account.getId());
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountEmailLoginChallengeRepository.findByAccountId(account.getId()))
+        .thenReturn(Optional.of(challenge));
+    return challenge;
+  }
+
+  private String issueOrdinaryCredential(OrdinaryIssuance mode) {
+    if (mode == OrdinaryIssuance.PLAYER_BOOTSTRAP) {
+      PlayerBootstrapResult result = service.issuePlayerBootstrap("owner@example.com", "123456");
+      assertNotNull(
+          net.firedevops.firemud.accountservice.AccountUuidText.parseOrNull(result.accountId()));
+      return result.bootstrapToken();
+    }
+    AuthenticationResult result =
+        switch (mode) {
+          case CONTROL_UI -> service.authenticate("owner@example.com", "123456");
+          case GAMEPLAY_PASSWORD ->
+              service.authenticateForGameplay("owner@example.com", "password");
+          case EMAIL_OTP -> service.verifyEmailLoginOtp("owner@example.com", "123456");
+          case PLAYER_BOOTSTRAP -> throw new IllegalStateException("Bootstrap handled above");
+        };
+    assertEquals(
+        jwtUtil.parseToken(result.authToken()).getPayload().getSubject(), result.accountId());
+    return result.authToken();
   }
 
   @ParameterizedTest
@@ -2022,9 +2195,11 @@ class AccountServiceImplTest {
     when(accountEmailLoginChallengeRepository.findByAccountId(32L))
         .thenReturn(Optional.of(challenge));
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.authenticateForGameplay("unproved@example.com", "123456"));
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.authenticateForGameplay("unproved@example.com", "123456"));
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
 
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(32L);
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).findByAccountId(32L);
@@ -2204,7 +2379,10 @@ class AccountServiceImplTest {
     when(accountEmailLoginChallengeRepository.findByAccountId(50L))
         .thenReturn(Optional.of(challenge));
 
-    assertThrows(IllegalStateException.class, () -> service.issuePlayerBootstrap("demo", "123456"));
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class, () -> service.issuePlayerBootstrap("demo", "123456"));
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
 
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(50L);
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).findByAccountId(50L);
@@ -2258,6 +2436,96 @@ class AccountServiceImplTest {
     inOrder.verify(accountEmailLoginChallengeRepository).delete(challenge);
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(7L, result.bootstrapToken(), 300000L);
+  }
+
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      invalidBootstrapAccountClaims() {
+    String valid = "10000000-0000-4000-8000-00000000000a";
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("11", "11"),
+        org.junit.jupiter.params.provider.Arguments.of((String) null, valid),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid.toUpperCase(java.util.Locale.ROOT), valid),
+        org.junit.jupiter.params.provider.Arguments.of(" " + valid, valid),
+        org.junit.jupiter.params.provider.Arguments.of(valid, (Object) null),
+        org.junit.jupiter.params.provider.Arguments.of(valid, ""),
+        org.junit.jupiter.params.provider.Arguments.of(valid, 11L),
+        org.junit.jupiter.params.provider.Arguments.of(valid, "11"),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid, "00000000-0000-0000-0000-000000000000"),
+        org.junit.jupiter.params.provider.Arguments.of(
+            "00000000-0000-0000-0000-000000000000", valid),
+        org.junit.jupiter.params.provider.Arguments.of(valid, "not-a-uuid"),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid, valid.toUpperCase(java.util.Locale.ROOT)),
+        org.junit.jupiter.params.provider.Arguments.of(valid, " " + valid),
+        org.junit.jupiter.params.provider.Arguments.of(
+            valid, "10000000-0000-4000-8000-000000000002"));
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("invalidBootstrapAccountClaims")
+  void bootstrapReaderRejectsNonUuidOrContradictoryIdentityBeforeOwnerOrSessionUse(
+      String subject, Object accountClaim) {
+    Map<String, Object> claims = new java.util.HashMap<>();
+    claims.put("aud", "player-bootstrap");
+    if (accountClaim != null) {
+      claims.put("accountId", accountClaim);
+    }
+    String token = new JwtUtil(JWT_SECRET, 300000L).generateToken(subject, claims);
+
+    AuthenticationException denied =
+        assertThrows(AuthenticationException.class, () -> service.listBootstrapWorlds(token));
+
+    assertEquals("CONNECT_CONTEXT_INVALID", denied.getCode());
+    verifyNoInteractions(accountRepository, sessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "wrong-owner-uuid", "unavailable"})
+  void bootstrapReaderReportsOwnerReadbackFailureBeforeSessionUse(String failure) {
+    UUID uuid = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    if (failure.equals("unavailable")) {
+      when(accountRepository.findByAccountUuid(uuid))
+          .thenThrow(
+              new org.springframework.dao.DataAccessResourceFailureException("private detail"));
+    } else if (failure.equals("wrong-owner-uuid")) {
+      Account owner = new Account();
+      owner.setId(11L);
+      owner.setAccountUuid(UUID.randomUUID());
+      owner.setAccountUuidSourceNumericId(11L);
+      owner.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+      when(accountRepository.findByAccountUuid(uuid)).thenReturn(Optional.of(owner));
+    }
+    String token =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(
+                uuid.toString(), Map.of("aud", "player-bootstrap", "accountId", uuid.toString()));
+
+    AuthenticationException denied =
+        assertThrows(AuthenticationException.class, () -> service.listBootstrapWorlds(token));
+
+    assertEquals("AUTH_UNAVAILABLE", denied.getCode());
+    assertEquals("Account authority is unavailable", denied.getMessage());
+    verifyNoInteractions(sessionService);
+  }
+
+  @Test
+  void bootstrapReaderResolvesUuidBeforeReadingPrivateAccountSession() {
+    Account account = new Account();
+    account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
+    String uuid = account.getAccountUuid().toString();
+    String token =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(uuid, Map.of("aud", "player-bootstrap", "accountId", uuid));
+    when(sessionService.isAccountSessionActive(11L, token)).thenReturn(true);
+
+    assertFalse(service.listBootstrapWorlds(token).isEmpty());
+
+    org.mockito.InOrder reads = org.mockito.Mockito.inOrder(accountRepository, sessionService);
+    reads.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    reads.verify(sessionService).isAccountSessionActive(11L, token);
   }
 
   @Test
@@ -3357,6 +3625,82 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void bothScopeProducersBindPersistedUuidWhileRetainedRowsKeepPrivateAccountKey() {
+    Account account = directTextAccount();
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String browser =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    String direct =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
+    for (String token : java.util.List.of(browser, direct)) {
+      var claims = jwtUtil.parseToken(token).getPayload();
+      assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+      assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+      AuthenticationException held =
+          assertThrows(
+              AuthenticationException.class,
+              () ->
+                  service.issueConnectToken(
+                      bootstrap.bootstrapToken(), new ConnectTokenRequest(token, "held-proof")));
+      assertEquals("AUTH_UNAVAILABLE", held.getCode());
+    }
+    var retained = org.mockito.ArgumentCaptor.forClass(VerifiedJoinScope.class);
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.times(2))
+        .insert(retained.capture());
+    for (VerifiedJoinScope row : retained.getAllValues()) {
+      assertEquals(11L, row.accountId());
+      assertEquals(
+          net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(row),
+          row.snapshotDigest());
+    }
+  }
+
+  @Test
+  void scopeReaderOwnerFailureIsUnavailableAndNumericScopesNeverReachOwnerLookup() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    String scope =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
+    var decoded = new java.util.HashMap<String, Object>(jwtUtil.parseToken(scope).getPayload());
+    decoded.remove("iat");
+    decoded.remove("exp");
+    decoded.put("sub", "11");
+    decoded.put("accountId", "11");
+    String numeric = new JwtUtil(JWT_SECRET, 120000L).generateToken("11", decoded);
+    org.mockito.Mockito.clearInvocations(accountRepository);
+    AuthenticationException invalid =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProductionFromGameSession(
+                    directTextCaller(),
+                    new JoinPublicProductionRequest(numeric, directTextCaller().requestId())));
+    assertEquals("CONNECT_SCOPE_INVALID", invalid.getCode());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .findByAccountUuid(org.mockito.ArgumentMatchers.any());
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenThrow(
+            new org.springframework.dao.DataAccessResourceFailureException("private detail"));
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProductionFromGameSession(
+                    directTextCaller(),
+                    new JoinPublicProductionRequest(scope, directTextCaller().requestId())));
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+  }
+
+  @Test
   void getTenantEntitlementsForRuntimeTreatsStoreFailureAsUnavailable() {
     DataAccessResourceFailureException cause =
         new DataAccessResourceFailureException("subscription store unavailable");
@@ -4030,7 +4374,8 @@ class AccountServiceImplTest {
     assertEquals(2, secondCall.size());
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
         .findByTenantId(7L);
-    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(1 + secondCall.size()))
+        .findByAccountUuid(account.getAccountUuid());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).findById(11L);
     JwtUtil tokenReader = new JwtUtil(JWT_SECRET, 3600000L);
     for (var realm : secondCall) {

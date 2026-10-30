@@ -105,6 +105,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(socialStub().lastRequest())
         .hasValueSatisfying(
             request -> {
+              assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID);
               assertThat(request.getContent()).isEqualTo("hello travelers");
               assertThat(request.getType())
                   .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
@@ -155,6 +156,8 @@ class CommunicationWebSocketCrossServiceTest {
         ChatTestFixtures.PLAYER_SORA,
         "keep quiet",
         true);
+    assertThat(socialStub().lastRequest())
+        .hasValueSatisfying(request -> assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID));
 
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
@@ -181,6 +184,8 @@ class CommunicationWebSocketCrossServiceTest {
         ChatTestFixtures.PLAYER_SORA,
         "meet me at the forge",
         true);
+    assertThat(socialStub().lastRequest())
+        .hasValueSatisfying(request -> assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID));
 
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),

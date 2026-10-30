@@ -211,4 +211,39 @@ class JwtClaimsTest {
         IllegalArgumentException.class,
         () -> JwtClaims.requireSignedGameplayAccountUuid(numericClaim, "account subject mismatch"));
   }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "11",
+        "",
+        "not-a-uuid",
+        "00000000-0000-0000-0000-000000000000",
+        "10000000-0000-4000-8000-00000000000A",
+        " 10000000-0000-4000-8000-00000000000a "
+      })
+  void routingScopeRejectsNoncanonicalAccountIdentity(String value) {
+    var claims = io.jsonwebtoken.Jwts.claims().add("sub", value).add("accountId", value).build();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> JwtClaims.requireSignedGameplayRoutingClaims(claims, "mismatch"));
+  }
+
+  @Test
+  void routingScopeRejectsNumericObjectsAndDifferentUuidSubjects() {
+    Claims numeric = org.mockito.Mockito.mock(Claims.class);
+    org.mockito.Mockito.when(numeric.get("sub")).thenReturn(11L);
+    org.mockito.Mockito.when(numeric.get("accountId")).thenReturn(11L);
+    for (var claims :
+        java.util.List.of(
+            numeric,
+            io.jsonwebtoken.Jwts.claims()
+                .add("sub", "10000000-0000-4000-8000-000000000001")
+                .add("accountId", "10000000-0000-4000-8000-000000000002")
+                .build())) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> JwtClaims.requireSignedGameplayRoutingClaims(claims, "mismatch"));
+    }
+  }
 }

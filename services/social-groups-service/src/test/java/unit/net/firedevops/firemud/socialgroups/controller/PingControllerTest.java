@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,7 +35,12 @@ class PingControllerTest {
   void pingEndpointReturnsPong() throws Exception {
     when(pingService.ping()).thenReturn("pong");
 
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L),
+            Map.of(
+                "accountId", accountUuid(2L),
+                "globalRoles", List.of("platformAdmin")));
     mockMvc
         .perform(get("/ping").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())

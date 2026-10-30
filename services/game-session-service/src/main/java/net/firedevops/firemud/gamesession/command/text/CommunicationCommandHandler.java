@@ -64,6 +64,20 @@ public class CommunicationCommandHandler {
       meterRegistry.counter(COMMUNICATION_INVOCATIONS_METRIC, "type", typeTag).increment();
       meterRegistry.counter(metricPrefix(command.type()) + ".invocations").increment();
 
+      if (!SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+        logFailure(
+            "INVALID_ARGUMENT",
+            "Sender Account identity unavailable",
+            context,
+            tenantTag,
+            command.type(),
+            null);
+        return new CommunicationCommandHandlingResult(
+            CommandEnqueueResult.failure(
+                "COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable"),
+            List.of());
+      }
+
       ParsedCommunication parsed;
       try {
         parsed = parseCommunication(context, command);
