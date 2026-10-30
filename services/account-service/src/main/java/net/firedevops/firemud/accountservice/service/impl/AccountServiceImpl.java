@@ -2052,6 +2052,9 @@ public class AccountServiceImpl implements AccountService {
         throw new IllegalStateException("Account identity does not match its persisted owner");
       }
     } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
+      logger.warn(
+          "Account owner validation failed during issuance; cause={}",
+          ex.getClass().getSimpleName());
       throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
     }
   }
